@@ -1,5 +1,6 @@
 # exclude everything
 application/*
+.idea/*
 
 # exception to the rule
 !application/.gitkeep 
