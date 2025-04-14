@@ -1,0 +1,5 @@
+# exclude everything
+application/*
+
+# exception to the rule
+!application/.gitkeep 
