@@ -3,7 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: laravel-app
+    container_name: ${COMPOSE_PROJECT_NAME}-app
     restart: unless-stopped
     working_dir: /var/www
     volumes:
@@ -13,7 +13,7 @@ services:
 
   webserver:
     image: nginx:alpine
-    container_name: nginx-server
+    container_name: ${COMPOSE_PROJECT_NAME}-webserver
     restart: unless-stopped
     ports:
       - "8000:80"
