@@ -4,3 +4,5 @@ application/*
 
 # exception to the rule
 !application/.gitkeep
+
+/.vscode/settings.json
