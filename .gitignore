@@ -3,4 +3,6 @@ application/*
 .idea/*
 
 # exception to the rule
-!application/.gitkeep 
+!application/.gitkeep
+
+/.vscode/settings.json

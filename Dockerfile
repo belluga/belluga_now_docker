@@ -2,6 +2,9 @@ FROM php:8.4-fpm as builder
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
+    libpng16-16 \
+    libjpeg62-turbo \
+    libfreetype6 \
     libzip-dev \
     procps \
     vim-tiny \
@@ -40,6 +43,8 @@ RUN apt-get update && apt-get install -y \
     procps \
     vim-tiny \
     curl \
+    git \
+    unzip \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
