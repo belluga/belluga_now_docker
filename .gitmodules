@@ -1,3 +1,6 @@
 [submodule "application"]
-	path = application
+	path = laravel-app/application
 	url = https://github.com/belluga/belluga_backend.git
+[submodule "flutter-app"]
+	path = flutter-app
+	url = https://github.com/belluga/belluga_front.git
