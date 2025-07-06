@@ -1,30 +1,64 @@
-services:
-  app:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: ${COMPOSE_PROJECT_NAME}-app
-    restart: unless-stopped
-    working_dir: /var/www
-    volumes:
-      - ./application:/var/www
-    networks:
-      - laravel-network
+version: '3.9' # A versão 3.9 tem melhor suporte para profiles
 
-  webserver:
-    image: nginx:alpine
-    container_name: ${COMPOSE_PROJECT_NAME}-webserver
-    restart: unless-stopped
-    ports:
-      - "8000:80"
+services:
+  # --- Serviços Base (Sempre Ativos) ---
+  laravel-app:
+    build:
+      context: ./laravel-app
     volumes:
-      - ./application:/var/www
-      - ./docker/nginx:/etc/nginx/conf.d
+      - ./laravel-app:/var/www/laravel
     networks:
-      - laravel-network
+      - app-network
+
+  nginx:
+    build: ./nginx # Continua usando a abordagem com entrypoint.sh
+    env_file: .env # Passa todas as variáveis do .env para o NGINX
+    ports:
+      # Porta para acesso LOCAL (http://localhost:8080)
+      - "8080:80"
+      # Portas para PRODUÇÃO (serão usadas pelo Certbot e para tráfego público)
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./flutter-app/build/web:/var/www/flutter
+      - certbot-data:/etc/letsencrypt
+      - certbot-challenge:/var/www/certbot
     depends_on:
-      - app
+      - laravel-app
+    networks:
+      - app-network
+
+  # --- Serviço de Staging (Controlado por Perfil) ---
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN}
+    depends_on:
+      - nginx
+    networks:
+      - app-network
+    profiles:
+      - staging # <-- SÓ INICIA SE 'COMPOSE_PROFILES=staging'
+
+  # --- Serviço de Produção (Controlado por Perfil) ---
+  certbot:
+    image: certbot/certbot
+    volumes:
+      - certbot-data:/etc/letsencrypt
+      - certbot-challenge:/var/www/certbot
+    env_file: .env
+    command: >
+      sh -c "certbot certonly --webroot --webroot-path=/var/www/certbot \
+        --email ${CERTBOT_EMAIL} -d ${DOMAIN} --agree-tos --no-eff-email \
+        --force-renewal && \
+        while true; do certbot renew; sleep 12h; done"
+    profiles:
+      - production # <-- SÓ INICIA SE 'COMPOSE_PROFILES=production'
 
 networks:
-  laravel-network:
+  app-network:
     driver: bridge
+
+volumes:
+  certbot-data:
+  certbot-challenge:
