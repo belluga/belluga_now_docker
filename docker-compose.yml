@@ -1,5 +1,3 @@
-version: '3.9' # A versão 3.9 tem melhor suporte para profiles
-
 services:
   # --- Serviços Base (Sempre Ativos) ---
   laravel-app:

@@ -5,7 +5,8 @@ FROM nginx:stable-alpine
 RUN apk update && apk add gettext
 
 # Copia o template de configuração e o script de entrypoint para a imagem
-COPY ./app.conf.template /etc/nginx/templates/
+COPY ./prod.conf.template /etc/nginx/templates/
+COPY ./local.conf.template /etc/nginx/templates/
 COPY ./entrypoint.sh /
 
 # Dá permissão de execução ao script de entrypoint
