@@ -1,7 +1,7 @@
-FROM php:8.4-fpm as builder
+FROM php:8.4.10-fpm AS builder
 
 RUN apt-get update && apt-get install -y \
-    zip unzip curl git libonig-dev libzip-dev \
+    zip unzip curl git libonig-dev libzip-dev libssl-dev \
     && docker-php-ext-install pdo pdo_mysql mbstring zip \
     && pecl install mongodb \
     && docker-php-ext-enable mongodb
