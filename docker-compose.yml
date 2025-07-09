@@ -1,32 +1,62 @@
 services:
-  # --- Serviços Base (Sempre Ativos) ---
-  laravel-app:
+  app:
     build:
-      context: ./laravel-app
+      context: .
+      dockerfile: ./docker/laravel-app/Dockerfile
+    container_name: laravel-app
     volumes:
-      - ./laravel-app:/var/www/laravel
+      - ./laravel-app:/var/www
     networks:
       - app-network
 
+  # flutter:
+  #   image: ghcr.io/cirruslabs/flutter:latest
+  #   container_name: flutter-builder
+  #   volumes:
+  #     - ./flutter-app:/app
+  #   working_dir: /app
+  #   command: >
+  #     sh -c "
+  #       flutter pub get &&
+  #       flutter build web &&
+  #       tail -f /dev/null
+  #     "
+  #   networks:
+  #     - app-network
+
   nginx:
-    build: ./nginx # Continua usando a abordagem com entrypoint.sh
-    env_file: .env # Passa todas as variáveis do .env para o NGINX
+    build: ./docker/nginx
+    env_file: .env
+    # image: nginx:latest
+    # container_name: nginx-proxy
     ports:
-      # Porta para acesso LOCAL (http://localhost:8080)
-      - "8080:80"
-      # Portas para PRODUÇÃO (serão usadas pelo Certbot e para tráfego público)
       - "80:80"
       - "443:443"
     volumes:
+      - ./laravel-app:/var/www/laravel
       - ./flutter-app/build/web:/var/www/flutter
       - certbot-data:/etc/letsencrypt
       - certbot-challenge:/var/www/certbot
+    # - type: bind
+    #   source: ./flutter-app/build/web
+    #   target: /var/www/frontend
+    # - type: bind
+    #   source: ./laravel-app
+    #   target: /var/www
+    # - type: bind
+      # source: ./docker/nginx.conf
+      # target: /etc/nginx/conf.d/default.conf
+  
+    # volumes:
+    #   - ./docker/nginx.conf:/etc/nginx/conf.d/default.conf
+    #   - ./frontend-flutter/build/web:/var/www/frontend
+    #   - ./backend-laravel:/var/www/laravel
     depends_on:
-      - laravel-app
+      - app
     networks:
       - app-network
 
-  # --- Serviço de Staging (Controlado por Perfil) ---
+      # --- Serviço de Staging (Controlado por Perfil) ---
   cloudflared:
     image: cloudflare/cloudflared:latest
     restart: unless-stopped
