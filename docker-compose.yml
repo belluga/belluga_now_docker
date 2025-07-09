@@ -2,29 +2,92 @@ services:
   app:
     build:
       context: .
-      dockerfile: Dockerfile
-    container_name: ${COMPOSE_PROJECT_NAME}-app
-    restart: unless-stopped
-    working_dir: /var/www
+      dockerfile: ./docker/laravel-app/Dockerfile
+    container_name: laravel-app
     volumes:
-      - ./application:/var/www
+      - ./laravel-app:/var/www
     networks:
-      - laravel-network
+      - app-network
 
-  webserver:
-    image: nginx:alpine
-    container_name: ${COMPOSE_PROJECT_NAME}-webserver
-    restart: unless-stopped
-    ports:
-      - "8000:80"
+  flutter:
+    image: ghcr.io/cirruslabs/flutter:latest
+    container_name: flutter-builder
     volumes:
-      - ./application:/var/www
-      - ./docker/nginx:/etc/nginx/conf.d
+      - ./flutter-app:/app
+    working_dir: /app
+    command: >
+      sh -c "
+        flutter pub get &&
+        flutter build web &&
+        tail -f /dev/null
+      "
     networks:
-      - laravel-network
+      - app-network
+
+  nginx:
+    build: ./docker/nginx
+    env_file: .env
+    # image: nginx:latest
+    # container_name: nginx-proxy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./laravel-app:/var/www/laravel
+      - ./flutter-app/build/web:/var/www/flutter
+      - certbot-data:/etc/letsencrypt
+      - certbot-challenge:/var/www/certbot
+    # - type: bind
+    #   source: ./flutter-app/build/web
+    #   target: /var/www/frontend
+    # - type: bind
+    #   source: ./laravel-app
+    #   target: /var/www
+    # - type: bind
+      # source: ./docker/nginx.conf
+      # target: /etc/nginx/conf.d/default.conf
+  
+    # volumes:
+    #   - ./docker/nginx.conf:/etc/nginx/conf.d/default.conf
+    #   - ./frontend-flutter/build/web:/var/www/frontend
+    #   - ./backend-laravel:/var/www/laravel
     depends_on:
       - app
+      - flutter
+    networks:
+      - app-network
+
+      # --- Serviço de Staging (Controlado por Perfil) ---
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN}
+    depends_on:
+      - nginx
+    networks:
+      - app-network
+    profiles:
+      - staging # <-- SÓ INICIA SE 'COMPOSE_PROFILES=staging'
+
+  # --- Serviço de Produção (Controlado por Perfil) ---
+  certbot:
+    image: certbot/certbot
+    volumes:
+      - certbot-data:/etc/letsencrypt
+      - certbot-challenge:/var/www/certbot
+    env_file: .env
+    command: >
+      sh -c "certbot certonly --webroot --webroot-path=/var/www/certbot \
+        --email ${CERTBOT_EMAIL} -d ${DOMAIN} --agree-tos --no-eff-email \
+        --force-renewal && \
+        while true; do certbot renew; sleep 12h; done"
+    profiles:
+      - production # <-- SÓ INICIA SE 'COMPOSE_PROFILES=production'
 
 networks:
-  laravel-network:
+  app-network:
     driver: bridge
+
+volumes:
+  certbot-data:
+  certbot-challenge:
