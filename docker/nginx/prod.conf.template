@@ -1,0 +1,20 @@
+server {
+    listen 80;
+    listen [::]:80;
+    # Use a variável de ambiente para o domínio
+    server_name ${YOUR_DOMAIN};
+
+    # ... o resto da sua configuração ...
+}
+
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name ${YOUR_DOMAIN};
+
+    # Caminhos para os certificados SSL passados via .env
+    ssl_certificate ${SSL_CERTIFICATE_PATH};
+    ssl_certificate_key ${SSL_CERTIFICATE_KEY_PATH};
+    
+    # ... resto da configuração SSL e location blocks ...
+}
