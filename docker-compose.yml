@@ -3,7 +3,6 @@ services:
     build:
       context: .
       dockerfile: ./docker/laravel-app/Dockerfile
-    container_name: laravel-app
     volumes:
       - ./laravel-app:/var/www
     networks:
@@ -11,7 +10,6 @@ services:
 
   flutter:
     image: ghcr.io/cirruslabs/flutter:latest
-    container_name: flutter-builder
     volumes:
       - ./flutter-app:/app
     working_dir: /app
