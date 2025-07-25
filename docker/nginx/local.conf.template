@@ -21,6 +21,12 @@ server {
         try_files $uri /index.php$is_args$args;
     }
 
+    # Laravel API
+    location ^~ /initialize {
+        alias /var/www/public/;
+        try_files $uri /index.php$is_args$args;
+    }
+
     # PHP para Laravel (fallback, se necessário)
     location ~ \.php$ {
         root /var/www/public;
