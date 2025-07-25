@@ -1,0 +1,44 @@
+# Define o comportamento padrão. Git tentará detectar arquivos de texto automaticamente.
+* text=auto
+
+# Força o uso de terminações de linha LF (padrão Linux/macOS) para arquivos
+# que são sensíveis a isso, especialmente em ambientes Docker.
+# Esta é a parte mais importante para o seu projeto.
+*.sh           eol=lf
+*.php          eol=lf
+*.js           eol=lf
+*.ts           eol=lf
+*.dart         eol=lf
+*.py           eol=lf
+*.rb           eol=lf
+
+# Arquivos de configuração e texto comuns
+*.yml          eol=lf
+*.yaml         eol=lf
+*.json         eol=lf
+*.md           eol=lf
+.env* eol=lf
+.gitattributes eol=lf
+.gitignore     eol=lf
+.dockerignore  eol=lf
+Dockerfile     eol=lf
+
+# Garante que arquivos de lote do Windows (se existirem) mantenham o formato CRLF.
+*.bat          eol=crlf
+*.cmd          eol=crlf
+
+# Marca arquivos binários para que o Git não tente modificar suas terminações de linha.
+*.png          binary
+*.jpg          binary
+*.jpeg         binary
+*.gif          binary
+*.ico          binary
+*.svg          binary
+*.webp         binary
+*.woff         binary
+*.woff2        binary
+*.ttf          binary
+*.eot          binary
+*.otf          binary
+*.zip          binary
+*.gz           binary
