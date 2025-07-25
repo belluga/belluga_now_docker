@@ -3,7 +3,6 @@ services:
     build:
       context: .
       dockerfile: ./docker/laravel-app/Dockerfile
-    container_name: laravel-app
     volumes:
       - ./laravel-app:/var/www
     networks:
@@ -11,13 +10,13 @@ services:
 
   flutter:
     image: ghcr.io/cirruslabs/flutter:latest
-    container_name: flutter-builder
     volumes:
       - ./flutter-app:/app
     working_dir: /app
     command: >
       sh -c "
         flutter pub get &&
+        mkdir -p build &&
         flutter build web &&
         tail -f /dev/null
       "
@@ -30,8 +29,8 @@ services:
     # image: nginx:latest
     # container_name: nginx-proxy
     ports:
-      - "80:80"
-      - "443:443"
+      - "${NGINX_HOST_PORT_80}:80"
+      - "${NGINX_HOST_PORT_443}:443"
     volumes:
       - ./laravel-app:/var/www/laravel
       - ./flutter-app/build/web:/var/www/flutter
