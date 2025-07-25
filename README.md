@@ -73,15 +73,28 @@ Agora, aponte os submódulos para os seus novos repositórios.
     git submodule update --init --recursive
     ```
 
-### Passo 4: Configure o Ambiente
+### Passo 4: Configure o Arquivo de Ambiente
 
 1.  Copie o arquivo de exemplo `.env.example` para um novo arquivo chamado `.env`.
     ```bash
     cp .env.example .env
     ```
-2.  **Edite o arquivo `.env`** com suas próprias configurações. Preencha as variáveis de acordo com o ambiente que você deseja executar (staging ou production).
+2.  **Edite o arquivo `.env`** com as configurações básicas do projeto, como `PROJECT_NAME`. As variáveis específicas de cada ambiente serão preenchidas a seguir.
 
-### Passo 5: Envie o Código Inicial
+### Passo 5: Configure o Túnel para Staging (Opcional)
+
+Para usar o perfil de `staging` e expor seu ambiente local na internet, você precisa de um **Cloudflare Tunnel**.
+
+1.  Siga o **tutorial oficial do Cloudflare** para criar seu túnel:
+    * **[Guia de Início Rápido do Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/get-started/)**
+
+2.  Após seguir o tutorial, você terá um **token do túnel** e um **domínio público** (ex: `meu-app.meudominio.com`).
+
+3.  Abra seu arquivo `.env` e atualize as seguintes variáveis:
+    * `CLOUDFLARE_TUNNEL_TOKEN`: Cole o token do seu túnel aqui.
+    * `DOMAIN`: Insira o domínio público que você configurou para o túnel.
+
+### Passo 6: Envie o Código Inicial
 
 Finalmente, envie as alterações de configuração e o código inicial para seus novos repositórios.
 
@@ -111,8 +124,8 @@ O ambiente é controlado pela variável `COMPOSE_PROFILES` no seu arquivo `.env`
 
 Ideal para desenvolvimento e para compartilhar seu progresso. Utiliza o Cloudflare Tunnel para criar um túnel seguro para seu ambiente local.
 
-1.  No arquivo `.env`, defina `COMPOSE_PROFILES=staging`.
-2.  Preencha a variável `CLOUDFLARE_TUNNEL_TOKEN` com o token do seu túnel.
+1.  No arquivo `.env`, garanta que `COMPOSE_PROFILES=staging`.
+2.  Confirme que as variáveis `CLOUDFLARE_TUNNEL_TOKEN` e `DOMAIN` foram preenchidas conforme o **Passo 5**.
 3.  Suba os contêineres:
     ```bash
     docker compose up -d --build
@@ -123,7 +136,7 @@ Ideal para desenvolvimento e para compartilhar seu progresso. Utiliza o Cloudfla
 Para implantar em um servidor com um domínio real.
 
 1.  No arquivo `.env`, defina `COMPOSE_PROFILES=production`.
-2.  Preencha as variáveis `DOMAIN` e `CERTBOT_EMAIL`.
+2.  Preencha as variáveis `DOMAIN` e `CERTBOT_EMAIL` com os dados do seu domínio de produção.
 3.  Aponte o DNS do seu domínio para o IP do servidor.
 4.  Suba os contêineres:
     ```bash
@@ -155,26 +168,3 @@ Execute todos os comandos de desenvolvimento através do `docker compose exec`.
     ```bash
     docker compose logs -f <nome-do-servico>
     ```
-
-***
-
-## 📂 Estrutura do Projeto
-
-├── docker/
-│   ├── laravel-app/
-│   │   ├── Dockerfile
-│   │   └── entrypoint.sh
-│   └── nginx/
-│       ├── Dockerfile
-│       ├── entrypoint.sh
-│       ├── local.conf.template
-│       └── prod.conf.template
-├── flutter-app/        # Submódulo do Frontend Flutter
-├── laravel-app/        # Submódulo do Backend Laravel
-├── .dockerignore
-├── .env.example
-├── .gitattributes      # Garante a consistência de terminações de linha
-├── .gitignore
-├── .gitmodules
-├── docker-compose.yml
-└── README.md
