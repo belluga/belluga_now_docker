@@ -1,6 +1,8 @@
 [submodule "flutter-app"]
 	path = flutter-app
 	url = https://github.com/belluga/belluga_now_front.git
+	ignore = all
 [submodule "laravel-app"]
 	path = laravel-app
 	url = https://github.com/belluga/belluga_now_backend.git
+	ignore = all
