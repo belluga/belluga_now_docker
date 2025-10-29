@@ -7,3 +7,8 @@ application/*
 !application/.gitkeep
 
 /.vscode/settings.json
+
+# AI Agents
+GEMINI.md
+TESTING.md
+delphi-ai/
