@@ -9,6 +9,7 @@ application/*
 /.vscode/settings.json
 
 # AI Agents
+AGENTS.md
 GEMINI.md
 TESTING.md
 delphi-ai/
