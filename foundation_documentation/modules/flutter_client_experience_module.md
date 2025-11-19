@@ -22,6 +22,8 @@
 * **Invariants:** Controllers are the sole owners of state mutations; widgets remain presentational; every domain entity surfaces as a value-object backed model; DI registrations occur before route build.
 * **Validation Rules:** Input fields rely on domain value objects (e.g., `EmailValue`, `PasswordValue`); invite codes enforce length 6–12; POI filter radius 1–50 km; schedule entries require ISO-8601 timestamps.
 * **Authorization Requirements:** Anonymous flow limited to onboarding and invite acceptance; authenticated tenant scope unlocks home, schedule, map; partner scope exposes partner dashboards (future flavor); promoter scope requires explicit feature flag.
+* **Shared Services:** `UserLocationService` + `LocationRepository` live in the domain layer. Controllers (Map, Search, Invite Check-in) inject the service to request permission, seed initial filters, and pass coordinates to repositories. Repositories never call each other; services wrap a single repository per architecture principle §2.5.
+* **Task & Invite Hooks:** Controllers subscribe to `TaskStream` (from Task & Reminder module) to show outstanding reminders (e.g., invite follow-ups, check-ins). Invite controllers must respect `Web-to-App Promotion Policy` by deep-linking to `/attendance` and `/accept/import-contacts` endpoints instead of handling critical actions purely on the web.
 
 #### 2.2 API Endpoint Definitions
 
@@ -33,6 +35,8 @@
 | `/v1/app/map/pois` | GET | Returns POIs for the active viewport and filter set. | Tenant | `MapPoisRequest` | `MapPoisResponse` |
 | `/v1/app/profile` | GET | Delivers profile summary, identity claims, and linked partner roles. | Tenant | `ProfileRequest` | `ProfileResponse` |
 | `/v1/app/onboarding/context` | GET | Supplies localization strings, branding palette, and dynamic CTA verbs. | Anonymous | `OnboardingContextRequest` | `OnboardingContextResponse` |
+| `/v1/tasks` | GET | Lists active tasks/reminders (invite follow-ups, check-ins, partner requirements). | Tenant | `TaskListRequest` | `TaskListResponse` |
+| `/v1/tasks/{taskId}/complete` | POST | Completes tasks (via in-app actions) and feeds back into invite/partner flows. | Tenant | `TaskCompleteRequest` | `TaskCompleteResponse` |
 
 *Success/Failure Handling:* All endpoints return `metadata.request_id` for tracing, success payloads encapsulated in `data`, and standardized error envelopes with `error.code`, `error.message`, `error.hints[]`. Mock implementations must reproduce this contract exactly.
 *Rate Limiting:* Soft limit of 5 req/min per endpoint during mock stage to mirror production throttles; burst handling delegated to controller retry strategies.
@@ -190,4 +194,3 @@
 * **Reference APIs:** Laravel backend contracts defined in MOD-101 (pending).
 * **Security Review Checklist:** Enforce HTTPS-only asset loading; sanitize invite codes before display; gate partner dashboards behind role checks.
 * **Operational Runbooks:** `docs/runbooks/flutter_bootstrap.md` (to be authored) will outline cold-start troubleshooting, mock backend rotation, and DI registration audits.
-
