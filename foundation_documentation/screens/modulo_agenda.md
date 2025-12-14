@@ -65,6 +65,11 @@
 - **Call to Action (CTA):**
     - **Botão Fixo (Sticky):** `[Botão: Confirmar Presença]`
 
+### 3.2. Tratamento de Convites Recebidos
+- **Banner de Convite (entre hero e abas):** Card padrão exibindo quem convidou e ações **Agora não** / **Bora!**. Este banner é a única superfície de aceitação/recusa dentro do detalhe imersivo.
+- **Rodapé do “O Rolê”:** Não exibe mais CTA de aceitar convite; permanece reservado para conteúdo do evento. A confirmação de presença continua no botão sticky global.
+- **Contrato:** O payload de convite deve expor `inviter_name`, `host_name`, `message`, `event_image_uri`, `invite_id`, e o status atual; aceitar/recusar deve atualizar a fonte de dados e refletir no banner e na agenda.
+
 ---
 
 ## 4. Tela: Gerenciador de Convites ("Tinder-like")

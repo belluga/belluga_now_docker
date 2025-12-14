@@ -21,6 +21,58 @@ The Invite & Social Loop module (MOD-302) governs Guar[APP]ari’s virality engi
 
 ---
 
+## 2.1 V1 Structural Decisions (Crediting, Uniqueness, Limits)
+
+These decisions are foundational because they prevent metric inflation, preserve monetization integrity, and unlock partner-facing analytics.
+
+### A) Inviter Principal (User vs Partner)
+Every invite is issued by an `inviter_principal`:
+
+```json
+{
+  "inviter_principal": { "kind": "user|partner", "id": "ObjectId()" },
+  "issued_by_user_id": "ObjectId() | null"
+}
+```
+
+- The **recipient-facing inviter** is always the `inviter_principal`.
+- When `inviter_principal.kind == "partner"`, `issued_by_user_id` records which user (landlord/admin or partner team member) issued the invite on behalf of the partner. This supports auditing, permissions, and abuse investigations; it does not change who gets invite credit.
+
+### B) Uniqueness (No Duplicate Invites From Same Inviter)
+We never allow the same inviter to invite the same receiver to the same event more than once.
+
+**Uniqueness key:**
+`(tenant_id, event_id, receiver_user_id, inviter_principal.kind, inviter_principal.id)`
+
+If a duplicate attempt occurs:
+- Backend responds with `already_invited` and no record is created.
+- Client surfaces “Já convidado”.
+
+### C) Credited Acceptance (One Credited Invite Per Receiver + Event)
+When a user confirms attendance via invites, exactly **one** invite becomes the credited acceptance for that `(receiver_user_id, event_id)` pair.
+
+- UI must force explicit selection (“Aceitar convite de …” opens a selector dialog); **no default inviter selection** is applied.
+- On acceptance, the selected invite transitions to `accepted` with `credited_acceptance=true`.
+- All other invites for the same `(receiver_user_id, event_id)` transition to `closed_duplicate` (still queryable for audit and reporting, but not counted as accepted conversions).
+
+### D) Backend-Owned Limits (Tenant Settings + Enforcement)
+Invite limits are configured and enforced by the backend. Flutter:
+- fetches settings when needed (and may cache briefly for UX),
+- shows quota/limit messaging,
+- relies on backend enforcement as the source of truth.
+
+Backend must return:
+- `429` when over quota/rate-limited,
+- a structured payload describing which limit was exceeded and when it resets.
+
+**Suggested healthy defaults (backend-owned; per-tenant + per-plan override):**
+- `max_invites_per_event_per_inviter`: `300`
+- `max_invites_per_day_per_partner`: `500` (Tiny Free plan: `50–100`)
+- `max_invites_per_day_per_user_actor`: `100`
+- `max_pending_invites_per_invitee`: `20`
+- `max_invites_to_same_invitee_per_30d` (any events): `10`
+- Suppression: per-partner blocklist + per-user opt-out
+
 ## 3. Data Model
 
 ### 3.1 `invite_edges`
@@ -47,7 +99,17 @@ The Invite & Social Loop module (MOD-302) governs Guar[APP]ari’s virality engi
   "updated_at": "Date"
 }
 ```
-`status` ∈ {`pending`, `accepted`, `declined`, `expired`, `snoozed`, `suppressed`}. `attendance_status` ∈ {`unknown`, `confirmed`, `no_show`}. `unknown` is the default and represents “attendance not yet reported”. `channel` includes `whatsapp`, `in_app`, `qr`, `link`. `auto_expire_at` is derived from the related event/offer end time so invitations automatically close when the underlying experience has passed. `plan_charge_bucket` ties each invite to the partner plan quota bucket used by billing (e.g., `core`, `premium_boost`), enabling per-plan limits.
+`status` ∈ {`pending`, `viewed`, `accepted`, `declined`, `closed_duplicate`, `expired`, `snoozed`, `suppressed`}. `attendance_status` ∈ {`unknown`, `confirmed`, `no_show`}. `unknown` is the default and represents “attendance not yet reported”. `channel` includes `whatsapp`, `in_app`, `qr`, `link`. `auto_expire_at` is derived from the related event/offer end time so invitations automatically close when the underlying experience has passed. `plan_charge_bucket` ties each invite to the partner plan quota bucket used by billing (e.g., `core`, `premium_boost`), enabling per-plan limits.
+
+**V1 additional fields (required):**
+```json
+{
+  "event_id": "ObjectId()",
+  "inviter_principal": { "kind": "user|partner", "id": "ObjectId()" },
+  "issued_by_user_id": "ObjectId() | null",
+  "credited_acceptance": "Boolean"
+}
+```
 
 ### 3.2 `invite_actions`
 Captures all user actions performed on an invite entry.
@@ -100,12 +162,61 @@ To enforce both anti-spam policies and partner plan limits, the module maintains
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/v1/app/invites` | GET | Returns paginated invite feed with friend resumes, contextual prompts, quota status, and suppression flags per event. |
+| `/v1/app/invites/settings` | GET | Returns backend-owned tenant settings relevant to invite quotas, anti-spam, and client UX messaging. |
+| `/v1/app/invites/share` | POST | Creates (or returns) an external share code that attributes installs/signups to an inviter principal for a specific event. |
+| `/v1/app/invites/share/{code}` | GET | Resolves share code context (event + inviter principal) and records an open; used for deep-link attribution. |
+| `/v1/app/invites/share/{code}/consume` | POST | Consumes the share code for the current user (post-install/post-signup) to bind attribution and enable conversion tracking. |
 | `/v1/app/invites/{inviteCode}/accept` | POST | Confirms an invite and emits `invite.accepted`. |
 | `/v1/app/invites/{inviteCode}/resend` | POST | Rotates share tokens and reissues invite links. |
 | `/v1/app/invites/{inviteCode}/snooze` | POST | Marks invite as `snoozed`, emits `invite.snoozed`, and registers a reminder intent. |
 | `/v1/app/invites/{inviteCode}/suppress-event` | POST | Blocks future invites for the same event (per receiver) until suppression is lifted. |
 | `/v1/app/invites/{inviteCode}/accept/import-contacts` | POST | Shortcut endpoint used immediately after an acceptance to trigger contact import/friend discovery without leaving the invite context. |
 | `/v1/app/invites/{inviteCode}/attendance` | POST | Allows invitees to self-report attendance (`confirmed`/`no_show`). Emits `invite.attendance.user-reported`; partner confirmations still override but both signals feed analytics/trust scoring. |
+
+### 4.3 External Share Invites (New Users Attribution)
+
+V1 requires tracking external shares (WhatsApp/Instagram/etc.) for **new users** (install → signup → acceptance) and attributing them to the inviter.
+
+**Eligibility rule (agreed):** anyone who can send invites can generate external share invites.
+- For user inviters: authenticated user with invite permission.
+- For partner inviters: authenticated user must be an active `partner_membership` with `can_invite=true`; the inviter principal remains the partner, and `issued_by_user_id` is required for auditing.
+
+**Share code contract (server-stored):**
+```json
+{
+  "code": "String",
+  "tenant_id": "ObjectId()",
+  "event_id": "ObjectId()",
+  "inviter_principal": { "kind": "user|partner", "id": "ObjectId()" },
+  "issued_by_user_id": "ObjectId() | null",
+  "created_at": "Date",
+  "expires_at": "Date | null",
+  "opens_count": "Number",
+  "consumed_count": "Number"
+}
+```
+
+**Key requirements:**
+- `code` resolves to a single inviter principal + event.
+- Backend records **opens** on resolve and binds **consumption** post-install/post-signup via `/consume`.
+- Backend must prevent duplicate invite issuance to the same receiver+event+inviter principal (see Uniqueness rule); the share code is attribution, not a loophole to spam.
+
+### 4.4 Web Acceptance + Same-Event Re-Share (V1 Exception)
+
+V1 supports a narrow web exception for invite acceptance:
+- Web can accept an invite only when reached via a single invite/share `code` (invite landing).
+- The credited inviter is the inviter principal bound to that code (no multi-inviter selection on web).
+- After acceptance, web may allow the new attendee to **re-share only the same event** externally (WhatsApp/Instagram/etc.), subject to strict backend limits.
+
+This enables viral growth while keeping app-only “agenda-first acceptance” as the trusted conversion surface.
+
+#### Sanctum + Anonymous Identity Requirement
+
+Even on web “unauthenticated” landings, the canonical API is Sanctum-validated by default:
+
+- Web must mint or resume an anonymous identity via `POST /v1/anonymous/identities` to obtain a Sanctum token.
+- The web client then calls the same invite acceptance / share endpoints using `Authorization: Bearer <token>`.
+- The backend controls what anonymous tokens may do via `tenant.anonymous_access_policy.abilities` (and TTL), and must still enforce quotas and uniqueness rules.
 
 **Events**
 * Outbound: `invite.created`, `invite.accepted`, `invite.accepted.contacts-import-triggered`, `invite.fulfillment.step-required`, `invite.fulfillment.step-completed`, `invite.attendance.confirmed`, `invite.attendance.no-show`, `invite.attendance.unconfirmed`, `invite.expired`, `invite.reward-unlocked`, `invite.rate-limited`, `invite.plan-limit-reached`, `invite.snoozed`, `invite.suppressed`.

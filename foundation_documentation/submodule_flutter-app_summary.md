@@ -1,84 +1,73 @@
-# Flutter Submodule Summary
+# Documentation: Submodule Summary - flutter-app
+**Version:** 1.0
 
-**Submodule path:** `/flutter-app`  
-**Source commit:** `8f105ca0d45d5bd60fc7c3f9d8856eb1ebeba6b2` (matches current submodule head)
+## 1. Analyzed Version
 
-## Current Execution Mandate
+* **Submodule Name:** `flutter-app`
+* **Commit Hash:** `70f764f0bda38e32365df4c6410a47de725f6ea8`
+* **Analysis Date:** `2025-12-13`
 
-We are establishing a full-featured **Mock App** ahead of the Laravel delivery so that the Flutter client can harden the domain models, interaction flows, and value objects first. The Laravel team will subsequently align their contracts to the shapes validated inside this mock. All Flutter work must therefore:
+*Purpose: This document summarizes the key architectural aspects of the specified submodule version relevant to the main ecosystem.*
 
-1. Model every interaction against the canonical domain entities (`User`, `Partner`, `Offering`, `Transaction`) defined in `foundation_documentation/domain_entities.md`.
-2. Document any new data requirements directly in `foundation_documentation/` before requesting backend work.
-3. Expose mocks that are forward-compatible with the Laravel API surface rather than ad-hoc UI conveniences.
+---
 
-## Architectural Baseline
+## 2. Core Dependencies & Technologies
 
-- Modular layering (`application`, `domain`, `infrastructure`, feature-oriented presentation) remains the enforced topology.
-- Navigation continues to use `auto_route` for declarative route maps.
-- All feature flows (Authentication, Tenant, Landlord) are implemented as mocks that must mirror the future API contract.
+* `Flutter (via FVM)`: Primary UI toolkit; commands run through `fvm flutter …`.
+* `auto_route`: Declarative, code-generated navigation and guard management.
+* `get_it`: DI container used for controller/repository/service wiring.
+* `get_it_modular_with_auto_route`: Submodule-style route aggregation + ModuleScope pattern.
+* `dio`: HTTP client used by Laravel-backed adapters (e.g., environment/app branding fetch).
+* `sentry_flutter`: Error + performance reporting (bootstrapped in `lib/main.dart`).
+* `flutter_map` / `latlong2`: Map rendering and geo primitives for the tenant map experience.
+* `stream_value`: Reactive state holder for controller-owned state → widgets.
+* `value_object_pattern`: Value-object layer used for UI/domain primitives (IDs, icons, URIs, etc.).
 
-## Identified Flutter Disalignments
+---
 
-| Area | Finding | Required Remediation |
-| --- | --- | --- |
-| Domain projections | `lib/domain/venue_event/projections/venue_event_resume.dart` introduces a `VenueEvent` projection that is not tied to any documented entity and hydrates directly from `EventModel`. | Reframe the projection as an `Offering` (Event Offering) view or update the domain docs + Laravel contracts to include `VenueEvent`. Decouple from UI models by introducing DTOs sourced from the API contract. |
-| Artist modeling | Artists are represented as `List<String>` with a `'Belluga Now'` default, breaking P-1 (domain fidelity) and P-6 (single source of truth). | Introduce value objects keyed to `Partner` identities (e.g., `ArtistIdentityValue`) and define fallback behavior in the shared documentation so the backend mirrors it. |
-| Temporal guarantees | `DateTimeValue` reliance on `assert` means nulls would surface in release builds. | Enforce non-null invariants inside the value object (throw domain errors) and add contract tests to reject incomplete schedule payloads. |
-| Layer isolation | Domain types import presentation-layer models (`EventModel`), collapsing the boundary described in `foundation_documentation/submodule_flutter-app_summary.md`. | Create boundary DTOs generated from mocked API responses; application layer performs the translation into domain projections. |
+## 3. Structural Patterns
 
-These misalignments block our ability to snapshot the mock as a canonical contract for Laravel and therefore have roadmap priority.
+* **Overall Structure:** Layered boundaries (`application`, `domain`, `infrastructure`, `presentation`) with feature-first presentation modules (`tenant/*`, `landlord/*`, `prototypes/*`).
+* **Key Patterns:**
+    * Controller-owned state via `StreamValue`; widgets act as (mostly) pure renderers.
+    * Repository contracts live in `lib/domain/repositories/*`; implementations in `lib/infrastructure/repositories/*`.
+    * DAL split between DTOs (`lib/infrastructure/dal/dto/*`) and backend adapters (`lib/infrastructure/dal/dao/*`), with mocks as the default data source.
+    * Navigation is defined via AutoRoute and assembled through modular route providers (`lib/application/router/modular_app/*`).
 
-## Roadmap (Mock-First Flutter Track)
+---
 
-1. **Domain Contract Hardening**
-   - Catalog every domain-facing model and map it to the authoritative entity/value object.
-   - Produce DTO definitions (JSON + Dart) for each API surface we mock, ensuring fields, enums, and validation rules are spelled out.
-2. **Projection & Aggregation Refactor**
-   - Restructure projections such as `VenueEventResume` to consume the new DTOs and persist only domain-aligned value objects.
-   - Remove cross-layer imports so `domain/` is source-of-truth for invariants.
-3. **Mock Data Orchestration**
-   - Centralize mock providers per endpoint (e.g., `/v1/offerings/events`) with fixtures that Laravel can reuse.
-   - Document mock payloads in `foundation_documentation/` to keep Flutter and Laravel synchronized.
-4. **Readiness Signal for Laravel**
-   - Once each feature’s mock surface is stable, record the schema snapshot and notify backend teams via the shared documentation channel so they can implement matching endpoints.
+## 4. Ecosystem Configuration Points
 
-This roadmap keeps Flutter ahead while ensuring every mock artifact is an explicit contract the Laravel team can adopt without guesswork.
+* **Configuration Method:** DI wiring through GetIt + module registration (`ModuleSettings`); backend adapters default to mock implementations with targeted Laravel-backed adapters for environment/bootstrap.
+* **Key Variables/Files:**
+    * `.fvmrc` / `.fvm/fvm_config.json`: Flutter SDK pinning.
+    * `pubspec.yaml`: Declares third-party packages and Flutter SDK constraints.
+    * `analysis_options.yaml`: Lints/analysis rules expected to stay clean.
+    * `lib/application/router/modular_app/module_settings.dart`: Global registrations, backend selection, and submodule route initialization.
+    * `lib/application/configurations/belluga_constants.dart`: Derives API base/admin URLs from `AppData` (bootstrapped at startup).
+    * `foundation_documentation/` (symlink): Shared domain/roadmap source of truth.
 
-## Domain Inventory & Controller Coupling
+---
 
-### Canonical Entities
+## 5. Architectural Principle Alignment
 
-| Entity | Source Path | Notes | Controller / Feature Touchpoints |
-| --- | --- | --- | --- |
-| User | `lib/domain/user/user_contract.dart` | Canonical consumer identity built from `MongoIDValue` and `UserProfileContract`. Needs value-object coverage for every PII field (profile photo, birthday, etc.). | `ProfileScreenController` pulls `UserContract` via `AuthRepositoryContract` for display and sign-out flows (`lib/presentation/tenant/profile/screens/profile_screen/controllers/profile_screen_controller.dart`). Auth/login controllers share the same repository stream. |
-| Tenant | `lib/domain/tenant/tenant.dart` | Represents the hosting venue or white-label tenant; couples to `AppData` and resolves domains/subdomains. | Initialization flows call into `BellugaInitScreenControllerContract` which bootstraps `AuthRepositoryContract`, then `InitScreenController` selects tenant/home routes based on results. |
-| Schedule Event (Offering) | `lib/domain/schedule/event_model.dart` | Primary representation of calendar offerings, carrying title, HTML content, artists, geo, and slot times. Works as the upstream source for projections such as `VenueEventResume`. | `ScheduleScreenController`, `EventDetailController`, tenant home, and invites builder query `ScheduleRepositoryContract` for lists or details. |
-| Invite | `lib/domain/invites/invite_model.dart` | Represents social/transactional invitations with participants and partner info. | `InviteFlowScreenController` orchestrates decisions using `InvitesRepositoryContract`, while tenant home’s invites banner consumes the shared stream for highlights. |
-| Favorite (placeholder) | `lib/domain/favorite/favorite.dart` | Comment-only stub indicates future aggregate; today only `FavoriteResume` projections exist. | `TenantHomeController` consumes `FavoriteRepositoryContract.fetchFavorites()` returning resumes, so controllers are blocked until the entity is finalized. |
-| City POI / Map Regions | `lib/domain/map/*.dart` | Encapsulate partner-supplied points of interest, categories, and coordinates that underpin the city map experience. | Map module controllers (`lib/presentation/tenant/map/.../controllers`) query `CityMapRepositoryContract` for POIs, categories, and regions. |
+* **P-1 (Domain-First, Schema-Second):** Partially Aligned — Domain entities and value objects exist, but partner subtype vocabulary (e.g., influencer/curator) and engagement metrics still need stricter documentation traceability in foundation docs.
+* **P-3 (API-Centric Ecosystem):** Partially Aligned — The app bootstraps against a Laravel-backed environment endpoint, while most feature data remains mock-backed to unblock UI/flow development ahead of finalized API delivery.
+* **P-8 (Explicit Schemas):** Partially Aligned — Significant DTO coverage exists (app_data, schedule, invites, profile, map), but mock databases (notably partners/discovery) still encode schema expectations implicitly.
+* **Appendix A (Flutter Tenets):** Partially Aligned — Feature-first organization and controller/stream patterns are present; continued tightening is needed to keep DTOs out of widgets and keep screen logic consistently controller-driven.
 
-### Projection Catalog
+---
 
-- `VenueEventResume` (`lib/domain/venue_event/projections/venue_event_resume.dart`) — Event teaser projection derived from `EventModel` and used by tenant home hero and schedule cards.
-- `FavoriteResume` (`lib/domain/favorite/projections/favorite_resume.dart`) — Lightweight depiction of a favorite item; currently the only consumable favorite shape.
-- `ScheduleSummaryModel` & `ScheduleSummaryItemModel` (`lib/domain/schedule/`) — Temporal projection that drives calendar pagination and highlights for `ScheduleScreenController`.
-- `CourseChildrenSummary`, `CourseItemModel`, etc. (`lib/domain/courses/`) — Additional projections around learning content; need reconciliation with Offering/Partner definitions before wiring to controllers.
+## 6. Key Integration Points / API Surface (If Applicable)
 
-### Controller Coupling Observations
+* **API Prefix/Base:** `https://{AppData.hostname}/api` (derived at runtime from the environment bootstrap payload).
+* **Primary Endpoints/Modules (Current Consumer Shape):** App environment/bootstrap (branding + theme), schedule/events, invites, favorites, partners/discovery, profile, map POIs (mixed: bootstrap via Laravel adapter; others primarily mock-backed).
+* **Authentication Method:** Presentational auth flows exist, but repository/backends are currently mock-focused; secure storage is available for future token/session persistence.
 
-1. **Tenant Home aggregation** — `TenantHomeController` composes favorites, featured events, and upcoming events by calling three repository contracts, then adapts `EventModel` into `VenueEventResume` inside the controller. This leaks projection logic out of repositories and should be moved into mappers backed by documented DTOs.
-2. **Schedule experience** — `ScheduleScreenController` relies on synchronous `StreamValue` wiring while performing repository fetches for both summary and per-day events. We must ensure repository outputs already enforce `DateTimeValue` invariants instead of letting controllers filter nulls.
-3. **Invite flows** — Controllers consume domain `InviteModel` objects directly with no intermediate projection, matching our target contract. These mocks should therefore be promoted to the shared documentation so Laravel can implement the same payload.
-4. **Map module** — Controllers under `lib/presentation/tenant/map/.../controllers` query domain repositories for POIs and categories but the corresponding entities are not yet documented in `foundation_documentation/domain_entities.md`. We need to add these geo/partner projections (or align them to Partner subtypes) before solidifying API contracts.
+---
 
-#### Clarifying Repository Outputs
+## 7. Notes & Observations
 
-- Controllers are allowed to consume **models** (full aggregates such as `EventModel`, `InviteModel`) whenever they need the entire contract for business logic or detailed rendering.
-- **Projections** (e.g., `VenueEventResume`, `FavoriteResume`, `ScheduleSummaryItemModel`) are reusable snapshots or summaries derived from those models. They exist for states like previews, carousels, or badges where the full aggregate would be excessive.
-- Repositories decide whether a call returns a model or a projection. Controllers should not rebuild projections from models; instead, they request the appropriate shape (`getEventsByDate` for full models, `getEventResumesByDate` for summaries) so that mapping logic stays centralized and reusable across screens.
-
-### Outstanding Alignment Tasks
-
-- Promote every projection that maps to a canonical entity (favorites, venue events, schedule summaries) into repository-returned DTOs so controllers receive target-state contracts instead of crafting them on the fly.
-- Update `foundation_documentation/domain_entities.md` with any additional aggregates we plan to support (e.g., Experiences/Courses, City POIs) or consolidate them under the existing `Offering` and `Partner` umbrellas.
-- Ensure repository contracts emit only domain entities, while projections live either in dedicated read-model packages or UI mappers. This will keep controllers declarative and make it easier for Laravel to mirror the contract.
+* Environment/bootstrap is implemented via a Laravel-backed adapter (`/environment?app_domain=…`) and must remain aligned with the backend payload keys used for branding (e.g., `main_logo_light_url`, `main_icon_dark_url`, `theme_data_settings`).
+* Partners/discovery continues to rely on local mock databases that embed subtype and engagement expectations; these should be treated as prototype contracts and mirrored in foundation documentation to prevent Flutter ↔ Laravel drift.
+* `ModuleSettings` supports test-time backend builders, enabling targeted tests to swap mock/real adapters without changing production wiring.

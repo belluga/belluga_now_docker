@@ -72,6 +72,49 @@ Stores every user action triggered from an agenda card for observability and com
 
 ---
 
+## 3.4 Client Event Payload (Agenda API)
+Agenda surfaces events as a paged list; Flutter consumes this shape for cards, invites, and chips.
+
+**Request (paged list)**
+- Query: `page` (int), `page_size` (int), `past_only` (bool), `search` (string), `invite_filter` (enum).
+
+**Response**
+```json
+{
+  "items": [
+    {
+      "id": "string",
+      "slug": "string",
+      "title": "string",
+      "description": "string (optional)",
+      "start_at": "ISO8601",
+      "end_at": "ISO8601 (optional)",
+      "thumb": { "url": "string", "type": "background|flyer" },
+      "venue": { "id": "string", "name": "string", "address": "string", "latitude": 0, "longitude": 0 },
+      "artists": [
+        { "id": "string", "name": "string", "avatar_url": "string (optional)", "highlight": false, "genres": ["string"] }
+      ],
+      "tags": ["string"],            // optional; when empty UI falls back to artist.genres
+      "actions": [ /* CTA descriptors, unchanged */ ],
+      "is_confirmed": false,
+      "total_confirmed": 0,
+      "friends_going": [ /* lightweight friend resumes */ ],
+      "received_invites": [ /* invite DTOs */ ],
+      "sent_invites": [ /* sent invite status DTOs */ ]
+    }
+  ],
+  "has_more": true
+}
+```
+
+**Display rule:** chips use `event.tags` if provided; otherwise aggregate all `artists[*].genres`; if both are empty, show no chips. Artists list itself may be empty. `thumb.type = flyer` is a pre-designed poster; `background` expects UI overlays.
+
+### Field Definitions
+- `thumb.type` ∈ {`background`, `flyer`}
+- `invite_filter` (query) ∈ {`none`, `invites_and_confirmed`, `confirmed_only`}
+
+---
+
 ## 4. Interfaces
 
 | Endpoint | Method | Description |

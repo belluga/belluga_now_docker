@@ -6,6 +6,21 @@
 
 ## 1. Protótipo da Tela Principal: Mapa (`mapa.md`)
 
+### 1.0. Gate de Localização (Permissão + Serviços)
+
+Algumas experiências do módulo (ex.: listagem de endereços/POIs próximos, ordenação por distância, “buscar nesta área”) dependem da localização atual do usuário. Para garantir consistência do produto e a integração com o backend (GeoQuery), o acesso a telas que **precisam** de localização deve ser protegido por um **Guard de Navegação**.
+
+**Regras do Guard (alto nível):**
+- Se **serviços de localização** do dispositivo estiverem desativados: redirecionar para uma tela convidativa pedindo para ativar os serviços.
+- Se **permissão** de geolocalização não estiver concedida: redirecionar para uma tela convidativa pedindo para liberar a permissão.
+- Se a permissão estiver em **“negada para sempre”**: orientar o usuário a abrir as configurações do app.
+- Somente permitir a navegação para as telas dependentes após a condição adequada estar atendida.
+
+**Tela convidativa (copy/UX):**
+- Explicar o benefício: “mostrar locais próximos”, “ordenar por distância”, “buscar pontos perto de você”.
+- CTA principal: “Permitir localização”.
+- CTA secundário: “Abrir configurações” (quando aplicável) e “Ativar serviços de localização” (quando aplicável).
+
 ### 1.1. Arquitetura de Visualização (Prioridade do Mapa)
 - **Componente Principal:** Visualização de Mapa Interativo.
 - **Pins (Ícones):** Iconografia clara para diferenciar Eventos, Lojas/Produtores, Guias e Pontos de Interesse (Ex: Farmácia, Ponto de Táxi).

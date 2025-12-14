@@ -164,13 +164,82 @@ Guar[APP]ari é uma plataforma de experiências que cria um **ecossistema simbi�
 - **Ações:**
     - **Swipe Direita / ✅:** Aceitar
     - **Swipe Esquerda / ❌:** Recusar
-    - **Swipe Cima / 🤔:** Talvez
+    - **Sem "Talvez":** decisões binárias para priorizar sinais fortes; convites expiram ao fim do evento.
 
 ### Fluxo "Bora?": Propagar Convite
 - **Contexto:** `[🎉 Presença Confirmada!]` no evento.
 - **Sugestões Inteligentes:** Carrossel de contatos sugeridos ("Vocês foram a 3 eventos de Rock juntos").
 - **Seleção:** Busca e lista de contatos.
 - **CTA Final:** `[Botão com Ícone do WhatsApp: Enviar Convite para (3)]`
+
+### 2.3.1. Contrato de Mock: Descoberta de Parceiros (Cards e Métricas)
+- **Endpoint alvo (mock):** `/v1/app/partners/discovery`.
+- **Payload (lista de parceiros):**
+  - `id` (ObjectId string, obrigatório), `slug` (string ≤64, obrigatório), `name` (string ≤120, obrigatório).
+  - `partner_type` (enum): `artist`, `venue`, `experience_provider`, `influencer`, `curator`.
+  - `avatar_uri`, `cover_uri` (URI strings, opcionais); valores inválidos devem ser omitidos para permitir fallback na projeção.
+  - `bio` (string ≤512, opcional); `tags` (array ≤16 strings, cada ≤32 chars, sanitizadas e **contextuais ao tipo**):
+    - `artist`: gêneros musicais.
+    - `experience_provider`: localização/contexto (mar, praia, mergulho, montanha).
+    - `curator`: foco de curadoria (história, causos).
+    - `influencer` (personalidade): foco/estilo (lifestyle, baladas).
+  - `accepted_invites` (int ≥0, obrigatório para prova social).
+  - `engagement` (objeto opcional, type-aware):
+    - `artist`: `status_label` (string ≤32, p. ex. “Tocando agora”), `next_show_at` (ISO8601, opcional).
+    - `venue`: `presence_count` (int ≥0).
+    - `experience_provider`: `experience_count` (int ≥0).
+    - `influencer`: `invite_count` (int ≥0; deve alinhar semanticamente com `accepted_invites`).
+    - `curator`: `article_count` (int ≥0), `doc_count` (int ≥0).
+- **Projeção para UI (Discovery Card):**
+  - Resolve `type_label`, `is_live_now` (para artistas com `status_label` contendo estados ativos), métricas normalizadas em pares `label`/`value`/`icon`.
+  - Fallbacks (placeholder de avatar, rótulos) residem na projeção/UI; nunca gravar default de mídia no domínio.
+- **Validação:** Todos os inteiros são não-negativos; strings vazias são rejeitadas. Qualquer campo ausente mantém a projeção consistente com placeholders sem lançar exceções.
+
+### 2.3.2. Contrato de Convites e Presença (Fluxo “Bora?”)
+- **Endpoints (mock):**
+  - `GET /v1/app/invites` — lista convites pendentes por prioridade (evento mais próximo; empate: mais convites para o mesmo evento).
+  - `POST /v1/app/invites/{invite_id}/accept` — aceita convite; só um por evento/usuário.
+  - `POST /v1/app/invites/{invite_id}/decline` — recusa convite.
+  - `POST /v1/app/events/{event_id}/check-in` — registra presença com `method` (`geofence`, `qr`, `staff_manual`), `geo` (lat/lng), `qr_token` opcional.
+- **Payload de convite:**
+  - `id`, `event_id`, `inviter_id`, `invitee_id`, `status` (`pending`/`accepted`/`declined`; `expired` derivado), `sent_at`, `expires_at` (fim do evento), `inviter_name`, `host_name`, `message`, `image_uri`, `priority_rank`.
+- **Regra de contagem:** Apenas convites `accepted` + check-in confirmado viram `Presença Confirmada`; aceito sem check-in = `no_show`.
+- **Limites:** Invites pendentes simultâneos: basic até 20, verified até 50, partner_paid até 100 (planos maiores podem ampliar). Não é permitido convidar a mesma pessoa para o mesmo evento mais de uma vez.
+- **Privacidade:** Perfis `friends_only` aparecem anonimizados (blur/avatar masked) nos rankings, mas convites e métricas contam normalmente.
+
+### 2.3.3. Contrato de Missões (Parceiro)
+- **Endpoints (mock):** `GET /v1/app/missions` (listar missões ativas do parceiro), `POST /v1/app/missions` (criar), `PATCH /v1/app/missions/{id}` (atualizar status/target).
+- **Campos:**
+  - `id`, `title`, `description`, `metric` (`invites_accepted`, `presences_confirmed`, `check_ins`, `purchases`), `target_value` (int ≥1), `window` (data inicial/final), `reward` (texto/ex.: voucher/benefício), `status` (`pending`/`active`/`completed`/`expired`).
+  - `validation_source`: `system` (auto, via métricas) ou `partner_manual` (confirmação manual).
+- **Uso pré-evento:** Parceiro escolhe a métrica livremente; recomendação na UI é usar `invites_accepted` ou `check_ins` para pré-evento, mas não é imposto.
+- **Acompanhamento:** Tela de parceiro deve mostrar ranking/progresso por usuário (respeitando anonimização quando `friends_only`), quem atingiu a meta e estado de payout.
+
+### 2.3.4. Vínculo Parceiro ↔ Curador/Pessoa
+- **Endpoints (mock):** `POST /v1/app/partner-links` (propor), `PATCH /v1/app/partner-links/{id}` (aceitar/recusar).
+- **Campos:** `id`, `partner_id`, `person_id` (curador/pessoa), `status` (`pending`, `accepted`), `created_at`, `accepted_at`.
+- **Exibição:** Parceiros exibem curadores/pessoas vinculadas e vice-versa; principal janela de prova social mensal (presenças confirmadas no mês).
+
+### 2.3.5. Configurações de Privacidade e Ranking
+- **Perfil:** `privacy_mode` (`public`, `friends_only`), `friends` = favoritos recíprocos (UI para ver quem te favoritou e favoritar de volta).
+- **Ranking:** Sempre conta métricas; se `friends_only`, exibe como anonimizado (nome oculto, avatar blur). Convites não são limitados pela privacidade.
+
+### 2.3.6. Experiência de Descoberta Social (App Discover)
+- **App Bar:** Ícone de busca que expande para campo de texto (debounce + limpar); colapso retorna ao estado anterior. CTA opcional “Encontrar amigos na agenda” (opt-in, com consentimento) para importar contatos; contatos são hasheados e usados apenas para sugestões/matching.
+- **Seções Horizontais:**
+  - **Tocando Agora:** eventos em andamento ou começando em <2h. Fonte: agenda com `live_now=true` derivado de start/end. Seta abre Agenda.
+  - **Perto de Você:** venues/experiências/monumentos via `nearby` geoquery (lat/lng) com `distance_meters` retornado e ordenação no backend.
+  - **Veja isso… (Curadores):** conteúdo (foto/vídeo) de curadores, ordenado por última publicação (futuro: mais vistos). DTO inclui autor, tipo de mídia, thumb, vínculo a parceiro/evento.
+  - **Pessoas:** perfis ordenados pelo Social Score do mês; verificados aparecem primeiro em empates, mas perfis básicos também podem aparecer. Respeita `privacy_mode` (amigos_only → blur/anônimo em ranking público).
+- **Lista Completa:** chips logo abaixo do título para filtros rápidos (Todos, Artistas, Locais, Experiências, Pessoas) em vez de bottom sheet. Ícone de filtro opcional apenas para distância, se exposto; quando ativo, mostrar badge e cor.
+- **Cards:** exibem métricas sociais (convites aceitos/presenças no mês), badge “Tocando agora” para artistas live, verificado (Pro) quando aplicável, favorito toggle.
+- **Contratos/Parâmetros:**
+  - `live_now=true` (derivado de start/end ou start em <2h).
+  - `nearby=true` + `distance_meters` (geoquery Mongo) para Perto de Você.
+  - `content_order=latest` para curadores (futuro `most_viewed`).
+  - `people_order=social_score_month` com `prefer_verified=true` para desempate.
+  - `types` array para chips (artist, venue, experience_provider, person).
+  - Contatos importados: `POST /v1/app/contacts/import` recebe lista de hashes + sal, nunca PII; matching acontece ao aceitar convites com contatos fornecidos.
 
 ---
 

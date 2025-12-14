@@ -34,6 +34,13 @@
 | `[Quero um Roteiro]` | Guias & Experiências (`modulo_guias_e_experiencias.md`) |
 | `[Utilidades Próximas]` | Mapa (`modulo_mapa_e_mobilidade.md`) |
 
+### 1.5. Faixa de Favoritos (Branding + Acesso Rápido)
+*Carrossel horizontal com o primeiro item fixo para o perfil oficial do app.*
+
+- **Item Fixo (Branding):** Avatar/ícone Guar[APP]ari com badge primário, sempre ancorado à esquerda (não scrolla com o restante da faixa).
+- **Itens Favoritos:** Parceiros favoritados pelo usuário, ordenados após o item fixo.
+- **Ação Extra:** Pílula “Procurar” como último item da faixa para abrir a descoberta.
+
 ---
 
 ### 2. Conteúdo Dinâmico (Blocos Modulares)
