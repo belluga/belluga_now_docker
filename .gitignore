@@ -1,4 +1,5 @@
 .env
+.env.testing
 # exclude everything
 application/*
 .idea/*
@@ -11,3 +12,8 @@ application/*
 # AI Agents
 AGENTS.md
 delphi-ai/
+GEMINI.md
+gemini_memory.md
+.agent
+foundation_documentation_tmp/
+foundation_documentation/todos/completed/
