@@ -1,16 +1,18 @@
-# TODO (V1): First Release Delivery Plan
+# TODO (V1): First Release Delivery Plan (Orchestrator)
 
 **Status:** Active  
 **Owner:** Delphi + Backend Team  
-**Goal:** Ship the first tenant-facing version focused on Events + Invites + Artist Favorites + Map (with Beaches).
+**Goal:** Ship the first tenant-facing version focused on Events + Invites + Artist Favorites + Map (with Beaches), with Web invite landing + acceptance functional in V1 and a Flutter test foundation that prevents regressions.
 
 ---
 
 ## References
 - Invites contract + limits: `foundation_documentation/modules/invite_and_social_loop_module.md`
 - Partner workspace + memberships (draft): `foundation_documentation/modules/partner_admin_module.md`
+- Map/POI architecture: `foundation_documentation/modules/map_poi_module.md`
 - Roadmap tracking: `foundation_documentation/system_roadmap.md`
 - Deferred features: `foundation_documentation/todos/active/TODO-vnext-parking-lot.md`
+- Flutter test foundation (baseline): `foundation_documentation/todos/active/TODO-v1-flutter-test-foundation.md`
 - Invites implementation slice: `foundation_documentation/todos/active/TODO-v1-invites-implementation.md`
 - Telemetry + push slice: `foundation_documentation/todos/active/TODO-v1-telemetry-and-push.md`
 - Map slice: `foundation_documentation/todos/active/TODO-v1-map.md`
@@ -26,18 +28,72 @@ These are scope descriptors (not tasks).
 - Events browsing + event detail
 - Invites: send, receive, accept/decline, confirm presence
 - Invite crediting selection (“Accept invite from…”, no default)
+- Web: invite landing + accept via code (V1 is web functional for these flows)
 - Partner-issued invites (Artist/Venue/Creator) with `issued_by_user_id` audit
 - Partner event invite metrics (for the event host/managing partner)
 - Map POIs with categories: `Culture`, `Sponsor`, `Restaurant`, `Beach`, `Nature` + dynamic `Events`
 - Artist favorites only (favorites remain surfaced in Home)
 - Push notifications (V1 baseline)
 - Tracking / product analytics (Mixpanel) integration (V1 baseline)
+- Flutter test foundation (unit + contract + minimal widget/integration + network contract checks)
 
 ### Out of scope (tracked in `foundation_documentation/todos/active/TODO-vnext-parking-lot.md`)
 - Wallet / purchases / premium
 - Venue favorites + venue detail pages
 - Persistent favorites (backend later; mock can reset on load)
 - Full partner profile modules/store for all partner types
+
+---
+
+## 0.1) Orchestration (How We Sequence Work)
+
+### Primary sequencing principle
+- Freeze behavior with tests first, then implement features: `TODO-v1-flutter-test-foundation.md` is the precondition to reduce regressions and avoid “workaround tests”.
+
+### Dependency map (high level)
+- Core loop: Invites + Agenda → unlock Telemetry/Push and Partner Metrics.
+- Web invite acceptance depends on stable environment resolution + share code contract (and must remain contract-aligned with app invites).
+- Map depends on stable event detail routing + time-window settings for event POIs.
+- Partner workspace depends on invites being audit-safe (`issued_by_user_id`) + credited acceptance semantics.
+
+---
+
+## 0.2) Milestones (Each Must Be Manually Testable)
+
+### M0 — Flutter test foundation (precondition)
+- TODO: `foundation_documentation/todos/active/TODO-v1-flutter-test-foundation.md`
+- Gate: `fvm flutter test` green (including network contract tests per TODO)
+- Manual: compile and run app; smoke routes still open without crashes
+
+### M1 — Core loop contracts + mock fidelity
+- TODOs: `TODO-v1-invites-implementation.md`, `TODO-v1-events-and-agenda.md` (refinement + mock-first)
+- Gate: DTO/fixture contract tests updated; no mock drift from docs
+- Manual: browse events → open event detail → start invite flow (mock-backed)
+
+### M2 — Web functional (invite landing + accept via code)
+- TODOs: `TODO-v1-web-to-app-policy.md` + web slices in `TODO-v1-invites-implementation.md`
+- Gate: web acceptance works against contract-faithful mock server endpoints
+- Manual: open tenant subdomain → invite landing → accept → verify result state
+
+### M3 — Telemetry + push baseline
+- TODO: `TODO-v1-telemetry-and-push.md`
+- Gate: analytics taxonomy + push routing validated (no double-counting)
+- Manual: invite received routes correctly; Mixpanel shows funnel events
+
+### M4 — Map V1
+- TODO: `TODO-v1-map.md`
+- Gate: map payload contract tests; stacking behavior stable
+- Manual: beaches/nature visible; event POIs show; stacks show `+N`
+
+### M5 — Artist favorites/profile V1
+- TODO: `TODO-v1-artist-favorites-and-profile.md`
+- Gate: favorites gating tests (artist-only) remain green
+- Manual: favorites strip works; artist profile uses reduced tabs
+
+### M6 — Partner workspace V1 minimum
+- TODO: `TODO-v1-partner-workspace.md`
+- Gate: memberships + metrics authorization enforced; credited acceptance counts correct
+- Manual: partner member views event invite metrics + issuer breakdown
 
 ---
 
@@ -151,3 +207,10 @@ Suggested defaults (override per tenant + plan):
 - [ ] No Wallet/Purchases/Premium surfaces ship in V1 (tracked as deferred)
 - [ ] Push notifications work end-to-end for invite received at minimum, including deep link routing
 - [ ] Mixpanel captures the invite funnel and event funnel with consistent identifiers
+
+---
+
+## 5) Global Validation Checklist (Run Every Milestone)
+- Tests: `cd flutter-app && fvm flutter test`
+- Manual: `flutter run` (emulator/device) and verify the milestone’s manual checklist
+- Web: verify `/environment` on root and tenant subdomain, plus fixed branding paths (`/logo-*.png`, `/icon-*.png`, `/manifest.json`, `/favicon.ico`)
