@@ -10,6 +10,7 @@
 - Invites contract + limits: `foundation_documentation/modules/invite_and_social_loop_module.md`
 - Partner workspace + memberships (draft): `foundation_documentation/modules/partner_admin_module.md`
 - Map/POI architecture: `foundation_documentation/modules/map_poi_module.md`
+- MVP scope gate (decisions): `foundation_documentation/todos/active/TODO-mvp-scope-definition.md`
 - Roadmap tracking: `foundation_documentation/system_roadmap.md`
 - Deferred features: `foundation_documentation/todos/active/TODO-vnext-parking-lot.md`
 - Flutter test foundation (baseline): `foundation_documentation/todos/active/TODO-v1-flutter-test-foundation.md`
@@ -49,6 +50,7 @@ These are scope descriptors (not tasks).
 
 ### Primary sequencing principle
 - Freeze behavior with tests first, then implement features: `TODO-v1-flutter-test-foundation.md` is the precondition to reduce regressions and avoid “workaround tests”.
+- Scope gate: before executing MVP feature slices, finalize decisions in `foundation_documentation/todos/active/TODO-mvp-scope-definition.md` to prevent churn and rework.
 
 ### Dependency map (high level)
 - Core loop: Invites + Agenda → unlock Telemetry/Push and Partner Metrics.

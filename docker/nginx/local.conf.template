@@ -1,12 +1,33 @@
 server {
     listen 80;
     server_name localhost;
+    
+    # Increase client max body size for file uploads
+    client_max_body_size 100M;
 
-    # Flutter Web (Frontend)
+    # Set the default root for the Laravel application
+    root /var/www/public;
+    index index.php index.html;
+    try_files $uri $uri/ /index.php?$query_string;
+
+    # --- Named location for Laravel fallback ---
+    # This centralizes the logic for passing requests to Laravel's front controller.
+    location @laravel {
+        rewrite ^ /index.php$is_args$args last;
+    }
+
+    # --- Flutter Web (Frontend) ---
+    # This is the primary catch-all location.
     location / {
         root /var/www/flutter;
         index index.html;
         try_files $uri $uri/ /index.html;
+        
+        # Add headers for better caching on Flutter's static assets
+        location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg)$ {
+            expires 1y;
+            add_header Cache-Control "public, immutable";
+        }
     }
 
     location ^~ /storage/ {
@@ -25,28 +46,77 @@ server {
     # --- Laravel API and other backend routes ---
     # These also have high priority. If the file doesn't exist, they fall back to Laravel.
     location ^~ /api/ {
-        alias /var/www/public/;
-        try_files $uri /index.php$is_args$args;
+        try_files $uri @laravel;
+    }
+    location ^~ /admin/ {
+        try_files $uri @laravel;
+    }
+    location = /manifest.json {
+        try_files $uri /index.php?$query_string;
+    }
+    location = /environment {
+            try_files $uri /index.php?$query_string;
+        }
+    location ^~ /icon/ {
+        try_files $uri /index.php?$query_string;
+    }
+    location ^~ /logo-dark.png {
+        try_files $uri /index.php?$query_string;
+    }
+    location ^~ /logo-light.png {
+        try_files $uri /index.php?$query_string;
+    }
+    location ^~ /icon-dark.png {
+        try_files $uri /index.php?$query_string;
+    }
+    location ^~ /icon-light.png {
+        try_files $uri /index.php?$query_string;
     }
 
-    # Laravel API
-    location ^~ /admin/api/ {
-        alias /var/www/public/;
-        try_files $uri /index.php$is_args$args;
-    }
-
-    # Laravel API
-    location ^~ /initialize {
-        alias /var/www/public/;
-        try_files $uri /index.php$is_args$args;
-    }
-
-    # PHP para Laravel (fallback, se necessário)
+    # --- PHP-FPM Handler ---
+    # This is now a single, top-level block that handles all .php requests.
     location ~ \.php$ {
-        root /var/www/public;
+
+        # --- CORS Handling START ---
+        # Handle CORS preflight requests
+        if ($request_method = 'OPTIONS') {
+            add_header 'Access-Control-Allow-Origin' "$http_origin" always;
+            add_header 'Access-Control-Allow-Methods' 'GET, POST, PUT, DELETE, OPTIONS' always;
+            add_header 'Access-Control-Allow-Headers' 'DNT,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Range,Authorization' always;
+            add_header 'Access-Control-Allow-Credentials' 'true' always;
+            add_header 'Access-Control-Max-Age' 1728000;
+            add_header 'Content-Length' 0;
+            return 204;
+        }
+
+        # Add CORS headers to actual requests
+        add_header 'Access-Control-Allow-Origin' "$http_origin" always;
+        add_header 'Access-Control-Allow-Credentials' 'true' always;
+        # --- CORS Handling END ---
+
+        try_files $uri =404;
         include fastcgi_params;
         fastcgi_pass app:9000;
         fastcgi_index index.php;
         fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+        fastcgi_param PATH_INFO $fastcgi_path_info;
+        
+        # Timeouts for long-running requests
+        fastcgi_read_timeout 300;
+        fastcgi_send_timeout 300;
     }
+
+    # --- Security Rules ---
+    location ~ /\. {
+        deny all;
+    }
+    location ~ /(vendor|storage|bootstrap|config|database|resources|routes|tests)/ {
+        deny all;
+    }
+
+    # --- Gzip Compression ---
+    gzip on;
+    gzip_vary on;
+    gzip_min_length 1024;
+    gzip_types text/plain text/css text/xml text/javascript application/javascript application/xml+rss application/json;
 }
