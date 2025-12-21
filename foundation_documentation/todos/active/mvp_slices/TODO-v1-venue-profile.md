@@ -7,8 +7,8 @@
 ---
 
 ## References
-- `foundation_documentation/todos/active/TODO-mvp-scope-definition.md`
-- `foundation_documentation/todos/active/TODO-v1-first-release.md`
+- `foundation_documentation/todos/completed/TODO-mvp-scope-definition.md`
+- `foundation_documentation/todos/active/mvp_slices/TODO-v1-first-release.md`
 - `lib/presentation/tenant/partners/models/partner_profile_config.dart`
 
 ---

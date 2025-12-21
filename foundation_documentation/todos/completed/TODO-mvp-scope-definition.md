@@ -15,7 +15,7 @@ We are targeting an MVP that can be shipped ASAP. Our current V1 TODO set is str
 - Unmanaged accounts and a hidden manage flow (API-only for now).
 - Audit requirements: “who edited what” and “acting on behalf of” semantics.
 
-This TODO is the “gate” for scope clarity: we answer the questions below, then we refine/adjust the execution TODOs (`TODO-v1-*`) accordingly.
+This TODO is the “gate” for scope clarity: we answer the questions below, then we refine/adjust the execution TODOs (`foundation_documentation/todos/active/mvp_slices/TODO-v1-*.md`) accordingly.
 
 ---
 
@@ -23,7 +23,7 @@ This TODO is the “gate” for scope clarity: we answer the questions below, th
 
 ### 2.1 Tenant (public-facing) MVP
 - Reduced profiles:
-  - Artist reduced profile (already tracked in `TODO-v1-artist-favorites-and-profile.md`)
+  - Artist reduced profile (already tracked in `foundation_documentation/todos/active/mvp_slices/TODO-v1-artist-favorites-and-profile.md`)
   - Venue reduced profile (defined in MVP decisions)
 - Map POIs:
   - Beaches
@@ -138,10 +138,10 @@ This TODO is the “gate” for scope clarity: we answer the questions below, th
 ## 4) Proposed TODO changes after decisions are made
 
 After we answer D1–D5, we will:
-- [x] Update `TODO-v1-map.md` to explicitly match the agreed POI taxonomy + filter mapping.
+- [x] Update `foundation_documentation/todos/active/mvp_slices/TODO-v1-map.md` to explicitly match the agreed POI taxonomy + filter mapping.
 - [x] Add a new TODO for “Venue reduced profile”.
 - [x] Update the Tenant/Admin area TODO to cover CRUD + audit + unmanaged lifecycle.
-- [x] Update `TODO-v1-first-release.md` to reflect the MVP boundary (and move non-MVP items to `TODO-vnext-parking-lot.md`).
+- [x] Update `foundation_documentation/todos/active/mvp_slices/TODO-v1-first-release.md` to reflect the MVP boundary (and move non-MVP items to `TODO-vnext-parking-lot.md`).
 
 ---
 

@@ -8,7 +8,7 @@
 
 ## References
 - `foundation_documentation/modules/partner_admin_module.md`
-- `foundation_documentation/todos/active/TODO-v1-first-release.md`
+- `foundation_documentation/todos/active/mvp_slices/TODO-v1-first-release.md`
 - Deferred items: `foundation_documentation/todos/active/TODO-vnext-parking-lot.md`
 
 ---

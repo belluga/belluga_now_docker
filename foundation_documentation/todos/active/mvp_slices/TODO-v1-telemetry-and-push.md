@@ -7,7 +7,7 @@
 ---
 
 ## References
-- `foundation_documentation/todos/active/TODO-v1-first-release.md`
+- `foundation_documentation/todos/active/mvp_slices/TODO-v1-first-release.md`
 - `foundation_documentation/modules/invite_and_social_loop_module.md`
 - `foundation_documentation/system_roadmap.md`
 

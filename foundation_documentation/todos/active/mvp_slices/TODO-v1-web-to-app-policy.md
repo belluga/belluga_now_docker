@@ -8,8 +8,8 @@
 
 ## References
 - `foundation_documentation/system_roadmap.md` (Web-to-App Promotion Policy section)
-- `foundation_documentation/todos/active/TODO-v1-first-release.md`
-- `foundation_documentation/todos/active/TODO-v1-invites-implementation.md` (share codes + attribution)
+- `foundation_documentation/todos/active/mvp_slices/TODO-v1-first-release.md`
+- `foundation_documentation/todos/active/mvp_slices/TODO-v1-invites-implementation.md` (share codes + attribution)
 
 ---
 

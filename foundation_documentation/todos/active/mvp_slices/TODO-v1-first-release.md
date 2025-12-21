@@ -10,17 +10,17 @@
 - Invites contract + limits: `foundation_documentation/modules/invite_and_social_loop_module.md`
 - Partner/admin module (draft): `foundation_documentation/modules/partner_admin_module.md`
 - Map/POI architecture: `foundation_documentation/modules/map_poi_module.md`
-- MVP scope gate (decisions): `foundation_documentation/todos/active/TODO-mvp-scope-definition.md`
+- MVP scope gate (decisions): `foundation_documentation/todos/completed/TODO-mvp-scope-definition.md`
 - Roadmap tracking: `foundation_documentation/system_roadmap.md`
 - Deferred features: `foundation_documentation/todos/active/TODO-vnext-parking-lot.md`
-- Flutter test foundation (baseline): `foundation_documentation/todos/active/TODO-v1-flutter-test-foundation.md`
-- Invites implementation slice: `foundation_documentation/todos/active/TODO-v1-invites-implementation.md`
-- Telemetry + push slice: `foundation_documentation/todos/active/TODO-v1-telemetry-and-push.md`
-- Map slice: `foundation_documentation/todos/active/TODO-v1-map.md`
-- Events/Agenda slice: `foundation_documentation/todos/active/TODO-v1-events-and-agenda.md`
-- Artist favorites/profile slice: `foundation_documentation/todos/active/TODO-v1-artist-favorites-and-profile.md`
-- Tenant/admin area slice: `foundation_documentation/todos/active/TODO-v1-partner-workspace.md`
-- Web-to-app policy slice: `foundation_documentation/todos/active/TODO-v1-web-to-app-policy.md`
+- Flutter test foundation (baseline): `foundation_documentation/todos/active/mvp_slices/TODO-v1-flutter-test-foundation.md`
+- Invites implementation slice: `foundation_documentation/todos/active/mvp_slices/TODO-v1-invites-implementation.md`
+- Telemetry + push slice: `foundation_documentation/todos/active/mvp_slices/TODO-v1-telemetry-and-push.md`
+- Map slice: `foundation_documentation/todos/active/mvp_slices/TODO-v1-map.md`
+- Events/Agenda slice: `foundation_documentation/todos/active/mvp_slices/TODO-v1-events-and-agenda.md`
+- Artist favorites/profile slice: `foundation_documentation/todos/active/mvp_slices/TODO-v1-artist-favorites-and-profile.md`
+- Tenant/admin area slice: `foundation_documentation/todos/active/mvp_slices/TODO-v1-partner-workspace.md`
+- Web-to-app policy slice: `foundation_documentation/todos/active/mvp_slices/TODO-v1-web-to-app-policy.md`
 
 ## 0) Scope Boundaries (V1)
 
@@ -49,8 +49,8 @@ These are scope descriptors (not tasks).
 ## 0.1) Orchestration (How We Sequence Work)
 
 ### Primary sequencing principle
-- Freeze behavior with tests first, then implement features: `TODO-v1-flutter-test-foundation.md` is the precondition to reduce regressions and avoid “workaround tests”.
-- Scope gate: before executing MVP feature slices, finalize decisions in `foundation_documentation/todos/active/TODO-mvp-scope-definition.md` to prevent churn and rework.
+- Freeze behavior with tests first, then implement features: `foundation_documentation/todos/active/mvp_slices/TODO-v1-flutter-test-foundation.md` is the precondition to reduce regressions and avoid “workaround tests”.
+- Scope gate: before executing MVP feature slices, finalize decisions in `foundation_documentation/todos/completed/TODO-mvp-scope-definition.md` to prevent churn and rework.
 
 ### Dependency map (high level)
 - Core loop: Invites + Agenda → unlock Telemetry/Push.
@@ -63,37 +63,37 @@ These are scope descriptors (not tasks).
 ## 0.2) Milestones (Each Must Be Manually Testable)
 
 ### M0 — Flutter test foundation (precondition)
-- TODO: `foundation_documentation/todos/active/TODO-v1-flutter-test-foundation.md`
+- TODO: `foundation_documentation/todos/active/mvp_slices/TODO-v1-flutter-test-foundation.md`
 - Gate: `fvm flutter test` green (including network contract tests per TODO)
 - Manual: compile and run app; smoke routes still open without crashes
 
 ### M1 — Core loop contracts + mock fidelity
-- TODOs: `TODO-v1-invites-implementation.md`, `TODO-v1-events-and-agenda.md` (refinement + mock-first)
+- TODOs: `foundation_documentation/todos/active/mvp_slices/TODO-v1-invites-implementation.md`, `foundation_documentation/todos/active/mvp_slices/TODO-v1-events-and-agenda.md` (refinement + mock-first)
 - Gate: DTO/fixture contract tests updated; no mock drift from docs
 - Manual: browse events → open event detail → start invite flow (mock-backed)
 
 ### M2 — Web functional (invite landing + accept via code)
-- TODOs: `TODO-v1-web-to-app-policy.md` + web slices in `TODO-v1-invites-implementation.md`
+- TODOs: `foundation_documentation/todos/active/mvp_slices/TODO-v1-web-to-app-policy.md` + web slices in `foundation_documentation/todos/active/mvp_slices/TODO-v1-invites-implementation.md`
 - Gate: web acceptance works against contract-faithful mock server endpoints
 - Manual: open tenant subdomain → invite landing → accept → verify result state
 
 ### M3 — Telemetry + push baseline
-- TODO: `TODO-v1-telemetry-and-push.md`
+- TODO: `foundation_documentation/todos/active/mvp_slices/TODO-v1-telemetry-and-push.md`
 - Gate: analytics taxonomy + push routing validated (no double-counting)
 - Manual: invite received routes correctly; Mixpanel shows funnel events
 
 ### M4 — Map V1
-- TODO: `TODO-v1-map.md`
+- TODO: `foundation_documentation/todos/active/mvp_slices/TODO-v1-map.md`
 - Gate: map payload contract tests; stacking behavior stable
 - Manual: beaches/nature visible; event POIs show; stacks show `+N`
 
 ### M5 — Artist favorites/profile V1
-- TODO: `TODO-v1-artist-favorites-and-profile.md`
+- TODO: `foundation_documentation/todos/active/mvp_slices/TODO-v1-artist-favorites-and-profile.md`
 - Gate: favorites gating tests (artist-only) remain green
 - Manual: favorites strip works; artist profile uses reduced tabs
 
 ### M6 — Tenant/Admin area V1 minimum
-- TODO: `TODO-v1-partner-workspace.md`
+- TODO: `foundation_documentation/todos/active/mvp_slices/TODO-v1-partner-workspace.md`
 - Gate: tenant/admin authorization enforced
 - Manual: tenant admin can manage accounts, assets, events, and branding
 

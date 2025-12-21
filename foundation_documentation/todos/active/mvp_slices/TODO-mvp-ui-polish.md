@@ -38,4 +38,4 @@
 ---
 
 ## G) Mixpanel
-- [ ] Define trigger moments for each Mixpanel event (align with `TODO-v1-telemetry-and-push.md`).
+- [ ] Define trigger moments for each Mixpanel event (align with `foundation_documentation/todos/active/mvp_slices/TODO-v1-telemetry-and-push.md`).
