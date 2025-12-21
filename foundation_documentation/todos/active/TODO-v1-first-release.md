@@ -8,7 +8,7 @@
 
 ## References
 - Invites contract + limits: `foundation_documentation/modules/invite_and_social_loop_module.md`
-- Partner workspace + memberships (draft): `foundation_documentation/modules/partner_admin_module.md`
+- Partner/admin module (draft): `foundation_documentation/modules/partner_admin_module.md`
 - Map/POI architecture: `foundation_documentation/modules/map_poi_module.md`
 - MVP scope gate (decisions): `foundation_documentation/todos/active/TODO-mvp-scope-definition.md`
 - Roadmap tracking: `foundation_documentation/system_roadmap.md`
@@ -56,7 +56,7 @@ These are scope descriptors (not tasks).
 - Core loop: Invites + Agenda → unlock Telemetry/Push.
 - Web invite acceptance depends on stable environment resolution + share code contract (and must remain contract-aligned with app invites).
 - Map depends on stable event detail routing + time-window settings for event POIs.
-- Partner workspace depends on invites being audit-safe (credited acceptance semantics).
+- Tenant/admin area depends on account memberships + permissions (credited acceptance semantics for invites remain app-side).
 
 ---
 
@@ -133,8 +133,8 @@ Suggested defaults (override per tenant + plan):
 - `max_invites_to_same_invitee_per_30d = 10`
 - suppression: per-partner blocklist + per-user opt-out
 
-### 2.2 Partner memberships
-- [ ] Implement `partner_memberships` (draft spec in `foundation_documentation/modules/partner_admin_module.md`)
+### 2.2 Account memberships
+- [ ] Implement account memberships (draft spec in `foundation_documentation/modules/partner_admin_module.md`)
 
 ### 2.3 Event invite metrics (partner-facing)
 - (Deferred to VNext)
@@ -189,9 +189,12 @@ Suggested defaults (override per tenant + plan):
   - [ ] `favorite_artist_toggled`, `map_opened`, `poi_opened`
 - [ ] Ensure every event includes: `tenant_id`, `event_id` (when applicable), `inviter_kind/id` (when applicable), `partner_id` (when applicable)
 
-### 3.4 Partner Workspace (V1 minimum pages)
-- [ ] Partner Workspace Home
-- [ ] Partner Members
+### 3.4 Tenant/Admin area (V1 minimum pages)
+- [ ] Tenant/Admin Home
+- [ ] Accounts management
+- [ ] Assets management (StaticAssets)
+- [ ] Events management
+- [ ] Tenant branding management (About/logo/icon/colors)
 - [ ] Plan/Limits read-only view (uses invite settings payload + partner plan payload)
 
 ---

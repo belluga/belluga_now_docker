@@ -1,7 +1,7 @@
 # TODO (MVP): Scope Definition + Open Decisions
 
 **Owners:** Delphi + Time Produto + Backend + Flutter + Web  
-**Status:** Active  
+**Status:** Completed  
 **Goal:** Lock the MVP scope (what ships / what is deferred) and document the decisions needed before execution begins.
 
 ---
@@ -11,8 +11,8 @@
 We are targeting an MVP that can be shipped ASAP. Our current V1 TODO set is strong for tenant consumption (events/invites/map), but it is missing or under-specifying key MVP needs:
 - Reduced profiles for **Artists** and **Venues** (not just artists).
 - Map POI coverage rules for **Culture**, **Historic/Churches**, **Nature**, **Restaurants**, **Sponsors**.
-- Admin/landlord + partner workspace flows to create/edit/delete **events**, **artists/venues**, and **POIs**.
-- “Free/unclaimed” partner accounts and a hidden claim process (API-only for now).
+- Admin/landlord + tenant/admin flows to create/edit/delete **events**, **artists/venues**, and **POIs**.
+- Unmanaged accounts and a hidden manage flow (API-only for now).
 - Audit requirements: “who edited what” and “acting on behalf of” semantics.
 
 This TODO is the “gate” for scope clarity: we answer the questions below, then we refine/adjust the execution TODOs (`TODO-v1-*`) accordingly.
@@ -24,7 +24,7 @@ This TODO is the “gate” for scope clarity: we answer the questions below, th
 ### 2.1 Tenant (public-facing) MVP
 - Reduced profiles:
   - Artist reduced profile (already tracked in `TODO-v1-artist-favorites-and-profile.md`)
-  - Venue reduced profile (missing; must be defined)
+  - Venue reduced profile (defined in MVP decisions)
 - Map POIs:
   - Beaches
   - Nature attractions (e.g., ecological parks)
@@ -69,7 +69,6 @@ This TODO is the “gate” for scope clarity: we answer the questions below, th
 - POI-enabled sources: `StaticAsset` (yes), `Event` (yes), `Account`/Partner (conditional).
 - Restaurants always use `restaurant` category; cuisine details are tags (no `attraction` + `food` workaround).
 - Nature assets require `name`; `description` and `thumbnail` are optional.
-- Use **Unmanaged** state to represent accounts with no responsible user; compute/update the flag on relevant writes (account save + membership/user attach/detach).
 - Use a shared POI projection hook (e.g., Laravel trait `HasPoiProjection`) to trigger `map_pois` upsert/remove on save/delete for POI-enabled sources.
 
 ### D2) Reduced profiles (Artist + Venue)
@@ -104,6 +103,7 @@ This TODO is the “gate” for scope clarity: we answer the questions below, th
 **Decided (MVP)**
 - Use only `is_managed` as the Unmanaged flag (no `managed_at`/`managed_by_user_id`).
 - Account-based memberships; no owner role.
+- Use **Unmanaged** state to represent accounts with no responsible user; compute/update the flag on relevant writes (account save + membership/user attach/detach).
 
 - Manage flow: create user (if needed) and grant access to the Account.
 
@@ -138,14 +138,14 @@ This TODO is the “gate” for scope clarity: we answer the questions below, th
 ## 4) Proposed TODO changes after decisions are made
 
 After we answer D1–D5, we will:
-- [ ] Update `TODO-v1-map.md` to explicitly match the agreed POI taxonomy + filter mapping.
-- [ ] Add a new TODO for “Venue reduced profile”.
-- [ ] Add a new TODO for “Admin/workspace CRUD + audit + unclaimed partner lifecycle”.
-- [ ] Update `TODO-v1-first-release.md` to reflect the MVP boundary (and move non-MVP items to `TODO-vnext-parking-lot.md`).
+- [x] Update `TODO-v1-map.md` to explicitly match the agreed POI taxonomy + filter mapping.
+- [x] Add a new TODO for “Venue reduced profile”.
+- [x] Update the Tenant/Admin area TODO to cover CRUD + audit + unmanaged lifecycle.
+- [x] Update `TODO-v1-first-release.md` to reflect the MVP boundary (and move non-MVP items to `TODO-vnext-parking-lot.md`).
 
 ---
 
 ## 5) Definition of Done (for this TODO)
-- [ ] All decisions D1–D5 answered and documented in this file.
-- [ ] A “MVP checklist” exists (single source of truth) and links to the execution TODOs.
-- [ ] Any non-MVP items explicitly deferred and referenced in `TODO-vnext-parking-lot.md`.
+- [x] All decisions D1–D5 answered and documented in this file.
+- [x] A “MVP checklist” exists (single source of truth) and links to the execution TODOs.
+- [x] Any non-MVP items explicitly deferred and referenced in `TODO-vnext-parking-lot.md`.

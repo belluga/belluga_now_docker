@@ -28,6 +28,11 @@
 - [ ] CRUD accounts (including unmanaged accounts).
 - [ ] CRUD StaticAssets (landlord-managed assets within tenant scope).
 
+### A4) Audit + Unmanaged lifecycle
+- [ ] Track `created_by` / `updated_by` + `*_by_type` on managed entities.
+- [ ] Emit `action_audit_log` entries for create/update/delete actions.
+- [ ] Ensure `is_managed` toggles when account access is granted/removed.
+
 ---
 
 ## B) Flutter Tasks
