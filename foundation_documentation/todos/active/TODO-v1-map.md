@@ -16,7 +16,7 @@
 ## A) Backend Tasks
 
 ### A1) `map_pois` projection persistence
-- [ ] On create/update of Partner/Event (and POI-enabled custom objects), upsert linked `map_pois` record (transactional / consistent write)
+- [ ] On create/update of Account/Partner, StaticAsset, or Event (and POI-enabled custom objects), upsert linked `map_pois` record (transactional / consistent write)
 - [ ] Support `time_anchor_at` nullable on `map_pois` (no stored `visible_from/visible_until`)
 - [ ] Implement tenant settings for time-window filtering:
   - [ ] `map_poi_future_window_days`
@@ -45,9 +45,10 @@
 ## B) Flutter Tasks
 
 ### B1) Map rendering + filters
-- [ ] Render static POIs for categories: `Culture`, `Sponsor`, `Restaurant`, `Beach`, `Nature`
+- [ ] Render static POIs for categories: `Culture`, `Restaurant`, `Beach`, `Nature`, `Historic`
 - [ ] Render dynamic Event POIs distinctly from static POIs
 - [ ] Keep categories coarse; use tags for subcategories (no enum expansion in V1)
+  - StaticAsset and Event are POI-enabled sources; Account/Partner is conditional per MVP scope.
 
 ### B2) Same-spot UX
 - [ ] Marker shows top POI + `+N` badge when stack has multiple items
@@ -65,4 +66,3 @@
 - [ ] Beaches and Nature POIs appear as static POIs and are filterable
 - [ ] Event POIs appear only within backend-defined time windows (via settings)
 - [ ] Same-spot POIs stack with `+N` badge and open a POI deck with deterministic ordering
-

@@ -37,6 +37,7 @@
 - [ ] Require Sanctum (`auth:sanctum`) even on web landing acceptance; web obtains an anonymous token first via `POST /v1/anonymous/identities`
 - [ ] Create/bind an anonymous identity on web acceptance so the backend can persist acceptance + attribution (anonymous user + Sanctum token is sufficient)
 - [ ] Allow external re-share only for the same `event_id` after acceptance, with strict backend limits
+- [ ] Invite share links must carry the `code` as a GET parameter in the URL
 
 ### A2) Uniqueness + responses
 - [ ] Enforce uniqueness key:

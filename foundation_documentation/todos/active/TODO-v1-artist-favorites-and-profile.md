@@ -2,7 +2,7 @@
 
 **Status:** Active  
 **Owners:** Backend Team + Delphi (Flutter)  
-**Objective:** Keep favorites in Home, restrict favorites to Artists in V1, and use the existing Partner Detail base page with reduced artist tabs.
+**Objective:** Keep favorites in Home, restrict favorites to Artists in this slice, and use the existing Partner Detail base page with reduced artist tabs. Venue favorites are tracked in a separate TODO.
 
 ---
 
@@ -38,7 +38,6 @@
 ### B3) Reduce Artist profile tabs (do not create a new screen)
 - [ ] Update the artist `PartnerProfileConfig` to a minimal set of tabs/modules:
   - [ ] Bio/summary + upcoming events (schedule)
-  - [ ] Optional media/player module only if it’s lightweight
 - [ ] Avoid store modules in V1 (defer to VNext)
 
 ---
@@ -48,4 +47,3 @@
 - [ ] Users can favorite/unfavorite Artists (only)
 - [ ] Favorites remain visible in Home and open the artist profile
 - [ ] Artist profile uses the existing base page with reduced tabs (no new detail screen)
-

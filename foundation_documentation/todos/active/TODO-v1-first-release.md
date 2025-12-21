@@ -2,7 +2,7 @@
 
 **Status:** Active  
 **Owner:** Delphi + Backend Team  
-**Goal:** Ship the first tenant-facing version focused on Events + Invites + Artist Favorites + Map (with Beaches), with Web invite landing + acceptance functional in V1 and a Flutter test foundation that prevents regressions.
+**Goal:** Ship the first tenant-facing version focused on Events + Invites + Favorites (Artists + Venues) + Map (with Beaches), with Web invite landing + acceptance functional in V1 and a Flutter test foundation that prevents regressions.
 
 ---
 
@@ -19,7 +19,7 @@
 - Map slice: `foundation_documentation/todos/active/TODO-v1-map.md`
 - Events/Agenda slice: `foundation_documentation/todos/active/TODO-v1-events-and-agenda.md`
 - Artist favorites/profile slice: `foundation_documentation/todos/active/TODO-v1-artist-favorites-and-profile.md`
-- Partner workspace slice: `foundation_documentation/todos/active/TODO-v1-partner-workspace.md`
+- Tenant/admin area slice: `foundation_documentation/todos/active/TODO-v1-partner-workspace.md`
 - Web-to-app policy slice: `foundation_documentation/todos/active/TODO-v1-web-to-app-policy.md`
 
 ## 0) Scope Boundaries (V1)
@@ -30,19 +30,19 @@ These are scope descriptors (not tasks).
 - Invites: send, receive, accept/decline, confirm presence
 - Invite crediting selection (“Accept invite from…”, no default)
 - Web: invite landing + accept via code (V1 is web functional for these flows)
-- Partner-issued invites (Artist/Venue/Creator) with `issued_by_user_id` audit
-- Partner event invite metrics (for the event host/managing partner)
-- Map POIs with categories: `Culture`, `Sponsor`, `Restaurant`, `Beach`, `Nature` + dynamic `Events`
-- Artist favorites only (favorites remain surfaced in Home)
+- Map POIs with categories: `Culture`, `Restaurant`, `Beach`, `Nature`, `Historic` + dynamic `Events`
+- StaticAssets (landlord-managed) are POI-enabled sources; Unmanaged accounts are supported for partner creation.
+- Favorites: Artists + Venues (favorites remain surfaced in Home)
+- Venue profile pages (reduced profile)
 - Push notifications (V1 baseline)
 - Tracking / product analytics (Mixpanel) integration (V1 baseline)
 - Flutter test foundation (unit + contract + minimal widget/integration + network contract checks)
 
 ### Out of scope (tracked in `foundation_documentation/todos/active/TODO-vnext-parking-lot.md`)
 - Wallet / purchases / premium
-- Venue favorites + venue detail pages
 - Persistent favorites (backend later; mock can reset on load)
 - Full partner profile modules/store for all partner types
+- Partner-issued invites + partner invite metrics
 
 ---
 
@@ -53,10 +53,10 @@ These are scope descriptors (not tasks).
 - Scope gate: before executing MVP feature slices, finalize decisions in `foundation_documentation/todos/active/TODO-mvp-scope-definition.md` to prevent churn and rework.
 
 ### Dependency map (high level)
-- Core loop: Invites + Agenda → unlock Telemetry/Push and Partner Metrics.
+- Core loop: Invites + Agenda → unlock Telemetry/Push.
 - Web invite acceptance depends on stable environment resolution + share code contract (and must remain contract-aligned with app invites).
 - Map depends on stable event detail routing + time-window settings for event POIs.
-- Partner workspace depends on invites being audit-safe (`issued_by_user_id`) + credited acceptance semantics.
+- Partner workspace depends on invites being audit-safe (credited acceptance semantics).
 
 ---
 
@@ -92,10 +92,10 @@ These are scope descriptors (not tasks).
 - Gate: favorites gating tests (artist-only) remain green
 - Manual: favorites strip works; artist profile uses reduced tabs
 
-### M6 — Partner workspace V1 minimum
+### M6 — Tenant/Admin area V1 minimum
 - TODO: `TODO-v1-partner-workspace.md`
-- Gate: memberships + metrics authorization enforced; credited acceptance counts correct
-- Manual: partner member views event invite metrics + issuer breakdown
+- Gate: tenant/admin authorization enforced
+- Manual: tenant admin can manage accounts, assets, events, and branding
 
 ---
 
@@ -105,14 +105,14 @@ These are scope descriptors (not tasks).
 - Uniqueness: forbid duplicate invite key `(tenant_id, event_id, receiver_user_id, inviter_principal.kind, inviter_principal.id)` → respond `already_invited`.
 - Credited acceptance: exactly one `credited_acceptance=true` per `(receiver_user_id, event_id)`; others become `closed_duplicate`.
 - No default inviter selection in UI; user must pick who to credit before accepting.
-- Inviter principal is union `{kind:user|partner, id}`; partner-issued invites also record `issued_by_user_id`.
+- Inviter principal is union `{kind:user|partner, id}`; partner-issued invites are deferred in MVP.
 
 ### 1.2 Canonical IDs
 - Events and participants always reference stable `partner_id` (create partners upfront with Tiny Free when needed).
 - Never rely on name-only references except as display fallbacks.
 
 ### 1.3 Metrics access boundary
-- Event invite metrics visible only to users who are members of the event’s host/managing partner and have `can_view_metrics=true`.
+- Partner invite metrics are deferred in MVP.
 
 ---
 
@@ -133,15 +133,11 @@ Suggested defaults (override per tenant + plan):
 - `max_invites_to_same_invitee_per_30d = 10`
 - suppression: per-partner blocklist + per-user opt-out
 
-### 2.2 Partner membership + partner-issued actions
+### 2.2 Partner memberships
 - [ ] Implement `partner_memberships` (draft spec in `foundation_documentation/modules/partner_admin_module.md`)
-- [ ] Validate `issued_by_user_id` permissions when sending partner invites
 
 ### 2.3 Event invite metrics (partner-facing)
-- [ ] Implement endpoint(s) (exact naming TBD by backend team):
-  - [ ] `GET /v1/partners/{partner_id}/events/{event_id}/invites/metrics`
-  - [ ] `GET /v1/partners/{partner_id}/events/{event_id}/invites` (drill-down)
-- [ ] Provide per-inviter principal + per-issuer user aggregates; accepted counts must use `credited_acceptance=true`
+- (Deferred to VNext)
 
 ### 2.4 Push notifications (baseline)
 - [ ] Implement device registration endpoint (exact naming TBD):
@@ -169,10 +165,11 @@ Suggested defaults (override per tenant + plan):
 - [ ] Ensure UI shows “já convidado” when backend returns `already_invited`
 - [ ] Expose invite metrics counters (sent/accepted/confirmed) in Profile and Menu hero, wired to the correct repositories
 
-### 3.2 Tenant: Favorites (Artist-only)
+### 3.2 Tenant: Favorites (Artists + Venues)
 - [ ] Keep favorites displayed in Home
 - [ ] Clicking an artist favorite opens the existing Partner Detail base page with reduced tabs (artist config)
-- [ ] Enforce “favoritable” for artists only in the mock repository path until backend sends capabilities
+- [ ] Clicking a venue favorite opens the existing Partner Detail base page with reduced tabs (venue config)
+- [ ] Enforce “favoritable” for artists + venues only in the mock repository path until backend sends capabilities
 
 ### 3.3 Tenant: Map
 - [ ] Keep POI categories coarse; use tags for subcategories
@@ -195,7 +192,6 @@ Suggested defaults (override per tenant + plan):
 ### 3.4 Partner Workspace (V1 minimum pages)
 - [ ] Partner Workspace Home
 - [ ] Partner Members
-- [ ] Event Invite Metrics view
 - [ ] Plan/Limits read-only view (uses invite settings payload + partner plan payload)
 
 ---
@@ -204,8 +200,8 @@ Suggested defaults (override per tenant + plan):
 
 - [ ] Invites cannot be duplicated by same inviter for same receiver+event (`already_invited`)
 - [ ] Accepting an invite requires explicit inviter selection; only one credited acceptance per receiver+event
-- [ ] Partner event metrics show credited accepted counts and “issued_by_user_id” breakdown for auditing
 - [ ] Map supports the agreed categories and shows beaches + events
+- [ ] Favorites support artists + venues and route to reduced profiles
 - [ ] No Wallet/Purchases/Premium surfaces ship in V1 (tracked as deferred)
 - [ ] Push notifications work end-to-end for invite received at minimum, including deep link routing
 - [ ] Mixpanel captures the invite funnel and event funnel with consistent identifiers

@@ -30,14 +30,14 @@ This TODO is the “gate” for scope clarity: we answer the questions below, th
   - Nature attractions (e.g., ecological parks)
   - Restaurants
   - Culture centers (e.g., Vila Verde, Centro Cultural Casa Sinestésica)
-  - Sponsors (remain)
+  - Sponsors (deferred to VNext)
   - Historic attractions / churches (decision needed: how we model + filter)
 
 ### 2.2 Admin/Workspace MVP (authenticated)
 - Flows to add/edit/delete:
   - Events
   - Artists and venues (as partner “free accounts”)
-  - Static POIs (beaches/nature/culture/historic/restaurants/sponsors)
+  - Static POIs (beaches/nature/culture/historic/restaurants)
 - Permission boundaries:
   - Artist/Venue profiles can delete their own profile and events related to them.
   - Admin/landlord can create partners and can create events “on behalf of” other partners.
@@ -47,90 +47,105 @@ This TODO is the “gate” for scope clarity: we answer the questions below, th
   - When it happened
   - “On behalf of” context (landlord override)
 
-### 2.3 Unclaimed partners + hidden claim
-- Team creates “free accounts” that are initially **unclaimed**.
-- Claim flow must be hidden in UI for now.
-- API-only: we can link an existing/new user to the partner and resolve the unclaimed status.
+### 2.3 Unmanaged accounts + hidden manage flow
+- Team creates “free accounts” that are initially **Unmanaged**.
+- Manage flow must be hidden in UI for now.
+- API-only: we can link an existing/new user to the account and resolve the unmanaged status.
 
 ---
 
-## 3) Open Decisions (Must Answer)
+## 3) Decision Register (Explicit)
 
 ### D1) POI taxonomy + filters (Map)
-1. **Culture**: Should this be strictly “Centros Culturais” only (e.g., Vila Verde, Casa Sinestésica)?
-2. **Historic / churches**:
-   - Option A: treat as **Culture** (broader umbrella) using tags like `historical`, `church`, `heritage`.
-   - Option B: treat as **Attraction** with tags (`historical`, `church`) and keep “Culture” strict.
-   - Option C: create a dedicated “Historic” filter label (UI-only grouping) without expanding enums.
-
-**Recommendation:** Choose **Option C** for UX clarity *without* expanding enums:
-- Keep backend enum/categories coarse (no new enum values in V1/MVP).
-- Add a “Histórico” filter in UI that maps to categories `{monument, church, attraction}` and/or tags `{historical, heritage}`.
-- Keep “Cultura” filter mapping to `{culture}` (centros culturais), with optional tags for subtypes.
-
-**Decision (MVP):** Churches are included **only** when they have historical relevance, and they live under the **Histórico** grouping (along with monuments and other historic attractions). We do **not** list “churches” as a standalone public category/filter.
-
-3. **Nature**: Confirm Nature includes parks/ecological areas; define required tags (e.g., `park`, `trail`, `waterfall`) and whether nature POIs must always include coordinates + a short description.
-4. **Restaurants**: Clarify whether food POIs are always `restaurant` category, or if some should be `attraction` with `food` tag.
-5. **Sponsors**: Confirm sponsor POIs are static and always visible, or visibility is tenant-configurable.
+**Decided (MVP)**
+- **Culture** is strictly “Centros Culturais” (e.g., Vila Verde, Casa Sinestésica).
+- **Historic** is a UI grouping that includes historically relevant churches + monuments + historic attractions; **no standalone “churches”** category.
+- **Nature** includes ecological parks and other natural attractions.
+- Sponsors are **deferred** from MVP (see VNext).
+- **StaticAsset** is the source entity for non-partner assets; POI is a projection (same pattern as Partner/Event).
+- Partner/StaticAsset create/update/delete triggers a POI projection job (create/update/remove in `map_pois`).
+- StaticAssets are landlord-managed (app owner/admin); AccountUsers have read-only access.
+- `map_pois` is a projection store; map queries read `map_pois` directly (no aggregation at query time).
+- POI-enabled sources: `StaticAsset` (yes), `Event` (yes), `Account`/Partner (conditional).
+- Restaurants always use `restaurant` category; cuisine details are tags (no `attraction` + `food` workaround).
+- Nature assets require `name`; `description` and `thumbnail` are optional.
+- Use **Unmanaged** state to represent accounts with no responsible user; compute/update the flag on relevant writes (account save + membership/user attach/detach).
+- Use a shared POI projection hook (e.g., Laravel trait `HasPoiProjection`) to trigger `map_pois` upsert/remove on save/delete for POI-enabled sources.
 
 ### D2) Reduced profiles (Artist + Venue)
-1. Define “reduced Artist profile” modules (tabs/sections) for MVP.
-2. Define “reduced Venue profile” modules (tabs/sections) for MVP.
-3. Define cross-link rules:
-   - Event detail links to venue + artists
-   - Map POI links to venue/restaurant vs static POI detail
-
-**MVP Decision (no tech debt):** Implement reduced profiles strictly via the existing `PartnerProfileConfig` / `ProfileModuleId` composition (no new screen or parallel profile system). The fixed header/taxonomy (name/type/tagline/badges/hero) remains above tabs.
+**Decided (MVP)**
+- **No tech debt**: implement reduced profiles via existing `PartnerProfileConfig` / `ProfileModuleId` (no parallel system).
+- Header/taxonomy remains **above** tabs.
+- Bio is optional; if present, show **Sobre** and it is **always the first tab**.
 
 **Artist (`PartnerType.artist`)**
-- Tab `Sobre` (conditional, **must be first when present**): `ProfileModuleId.richText` **only if** the partner has a non-empty bio/description.
-- Tab `Eventos` (always): `ProfileModuleId.agendaCarousel` (or `ProfileModuleId.agendaList` if we standardize on list).
-- Exclusions (MVP): `externalLinks`, `musicPlayer`, `productGrid`, and any commerce/store modules.
+- Tabs: `Sobre` (conditional) + `Eventos` (always).
+- `Sobre` uses `ProfileModuleId.richText` only when bio exists.
+- `Eventos` uses `ProfileModuleId.agendaCarousel` (or `ProfileModuleId.agendaList` if we standardize).
+- Exclusions: `externalLinks`, `musicPlayer`, `productGrid`, commerce/store modules.
 
 **Venue (`PartnerType.venue`)**
-- Tab `Sobre` (conditional, **must be first when present**): `ProfileModuleId.richText` **only if** the partner has a non-empty bio/description.
-- Tab `Como Chegar` (always): `ProfileModuleId.locationInfo` with:
-  - a map preview, and
-  - a primary action that opens route/navigation.
-- Tab `Eventos` (always): `ProfileModuleId.agendaList`.
-- Exclusions (MVP): `externalLinks`, `supportedEntities`, and any commerce/store modules.
+- Tabs: `Sobre` (conditional) + `Como Chegar` (always) + `Eventos` (always).
+- `Como Chegar` uses `ProfileModuleId.locationInfo` with map preview + route action.
+- `Eventos` uses `ProfileModuleId.agendaList`.
+- Exclusions: `externalLinks`, `supportedEntities`, commerce/store modules.
 
-### D3) Unclaimed partner model
-1. What fields represent unclaimed status? (e.g., `is_claimed`, `claimed_at`, `claimed_by_user_id`).
-2. How do we model ownership vs membership? (recommend: `partner_memberships` becomes the source of truth; claim sets an `owner` membership + marks partner as claimed).
-3. How does “link user to partner” work for MVP? (existing user vs new user creation).
+**Decided (MVP)**
+- Event detail:
+  - `Como Chegar` shows map + route CTA only.
+  - `O Local` shows venue details + CTA to open the venue profile.
+- Artists section:
+  - Single artist → compact detail block + CTA to open artist profile.
+  - Multiple artists → list/cards with CTA to open artist profile (quick actions allowed on cards).
+
+- POI tap opens its own detail using a direct route/path or model reference.
+
+### D3) Unmanaged account model
+**Decided (MVP)**
+- Use only `is_managed` as the Unmanaged flag (no `managed_at`/`managed_by_user_id`).
+- Account-based memberships; no owner role.
+
+- Manage flow: create user (if needed) and grant access to the Account.
 
 ### D4) Admin/workspace permissions + audit
-1. Minimum permission flags for MVP:
-   - `can_manage_events`
-   - `can_manage_partner_profile`
-   - `can_manage_pois`
-   - `can_delete_partner` (only for own partner)
-2. Audit log storage:
-   - Do we use a single `action_audit_log` collection (recommended) or per-entity audit fields only?
-3. “Act on behalf of” semantics:
-   - When landlord creates/edits an event for a partner, what exact fields do we store? (recommend: `issued_by_user_id` pattern, plus `acting_partner_id`).
+**Decided (MVP)**
+- Permissions enforced via Sanctum abilities.
+- Landlord abilities:
+  - `can_create_partners`
+  - `can_delete_partners`
+  - `can_view_partners`
+  - `can_manage_partner_all`
+  - `can_manage_partner_unmanaged`
+  - `can_manage_assets`
+- Account user abilities:
+  - `can_manage_details`
+  - `can_manage_events`
+- Audit:
+  - Use a single `action_audit_log` collection for all managed objects (create/update/delete).
+  - Do **not** use capped collection in MVP (avoid truncation).
+  - Keep `created_by` / `updated_by` + `*_by_type` on entities for quick attribution.
+  - Audit log stores `actor_type`, `actor_id`, `entity_type`, `entity_id`, `action`, `created_at`, and optional `acting_account_id` when acting on behalf.
 
 ### D5) MVP scope boundary vs V1 scope
-Confirm what we *must* include in MVP versus defer:
-- Invites (full credited acceptance, quotas, share codes) — required now or defer?
-- Push + telemetry — required now or defer?
-- Partner invite metrics — required now or defer?
+**Decided (MVP)**
+- Telemetry (Mixpanel) is included in MVP scope (not deferred).
+- Invites from other users are included in MVP.
+- Push notifications are included in MVP.
+- Partner invite metrics are deferred (see VNext).
 
 ---
 
 ## 4) Proposed TODO changes after decisions are made
 
 After we answer D1–D5, we will:
-1. Update `TODO-v1-map.md` to explicitly match the agreed POI taxonomy + filter mapping.
-2. Add a new TODO for “Venue reduced profile”.
-3. Add a new TODO for “Admin/workspace CRUD + audit + unclaimed partner lifecycle”.
-4. Update `TODO-v1-first-release.md` to reflect the MVP boundary (and move non-MVP items to `TODO-vnext-parking-lot.md`).
+- [ ] Update `TODO-v1-map.md` to explicitly match the agreed POI taxonomy + filter mapping.
+- [ ] Add a new TODO for “Venue reduced profile”.
+- [ ] Add a new TODO for “Admin/workspace CRUD + audit + unclaimed partner lifecycle”.
+- [ ] Update `TODO-v1-first-release.md` to reflect the MVP boundary (and move non-MVP items to `TODO-vnext-parking-lot.md`).
 
 ---
 
 ## 5) Definition of Done (for this TODO)
-- All decisions D1–D5 answered and documented in this file.
-- A “MVP checklist” exists (single source of truth) and links to the execution TODOs.
-- Any non-MVP items explicitly deferred and referenced in `TODO-vnext-parking-lot.md`.
+- [ ] All decisions D1–D5 answered and documented in this file.
+- [ ] A “MVP checklist” exists (single source of truth) and links to the execution TODOs.
+- [ ] Any non-MVP items explicitly deferred and referenced in `TODO-vnext-parking-lot.md`.

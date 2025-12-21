@@ -82,6 +82,11 @@ Payload must include enough data to route:
   - [ ] `poi_opened`
   - [ ] `favorite_artist_toggled`
 
+### D2.1) Trigger moments (must define)
+- [ ] Define when each Mixpanel event fires (screen load, CTA tap, success response).
+- [ ] Confirm source of truth for invite acceptance events (client vs backend).
+- [ ] Confirm event detail open trigger (screen first paint vs data loaded).
+
 ### D3) Required properties (attach when available)
 - [ ] Include required properties (when available):
   - `tenant_id` (always)

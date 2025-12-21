@@ -23,10 +23,19 @@
 ## B) Partner Profiles (Deferred / Simplify in V1)
 
 - **Full partner profile modular tabs for all partner types**
-  - V1 intent: keep a minimal “Artist profile” view by reducing existing tabs, not creating multiple new surfaces.
-  - Defer richer modules (store, galleries, curated content) to when Partner Blueprints/Capabilities are backend-driven.
-- **Venue profile pages**
-  - V1 intent: avoid venue detail pages to reduce complexity; map + event flows cover venue context.
+  - V1 intent: keep minimal reduced profiles; defer richer modules (store, galleries, curated content) to when Partner Blueprints/Capabilities are backend-driven.
+
+## F) Partner Self-Management (Deferred)
+
+- **Partner self-management area**
+  - Reason: MVP uses tenant/admin area; partner self-management comes next.
+
+## E) Invites & Metrics (Deferred)
+
+- **Partner invite metrics**
+  - Reason: defer partner-facing metrics dashboards until after MVP invite flows are stable.
+- **Partner-issued invites**
+  - Reason: defer partner-issued invites until after MVP user-invite flows are stable.
 
 ---
 
@@ -44,4 +53,5 @@
 - **Subcategories taxonomy**
   - V1 intent: keep coarse POI categories and use tags for richer filtering.
   - Defer expanding `CityPoiCategory` unless validated by UX demand.
-
+- **Sponsors POIs**
+  - Reason: sponsors may require multi-location entities and/or moving POIs; defer until the model supports this cleanly.
