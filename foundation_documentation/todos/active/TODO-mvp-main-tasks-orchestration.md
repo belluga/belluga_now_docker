@@ -4,7 +4,49 @@
 
 ---
 
-## Tenant Experience (Public-Facing)
+## Cross-Team Gate (Must Do First)
+- [ ] Finalize `foundation_documentation/endpoints_mvp_contracts.md` **together** (Frontend + Backend).
+
+---
+
+## Backend Contract Execution (Mock → Prod on Same Routes)
+**Approach:** implement mock responses on **production routes**, then replace internals with real DB logic.  
+**Status legend:** `[ ]` pending · `[m]` mock implemented · `[x]` production-ready.
+
+**Route status tracking (MVP endpoints):**
+- [ ] `POST /anonymous/identities`
+- [ ] `GET /home-overview`
+- [ ] `GET /profile`
+- [ ] `GET /onboarding/context`
+- [ ] `GET /invites`
+- [ ] `GET /invites/settings`
+- [ ] `POST /invites/share`
+- [ ] `POST /invites/share/{code}/accept`
+- [ ] `GET /agenda`
+- [ ] `GET /events/{event_id}`
+- [ ] `POST /events/{event_id}/check-in`
+- [ ] `GET /map/pois`
+- [ ] `GET /map/filters`
+- [ ] `POST /push/register`
+- [ ] `GET /accounts`
+- [ ] `POST /accounts`
+- [ ] `PATCH /accounts/{account_id}`
+- [ ] `GET /assets`
+- [ ] `POST /assets`
+- [ ] `PATCH /assets/{asset_id}`
+- [ ] `GET /events`
+- [ ] `POST /events`
+- [ ] `PATCH /events/{event_id}`
+- [ ] `POST /branding/update`
+
+**Backend testing expectations:**
+- [ ] Contract tests assert schema for each endpoint.
+- [ ] Query/filter tests (cursor, filters, distance) pass for mocks.
+- [ ] Add unhappy-path tests when moving endpoints to production-ready.
+
+---
+
+## Frontend TODO (Flutter/Web)
 - [ ] Events browsing, event detail, and presence confirmation.
 - [ ] Invites between users (send/receive/accept/decline) with credited acceptance selection.
 - [ ] Favorites for **Artists + Venues**, shown on Home and opening reduced profiles.
@@ -24,7 +66,7 @@
 
 ---
 
-## Partner/Account + Admin (Authenticated)
+## Backend TODO (Laravel/API)
 - [ ] Accounts can be created without users (Unmanaged state).
 - [ ] Unmanaged accounts become managed by linking/creating a user and granting access.
 - [ ] StaticAssets exist as non-partner sources for POIs (landlord-managed; account users read-only).
@@ -47,7 +89,7 @@
 
 ---
 
-## Web + Distribution
+## Web + Distribution (Frontend)
 - [ ] Web invite landing + acceptance via code.
 - [ ] Web-to-app attribution preserved (code carried through to app).
 - [ ] Invite share links carry the `code` as a GET parameter.

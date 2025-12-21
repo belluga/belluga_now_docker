@@ -10,9 +10,9 @@ This roadmap enumerates the foundational milestones for the Belluga ecosystem. I
 | Workstream | Milestone | Description | Target | Status | Owner |
 |------------|-----------|-------------|--------|--------|-------|
 | Flutter Client Experience | FCX-01 | Bootstrap DI container, theming, and StreamValue-based controller scaffolding. | 2025-02-28 | In Progress | Delphi |
-| Flutter Client Experience | FCX-02 | Wire mocked repositories and services to tenant home, agenda, invites, and map controllers. | 2025-03-05 | Planned | Delphi |
-| Flutter Client Experience | FCX-03 | Implement analytics instrumentation (logs, metrics, tracing) for prototype flows. | 2025-03-12 | Planned | Delphi |
-| Flutter Client Experience | FCX-04 | Author operational runbook for prototype bootstrapping and mock backend rotation. | 2025-03-19 | Planned | Delphi |
+| Flutter Client Experience | FCX-02 | Lock endpoint response schemas (contract-first) for MVP flows. | 2025-03-05 | Planned | Delphi |
+| Flutter Client Experience | FCX-03 | Wire mocked repositories/services to tenant home, agenda, invites, map, and profiles based on contracts. | 2025-03-12 | Planned | Delphi |
+| Flutter Client Experience | FCX-04 | Implement telemetry (Mixpanel) baseline for MVP flows. | 2025-03-19 | Planned | Delphi |
 | Flutter Client Experience | FCX-05 | Add location permission guard + permission screen for geo-dependent routes (map/nearby). | 2025-03-26 | Planned | Delphi |
 
 ## 3. API Endpoint Tracking
@@ -25,7 +25,7 @@ This roadmap enumerates the foundational milestones for the Belluga ecosystem. I
 | `/v1/app/invites/settings` | MOD-201 | Backend-owned invite quotas, anti-spam limits, and UX messaging settings. | Planned | Backend enforces over-quota responses (`429`) and returns reset metadata; Flutter fetches for messaging/UX. |
 | `/v1/app/invites/share` | MOD-201 | External share codes for event invites (new user install/signup attribution). | Planned | Anyone who can invite can generate; resolves to `inviter_principal` (user or partner) + `event_id`; includes `/consume` to bind attribution post-install. |
 | `/v1/app/agenda` | MOD-201 | Paged agenda feed with event tags/thumb type, artist genres, invite filters, search, past-only toggle. | Defined | Request: `page`, `page_size`, `past_only`, `search`, `invite_filter` (none/invites_and_confirmed/confirmed_only). Response: items with `tags[]` (or artist-genre fallback), `thumb {url,type background|flyer}`, single `venue`, optional `artists[]` (may be empty, each with `genres[]`), `is_confirmed`, `total_confirmed`, invites/friends for halos; `has_more` flag. |
-| `/v1/app/map/pois` | MOD-201 | Map POIs and live offers (GeoQuery-backed). | Defined | Backend must use MongoDB GeoQuery (`$geoNear`/`$geoWithin`) with viewport + optional origin/radius; Flutter must gate map routes behind location permission and pass bounds/origin params. |
+| `/v1/app/map/pois` | MOD-201 | Map POIs (projection-backed). | Defined | `map_pois` projection updated from StaticAssets, Events, and POI-enabled Accounts; use MongoDB GeoQuery with viewport + optional origin/radius. |
 | `/v1/app/map/filters` | MOD-201 | Map filter discovery (categories/tags). | Planned | Required to remove hardcoded filter catalogs from mocks. |
 | `/v1/app/profile` | MOD-201 | Profile summary and role claims. | Defined | Mock payload authoring queued in FCX-02. |
 | `/v1/app/onboarding/context` | MOD-201 | Dynamic onboarding strings and branding. | Defined | Requires content modeling before mocking. |
@@ -71,15 +71,15 @@ These roadmap phases extend the Flutter persona track and remain aligned with th
 - Web “unauthenticated” surfaces may mint a backend-issued anonymous Sanctum token via `/v1/anonymous/identities` to call allowed endpoints.
 
 **Web authenticated allowed (V1):**
-- Partner Workspace: event creation and management, memberships/team management, invite metrics dashboards.
+- Tenant/Admin area: accounts, events, assets, and branding management.
 
 **App-only (V1):**
 - Accept/Decline invite from agenda surfaces (credited acceptance selection + anti-gaming + quota enforcement).
 - Confirm presence / check-in.
-- Send invites (user + partner-issued).
+- Send invites (user only; partner-issued invites deferred).
 - Favorites and trust actions (check-in, credited acceptance selection).
 
-**Attribution requirement:** External share links carry a single `code` that resolves `{ tenant_id, event_id, inviter_principal }`. Web must preserve this `code` through install and the app must call a backend `consume` endpoint post-install/post-signup to bind attribution.
+**Attribution requirement:** External share links carry a single `code` as a GET param that resolves `{ tenant_id, event_id, inviter_principal }`. Web must preserve this `code` through install and the app must call a backend `consume` endpoint post-install/post-signup to bind attribution.
 
 **Tracking mandate (V1):** Instrument web → install → signup → acceptance → presence funnel to validate whether web-only actions should be expanded later. Use Mixpanel (client) and/or server-side events, but align naming to avoid double-counting.
 
