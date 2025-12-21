@@ -1,5 +1,6 @@
 # TODO (V1): Flutter Test Foundation (Baseline + Contract Fidelity)
 
+**Status legend:** `- [ ] ⚪ Pending` · `- [ ] 🟡 Provisional` · `- [x] ✅ Production‑Ready`.
 **Status:** Active  
 **Owners:** Delphi (Flutter) + Backend Team (contract source)  
 **Objective:** Establish a reliable Flutter test suite (unit/contract/widget/integration + network contract checks) that locks current behavior and prevents regressions before implementing V1 feature slices.

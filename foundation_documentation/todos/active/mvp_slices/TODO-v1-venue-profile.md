@@ -1,5 +1,6 @@
 # TODO (V1): Venue Profile (Reduced Tabs)
 
+**Status legend:** `- [ ] ⚪ Pending` · `- [ ] 🟡 Provisional` · `- [x] ✅ Production‑Ready`.
 **Status:** Active  
 **Owners:** Flutter Team + Product  
 **Objective:** Deliver the reduced Venue profile using the existing Partner Detail base page.
@@ -26,14 +27,14 @@
 ---
 
 ## B) Flutter Tasks
-- [ ] Implement venue `PartnerProfileConfig` with the reduced tabs above.
-- [ ] Ensure Venue profiles open from:
-  - [ ] Event Detail `O Local` CTA
-  - [ ] Venue favorites
+- [ ] ⚪ Implement venue `PartnerProfileConfig` with the reduced tabs above.
+- [ ] ⚪ Ensure Venue profiles open from:
+  - [ ] ⚪ Event Detail `O Local` CTA
+  - [ ] ⚪ Venue favorites
 
 ---
 
 ## C) Acceptance Criteria
-- [ ] Venue profile renders reduced tabs with correct ordering.
-- [ ] `Como Chegar` shows map preview + route CTA.
-- [ ] Tapping venue in Event Detail routes to the Venue profile.
+- [ ] ⚪ Venue profile renders reduced tabs with correct ordering.
+- [ ] ⚪ `Como Chegar` shows map preview + route CTA.
+- [ ] ⚪ Tapping venue in Event Detail routes to the Venue profile.

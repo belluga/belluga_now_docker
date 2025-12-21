@@ -1,5 +1,6 @@
 # TODO (VNext Parking Lot): Deferred Features / Avoid Losing Functionality
 
+**Status legend:** `- [ ] ⚪ Pending` · `- [ ] 🟡 Provisional` · `- [x] ✅ Production‑Ready`.
 **Status:** Active  
 **Owner:** Delphi  
 **Purpose:** Capture features we intentionally do **not** ship in V1 so they are not lost and can be re-evaluated in future versions.
