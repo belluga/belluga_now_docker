@@ -12,9 +12,13 @@
 - IDs are stable string IDs (Mongo ObjectId as string).
 - Date/times are ISO 8601 (`YYYY-MM-DDTHH:mm:ssZ`).
 - Fields marked **TBD** must be locked before implementation.
-- Cursor pagination follows Laravel `cursorPaginate()`:
-  - Request: `cursor` (string, optional), `limit` (int, optional).
-  - Response: `next_cursor`, `prev_cursor` (string or null).
+- Pagination conventions:
+  - **App feeds** (invites/agenda/events) use **cursor pagination** via Laravel `cursorPaginate()`.
+    - Request: `cursor` (string, optional), `limit` (int, optional).
+    - Response: `next_cursor`, `prev_cursor` (string or null).
+  - **Admin CRUD lists** (accounts/assets/admin events) use **page-based pagination**.
+    - Request: `page` (int, optional), `per_page` (int, optional).
+    - Response: `data`, `current_page`, `last_page`, `per_page`, `total`.
 - Distance fields:
   - `distance_meters` is returned when the backend computes distance from an origin (see Map).
   - For non-map lists (agenda/home), include `distance_meters` only when requested; otherwise omit.
@@ -28,22 +32,30 @@
 **Response:**
 ```json
 {
-  "user_id": "string",
-  "identity_state": "anonymous",
-  "token": "string",
-  "abilities": ["string"],
-  "expires_at": "2025-01-01T00:00:00Z"
+  "data": {
+    "user_id": "string",
+    "identity_state": "anonymous",
+    "token": "string",
+    "abilities": ["string"],
+    "expires_at": "2025-01-01T00:00:00Z"
+  }
 }
 ```
 
 ### `GET /environment` (root or tenant subdomain)
 **Purpose:** Resolve landlord/tenant context + branding.
+We should bring more details here, for
+**Request (query):** `app_domain`, `domain`, `subdomain` (all optional).
 **Response (minimum):**
 ```json
 {
   "type": "landlord|tenant",
   "name": "string",
   "subdomain": "string?",
+  // main_domain is not optional. It will always return the domain you should use by the requests.
+  "main_domain": "string?",
+  "domains": ["string"],
+  "app_domains": ["string"],
   "theme_data_settings": {
     "primary_seed_color": "#RRGGBB",
     "secondary_seed_color": "#RRGGBB",
@@ -51,6 +63,7 @@
   }
 }
 ```
+**Branding assets:** use default paths `GET /logo-light.png`, `/logo-dark.png`, `/icon-light.png`, `/icon-dark.png` (no direct URLs in this payload).
 
 ---
 
@@ -64,7 +77,6 @@
 **Purpose:** Profile summary + role claims.  
 **Response:** **TBD** (min fields for profile header + counters).
 
-<!-- In which context this would be used? -->
 ### `GET /onboarding/context`
 **Purpose:** Dynamic onboarding strings and branding.  
 **Response:** **TBD**.
@@ -73,7 +85,6 @@
 
 ## 3) Invites (User-to-User)
 
-<!-- Shouldn't have the generated code? Code will be only on share? -->
 ### `GET /invites`
 **Purpose:** Invites feed and referral context.  
 **Request (query):**
@@ -292,21 +303,16 @@
 
 ### `POST /branding/update`
 **Purpose:** Update tenant About/logo/icon/colors.  
-**Request (body):**
-```json
-{
-  "about": "string?",
-  "logo_light_url": "string?",
-  "logo_dark_url": "string?",
-  "icon_light_url": "string?",
-  "icon_dark_url": "string?",
-  "theme_data_settings": {
-    "primary_seed_color": "#RRGGBB",
-    "secondary_seed_color": "#RRGGBB",
-    "brightness_default": "light|dark"
-  }
-}
-```
+**Request (multipart/form-data):**
+- `theme_data_settings[brightness_default]` (`light|dark`)
+- `theme_data_settings[primary_seed_color]` (`#RRGGBB`)
+- `theme_data_settings[secondary_seed_color]` (`#RRGGBB`)
+- `logo_settings[light_logo_uri]` (png file, optional)
+- `logo_settings[dark_logo_uri]` (png file, optional)
+- `logo_settings[light_icon_uri]` (png file, optional)
+- `logo_settings[dark_icon_uri]` (png file, optional)
+- `logo_settings[favicon_uri]` (ico file, optional)
+- `logo_settings[pwa_icon]` (png file, optional; generates variants)
 **Response:** **TBD** (return updated branding payload).
 
 ---
@@ -314,6 +320,7 @@
 ## 8) Deferred (Do Not Implement in MVP)
 - Partner-issued invites + partner invite metrics endpoints.
 - Sponsors POIs endpoints.
+- `/initialize` (system bootstrap) is out of MVP scope; `/environment` is the MVP entrypoint.
 
 ---
 

@@ -11,8 +11,14 @@ application/*
 
 # AI Agents
 AGENTS.md
-delphi-ai/
+delphi-ai
 GEMINI.md
 gemini_memory.md
 .agent
+!.agent/rules/
+!.agent/workflows/
+!flutter-app/.agent/rules/
+!flutter-app/.agent/workflows/
+!laravel-app/.agent/rules/
+!laravel-app/.agent/workflows/
 foundation_documentation_tmp/
