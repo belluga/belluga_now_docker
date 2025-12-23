@@ -7,6 +7,11 @@
 ## Cross-Team Gate (Must Do First)
 - [ ] ⚪ Finalize `foundation_documentation/endpoints_mvp_contracts.md` **together** (Frontend + Backend).
 
+**scope:** Finalize MVP endpoint schemas in `foundation_documentation/endpoints_mvp_contracts.md`, including removing `/onboarding/context` and documenting `/environment` as the onboarding/branding source.  
+**out_of_scope:** Laravel/Flutter implementation, non‑MVP endpoints, DB schema changes.  
+**definition_of_done:** No `TBD` for MVP endpoints; `/onboarding/context` removed; `/environment` clearly defined as branding source; roadmap endpoint list updated accordingly.  
+**validation_steps:** Manual check against `foundation_documentation/system_roadmap.md` + `foundation_documentation/endpoints_mvp_contracts.md` for consistency.
+
 ---
 
 ## Backend Contract Execution (Mock → Prod on Same Routes)

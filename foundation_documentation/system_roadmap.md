@@ -14,21 +14,20 @@ This roadmap enumerates the foundational milestones for the Belluga ecosystem. I
 | Flutter Client Experience | FCX-03 | Wire mocked repositories/services to tenant home, agenda, invites, map, and profiles based on contracts. | 2025-03-12 | Planned | Delphi |
 | Flutter Client Experience | FCX-04 | Implement telemetry (Mixpanel) baseline for MVP flows. | 2025-03-19 | Planned | Delphi |
 | Flutter Client Experience | FCX-05 | Add location permission guard + permission screen for geo-dependent routes (map/nearby). | 2025-03-26 | Planned | Delphi |
+| Platform Realtime | PRX-01 | Add SSE delta streams for app feeds (events, invites, POIs) to complement page-based pagination. | 2025-04-02 | Planned | Delphi |
 
 ## 3. API Endpoint Tracking
 
 | Endpoint | Module | Description | Current Status | Notes |
 |----------|--------|-------------|----------------|-------|
 | `/v1/anonymous/identities` | MOD-101 | Anonymous identity bootstrap (Sanctum token issuance for web/app guest flows). | Implemented | Unauthenticated route returns `{user_id, identity_state, token, abilities, expires_at?}`; abilities/TTL controlled by `tenant.anonymous_access_policy`. |
-| `/v1/app/home-overview` | MOD-201 | Tenant home composition payload. | Mocked | Mock backend returns schema-aligned snapshot. |
 | `/v1/app/invites` | MOD-201 | Invite feed and referral graph. | Mocked | Prioritizes nearest events; enforces 1 invite per person/event; limits pending invites by role. |
 | `/v1/app/invites/settings` | MOD-201 | Backend-owned invite quotas, anti-spam limits, and UX messaging settings. | Planned | Backend enforces over-quota responses (`429`) and returns reset metadata; Flutter fetches for messaging/UX. |
 | `/v1/app/invites/share` | MOD-201 | External share codes for event invites (new user install/signup attribution). | Planned | Anyone who can invite can generate; resolves to `inviter_principal` (user or partner) + `event_id`; includes `/consume` to bind attribution post-install. |
-| `/v1/app/agenda` | MOD-201 | Paged agenda feed with event tags/thumb type, artist genres, invite filters, search, past-only toggle. | Defined | Request: `page`, `page_size`, `past_only`, `search`, `invite_filter` (none/invites_and_confirmed/confirmed_only). Response: items with `tags[]` (or artist-genre fallback), `thumb {url,type background|flyer}`, single `venue`, optional `artists[]` (may be empty, each with `genres[]`), `is_confirmed`, `total_confirmed`, invites/friends for halos; `has_more` flag. |
+| `/v1/app/agenda` | MOD-201 | Paged agenda feed with search + past toggle, includes happening-now events. | Defined | Request: `page`, `page_size`, `past_only`, `search`, `confirmed_only`. Response: full event DTO items (type, actions, tags, invites, sent_invites, friends_going, is_confirmed, total_confirmed), `has_more` flag. Happening-now rule: `date_time_start <= now < date_time_end` (default end = start + 3h). |
 | `/v1/app/map/pois` | MOD-201 | Map POIs (projection-backed). | Defined | `map_pois` projection updated from StaticAssets, Events, and POI-enabled Accounts; use MongoDB GeoQuery with viewport + optional origin/radius. |
 | `/v1/app/map/filters` | MOD-201 | Map filter discovery (categories/tags). | Planned | Required to remove hardcoded filter catalogs from mocks. |
-| `/v1/app/profile` | MOD-201 | Profile summary and role claims. | Defined | Mock payload authoring queued in FCX-02. |
-| `/v1/app/onboarding/context` | MOD-201 | Dynamic onboarding strings and branding. | Defined | Requires content modeling before mocking. |
+| `/v1/app/me` | MOD-201 | Authenticated profile summary and role claims. | Defined | Mock payload authoring queued in FCX-02. |
 | `/v1/app/partners/discovery` | MOD-201 | Partner discovery cards with engagement metrics and invite counts. | Mocked | Needs DTO/value-object mapping and shared prototype data for Laravel alignment. |
 | `/v1/app/events/{event_id}/check-in` | MOD-201 | Presence confirmation with geofence/QR/staff methods. | Mocked | Partner-defined radius; QR optional; accepted without check-in becomes no-show. |
 | `/v1/app/missions` | MOD-201 | Partner-created missions with metric targets and rewards. | Defined | Metrics selectable per mission; partner dashboard must show rankings/progress. |
