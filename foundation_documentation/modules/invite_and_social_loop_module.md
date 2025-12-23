@@ -162,16 +162,13 @@ To enforce both anti-spam policies and partner plan limits, the module maintains
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/v1/app/invites` | GET | Returns paginated invite feed with friend resumes, contextual prompts, quota status, and suppression flags per event. |
+| `/v1/app/invites/stream` | GET | Streams invite deltas for live updates (created/updated/deleted). |
 | `/v1/app/invites/settings` | GET | Returns backend-owned tenant settings relevant to invite quotas, anti-spam, and client UX messaging. |
 | `/v1/app/invites/share` | POST | Creates (or returns) an external share code that attributes installs/signups to an inviter principal for a specific event. |
-| `/v1/app/invites/share/{code}` | GET | Resolves share code context (event + inviter principal) and records an open; used for deep-link attribution. |
-| `/v1/app/invites/share/{code}/consume` | POST | Consumes the share code for the current user (post-install/post-signup) to bind attribution and enable conversion tracking. |
-| `/v1/app/invites/{inviteCode}/accept` | POST | Confirms an invite and emits `invite.accepted`. |
-| `/v1/app/invites/{inviteCode}/resend` | POST | Rotates share tokens and reissues invite links. |
-| `/v1/app/invites/{inviteCode}/snooze` | POST | Marks invite as `snoozed`, emits `invite.snoozed`, and registers a reminder intent. |
-| `/v1/app/invites/{inviteCode}/suppress-event` | POST | Blocks future invites for the same event (per receiver) until suppression is lifted. |
-| `/v1/app/invites/{inviteCode}/accept/import-contacts` | POST | Shortcut endpoint used immediately after an acceptance to trigger contact import/friend discovery without leaving the invite context. |
-| `/v1/app/invites/{inviteCode}/attendance` | POST | Allows invitees to self-report attendance (`confirmed`/`no_show`). Emits `invite.attendance.user-reported`; partner confirmations still override but both signals feed analytics/trust scoring. |
+| `/v1/app/invites/share/{code}/accept` | POST | Accepts a share invite for the current user and emits `invite.accepted`. |
+| `/v1/app/contacts/import` | POST | Imports hashed contacts for friend matching and invite discovery. |
+
+**Deferred (post-MVP) endpoints:** `/v1/app/invites/share/{code}` (resolve), `/v1/app/invites/share/{code}/consume`, `/v1/app/invites/{inviteCode}/accept`, `/v1/app/invites/{inviteCode}/resend`, `/v1/app/invites/{inviteCode}/snooze`, `/v1/app/invites/{inviteCode}/suppress-event`, `/v1/app/invites/{inviteCode}/accept/import-contacts`, `/v1/app/invites/{inviteCode}/attendance`.
 
 ### 4.3 External Share Invites (New Users Attribution)
 
@@ -181,7 +178,7 @@ V1 requires tracking external shares (WhatsApp/Instagram/etc.) for **new users**
 - For user inviters: authenticated user with invite permission.
 - For partner inviters: authenticated user must be an active `partner_membership` with `can_invite=true`; the inviter principal remains the partner, and `issued_by_user_id` is required for auditing.
 
-**Share code contract (server-stored):**
+**Share code contract (server-stored, MVP minimum):**
 ```json
 {
   "code": "String",
@@ -190,15 +187,13 @@ V1 requires tracking external shares (WhatsApp/Instagram/etc.) for **new users**
   "inviter_principal": { "kind": "user|partner", "id": "ObjectId()" },
   "issued_by_user_id": "ObjectId() | null",
   "created_at": "Date",
-  "expires_at": "Date | null",
-  "opens_count": "Number",
-  "consumed_count": "Number"
+  "expires_at": "Date | null"
 }
 ```
 
 **Key requirements:**
 - `code` resolves to a single inviter principal + event.
-- Backend records **opens** on resolve and binds **consumption** post-install/post-signup via `/consume`.
+- Backend records **share visits** and **invite acceptance**; acceptance is triggered by `/v1/app/invites/share/{code}/accept` (source = `share_url`).
 - Backend must prevent duplicate invite issuance to the same receiver+event+inviter principal (see Uniqueness rule); the share code is attribution, not a loophole to spam.
 
 ### 4.4 Web Acceptance + Same-Event Re-Share (V1 Exception)

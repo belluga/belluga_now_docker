@@ -7,10 +7,10 @@
 ## Cross-Team Gate (Must Do First)
 - [ ] ⚪ Finalize `foundation_documentation/endpoints_mvp_contracts.md` **together** (Frontend + Backend).
 
-**scope:** Finalize MVP endpoint schemas in `foundation_documentation/endpoints_mvp_contracts.md`, including removing `/onboarding/context` and documenting `/environment` as the onboarding/branding source.  
+**scope:** Finalize MVP endpoint schemas in `foundation_documentation/endpoints_mvp_contracts.md`, including removing `/onboarding/context` and documenting `/environment` as the onboarding/branding source; update related module docs that define these endpoints (agenda + map) so contracts stay aligned; add taxonomy filters/terms to the relevant request/response shapes.  
 **out_of_scope:** Laravel/Flutter implementation, non‑MVP endpoints, DB schema changes.  
-**definition_of_done:** No `TBD` for MVP endpoints; `/onboarding/context` removed; `/environment` clearly defined as branding source; roadmap endpoint list updated accordingly.  
-**validation_steps:** Manual check against `foundation_documentation/system_roadmap.md` + `foundation_documentation/endpoints_mvp_contracts.md` for consistency.
+**definition_of_done:** No `TBD` for MVP endpoints; `/onboarding/context` removed; `/environment` clearly defined as branding source; taxonomy filters/terms documented in contracts + related module docs; roadmap endpoint list updated accordingly.  
+**validation_steps:** Manual check against `foundation_documentation/system_roadmap.md` + `foundation_documentation/endpoints_mvp_contracts.md` + updated module docs for consistency.
 
 ---
 
@@ -20,23 +20,27 @@
 
 **Route status tracking (MVP endpoints):**
 - [ ] ⚪ `POST /anonymous/identities`
-- [ ] ⚪ `GET /home-overview`
-- [ ] ⚪ `GET /profile`
-- [ ] ⚪ `GET /onboarding/context`
+- [ ] ⚪ `GET /environment`
+- [ ] ⚪ `GET /me`
 - [ ] ⚪ `GET /invites`
+- [ ] ⚪ `GET /invites/stream` (SSE)
 - [ ] ⚪ `GET /invites/settings`
 - [ ] ⚪ `POST /invites/share`
 - [ ] ⚪ `POST /invites/share/{code}/accept`
+- [ ] ⚪ `POST /contacts/import`
 - [ ] ⚪ `GET /agenda`
+- [ ] ⚪ `GET /events/stream` (SSE)
 - [ ] ⚪ `GET /events/{event_id}`
 - [ ] ⚪ `POST /events/{event_id}/check-in`
 - [ ] ⚪ `GET /map/pois`
+- [ ] ⚪ `GET /map/pois/stream` (SSE)
 - [ ] ⚪ `GET /map/filters`
 - [ ] ⚪ `POST /push/register`
 - [ ] ⚪ `GET /accounts`
 - [ ] ⚪ `POST /accounts`
 - [ ] ⚪ `PATCH /accounts/{account_id}`
 - [ ] ⚪ `GET /assets`
+- [ ] ⚪ `GET /assets/{asset_id}`
 - [ ] ⚪ `POST /assets`
 - [ ] ⚪ `PATCH /assets/{asset_id}`
 - [ ] ⚪ `GET /events`
@@ -46,7 +50,8 @@
 
 **Backend testing expectations:**
 - [ ] ⚪ Contract tests assert schema for each endpoint.
-- [ ] ⚪ Query/filter tests (cursor, filters, distance) pass for mocks.
+- [ ] ⚪ Query/filter tests (page-based pagination, filters, distance) pass for mocks.
+- [ ] ⚪ SSE delta streams emit correct events and resync guidance is respected.
 - [ ] ⚪ Add unhappy-path tests when moving endpoints to production-ready.
 
 ---

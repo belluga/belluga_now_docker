@@ -12,6 +12,11 @@
 - `foundation_documentation/todos/active/mvp_slices/TODO-v1-first-release.md`
 - Deferred items: `foundation_documentation/todos/active/TODO-vnext-parking-lot.md`
 
+## Account + Partner Context (MVP)
+- Account remains generic; Partner is a 1:1 sibling model linked by `account_id`.
+- Partner stores domain fields like `type`, `tags`, and taxonomy terms (multi‑taxonomy: e.g., Venue can have `cuisines` and `music_genres`).
+- Discovery uses an aggregation over Account + Partner; admin CRUD remains in the tenant/admin route file.
+
 ---
 
 ## A) Backend Tasks

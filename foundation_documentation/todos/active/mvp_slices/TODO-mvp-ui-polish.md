@@ -3,7 +3,7 @@
 **Status legend:** `- [ ] ⚪ Pending` · `- [ ] 🟡 Provisional` · `- [x] ✅ Production‑Ready`.
 **Status:** Active  
 **Owners:** Flutter Team + Product  
-**Objective:** Apply MVP UI/UX adjustments captured in the printed notes, focused on clarity and simplification.
+**Objective:** Apply MVP UI/UX adjustments focused on clarity and simplification.
 
 ---
 

@@ -6,7 +6,7 @@
 
 ## 1. Overview
 
-The Tenant Home Composer module (MOD-301) assembles the personalized landing experience for every Guar[APP]ari user. It consumes upstream summaries (invites, agenda hints, partner promotions, map highlights) and emits a single schema for `/v1/app/home-overview`. The module runs in the tenant application tier and persists lightweight snapshots so mocked clients and production clients can converge on the same payload contract.
+The Tenant Home Composer module (MOD-301) assembles the personalized landing experience for every Guar[APP]ari user. For MVP, this module is **deferred**: home composition is client-side using independent requests (invites, agenda, map, discovery), and there is **no** aggregated home endpoint. Post-MVP, this module will emit a single schema and persist lightweight snapshots so mocked clients and production clients can converge on the same payload contract.
 
 ---
 
@@ -91,13 +91,9 @@ Captures user actions taken from the home screen so ranking logic can adapt.
 
 ---
 
-## 4. Interfaces
+## 4. Interfaces (Post-MVP)
 
-### 4.1 REST
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/v1/app/home-overview` | GET | Returns the latest snapshot for the authenticated tenant user, regenerating if stale. |
-| `/v1/app/home-overview/feedback` | POST | Records section-level engagement metrics. |
+**MVP note:** no home composer API is shipped; the app composes home from independent endpoints. Post-MVP endpoint names are to be defined alongside the final home payload contract.
 
 ### 4.2 Events
 * **Inbound:** `invites.summary.updated`, `agenda.snapshot.updated`, `partner.highlight.updated`, `poi.highlight.updated`.
@@ -115,6 +111,6 @@ Captures user actions taken from the home screen so ranking logic can adapt.
 
 ## 6. Roadmap
 
-1. **MVP (FCX-01/02):** Static rulesets, deterministic ordering, manual stitching of invites and featured offerings from mocks.
+1. **MVP (FCX-01/02):** Deferred; client composes home from independent endpoints (invites, agenda, map, discovery).
 2. **Phase 8 Dependency:** Integrate Multidimensional Insights snapshots to surface gamified leaderboards.
 3. **Phase 10 Alignment:** Receive backend-driven aggregation payloads to fully replace mock data while preserving the same schema.

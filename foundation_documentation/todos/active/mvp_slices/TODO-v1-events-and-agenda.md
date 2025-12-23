@@ -17,12 +17,13 @@
 ## A) Backend Tasks
 
 ### A1) Agenda/events endpoints (MOD-201)
-- [ ] ⚪ Ensure `/v1/app/agenda` contract is implemented or mocked as defined in `foundation_documentation/system_roadmap.md`
+- [ ] ⚪ Ensure `/v1/app/agenda` contract is implemented or mocked (page-based pagination + filters + geo + confirmed_only) per `foundation_documentation/endpoints_mvp_contracts.md`
+- [ ] ⚪ Ensure `/v1/app/events/stream` SSE emits delta events aligned with active filters (created/updated/deleted)
 - [ ] ⚪ Ensure event detail includes:
-  - [ ] ⚪ `event_id`, `slug`
-  - [ ] ⚪ `start_at`, `end_at` (or duration)
-  - [ ] ⚪ venue + artists references (partner ids when available)
-  - [ ] ⚪ invite-related context (if needed for UI)
+  - [ ] ⚪ `id`, `slug`, `type`, `title`, `content`, `location`
+  - [ ] ⚪ `date_time_start`, `date_time_end` (or default duration)
+  - [ ] ⚪ venue + artists + participants projections
+  - [ ] ⚪ invite-related arrays (`received_invites`, `sent_invites`, `friends_going`)
 
 ### A2) Presence confirmation
 - [ ] ⚪ Confirm presence endpoint `/v1/app/events/{event_id}/check-in` (mock or implemented)
@@ -46,4 +47,3 @@
 
 - [ ] ⚪ Users can browse events, open event detail, and confirm presence
 - [ ] ⚪ Invite actions are available from event detail and do not duplicate invites
-

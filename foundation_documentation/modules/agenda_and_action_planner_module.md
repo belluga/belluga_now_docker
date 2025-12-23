@@ -76,7 +76,7 @@ Stores every user action triggered from an agenda card for observability and com
 Agenda surfaces events as a paged list; Flutter consumes this shape for cards, invites, and chips.
 
 **Request (paged list)**
-- Query: `page` (int), `page_size` (int), `past_only` (bool), `search` (string), `invite_filter` (enum).
+- Query: `page` (int), `page_size` (int), `past_only` (bool), `search` (string), `categories[]`, `tags[]`, `taxonomy[]`, `origin_lat`, `origin_lng`, `max_distance_meters`, `confirmed_only` (bool).
 
 **Response**
 ```json
@@ -85,33 +85,64 @@ Agenda surfaces events as a paged list; Flutter consumes this shape for cards, i
     {
       "id": "string",
       "slug": "string",
+      "type": {
+        "id": "string",
+        "name": "string",
+        "slug": "string",
+        "description": "string",
+        "icon": "string?",
+        "color": "#RRGGBB?"
+      },
       "title": "string",
-      "description": "string (optional)",
-      "start_at": "ISO8601",
-      "end_at": "ISO8601 (optional)",
-      "thumb": { "url": "string", "type": "background|flyer" },
-      "venue": { "id": "string", "name": "string", "address": "string", "latitude": 0, "longitude": 0 },
+      "content": "string",
+      "location": "string",
+      "venue": {
+        "id": "string",
+        "display_name": "string",
+        "tagline": "string?",
+        "hero_image_url": "string?",
+        "logo_url": "string?",
+        "taxonomy_terms": [{ "type": "string", "value": "string" }]
+      },
+      "latitude": 0.0,
+      "longitude": 0.0,
+      "thumb": { "type": "image", "data": { "url": "string" } },
+      "date_time_start": "2025-01-01T00:00:00Z",
+      "date_time_end": "2025-01-01T00:00:00Z?",
       "artists": [
         { "id": "string", "name": "string", "avatar_url": "string (optional)", "highlight": false, "genres": ["string"] }
       ],
-      "tags": ["string"],            // optional; when empty UI falls back to artist.genres
+      "participants": [
+        {
+          "partner": {
+            "id": "string",
+            "display_name": "string",
+            "tagline": "string?",
+            "hero_image_url": "string?",
+            "logo_url": "string?",
+            "taxonomy_terms": [{ "type": "string", "value": "string" }]
+          },
+          "role": "string",
+          "is_highlight": false
+        }
+      ],
       "actions": [ /* CTA descriptors, unchanged */ ],
       "is_confirmed": false,
       "total_confirmed": 0,
-      "friends_going": [ /* lightweight friend resumes */ ],
       "received_invites": [ /* invite DTOs */ ],
-      "sent_invites": [ /* sent invite status DTOs */ ]
+      "sent_invites": [ /* sent invite status DTOs */ ],
+      "friends_going": [ /* lightweight friend resumes */ ],
+      "tags": ["string"]
     }
   ],
   "has_more": true
 }
 ```
 
-**Display rule:** chips use `event.tags` if provided; otherwise aggregate all `artists[*].genres`; if both are empty, show no chips. Artists list itself may be empty. `thumb.type = flyer` is a pre-designed poster; `background` expects UI overlays.
+**Display rule:** chips use `event.tags` if provided; otherwise aggregate all `artists[*].genres`; if both are empty, show no chips. Artists list itself may be empty.
 
 ### Field Definitions
-- `thumb.type` ∈ {`background`, `flyer`}
-- `invite_filter` (query) ∈ {`none`, `invites_and_confirmed`, `confirmed_only`}
+- `thumb.type` ∈ {`image`}
 
 ---
 
@@ -120,8 +151,8 @@ Agenda surfaces events as a paged list; Flutter consumes this shape for cards, i
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/v1/app/agenda` | GET | Returns grouped timeline nodes plus derived counts. |
-| `/v1/app/agenda/{nodeId}/action` | POST | Executes an action descriptor; triggers domain-specific workflows (confirm booking, share invite, contact partner). |
-| `/v1/app/agenda/sync` | POST | Enrolls the user into background calendar sync jobs. |
+
+**Deferred (post-MVP):** `/v1/app/agenda/{nodeId}/action`, `/v1/app/agenda/sync`.
 
 **Events**
 * Inbound: `booking.confirmed`, `booking.cancelled`, `invite.accepted`, `poi.favorite.added`, `task.reminder.scheduled`.

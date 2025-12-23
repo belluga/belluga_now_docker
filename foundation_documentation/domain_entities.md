@@ -58,6 +58,7 @@ This list serves as the domain source of truth referenced by the `system_archite
   - `experience_provider`: context/location tags (e.g., mar, praia, mergulho, montanha).
   - `curator`: curatorial focus (e.g., história, causos).
   - `influencer` (personalidade): focus areas (e.g., lifestyle, baladas).
+- `taxonomy_terms` (array of objects): optional, WordPress-style multi-taxonomy list of `{type, value}` pairs (e.g., `{type: cuisine, value: italian}` or `{type: music_genre, value: samba}`). Partners may carry multiple taxonomy types simultaneously (venues can have cuisines + music genres).
 
 ### Social Graph & Presence Field Definitions
 

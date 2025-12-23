@@ -19,13 +19,13 @@ The Onboarding Flow module (MOD-307) owns the full first-time experience across 
             2. Contact import prompt (`import contacts to share with friends`) wired to Invite module’s endpoint.
             3. Optional “Find friends” preview from `friend_resumes` to encourage immediate viral sharing.
         * After contact import (or skip), user transitions to preference capture + location consent steps to personalize home/map.
-    * Integration: Directly calls `/v1/app/invites/{inviteCode}/accept/import-contacts` if the user chooses to import, and passes invite metadata into onboarding state so preference recommendations can reference the same event/partner.
+    * Integration: Calls `/v1/app/invites/share/{code}/accept` to confirm the invite, then uses `POST /v1/app/contacts/import` if the user opts to import contacts. Invite metadata is stored locally so preference recommendations can reference the same event/partner.
 
 2. **Invite Decline / No Invite Path**
     * Steps:
         * User declines invite (or arrives without one) → flows into preference capture wizard.
         * Prompts include “What are you looking for today?” categories, location consent, and optional contact import later in the flow.
-        * Produced values feed Tenant Home Composer (initial sections) and Map module (initial filters).
+    * Produced values feed the Map module (initial filters) and local home composition logic.
     * Integration: When user declines an invite for an event, onboarding triggers `invite.suppressed` for that event and optionally suggests alternative events via home/map modules.
 
 ## 3. Core Responsibilities
@@ -39,8 +39,8 @@ The Onboarding Flow module (MOD-307) owns the full first-time experience across 
     * Sessions expire after defined inactivity windows; Task & Reminder module receives `task.intent` when users exit mid-way.
 
 3. **Preference Capture**
-    * Standard API contract: `POST /v1/onboarding/preferences` with categories, tags, location sharing preference, radius default.
-    * Stored preferences feed initial Map filter payloads and Tenant Home Composer rulesets.
+    * MVP stores preferences locally (categories, tags, location preference, radius default).
+    * Backend preference persistence is deferred post-MVP.
 
 4. **Location Consent & Initialization**
     * Step ensures location permissions are requested once, with tenant-specific privacy copy.

@@ -14,7 +14,7 @@
 * **Purpose Statement:** Establish the foundational Flutter application that orchestrates tenant, partner, and promoter experiences through a clean architecture stack (presentation, domain, infrastructure) wired to mocked service contracts that mirror the definitive API.
 * **Core Entities:** User, Partner, Offering, Transaction.
 * **Key Workflows:** Adaptive onboarding, tenant home discovery, invite and social growth loop, agenda management, map exploration with POIs, authenticated profile utilities.
-* **External Dependencies:** AutoRoute (navigation), GetIt (DI container), StreamValue (reactive state wrapper), value_object_pattern, Firebase Cloud Messaging (future push integration), mocked HTTP/WebSocket backends.
+* **External Dependencies:** AutoRoute (navigation), GetIt (DI container), StreamValue (reactive state wrapper), value_object_pattern, Firebase Cloud Messaging (future push integration), mocked HTTP + SSE backends.
 * **Service-Level Objectives:** Screen state transitions <150 ms under mock data; cold-start bootstrap <2.5 s on mid-range devices; navigation stack integrity with zero controller leaks; 100 % controller-stream parity (no orphaned state).
 
 #### 2.1 Domain Rules
@@ -23,27 +23,34 @@
 * **Validation Rules:** Input fields rely on domain value objects (e.g., `EmailValue`, `PasswordValue`); invite codes enforce length 6–12; POI filter radius 1–50 km; schedule entries require ISO-8601 timestamps.
 * **Authorization Requirements:** Anonymous flow limited to onboarding and invite acceptance; authenticated tenant scope unlocks home, schedule, map; partner scope exposes partner dashboards (future flavor); promoter scope requires explicit feature flag.
 * **Shared Services:** `UserLocationService` + `LocationRepository` live in the domain layer. Controllers (Map, Search, Invite Check-in) inject the service to request permission, seed initial filters, and pass coordinates to repositories. Repositories never call each other; services wrap a single repository per architecture principle §2.5.
-* **Task & Invite Hooks:** Controllers subscribe to `TaskStream` (from Task & Reminder module) to show outstanding reminders (e.g., invite follow-ups, check-ins). Invite controllers must respect `Web-to-App Promotion Policy` by deep-linking to `/attendance` and `/accept/import-contacts` endpoints instead of handling critical actions purely on the web.
+* **Task & Invite Hooks:** TaskStream integration is deferred post-MVP. Invite controllers must respect `Web-to-App Promotion Policy` by deep-linking to `/invites/share/{code}/accept` and using `POST /contacts/import` instead of handling critical actions purely on the web.
 
 #### 2.2 API Endpoint Definitions
 
 | Endpoint | Method | Description | Required Role | Request Schema | Response Schema |
 |----------|--------|-------------|---------------|----------------|-----------------|
-| `/v1/app/home-overview` | GET | Fetches the tenant home composition (hero sections, featured offerings, invite prompts). | Tenant | `HomeOverviewRequest` | `HomeOverviewResponse` |
+| `/v1/environment` | GET | Resolves tenant branding/context for app bootstrap. | Anonymous | `EnvironmentRequest` | `EnvironmentResponse` |
+| `/v1/app/me` | GET | Delivers authenticated profile summary and role claims. | Tenant | `MeRequest` | `MeResponse` |
 | `/v1/app/invites` | GET | Retrieves pending invites and social proof metadata for the current user. | Tenant | `InviteFeedRequest` | `InviteFeedResponse` |
+| `/v1/app/invites/stream` | GET | Streams invite deltas for live updates. | Tenant | `InviteStreamRequest` | SSE delta events |
+| `/v1/app/invites/settings` | GET | Fetches invite limits and UX messaging settings. | Tenant | `InviteSettingsRequest` | `InviteSettingsResponse` |
+| `/v1/app/invites/share` | POST | Creates or returns a share code for an event invite. | Tenant | `InviteShareRequest` | `InviteShareResponse` |
+| `/v1/app/invites/share/{code}/accept` | POST | Accepts a share invite for the current user (records source). | Tenant | `InviteShareAcceptRequest` | `InviteShareAcceptResponse` |
+| `/v1/app/contacts/import` | POST | Imports hashed contacts for friend matching. | Tenant | `ContactsImportRequest` | `ContactsImportResponse` |
 | `/v1/app/agenda` | GET | Provides schedule entries, suggested actions, and contextual CTAs. | Tenant | `AgendaRequest` | `AgendaResponse` |
+| `/v1/app/events/stream` | GET | Streams event deltas for active filters. | Tenant | `EventStreamRequest` | SSE delta events |
+| `/v1/app/events/{event_id}` | GET | Returns event detail. | Tenant | `EventDetailRequest` | `EventDetailResponse` |
+| `/v1/app/events/{event_id}/check-in` | POST | Confirms presence for an event. | Tenant | `EventCheckInRequest` | `EventCheckInResponse` |
 | `/v1/app/map/pois` | GET | Returns POIs for the active viewport and filter set. | Tenant | `MapPoisRequest` | `MapPoisResponse` |
-| `/v1/app/profile` | GET | Delivers profile summary, identity claims, and linked partner roles. | Tenant | `ProfileRequest` | `ProfileResponse` |
-| `/v1/app/onboarding/context` | GET | Supplies localization strings, branding palette, and dynamic CTA verbs. | Anonymous | `OnboardingContextRequest` | `OnboardingContextResponse` |
-| `/v1/tasks` | GET | Lists active tasks/reminders (invite follow-ups, check-ins, partner requirements). | Tenant | `TaskListRequest` | `TaskListResponse` |
-| `/v1/tasks/{taskId}/complete` | POST | Completes tasks (via in-app actions) and feeds back into invite/partner flows. | Tenant | `TaskCompleteRequest` | `TaskCompleteResponse` |
+| `/v1/app/map/pois/stream` | GET | Streams POI deltas for active filters. | Tenant | `MapPoisStreamRequest` | SSE delta events |
+| `/v1/app/map/filters` | GET | Returns server-defined categories/tags for map filters. | Tenant | `MapFiltersRequest` | `MapFiltersResponse` |
 
 *Success/Failure Handling:* All endpoints return `metadata.request_id` for tracing, success payloads encapsulated in `data`, and standardized error envelopes with `error.code`, `error.message`, `error.hints[]`. Mock implementations must reproduce this contract exactly.
 *Rate Limiting:* Soft limit of 5 req/min per endpoint during mock stage to mirror production throttles; burst handling delegated to controller retry strategies.
 
 #### 2.3 Data Schemas
 
-##### Collection: home_overviews
+##### Deferred (post-MVP): home_overviews
 
 **Schema Definition**
 
@@ -124,7 +131,7 @@
 * `live_status`: Valid values are `static`, `live_event`, `sponsored_highlight`.
 * `OfferDocument.kind`: Valid values are `discount`, `bundle`, `vip_pass`.
 
-##### Collection: profile_summaries
+##### Deferred (post-MVP): profile_summaries
 
 **Schema Definition**
 
@@ -148,12 +155,12 @@
 #### 2.4 Event & Messaging Contracts
 
 * **Outbound Events:** `app.session_bootstrapped` emitted when the bootstrap sequence finalizes, payload includes `user_id`, `active_modules`, `timestamp`. `app.invite_consumed` fired when an invite transitions to `accepted`.
-* **Inbound Events:** `poi.moved`, `offer.activated`, `offer.deactivated` simulated through WebSocket mock; controllers ensure idempotent application by comparing `event.sequence`.
+* **Inbound Events:** SSE delta events (`poi.created`, `poi.updated`, `poi.deleted`, `event.created`, `event.updated`, `event.deleted`) simulated through mock streams; controllers ensure idempotent application by comparing `event.sequence`.
 * **Queue/Topic Configuration:** FCM topics follow `partner_{partnerId}` naming; mocked notifier replicates topic subscription flow to guarantee DI wiring.
 
 #### 2.5 Background Jobs & Schedulers
 
-* Application schedules `DailyRefreshJob` (7 AM local) to refresh cached home overview and agenda using background fetch APIs.
+* Application schedules `DailyRefreshJob` (7 AM local) to refresh cached invites and agenda using background fetch APIs.
 * `InviteExpirySweep` runs hourly to mark stale invites and emit UI updates.
 * Jobs delegate to controllers’ services and honor app lifecycle (pause/resume) to avoid stale state.
 
@@ -161,21 +168,21 @@
 
 * **Logs:** Structured debug logs via `dart:developer` with fields `{event, controller, payloadHash}`; upload to Crashlytics in production.
 * **Metrics:** Custom analytics events (`home_section_view`, `invite_action`, `poi_tap`) proxied through a unified `AnalyticsService`.
-* **Tracing:** Session traces captured with Firebase Performance; spans named `Controller::<Action>` (e.g., `TenantHomeController::loadOverview`).
+* **Tracing:** Session traces captured with Firebase Performance; spans named `Controller::<Action>` (e.g., `TenantHomeController::loadHome`).
 * **Alerts:** Crash-free sessions threshold ≥99%; analytics anomaly detection (invite acceptance drop >20 % triggers alert).
 
 #### 2.7 Testing Strategy
 
 * **Unit Tests:** 100 % coverage for controllers’ state transitions, repository mocks, and value object validations.
 * **Integration Tests:** AutoRoute navigation flows, DI bootstrap, and StreamValue-driven UI updates using `flutter_test`.
-* **Contract Tests:** Golden contract tests ensuring mock responses match schema definitions; WebSocket event shape validation.
+* **Contract Tests:** Golden contract tests ensuring mock responses match schema definitions; SSE event shape validation.
 * **Performance Tests:** Frame budget tests for home, map, and schedule screens under 60 fps minimum using `integration_test`.
 
 ## 3. Cross-Module Considerations
 
 * **Shared Libraries:** `lib/application` hosts theming and localization contracts; `lib/presentation/shared/widgets` houses reusable components (e.g., `MainLogo`, `BellugaBottomNavigationBar`); `lib/domain/value_objects` encapsulates validation logic shared across modules.
 * **Data Ownership Boundaries:** Mock repositories remain the single source of truth for state; cached DTOs never overwrite domain models without controller orchestration.
-* **Failure & Degradation Modes:** When WebSocket mock disconnects, controllers downgrade to polling (`/v1/app/map/pois`) and surface passive UI states; offline mode caches last successful responses and displays timestamped banners.
+* **Failure & Degradation Modes:** When SSE streams disconnect, controllers downgrade to polling (`/v1/app/map/pois`) and surface passive UI states; offline mode caches last successful responses and displays timestamped banners.
 
 ## 4. Implementation Notes
 

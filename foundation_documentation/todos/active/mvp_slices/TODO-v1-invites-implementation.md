@@ -12,6 +12,19 @@
 - `foundation_documentation/modules/partner_admin_module.md`
 - Deferred items: `foundation_documentation/todos/active/TODO-vnext-parking-lot.md`
 
+## Invite Flow Summary (MVP)
+- User confirms presence on an event (enables invite context + metrics).
+- To invite:
+  - **Matched user**: app uses `POST /v1/app/contacts/import` (hashed contacts). If a match exists, backend creates invite and sends push.
+  - **No match**: app generates a share link via `POST /v1/app/invites/share` and sends externally (e.g., WhatsApp).
+- Acceptance:
+  - `POST /v1/app/invites/share/{code}/accept` binds attribution to `inviter_principal`.
+  - Acceptance counts as `invite_accepted` with `source = share_url`.
+  - Only one accepted invite per `(tenant_id, event_id, receiver_user_id)`; others become `closed_duplicate`.
+- Tracking:
+  - `share_visit` is analytics only (not an accepted invite).
+  - No raw PII stored; only contact hashes are persisted.
+
 ## A) Backend Work
 
 ### A1) Data model requirements
@@ -39,6 +52,10 @@
 - [ ] ⚪ Create/bind an anonymous identity on web acceptance so the backend can persist acceptance + attribution (anonymous user + Sanctum token is sufficient)
 - [ ] ⚪ Allow external re-share only for the same `event_id` after acceptance, with strict backend limits
 - [ ] ⚪ Invite share links must carry the `code` as a GET parameter in the URL
+
+### A1.3) Contacts + realtime deltas
+- [ ] ⚪ Implement `POST /v1/app/contacts/import` (hashed contact matching for friend suggestions)
+- [ ] ⚪ Expose `/v1/app/invites/stream` SSE for invite deltas (created/updated/deleted)
 
 ### A2) Uniqueness + responses
 - [ ] ⚪ Enforce uniqueness key:

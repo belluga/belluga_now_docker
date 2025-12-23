@@ -24,6 +24,10 @@ Required behaviors:
 - Deep link into the app to the correct surface (invite context or event detail).
 - Respect tenant-level notification policies provided by the backend.
 
+## Push Policy Summary (MVP)
+- No channel filtering in V1; users receive all push types by default.
+- Backend uses server-side fan‑out for event reminders and favorites audiences.
+
 ---
 
 ## B) Backend Requirements

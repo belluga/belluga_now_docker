@@ -11,6 +11,11 @@
 - `foundation_documentation/todos/active/mvp_slices/TODO-v1-first-release.md`
 - `foundation_documentation/todos/active/TODO-vnext-parking-lot.md`
 
+## Taxonomy Summary (MVP)
+- Partners can carry multiple taxonomies (WordPress‑style). A Venue may have `cuisines` and also `music_genres`.
+- Taxonomy terms are **typed** (e.g., `music_genres`, `cuisines`, `experiences`) and can be filtered independently.
+- Favorites are driven by **capability** (interim policy: `artist` and `venue` are favoritable until backend sends `is_favoritable`).
+
 ---
 
 ## A) Backend Tasks

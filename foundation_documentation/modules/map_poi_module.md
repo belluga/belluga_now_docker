@@ -25,7 +25,7 @@ The initial prototype uses a mocked data layer that simulates fetching POIs from
 
 Initial architectural discussions considered a client-heavy caching model. However, requirements for powerful geospatial search, real-time location tracking, and live state changes make a **server-centric, real-time model** the superior approach.
 
-This architecture leverages a powerful backend database (e.g., **MongoDB with geospatial indexes**) to handle all complex queries, while using a real-time communication layer (**WebSockets**) to push instant updates to clients.
+This architecture leverages a powerful backend database (e.g., **MongoDB with geospatial indexes**) to handle all complex queries, while using a real-time communication layer (**SSE**) to push instant updates to clients.
 
 *A core principle of this architecture is to **Build for the Future**. The B2C client application and its underlying mock data layer will be built to support the full v1.1 feature set from the start, even if some features are only testable via a debug menu initially. This avoids building technical debt and ensures the foundation is scalable.*
 
@@ -35,9 +35,9 @@ The primary mechanism for fetching POIs will be an on-demand process driven by t
 
 **Radius semantics:** The radius filter is always anchored around a reference point (current user location by default, or a manually selected center supplied through the initial filter payload). While the user pans the map, the reference point does **not** change automatically; we continue to query “POIs within X meters of the reference point.” If the user wants to search the newly centered area, we surface a “Search this area” button — pressing it resets the reference point to the new center and reissues the radius-constrained fetch. This keeps “Max 10 km” intentions consistent regardless of map movement. The client caches the results of these calls to ensure smooth performance and provide a degree of offline functionality.
 
-### 3.2. Real-Time Updates (WebSocket API)
+### 3.2. Real-Time Updates (SSE)
 
-For instant updates like moving POIs and live offers, a persistent WebSocket connection will be used. The backend will push events to subscribed clients, which will update the UI in real-time without a full refresh.
+For instant updates like moving POIs and live offers, a persistent SSE connection will be used. The backend will push delta events to subscribed clients, which will update the UI in real-time without a full refresh.
 
 ### 3.3. User Interface and Interaction
 
@@ -54,7 +54,7 @@ When a user taps a POI, a details card will appear with "Details", "Share", and 
 
 ## 4. API Requirements for Proposed Architecture
 
-This architecture requires a REST API for on-demand queries and a WebSocket API for real-time events. The data model for a POI will need to include a `priority` field to control the visual stacking order.
+This architecture requires a REST API for on-demand queries and an SSE API for real-time events. The data model for a POI will need to include a `priority` field to control the visual stacking order.
 
 ### 3.4 POI Type Registry & Navigation
 - **Normalized IDs/Slugs:** Every custom object (poi, event, artist) exposes `id`, `slug`, and `type`. Navigation and actions use the slug as the canonical identifier; IDs back lookups but routing is slug-first.
@@ -223,7 +223,7 @@ Response shape (example):
         - `ne_lat`, `ne_lng`, `sw_lat`, `sw_lng` (optional but recommended): current map viewport bounds.
         - `origin_lat`, `origin_lng` (optional): reference point for `$geoNear` / distance ordering; if omitted, backend may derive from viewport center.
         - `max_distance_meters` (optional): radius filter anchored to origin; when present, backend must compute `distance_meters`.
-        - `categories[]`, `tags[]`, `search` (optional): filters and free-text matching.
+        - `categories[]`, `tags[]`, `taxonomy[]`, `search` (optional): filters and free-text matching (taxonomy entries are `{type, value}` pairs).
         - `sort` (optional): `priority`, `distance`, `time_to_event`.
     -   Backend enforcement:
         - Use MongoDB geospatial queries (`$geoNear` and/or `$geoWithin`) as the authoritative source of “nearby” truth.
@@ -231,12 +231,13 @@ Response shape (example):
         - Apply time-window filters for `time_anchor_at` using backend-owned tenant settings (future/past windows). The client should not hardcode visibility windows.
     -   Response fields: standard POI attributes plus `distance_meters` (double, optional when distance is not requested). When sorting by `distance`, backend orders by ascending distance while still honoring priority tiers (sponsors > live events > others).
 2.  **Filter Discovery Endpoint:** `GET /v1/app/map/filters`
-    -   Returns all available categories and their associated tags to dynamically build the filter UI.
+    -   Returns all available categories and their associated tags to dynamically build the filter UI (taxonomy catalog is sourced separately and applied as advanced filters when needed).
 
-### 4.2. WebSocket API (Real-Time Events)
+### 4.2. SSE API (Real-Time Events)
 
-The client will connect to a WebSocket endpoint and subscribe to events for the visible map area.
--   **Server pushes events:** `poi:moved`, `poi:offer_activated`, `poi:offer_deactivated`.
+The client will connect to an SSE endpoint and subscribe to events for the visible map area.
+-   **Server pushes events:** `poi.created`, `poi.updated`, `poi.deleted`.
+    - **Endpoint:** `GET /v1/app/map/pois/stream` (filters match `/v1/app/map/pois`).
 
 ## 5. Roadmap and Strategic Decisions
 
@@ -248,7 +249,7 @@ The client will connect to a WebSocket endpoint and subscribe to events for the 
 -   The "Partner" or "Landlord" functionality for managing POIs and offers will not be a separate application. It will be a different mode or build flavor within the main Flutter codebase, ensuring efficiency and code reuse.
 
 ### 5.3. Implementation Roadmap
--   **Phase 1 (Complete):** Foundational Mock Data Layer (`MockPoiDatabase`, `MockHttpService`, `MockWebSocketService`).
+-   **Phase 1 (Complete):** Foundational Mock Data Layer (`MockPoiDatabase`, `MockHttpService`, `MockSseService`).
 -   **Phase 2 (In Progress):** Connect Data Layer to UI (Refactor `Repository`, `Controller`, and `Screen`).
 -   **Phase 2.1 (Queued):** Implement Core Visual Logic (Visual Stacking Order using the `priority` field).
 -   **Phase 3 (Queued):** Implement Feature UI (Filtering Panel, POI Details Card with Deselection Logic).

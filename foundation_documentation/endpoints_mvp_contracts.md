@@ -19,6 +19,7 @@
 - Distance fields:
   - `distance_meters` is returned when the backend computes distance from an origin (see Map).
   - For non-map lists (agenda/home), include `distance_meters` only when requested; otherwise omit.
+- Taxonomy terms are typed pairs: `{ "type": "string", "value": "string" }` (WordPress-style, multi-taxonomy per partner).
 
 ---
 
@@ -275,7 +276,7 @@
 
 ### `GET /events/stream` (SSE)
 **Purpose:** Stream event changes for active app filters (SSE).  
-**Request (query):** same filters as `/agenda` (`search`, `categories[]`, `tags[]`, `confirmed_only`, `origin_lat`, `origin_lng`, `max_distance_meters`).  
+**Request (query):** same filters as `/agenda` (`search`, `categories[]`, `tags[]`, `taxonomy[]`, `confirmed_only`, `origin_lat`, `origin_lng`, `max_distance_meters`).  
 **Event types:**
 - `event.created` (new event matches filters)
 - `event.updated` (fields changed)
@@ -296,6 +297,7 @@
   "search": "string?",
   "categories": ["string"],
   "tags": ["string"],
+  "taxonomy": [{ "type": "string", "value": "string" }],
   "origin_lat": 0.0,
   "origin_lng": 0.0,
   "max_distance_meters": 100000,
@@ -311,6 +313,7 @@
 - Search matches `title`, `content`, or any `artists[].name` (case-insensitive).
 - Categories filter matches `type.slug` or event categories when available (case-insensitive).
 - Tags filter matches any `tags[]` on the event (case-insensitive).
+- Taxonomy filter matches any `taxonomy_terms` attached to the venue or participants (case-insensitive).
 - If `origin_lat`/`origin_lng` are provided, filter within `max_distance_meters` (default 50000); if no matches, fall back to the unfiltered list.
 
 **Response (minimum):**
@@ -337,7 +340,8 @@
         "display_name": "string",
         "tagline": "string?",
         "hero_image_url": "string?",
-        "logo_url": "string?"
+        "logo_url": "string?",
+        "taxonomy_terms": [{ "type": "string", "value": "string" }]
       },
       "latitude": 0.0,
       "longitude": 0.0,
@@ -354,7 +358,8 @@
             "display_name": "string",
             "tagline": "string?",
             "hero_image_url": "string?",
-            "logo_url": "string?"
+            "logo_url": "string?",
+            "taxonomy_terms": [{ "type": "string", "value": "string" }]
           },
           "role": "string",
           "is_highlight": false
@@ -437,7 +442,8 @@
       "display_name": "string",
       "tagline": "string?",
       "hero_image_url": "string?",
-      "logo_url": "string?"
+      "logo_url": "string?",
+      "taxonomy_terms": [{ "type": "string", "value": "string" }]
     },
     "latitude": 0.0,
     "longitude": 0.0,
@@ -455,7 +461,8 @@
           "display_name": "string",
           "tagline": "string?",
           "hero_image_url": "string?",
-          "logo_url": "string?"
+          "logo_url": "string?",
+          "taxonomy_terms": [{ "type": "string", "value": "string" }]
         },
         "role": "string",
         "is_highlight": false
@@ -532,7 +539,7 @@
 
 ### `GET /map/pois/stream` (SSE)
 **Purpose:** Stream POI changes for the active map viewport/filters.  
-**Request (query):** same as `/map/pois` (`viewport`, `categories[]`, `tags[]`, `search`, `origin_lat`, `origin_lng`, `max_distance_meters`).  
+**Request (query):** same as `/map/pois` (`viewport`, `categories[]`, `tags[]`, `taxonomy[]`, `search`, `origin_lat`, `origin_lng`, `max_distance_meters`).  
 **Event types:**
 - `poi.created` (new POI matches filters)
 - `poi.updated` (fields changed)
@@ -553,6 +560,7 @@
   "max_distance_meters": 100000,
   "categories": ["culture"],
   "tags": ["string"],
+  "taxonomy": [{ "type": "string", "value": "string" }],
   "search": "string?",
   "sort": "priority|distance|time_to_event"
 }
@@ -562,7 +570,7 @@
 - `sort`: `priority`, `distance`, `time_to_event`.
 
 **Notes:**
-- Pagination is cursor-based elsewhere; map queries rely on viewport + radius rather than explicit item limits.
+- Pagination is page-based elsewhere; map queries rely on viewport + radius rather than explicit item limits.
 **Response (minimum):**
 ```json
 {
