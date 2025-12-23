@@ -6,7 +6,7 @@
 
 ## 1. Overview
 
-The Tenant Home Composer module (MOD-301) assembles the personalized landing experience for every Guar[APP]ari user. For MVP, this module is **deferred**: home composition is client-side using independent requests (invites, agenda, map, discovery), and there is **no** aggregated home endpoint. Post-MVP, this module will emit a single schema and persist lightweight snapshots so mocked clients and production clients can converge on the same payload contract.
+The Tenant Home Composer module (MOD-301) assembles the personalized landing experience for every tenant app user. For MVP, this module is **deferred**: home composition is client-side using independent requests (invites, agenda, map, discovery), and there is **no** aggregated home endpoint. Post-MVP, this module will emit a single schema and persist lightweight snapshots so mocked clients and production clients can converge on the same payload contract.
 
 ---
 

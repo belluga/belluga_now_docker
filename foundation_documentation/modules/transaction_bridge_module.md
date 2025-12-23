@@ -6,7 +6,7 @@
 
 ## 1. Overview
 
-The Transaction Bridge module (MOD-305) connects Guar[APP]ari’s tenant experiences to the external Commercial Engine. It orchestrates booking intents, deposits, payments, refunds, and loyalty credits while shielding the Flutter app from the complexity of multi-instrument pricing. The bridge persists lightweight booking projections and webhooks so we can continue operating during mock phases without a live payment processor.
+The Transaction Bridge module (MOD-305) connects tenant experiences to the external Commercial Engine. It orchestrates booking intents, deposits, payments, refunds, and loyalty credits while shielding the Flutter app from the complexity of multi-instrument pricing. The bridge persists lightweight booking projections and webhooks so we can continue operating during mock phases without a live payment processor.
 
 ---
 

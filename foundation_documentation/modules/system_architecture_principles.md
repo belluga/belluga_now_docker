@@ -1,73 +1,50 @@
-# Documentation: System Architectural Principles
+# Documentation: System Architecture Principles (Bóora! Platform)
 
-**Version:** 1.2
-**Date:** October 16, 2025
-**Authors:** Belluga Learning & Engineering
+**Version:** 1.0  
+**Date:** March 8, 2025  
+**Authors:** Belluga Engineering
 
 ## 1. Overview
 
-This document establishes the fundamental architectural principles and non-negotiable design decisions that govern the entire platform. It serves as the central source of truth to ensure consistency, scalability, and maintainability across all modules, present and future.
+This document defines the **project-specific architectural principles** for the Bóora! platform. These principles **extend** (do not replace) the agnostic core rules in `delphi-ai/system_architecture_principles.md`.
 
-Any new module or service developed for the platform **must** strictly adhere to the principles defined herein.
+Bóora! is the platform. Guar[APP]ari is a **tenant** hosted on the platform and serves as the first reference implementation.
 
 ---
 
-## 2. Global Architectural Principles
+## 2. Scope & Source of Truth
 
-### 2.1. Nested Multi-tenancy Model
+1. **Agnostic Core (Mandatory):** `delphi-ai/system_architecture_principles.md` is the canonical baseline for all projects.
+2. **Project-Specific Additions (This Document):** Any platform/tenant decisions unique to Bóora! live here.
 
-This is the platform's most critical architectural decision. It defines how data is organized and isolated.
+---
 
-* **Declaration:** The platform operates on a multi-level tenancy model, consisting of:
-    1.  **Landlord:** The highest level, managing the entire ecosystem. There is a single data context (database) for the Landlord.
-    2.  **Tenant:** The primary client (e.g., a large corporation). Each Tenant has its own dedicated database, ensuring physical data isolation from other Tenants.
-    3.  **Account:** A sub-organization or "branch" within a Tenant (e.g., the Sales department of the corporation). Multiple Accounts can exist within a single Tenant and **share the Tenant's database**.
+## 3. Platform & Tenant Model
 
-* **Justification:** This hybrid model offers the best of both worlds. Database-level separation for **Tenants** provides maximum security and isolation. Logical segregation by `account_id` within a **Tenant's** database allows for shared configurations and users while separating operational data, accurately reflecting the business model.
+1. **Platform vs Tenant:** Bóora! operates as a multi-tenant platform. Each tenant has its own domain, branding, and content scope. Guar[APP]ari is one tenant, not the platform itself.
+2. **Tenant-Scoped APIs:** All tenant data is served via tenant-scoped APIs; landlord/global APIs remain separated by routing and authorization.
+3. **Account vs Partner:** Accounts are generic administrative containers. Partner is a first-class domain model stored separately and linked 1:1 to `account_id`.
 
-* **Practical Implication:** When designing a new collection, the engineer must answer two fundamental questions:
+---
 
-    1.  **In which database context does this collection reside?**
-        * **Landlord Database:** For global data that governs the platform (e.g., list of tenants, subscription plans).
-        * **Tenant Database:** For data belonging to a specific client (the vast majority of collections).
+## 4. API & Data Access Principles (Project-Specific)
 
-    2.  **If in a Tenant Database, is the data scoped by Account?**
-        * **NO (Tenant-level data):** If the data is a configuration or resource shared by all Accounts within that Tenant. **The collection must NOT have an `account_id` field**.
-            * *Examples:* `users` (a user can belong to multiple accounts), `skill_configurations`, `skills`, `learning_objects` (the raw content library).
-        * **YES (Account-level data):** If the data is operational and belongs to a specific Account. **The collection MUST have an `account_id` field for filtering**.
-            * *Examples:* `courses` (a course is a specific offering for an account), `cohorts`, `enrollments`, `progress_trackers`.
+1. **Page-Based Lists + SSE Deltas:** All lists are page-based; realtime updates are delivered via SSE delta streams that never replace the list contract.
+2. **Independent Requests for Home:** No aggregated home endpoint in MVP. The client composes home using independent requests (invites, agenda, discovery, map).
+3. **Invite Attribution:** Share codes are attribution tokens. Accepting via `/invites/share/{code}/accept` must record source = `share_url`, and uniqueness rules prevent duplicate invite issuance to the same person/event.
+4. **Taxonomy-Ready Discovery:** Partners support multi-taxonomy terms (`{type, value}`), and discovery filters can target taxonomy terms in addition to categories/tags.
 
-### 2.2. Decoupled Communication via Event-Driven Architecture
+---
 
-* **Declaration:** Communication between the system's core modules (e.g., Learning Engine, Skills Engine) **must** be performed asynchronously via an eventing system.
-* **Justification:** Decoupling is crucial for maintainability and the independent evolution of modules. This increases the platform's resilience and development agility.
-* **Practical Implication:**
-    * A module must never interact directly with another module's database.
-    * When firing an event, the payload must contain all necessary context for listeners to act, including relevant identifiers like `tenant_id` (for event routing), `user_id`, and, if applicable, `account_id`.
+## 5. Client Architecture Addendum
 
-### 2.3. Safe Configuration via the "Prototype Configuration Pattern"
+1. **Repository Boundaries:** Controllers/services may coordinate multiple repositories, but repositories never call each other.
+2. **Realtime Consumption:** Clients subscribe to SSE streams for deltas and reconcile against page-based caches.
 
-* **Declaration:** For entities requiring complex, reusable configuration (e.g., `prices`, `quizzes`), the system **must** utilize the **Prototype Configuration Pattern**. This pattern involves a library of "prototypes" (templates) that are cloned to create a new concrete instance.
-* **Justification:** This pattern offers the best of both worlds: the efficiency of reusable templates and the safety of immutable records. By copying (snapshotting) the configuration at the moment of creation, the new entity becomes completely decoupled from its original prototype. This prevents accidental global changes and guarantees a perfect historical record, which is critical for the integrity of commercial and academic data.
-* **Practical Implication:**
-    * **Creation:** When creating a new object (e.g., a `price`), the user can select a `price_template`. The system then copies the template's content into the new `price` document.
-    * **Immutability:** The new object is self-contained. Future changes to the template **will not** affect objects already created from it.
-    * **Traceability:** The concrete object should store the ID of its original prototype (e.g., `source_template_id`) for analysis and auditing purposes only, without creating an active database link.
+---
 
-### 2.4. Naming and Documentation Consistency
+## 6. Documentation Rules (Project-Specific)
 
-* **Declaration:** All system components must follow standardized naming conventions and be accompanied by documentation that adheres to the established standard.
-* **Justification:** Consistency reduces cognitive load, accelerates the onboarding of new engineers, and makes the system more predictable.
-* **Practical Implication:**
-    * **MongoDB Collections:** `snake_case`, always plural (e.g., `learning_objects`, `insight_rules`).
-    * **Document Fields:** `snake_case` (e.g., `user_id`, `completed_at`, `account_id`).
-    * **Module Documentation:** Must follow the structure of `learning_engine.md` (`Overview`, `Principles`, `Detailed Schema`, etc.).
-
-### 2.5. Presentation-to-Infrastructure Dependency Rule
-
-* **Declaration:** In application clients (Flutter, Laravel), controllers or domain services are the only layers allowed to coordinate multiple repositories. Repositories never call other repositories directly; services declared as "UserLocationService", "AnalyticsService", etc., are thin abstractions over repositories and follow the same rule.
-* **Justification:** This keeps dependency arrows pointing inward (presentation → domain → data), preserves testability, and prevents caching/persistence responsibilities from leaking across repositories.
-* **Practical Implication:**
-    * `LocationRepository`, `PoiRepository`, `InviteRepository`, etc., expose deterministic contracts and can be composed by controllers or dedicated domain services. A controller that needs both location and POIs injects both repositories (or their service facades) and orchestrates the flow.
-    * Feature services may wrap one repository (e.g., `UserLocationService` uses `LocationRepository`) but must be injected like repositories and consumed only by controllers/domain services.
-    * Shared data (user location, auth state, analytics context) is published via DI services, not by having repositories reach into each other’s caches.
+1. **Naming:** Bóora! is the platform; Guar[APP]ari is a tenant.
+2. **Module Docs:** Use tenant-accurate wording (e.g., “tenant app users”) unless describing tenant-specific UI or copy.
+3. **Tenant-Specific Assets:** Marketing collateral and screen copy may remain tenant-specific.

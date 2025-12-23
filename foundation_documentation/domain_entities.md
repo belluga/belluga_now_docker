@@ -3,7 +3,7 @@
 
 ## 1. Introduction
 
-This document defines the Core Business Entities (CBEs) for the "Guar[APP]ari" project. These are the primary "nouns" of the project's domain.
+This document defines the Core Business Entities (CBEs) for the Bóora! platform. These are the primary "nouns" of the platform domain. Guar[APP]ari is the first tenant implementation hosted on Bóora!.
 
 This list serves as the domain source of truth referenced by the `system_architecture_principles.md` (Principle P-1) and is the foundation for all module design.
 

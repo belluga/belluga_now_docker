@@ -6,7 +6,7 @@
 
 ## 1. Overview
 
-The Task & Reminder Orchestration module (MOD-306) governs every follow-up obligation a Guar[APP]ari user must complete after interacting with partners, invites, or bookings. It centralizes reminder authoring, schedules push notifications, and emits dated references so downstream modules—such as Agenda & Action Planner or analytics pipelines—stay in sync without duplicating logic. The module serves both mocked flows (local JSON + simulated push) and the future multi-tenant backend.
+The Task & Reminder Orchestration module (MOD-306) governs every follow-up obligation a tenant app user must complete after interacting with partners, invites, or bookings. It centralizes reminder authoring, schedules push notifications, and emits dated references so downstream modules—such as Agenda & Action Planner or analytics pipelines—stay in sync without duplicating logic. The module serves both mocked flows (local JSON + simulated push) and the future multi-tenant backend.
 
 ---
 

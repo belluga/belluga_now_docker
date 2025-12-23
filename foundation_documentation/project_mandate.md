@@ -1,11 +1,13 @@
 # Documentation: Project Mandate
-**Version:** 1.2
+**Version:** 1.0
 
 ## 1. Project Overview
 
-* **Project Name:** "Guar[APP]ari"
-* **Domain:** Hyperlocal Experience Platform (TravelTech / Local Commerce)
-* **High-Level Goal:** To establish a symbiotic digital ecosystem that connects moratoriums, tourists, local specialists (guides, artists, producers), and artificial intelligence, creating a unified and personalized platform for discovering and transacting local experiences, events, and products.
+* **Project Name:** "Bóora!"
+* **Domain:** Multi-tenant Hyperlocal Experience Platform (TravelTech / Local Commerce)
+* **High-Level Goal:** To establish a symbiotic digital ecosystem that connects residents, tourists, and local specialists (guides, artists, producers) through a multi-tenant platform for discovering and transacting local experiences, events, and products.
+
+**Tenant framing:** Guar[APP]ari is the first tenant implementation hosted on Bóora!.
 
 ---
 
@@ -22,4 +24,4 @@ These principles define the purpose and ethical boundaries of the platform. They
 
 ## 3. Social Pivot Summary
 
-*We are no longer just a city guide; we are the social engine of Guarapari.* Discovery exists to feed action. The home experience prioritizes pending invites and confirmed agenda over generic listings; partner/value is proven through mobilized presences, not star ratings. Every actor—users, Pro/Verificados, parceiros, curadores—shares the same profile substrate, with Pro/Verificado status unlocking monetization (spaces, apoiadores) and enhanced limits.
+*We are no longer just a city guide; we are a social engine for each tenant city.* Discovery exists to feed action. The home experience prioritizes pending invites and confirmed agenda over generic listings; partner/value is proven through mobilized presences, not star ratings. Every actor—users, Pro/Verificados, parceiros, curadores—shares the same profile substrate, with Pro/Verificado status unlocking monetization (spaces, apoiadores) and enhanced limits.

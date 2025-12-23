@@ -6,7 +6,7 @@
 
 ## 1. Overview
 
-The Invite & Social Loop module (MOD-302) governs Guar[APP]ari’s virality engine. It manages invite issuance, referral graph analytics, friend resume projections, and gamified progression that feeds both the tenant app and the partner workspace. The module is built to operate with mocked persistence today while remaining API-compatible with a future backend microservice.
+The Invite & Social Loop module (MOD-302) governs the tenant app virality engine. It manages invite issuance, referral graph analytics, friend resume projections, and gamified progression that feeds both the tenant app and the partner workspace. The module is built to operate with mocked persistence today while remaining API-compatible with a future backend microservice.
 
 ---
 
