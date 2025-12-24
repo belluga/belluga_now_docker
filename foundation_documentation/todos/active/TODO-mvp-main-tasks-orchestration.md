@@ -5,12 +5,12 @@
 ---
 
 ## Cross-Team Gate (Must Do First)
-- [ ] ⚪ Finalize `foundation_documentation/endpoints_mvp_contracts.md` **together** (Frontend + Backend).
+- [x] ✅ Finalize `foundation_documentation/endpoints_mvp_contracts.md` **together** (Frontend + Backend).
 
-**scope:** Finalize MVP endpoint schemas in `foundation_documentation/endpoints_mvp_contracts.md`, including removing `/onboarding/context` and documenting `/environment` as the onboarding/branding source; update related module docs that define these endpoints (agenda + map) so contracts stay aligned; add taxonomy filters/terms to the relevant request/response shapes.  
+**scope:** Finalize MVP endpoint schemas in `foundation_documentation/endpoints_mvp_contracts.md`, including removing `/onboarding/context` and documenting `/environment` as the onboarding/branding source; update related module docs that define these endpoints (agenda + map) so contracts stay aligned; add taxonomy filters/terms to the relevant request/response shapes; normalize documented endpoint prefixes to `/api/v1` in `foundation_documentation/system_roadmap.md`; generate `foundation_documentation/submodule_laravel-app_summary.md` using the official template.  
 **out_of_scope:** Laravel/Flutter implementation, non‑MVP endpoints, DB schema changes.  
-**definition_of_done:** No `TBD` for MVP endpoints; `/onboarding/context` removed; `/environment` clearly defined as branding source; taxonomy filters/terms documented in contracts + related module docs; roadmap endpoint list updated accordingly.  
-**validation_steps:** Manual check against `foundation_documentation/system_roadmap.md` + `foundation_documentation/endpoints_mvp_contracts.md` + updated module docs for consistency.
+**definition_of_done:** No `TBD` for MVP endpoints; `/onboarding/context` removed; `/environment` clearly defined as branding source; taxonomy filters/terms documented in contracts + related module docs; roadmap endpoint list updated with `/api/v1` prefix; `foundation_documentation/submodule_laravel-app_summary.md` populated.  
+**validation_steps:** Manual check against `foundation_documentation/system_roadmap.md` + `foundation_documentation/endpoints_mvp_contracts.md` + updated module docs + `foundation_documentation/submodule_laravel-app_summary.md` for consistency.
 
 ---
 

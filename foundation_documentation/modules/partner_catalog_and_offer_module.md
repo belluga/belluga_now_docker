@@ -90,10 +90,10 @@ Aggregated data served to authenticated partners (owner/managers) once the works
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/v1/partners` | GET | Tenant-scoped list with filtering by category, status, verification flags. |
-| `/v1/partners/{partnerId}` | GET | Detailed partner profile summary for consumer experiences. |
-| `/v1/offers` | GET | Offer catalog filtered by partner, category, availability window. |
-| `/v1/offers/{offerId}` | PATCH | Admin/partner operation to update descriptions or windows (behind auth). |
+| `/api/v1/partners` | GET | Tenant-scoped list with filtering by category, status, verification flags. |
+| `/api/v1/partners/{partnerId}` | GET | Detailed partner profile summary for consumer experiences. |
+| `/api/v1/offers` | GET | Offer catalog filtered by partner, category, availability window. |
+| `/api/v1/offers/{offerId}` | PATCH | Admin/partner operation to update descriptions or windows (behind auth). |
 
 **Events**
 * `partner.created`, `partner.updated`, `offer.published`, `offer.unavailable`, `offer.window.expired`.

@@ -33,10 +33,10 @@ Required behaviors:
 ## B) Backend Requirements
 
 ### B1) Device registration
-- [ ] ⚪ Implement `POST /v1/app/push/register`:
+- [ ] ⚪ Implement `POST /api/v1/push/register`:
   - [ ] ⚪ accept `{ device_id, platform, push_token }`
   - [ ] ⚪ associate token with authenticated user + tenant
-- [ ] ⚪ Optional `DELETE /v1/app/push/unregister`
+- [ ] ⚪ Optional `DELETE /api/v1/push/unregister`
 - [ ] ⚪ Handle token rotation idempotently
 
 ### B2) Notification policies (tenant settings)

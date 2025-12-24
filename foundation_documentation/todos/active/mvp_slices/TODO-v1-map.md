@@ -30,8 +30,8 @@
 - [ ] ⚪ POIs without `time_anchor_at` remain eligible (subject to `is_active`, viewport, and filters)
 
 ### A2.1) Realtime deltas (SSE)
-- [ ] ⚪ Expose `/v1/app/map/pois/stream` with delta events (created/updated/deleted)
-- [ ] ⚪ Stream filters match `/v1/app/map/pois` (viewport, categories, tags, search, geo)
+- [ ] ⚪ Expose `/api/v1/map/pois/stream` with delta events (created/updated/deleted)
+- [ ] ⚪ Stream filters match `/api/v1/map/pois` (viewport, categories, tags, search, geo)
 
 ### A3) Same-spot stacking (V1 exact-key)
 - [ ] ⚪ Normalize coordinates on write (fixed precision, e.g., 6 decimals)

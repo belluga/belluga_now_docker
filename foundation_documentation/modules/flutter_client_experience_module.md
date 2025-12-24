@@ -29,21 +29,21 @@
 
 | Endpoint | Method | Description | Required Role | Request Schema | Response Schema |
 |----------|--------|-------------|---------------|----------------|-----------------|
-| `/v1/environment` | GET | Resolves tenant branding/context for app bootstrap. | Anonymous | `EnvironmentRequest` | `EnvironmentResponse` |
-| `/v1/app/me` | GET | Delivers authenticated profile summary and role claims. | Tenant | `MeRequest` | `MeResponse` |
-| `/v1/app/invites` | GET | Retrieves pending invites and social proof metadata for the current user. | Tenant | `InviteFeedRequest` | `InviteFeedResponse` |
-| `/v1/app/invites/stream` | GET | Streams invite deltas for live updates. | Tenant | `InviteStreamRequest` | SSE delta events |
-| `/v1/app/invites/settings` | GET | Fetches invite limits and UX messaging settings. | Tenant | `InviteSettingsRequest` | `InviteSettingsResponse` |
-| `/v1/app/invites/share` | POST | Creates or returns a share code for an event invite. | Tenant | `InviteShareRequest` | `InviteShareResponse` |
-| `/v1/app/invites/share/{code}/accept` | POST | Accepts a share invite for the current user (records source). | Tenant | `InviteShareAcceptRequest` | `InviteShareAcceptResponse` |
-| `/v1/app/contacts/import` | POST | Imports hashed contacts for friend matching. | Tenant | `ContactsImportRequest` | `ContactsImportResponse` |
-| `/v1/app/agenda` | GET | Provides schedule entries, suggested actions, and contextual CTAs. | Tenant | `AgendaRequest` | `AgendaResponse` |
-| `/v1/app/events/stream` | GET | Streams event deltas for active filters. | Tenant | `EventStreamRequest` | SSE delta events |
-| `/v1/app/events/{event_id}` | GET | Returns event detail. | Tenant | `EventDetailRequest` | `EventDetailResponse` |
-| `/v1/app/events/{event_id}/check-in` | POST | Confirms presence for an event. | Tenant | `EventCheckInRequest` | `EventCheckInResponse` |
-| `/v1/app/map/pois` | GET | Returns POIs for the active viewport and filter set. | Tenant | `MapPoisRequest` | `MapPoisResponse` |
-| `/v1/app/map/pois/stream` | GET | Streams POI deltas for active filters. | Tenant | `MapPoisStreamRequest` | SSE delta events |
-| `/v1/app/map/filters` | GET | Returns server-defined categories/tags for map filters. | Tenant | `MapFiltersRequest` | `MapFiltersResponse` |
+| `/environment` | GET | Resolves tenant branding/context for app bootstrap. | Anonymous | `EnvironmentRequest` | `EnvironmentResponse` |
+| `/me` | GET | Delivers authenticated profile summary and role claims. | Tenant | `MeRequest` | `MeResponse` |
+| `/invites` | GET | Retrieves pending invites and social proof metadata for the current user. | Tenant | `InviteFeedRequest` | `InviteFeedResponse` |
+| `/invites/stream` | GET | Streams invite deltas for live updates. | Tenant | `InviteStreamRequest` | SSE delta events |
+| `/invites/settings` | GET | Fetches invite limits and UX messaging settings. | Tenant | `InviteSettingsRequest` | `InviteSettingsResponse` |
+| `/invites/share` | POST | Creates or returns a share code for an event invite. | Tenant | `InviteShareRequest` | `InviteShareResponse` |
+| `/invites/share/{code}/accept` | POST | Accepts a share invite for the current user (records source). | Tenant | `InviteShareAcceptRequest` | `InviteShareAcceptResponse` |
+| `/contacts/import` | POST | Imports hashed contacts for friend matching. | Tenant | `ContactsImportRequest` | `ContactsImportResponse` |
+| `/agenda` | GET | Provides schedule entries, suggested actions, and contextual CTAs. | Tenant | `AgendaRequest` | `AgendaResponse` |
+| `/events/stream` | GET | Streams event deltas for active filters. | Tenant | `EventStreamRequest` | SSE delta events |
+| `/events/{event_id}` | GET | Returns event detail. | Tenant | `EventDetailRequest` | `EventDetailResponse` |
+| `/events/{event_id}/check-in` | POST | Confirms presence for an event. | Tenant | `EventCheckInRequest` | `EventCheckInResponse` |
+| `/map/pois` | GET | Returns POIs for the active viewport and filter set. | Tenant | `MapPoisRequest` | `MapPoisResponse` |
+| `/map/pois/stream` | GET | Streams POI deltas for active filters. | Tenant | `MapPoisStreamRequest` | SSE delta events |
+| `/map/filters` | GET | Returns server-defined categories/tags for map filters. | Tenant | `MapFiltersRequest` | `MapFiltersResponse` |
 
 *Success/Failure Handling:* All endpoints return `metadata.request_id` for tracing, success payloads encapsulated in `data`, and standardized error envelopes with `error.code`, `error.message`, `error.hints[]`. Mock implementations must reproduce this contract exactly.
 *Rate Limiting:* Soft limit of 5 req/min per endpoint during mock stage to mirror production throttles; burst handling delegated to controller retry strategies.
@@ -182,7 +182,7 @@
 
 * **Shared Libraries:** `lib/application` hosts theming and localization contracts; `lib/presentation/shared/widgets` houses reusable components (e.g., `MainLogo`, `BellugaBottomNavigationBar`); `lib/domain/value_objects` encapsulates validation logic shared across modules.
 * **Data Ownership Boundaries:** Mock repositories remain the single source of truth for state; cached DTOs never overwrite domain models without controller orchestration.
-* **Failure & Degradation Modes:** When SSE streams disconnect, controllers downgrade to polling (`/v1/app/map/pois`) and surface passive UI states; offline mode caches last successful responses and displays timestamped banners.
+* **Failure & Degradation Modes:** When SSE streams disconnect, controllers downgrade to polling (`/map/pois`) and surface passive UI states; offline mode caches last successful responses and displays timestamped banners.
 
 ## 4. Implementation Notes
 

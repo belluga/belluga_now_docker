@@ -6,7 +6,7 @@
 
 ## 1. Overview
 
-The Agenda & Action Planner module (MOD-303) tracks every upcoming experience, booking, and social action for tenant app users. It consolidates offers claimed from Map, invites accepted from the social loop, and booking/payment lifecycle events into a chronological stream delivered by `/v1/app/agenda`. Dedicated follow-up tasks and reminder payloads are authored by the Task & Reminder module and surface here only as read-only references when they represent a dated commitment.
+The Agenda & Action Planner module (MOD-303) tracks every upcoming experience, booking, and social action for tenant app users. It consolidates offers claimed from Map, invites accepted from the social loop, and booking/payment lifecycle events into a chronological stream delivered by `/api/v1/agenda`. Dedicated follow-up tasks and reminder payloads are authored by the Task & Reminder module and surface here only as read-only references when they represent a dated commitment.
 
 ---
 
@@ -150,9 +150,9 @@ Agenda surfaces events as a paged list; Flutter consumes this shape for cards, i
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/v1/app/agenda` | GET | Returns grouped timeline nodes plus derived counts. |
+| `/api/v1/agenda` | GET | Returns grouped timeline nodes plus derived counts. |
 
-**Deferred (post-MVP):** `/v1/app/agenda/{nodeId}/action`, `/v1/app/agenda/sync`.
+**Deferred (post-MVP):** `/api/v1/agenda/{nodeId}/action`, `/api/v1/agenda/sync`.
 
 **Events**
 * Inbound: `booking.confirmed`, `booking.cancelled`, `invite.accepted`, `poi.favorite.added`, `task.reminder.scheduled`.

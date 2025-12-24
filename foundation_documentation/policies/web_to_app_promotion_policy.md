@@ -56,7 +56,7 @@ This separation prevents accidental “half-logged-in” behaviors that break at
 
 “Open API” in this ecosystem means **a single canonical API surface** shared by web/app clients, with **Sanctum validation by default**.
 
-- Web “unauthenticated” surfaces are still allowed to call Sanctum-protected endpoints by first minting an **anonymous identity token** via `POST /v1/anonymous/identities`.
+- Web “unauthenticated” surfaces are still allowed to call Sanctum-protected endpoints by first minting an **anonymous identity token** via `POST /api/v1/anonymous/identities`.
 - The backend controls what anonymous tokens may do using `tenant.anonymous_access_policy.abilities` (and TTL).
 
 ## 4.1 Web Invite Acceptance Exception (V1)

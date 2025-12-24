@@ -17,8 +17,8 @@
 ## A) Backend Tasks
 
 ### A1) Agenda/events endpoints (MOD-201)
-- [ ] ⚪ Ensure `/v1/app/agenda` contract is implemented or mocked (page-based pagination + filters + geo + confirmed_only) per `foundation_documentation/endpoints_mvp_contracts.md`
-- [ ] ⚪ Ensure `/v1/app/events/stream` SSE emits delta events aligned with active filters (created/updated/deleted)
+- [ ] ⚪ Ensure `/api/v1/agenda` contract is implemented or mocked (page-based pagination + filters + geo + confirmed_only) per `foundation_documentation/endpoints_mvp_contracts.md`
+- [ ] ⚪ Ensure `/api/v1/events/stream` SSE emits delta events aligned with active filters (created/updated/deleted)
 - [ ] ⚪ Ensure event detail includes:
   - [ ] ⚪ `id`, `slug`, `type`, `title`, `content`, `location`
   - [ ] ⚪ `date_time_start`, `date_time_end` (or default duration)
@@ -26,7 +26,7 @@
   - [ ] ⚪ invite-related arrays (`received_invites`, `sent_invites`, `friends_going`)
 
 ### A2) Presence confirmation
-- [ ] ⚪ Confirm presence endpoint `/v1/app/events/{event_id}/check-in` (mock or implemented)
+- [ ] ⚪ Confirm presence endpoint `/api/v1/events/{event_id}/check-in` (mock or implemented)
 - [ ] ⚪ Ensure responses update confirmed/presence state deterministically
 
 ---

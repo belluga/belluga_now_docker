@@ -71,10 +71,10 @@ Durable log of inbound webhook deliveries with ack status for observability.
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/v1/bookings` | POST | Creates a reservation and initializes a payment intent. |
-| `/v1/bookings/{bookingId}` | GET | Returns booking status, payment state, and action descriptors. |
-| `/v1/bookings/{bookingId}/cancel` | POST | Cancels a pending booking and issues refunds when applicable. |
-| `/v1/transactions` | GET | Lists ledger entries filtered by date or partner. |
+| `/api/v1/bookings` | POST | Creates a reservation and initializes a payment intent. |
+| `/api/v1/bookings/{bookingId}` | GET | Returns booking status, payment state, and action descriptors. |
+| `/api/v1/bookings/{bookingId}/cancel` | POST | Cancels a pending booking and issues refunds when applicable. |
+| `/api/v1/transactions` | GET | Lists ledger entries filtered by date or partner. |
 | `/webhooks/commercial-engine` | POST | Receives signed webhook callbacks from the external Commercial Engine. |
 
 ---

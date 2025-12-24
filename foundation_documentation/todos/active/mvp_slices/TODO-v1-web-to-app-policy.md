@@ -19,7 +19,7 @@
 ### Web (Unauthenticated) is allowed for (read-only + promotion)
 - [ ] ⚪ Event landing page (read-only): title, date/time, venue name, artists names, hero media
 - [ ] ⚪ Invite landing page (read-only): “You were invited by …” context + event summary
-- [ ] ⚪ Web unauth surfaces may mint a backend-issued anonymous Sanctum token via `POST /v1/anonymous/identities` to call allowed endpoints
+- [ ] ⚪ Web unauth surfaces may mint a backend-issued anonymous Sanctum token via `POST /api/v1/anonymous/identities` to call allowed endpoints
 - [ ] ⚪ Install/Open-App CTA (deep link) that preserves attribution code
 - [ ] ⚪ V1 exception: allow invite acceptance only from invite landing reached via a single `code` (credited to that code’s inviter principal)
 - [ ] ⚪ V1 exception: allow re-share only the same event after acceptance (external share only), backend rate-limited
@@ -45,7 +45,7 @@ Rationale: keep high-value actions in the app to ensure identity, location capab
 ## B) Deep Link / Attribution Requirements
 
 - [ ] ⚪ Web links must carry a single `code` (invite share code) in the URL
-- [ ] ⚪ If web user is not logged in, web mints/resumes an anonymous identity (`POST /v1/anonymous/identities`) and uses its Sanctum token for landing actions (accept + same-event re-share)
+- [ ] ⚪ If web user is not logged in, web mints/resumes an anonymous identity (`POST /api/v1/anonymous/identities`) and uses its Sanctum token for landing actions (accept + same-event re-share)
 - [ ] ⚪ Web must redirect to:
   - [ ] ⚪ App deep link (if installed)
   - [ ] ⚪ App store (if not installed), preserving the `code` for post-install attribution

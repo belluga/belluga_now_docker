@@ -61,9 +61,9 @@ Appends events (creation, acknowledgement, completion) for auditability.
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/v1/tasks` | GET | Lists active tasks for the authenticated user persona. |
-| `/v1/tasks/{taskId}/ack` | POST | Marks a task as acknowledged (dismissed) and cancels pending pushes. |
-| `/v1/tasks/{taskId}/complete` | POST | Marks completion and emits follow-up events (e.g., to award streaks). |
+| `/api/v1/tasks` | GET | Lists active tasks for the authenticated user persona. |
+| `/api/v1/tasks/{taskId}/ack` | POST | Marks a task as acknowledged (dismissed) and cancels pending pushes. |
+| `/api/v1/tasks/{taskId}/complete` | POST | Marks completion and emits follow-up events (e.g., to award streaks). |
 | `/internal/tasks/intent` | POST | Producer-facing endpoint used by booking, invite, or partner systems to register a new task intent. |
 
 **Push Delivery**

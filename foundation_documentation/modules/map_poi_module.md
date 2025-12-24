@@ -217,7 +217,7 @@ Response shape (example):
 
 ### 4.1. REST API (On-Demand Queries)
 
-1.  **Primary POI Endpoint:** `GET /v1/app/map/pois`
+1.  **Primary POI Endpoint:** `GET /api/v1/map/pois`
     -   Purpose: return POIs within the current viewport and/or within a max distance anchored around a reference point (typically the user’s current position).
     -   Parameters (query string):
         - `ne_lat`, `ne_lng`, `sw_lat`, `sw_lng` (optional but recommended): current map viewport bounds.
@@ -229,15 +229,15 @@ Response shape (example):
         - Use MongoDB geospatial queries (`$geoNear` and/or `$geoWithin`) as the authoritative source of “nearby” truth.
         - When `origin_lat/lng` is provided, return `distance_meters` for each POI.
         - Apply time-window filters for `time_anchor_at` using backend-owned tenant settings (future/past windows). The client should not hardcode visibility windows.
-    -   Response fields: standard POI attributes plus `distance_meters` (double, optional when distance is not requested). When sorting by `distance`, backend orders by ascending distance while still honoring priority tiers (sponsors > live events > others).
-2.  **Filter Discovery Endpoint:** `GET /v1/app/map/filters`
+    -   Response fields: standard POI attributes plus `distance_meters` (double, optional when distance is not requested) and `taxonomy_terms` (typed pairs for filtering). When sorting by `distance`, backend orders by ascending distance while still honoring priority tiers (sponsors > live events > others).
+2.  **Filter Discovery Endpoint:** `GET /api/v1/map/filters`
     -   Returns all available categories and their associated tags to dynamically build the filter UI (taxonomy catalog is sourced separately and applied as advanced filters when needed).
 
 ### 4.2. SSE API (Real-Time Events)
 
 The client will connect to an SSE endpoint and subscribe to events for the visible map area.
 -   **Server pushes events:** `poi.created`, `poi.updated`, `poi.deleted`.
-    - **Endpoint:** `GET /v1/app/map/pois/stream` (filters match `/v1/app/map/pois`).
+    - **Endpoint:** `GET /api/v1/map/pois/stream` (filters match `/api/v1/map/pois`).
 
 ## 5. Roadmap and Strategic Decisions
 

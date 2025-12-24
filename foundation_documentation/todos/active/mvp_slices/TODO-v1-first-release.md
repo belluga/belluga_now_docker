@@ -120,7 +120,7 @@ These are scope descriptors (not tasks).
 ## 2) Backend Deliverables
 
 ### 2.1 Invite Settings (backend-owned + enforced)
-- [ ] ⚪ Implement endpoint: `GET /v1/app/invites/settings`
+- [ ] ⚪ Implement endpoint: `GET /api/v1/invites/settings`
 - [ ] ⚪ Enforce limits on invite creation and return:
   - [ ] ⚪ `429` with structured payload when over quota/rate-limited
   - [ ] ⚪ reset metadata (`resets_at`) and “which limit” identifier
@@ -142,8 +142,8 @@ Suggested defaults (override per tenant + plan):
 
 ### 2.4 Push notifications (baseline)
 - [ ] ⚪ Implement device registration endpoint (exact naming TBD):
-  - [ ] ⚪ `POST /v1/app/push/register` with `{ device_id, platform, push_token }`
-  - [ ] ⚪ Optional `DELETE /v1/app/push/unregister`
+  - [ ] ⚪ `POST /api/v1/push/register` with `{ device_id, platform, push_token }`
+  - [ ] ⚪ Optional `DELETE /api/v1/push/unregister`
 - [ ] ⚪ Send notifications (minimum):
   - [ ] ⚪ New invite received
   - [ ] ⚪ Invite status change (accepted/declined) when relevant

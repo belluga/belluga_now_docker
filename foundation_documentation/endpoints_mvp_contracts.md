@@ -581,6 +581,7 @@
       "ref_id": "string",
       "category": "culture|beach|nature|historic|restaurant",
       "tags": ["string"],
+      "taxonomy_terms": [{ "type": "string", "value": "string" }],
       "location": { "lat": 0.0, "lng": 0.0 },
       "time_anchor_at": "2025-01-01T00:00:00Z",
       "distance_meters": 0
@@ -591,6 +592,7 @@
 **Field Definitions**
 - `ref_type`: `event`, `account`, `static_asset`.
 - `category`: `culture`, `beach`, `nature`, `historic`, `restaurant`.
+- `taxonomy_terms[]`: typed pairs `{type, value}` attached to the POI for filtering.
 
 ### `GET /map/filters`
 **Purpose:** Server-defined filter catalog.  
@@ -603,11 +605,15 @@
   ],
   "tags": [
     { "key": "string", "label": "string", "count": 0 }
+  ],
+  "taxonomy_terms": [
+    { "type": "string", "value": "string", "label": "string", "count": 0 }
   ]
 }
 ```
 **Field Definitions**
 - `categories[].key`: `culture`, `beach`, `nature`, `historic`, `restaurant`.
+- `taxonomy_terms[].type`: taxonomy group slug (e.g., `cuisine`, `music_genre`, `vibe`).
 
 ---
 

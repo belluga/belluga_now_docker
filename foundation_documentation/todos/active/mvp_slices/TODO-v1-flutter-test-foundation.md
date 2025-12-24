@@ -69,46 +69,47 @@ For both landlord and tenant origins, these endpoints must return `200` or `304`
 
 ### M0 — Test scaffolding + deterministic DI
 **Deliverables**
-- Test utilities:
-  - reset GetIt registrations cleanly between tests
-  - provide a test `AppRouter` harness pump
-- Decide mocking style:
-  - manual fakes preferred; add a mocking library only if needed
+- [x] ✅ Test utilities:
+  - [x] ✅ reset GetIt registrations cleanly between tests (`TestHarness`)
+  - [x] ✅ provide a test `AppRouter` harness pump (unit tested via Guard)
+- [x] ✅ Decide mocking style:
+  - [x] ✅ manual fakes preferred; add a mocking library only if needed (`FakeAppData`)
 
 **Definition of Done**
-- `fvm flutter test` runs locally and is stable.
-- At least 1 unit test + 1 widget test green using the harness.
+- [x] ✅ `fvm flutter test` runs locally and is stable.
+- [x] ✅ At least 1 unit test + 1 widget test green using the harness.
 
 ### M1 — Unit tests for environment-driven selection (tenant vs landlord)
 **Coverage**
-- `Tenant.hasWebDomain(...)` and `Tenant.hasAppDomain(...)` behavior.
-- `TenantRepositoryContract.isLandlordRequest` and `isProperTenantRegistered` behavior.
-- `TenantRouteGuard` routing outcome in widget test:
+- [x] ✅ `Tenant.hasWebDomain(...)` and `Tenant.hasAppDomain(...)` behavior.
+- [x] ✅ `TenantRepositoryContract.isLandlordRequest` and `isProperTenantRegistered` behavior.
+- [x] ✅ `TenantRouteGuard` routing outcome in widget test:
   - tenant missing/invalid → redirects to landlord
   - tenant valid → allows tenant route
 
 **Definition of Done**
-- Deterministic tests that don’t depend on platform plugins (`package_info_plus`, `platform_device_id_plus`, etc.).
+- [x] ✅ Deterministic tests that don’t depend on platform plugins (`package_info_plus`, `platform_device_id_plus`, etc.).
 
 ### M2 — Widget resilience: image failure must not crash
 **Coverage**
-- A small helper to force image loading failure in widget tests.
-- At least one representative screen/widget that uses `Image.network` asserts:
-  - no crash
-  - fallback renders (placeholder widget or `errorBuilder` path)
+- [x] ✅ A small helper to force image loading failure in widget tests (`mockNetworkImages`).
+- [x] ✅ At least one representative screen/widget that uses `Image.network` asserts:
+  - [x] ✅ no crash
+  - [x] ✅ fallback renders (placeholder widget or `errorBuilder` path)
 
 **Definition of Done**
-- Widget tests do not perform real network calls.
+- [x] ✅ Widget tests do not perform real network calls.
 
 ### M3 — Contract tests for current feature DTOs (deserialize + invariants)
 **Coverage targets (current app surfaces)**
-- Schedule/agenda DTO mapping invariants.
-- Invites DTO mapping invariants.
-- Map POI DTO mapping invariants.
-- Profile DTO mapping invariants (as currently used).
+- [x] ✅ Schedule/agenda DTO mapping invariants (`EventDTO`).
+- [x] ✅ Invites DTO mapping invariants (`InviteDto`).
+- [x] ✅ Map POI DTO mapping invariants (`CityPoiDTO`).
+- [x] ✅ Profile DTO mapping invariants (as currently used - `TenantDto`).
 
 **Definition of Done**
-- Tests fail fast on missing required fields or incompatible types (prevents “silent drift”).
+- [x] ✅ `fvm flutter test` includes DTO contract validation.
+- [x] ✅ Tests fail fast on missing required fields or incompatible types (prevents “silent drift”).
 
 ### M4 — Network contract tests (Cloudflared)
 **Inputs**
@@ -125,11 +126,11 @@ For both landlord and tenant origins, these endpoints must return `200` or `304`
 
 ### M5 — Minimal integration smoke
 **Coverage**
-- One integration test that boots the app and reaches initial route without exceptions.
-- Optional: navigate to schedule or invites route (smoke only).
+- [x] ✅ One integration test that boots the app and reaches initial route without exceptions (`integration_test/app_test.dart`).
+- [ ] ⚪ Optional: navigate to schedule or invites route (smoke only).
 
 **Definition of Done**
-- Integration tests are stable and do not rely on external services.
+- [x] ✅ Integration tests are stable and do not rely on external services (uses `MockBackend`).
 
 ---
 

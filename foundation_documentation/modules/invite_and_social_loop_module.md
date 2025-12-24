@@ -161,14 +161,14 @@ To enforce both anti-spam policies and partner plan limits, the module maintains
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/v1/app/invites` | GET | Returns paginated invite feed with friend resumes, contextual prompts, quota status, and suppression flags per event. |
-| `/v1/app/invites/stream` | GET | Streams invite deltas for live updates (created/updated/deleted). |
-| `/v1/app/invites/settings` | GET | Returns backend-owned tenant settings relevant to invite quotas, anti-spam, and client UX messaging. |
-| `/v1/app/invites/share` | POST | Creates (or returns) an external share code that attributes installs/signups to an inviter principal for a specific event. |
-| `/v1/app/invites/share/{code}/accept` | POST | Accepts a share invite for the current user and emits `invite.accepted`. |
-| `/v1/app/contacts/import` | POST | Imports hashed contacts for friend matching and invite discovery. |
+| `/invites` | GET | Returns paginated invite feed with friend resumes, contextual prompts, quota status, and suppression flags per event. |
+| `/invites/stream` | GET | Streams invite deltas for live updates (created/updated/deleted). |
+| `/invites/settings` | GET | Returns backend-owned tenant settings relevant to invite quotas, anti-spam, and client UX messaging. |
+| `/invites/share` | POST | Creates (or returns) an external share code that attributes installs/signups to an inviter principal for a specific event. |
+| `/invites/share/{code}/accept` | POST | Accepts a share invite for the current user and emits `invite.accepted`. |
+| `/contacts/import` | POST | Imports hashed contacts for friend matching and invite discovery. |
 
-**Deferred (post-MVP) endpoints:** `/v1/app/invites/share/{code}` (resolve), `/v1/app/invites/share/{code}/consume`, `/v1/app/invites/{inviteCode}/accept`, `/v1/app/invites/{inviteCode}/resend`, `/v1/app/invites/{inviteCode}/snooze`, `/v1/app/invites/{inviteCode}/suppress-event`, `/v1/app/invites/{inviteCode}/accept/import-contacts`, `/v1/app/invites/{inviteCode}/attendance`.
+**Deferred (post-MVP) endpoints:** `/invites/share/{code}` (resolve), `/invites/share/{code}/consume`, `/invites/{inviteCode}/accept`, `/invites/{inviteCode}/resend`, `/invites/{inviteCode}/snooze`, `/invites/{inviteCode}/suppress-event`, `/invites/{inviteCode}/accept/import-contacts`, `/invites/{inviteCode}/attendance`.
 
 ### 4.3 External Share Invites (New Users Attribution)
 
@@ -193,7 +193,7 @@ V1 requires tracking external shares (WhatsApp/Instagram/etc.) for **new users**
 
 **Key requirements:**
 - `code` resolves to a single inviter principal + event.
-- Backend records **share visits** and **invite acceptance**; acceptance is triggered by `/v1/app/invites/share/{code}/accept` (source = `share_url`).
+- Backend records **share visits** and **invite acceptance**; acceptance is triggered by `/invites/share/{code}/accept` (source = `share_url`).
 - Backend must prevent duplicate invite issuance to the same receiver+event+inviter principal (see Uniqueness rule); the share code is attribution, not a loophole to spam.
 
 ### 4.4 Web Acceptance + Same-Event Re-Share (V1 Exception)
@@ -209,7 +209,7 @@ This enables viral growth while keeping app-only “agenda-first acceptance” a
 
 Even on web “unauthenticated” landings, the canonical API is Sanctum-validated by default:
 
-- Web must mint or resume an anonymous identity via `POST /v1/anonymous/identities` to obtain a Sanctum token.
+- Web must mint or resume an anonymous identity via `POST /anonymous/identities` to obtain a Sanctum token.
 - The web client then calls the same invite acceptance / share endpoints using `Authorization: Bearer <token>`.
 - The backend controls what anonymous tokens may do via `tenant.anonymous_access_policy.abilities` (and TTL), and must still enforce quotas and uniqueness rules.
 

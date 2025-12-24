@@ -173,7 +173,7 @@ Guar[APP]ari é uma plataforma de experiências que cria um **ecossistema simbi�
 - **CTA Final:** `[Botão com Ícone do WhatsApp: Enviar Convite para (3)]`
 
 ### 2.3.1. Contrato de Mock: Descoberta de Parceiros (Cards e Métricas)
-- **Endpoint alvo (mock):** `/v1/app/partners/discovery`.
+- **Endpoint alvo (mock):** `/api/v1/partners/discovery`.
 - **Payload (lista de parceiros):**
   - `id` (ObjectId string, obrigatório), `slug` (string ≤64, obrigatório), `name` (string ≤120, obrigatório).
   - `partner_type` (enum): `artist`, `venue`, `experience_provider`, `influencer`, `curator`.
@@ -197,10 +197,10 @@ Guar[APP]ari é uma plataforma de experiências que cria um **ecossistema simbi�
 
 ### 2.3.2. Contrato de Convites e Presença (Fluxo “Bora?”)
 - **Endpoints (mock):**
-  - `GET /v1/app/invites` — lista convites pendentes por prioridade (evento mais próximo; empate: mais convites para o mesmo evento).
-  - `POST /v1/app/invites/{invite_id}/accept` — aceita convite; só um por evento/usuário.
-  - `POST /v1/app/invites/{invite_id}/decline` — recusa convite.
-  - `POST /v1/app/events/{event_id}/check-in` — registra presença com `method` (`geofence`, `qr`, `staff_manual`), `geo` (lat/lng), `qr_token` opcional.
+  - `GET /api/v1/invites` — lista convites pendentes por prioridade (evento mais próximo; empate: mais convites para o mesmo evento).
+  - `POST /api/v1/invites/{invite_id}/accept` — aceita convite; só um por evento/usuário.
+  - `POST /api/v1/invites/{invite_id}/decline` — recusa convite.
+  - `POST /api/v1/events/{event_id}/check-in` — registra presença com `method` (`geofence`, `qr`, `staff_manual`), `geo` (lat/lng), `qr_token` opcional.
 - **Payload de convite:**
   - `id`, `event_id`, `inviter_id`, `invitee_id`, `status` (`pending`/`accepted`/`declined`; `expired` derivado), `sent_at`, `expires_at` (fim do evento), `inviter_name`, `host_name`, `message`, `image_uri`, `priority_rank`.
 - **Regra de contagem:** Apenas convites `accepted` + check-in confirmado viram `Presença Confirmada`; aceito sem check-in = `no_show`.
@@ -208,7 +208,7 @@ Guar[APP]ari é uma plataforma de experiências que cria um **ecossistema simbi�
 - **Privacidade:** Perfis `friends_only` aparecem anonimizados (blur/avatar masked) nos rankings, mas convites e métricas contam normalmente.
 
 ### 2.3.3. Contrato de Missões (Parceiro)
-- **Endpoints (mock):** `GET /v1/app/missions` (listar missões ativas do parceiro), `POST /v1/app/missions` (criar), `PATCH /v1/app/missions/{id}` (atualizar status/target).
+- **Endpoints (mock):** `GET /api/v1/missions` (listar missões ativas do parceiro), `POST /api/v1/missions` (criar), `PATCH /api/v1/missions/{id}` (atualizar status/target).
 - **Campos:**
   - `id`, `title`, `description`, `metric` (`invites_accepted`, `presences_confirmed`, `check_ins`, `purchases`), `target_value` (int ≥1), `window` (data inicial/final), `reward` (texto/ex.: voucher/benefício), `status` (`pending`/`active`/`completed`/`expired`).
   - `validation_source`: `system` (auto, via métricas) ou `partner_manual` (confirmação manual).
@@ -216,7 +216,7 @@ Guar[APP]ari é uma plataforma de experiências que cria um **ecossistema simbi�
 - **Acompanhamento:** Tela de parceiro deve mostrar ranking/progresso por usuário (respeitando anonimização quando `friends_only`), quem atingiu a meta e estado de payout.
 
 ### 2.3.4. Vínculo Parceiro ↔ Curador/Pessoa
-- **Endpoints (mock):** `POST /v1/app/partner-links` (propor), `PATCH /v1/app/partner-links/{id}` (aceitar/recusar).
+- **Endpoints (mock):** `POST /api/v1/partner-links` (propor), `PATCH /api/v1/partner-links/{id}` (aceitar/recusar).
 - **Campos:** `id`, `partner_id`, `person_id` (curador/pessoa), `status` (`pending`, `accepted`), `created_at`, `accepted_at`.
 - **Exibição:** Parceiros exibem curadores/pessoas vinculadas e vice-versa; principal janela de prova social mensal (presenças confirmadas no mês).
 
@@ -239,7 +239,7 @@ Guar[APP]ari é uma plataforma de experiências que cria um **ecossistema simbi�
   - `content_order=latest` para curadores (futuro `most_viewed`).
   - `people_order=social_score_month` com `prefer_verified=true` para desempate.
   - `types` array para chips (artist, venue, experience_provider, person).
-  - Contatos importados: `POST /v1/app/contacts/import` recebe lista de hashes + sal, nunca PII; matching acontece ao aceitar convites com contatos fornecidos.
+  - Contatos importados: `POST /api/v1/contacts/import` recebe lista de hashes + sal, nunca PII; matching acontece ao aceitar convites com contatos fornecidos.
 
 ---
 

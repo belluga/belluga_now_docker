@@ -20,21 +20,39 @@ This roadmap enumerates the foundational milestones for the Belluga ecosystem. I
 
 | Endpoint | Module | Description | Current Status | Notes |
 |----------|--------|-------------|----------------|-------|
-| `/v1/anonymous/identities` | MOD-101 | Anonymous identity bootstrap (Sanctum token issuance for web/app guest flows). | Implemented | Unauthenticated route returns `{user_id, identity_state, token, abilities, expires_at?}`; abilities/TTL controlled by `tenant.anonymous_access_policy`. |
-| `/v1/app/invites` | MOD-201 | Invite feed and referral graph. | Mocked | Prioritizes nearest events; enforces 1 invite per person/event; limits pending invites by role. |
-| `/v1/app/invites/settings` | MOD-201 | Backend-owned invite quotas, anti-spam limits, and UX messaging settings. | Planned | Backend enforces over-quota responses (`429`) and returns reset metadata; Flutter fetches for messaging/UX. |
-| `/v1/app/invites/share` | MOD-201 | External share codes for event invites (new user install/signup attribution). | Planned | Anyone who can invite can generate; resolves to `inviter_principal` (user or partner) + `event_id`; includes `/consume` to bind attribution post-install. |
-| `/v1/app/agenda` | MOD-201 | Paged agenda feed with search + past toggle, includes happening-now events. | Defined | Request: `page`, `page_size`, `past_only`, `search`, `categories`, `tags`, `taxonomy`, `confirmed_only`, `origin_lat/lng`, `max_distance_meters`. Response: full event DTO items (type, actions, tags, invites, sent_invites, friends_going, is_confirmed, total_confirmed), `has_more` flag. Happening-now rule: `date_time_start <= now < date_time_end` (default end = start + 3h). |
-| `/v1/app/map/pois` | MOD-201 | Map POIs (projection-backed). | Defined | `map_pois` projection updated from StaticAssets, Events, and POI-enabled Accounts; use MongoDB GeoQuery with viewport + optional origin/radius and filters (`categories`, `tags`, `taxonomy`, `search`). |
-| `/v1/app/map/filters` | MOD-201 | Map filter discovery (categories/tags). | Planned | Required to remove hardcoded filter catalogs from mocks. |
-| `/v1/app/me` | MOD-201 | Authenticated profile summary and role claims. | Defined | Mock payload authoring queued in FCX-02. |
-| `/v1/app/partners/discovery` | MOD-201 | Partner discovery cards with engagement metrics and invite counts. | Mocked | Needs DTO/value-object mapping and shared prototype data for Laravel alignment. |
-| `/v1/app/events/{event_id}/check-in` | MOD-201 | Presence confirmation with geofence/QR/staff methods. | Mocked | Partner-defined radius; QR optional; accepted without check-in becomes no-show. |
-| `/v1/app/missions` | MOD-201 | Partner-created missions with metric targets and rewards. | Defined | Metrics selectable per mission; partner dashboard must show rankings/progress. |
-| `/v1/app/partner-links` | MOD-201 | Partner ↔ curador/pessoa linkage. | Defined | Bidirectional proposals; statuses pending/accepted; monthly proof-of-presence window. |
-| `/v1/app/discover/people` | MOD-201 | People/Influencer row ordered by monthly Social Score. | Defined | Prefer verified on ties; respects privacy by anonymizing friends-only profiles. |
-| `/v1/app/discover/curator-content` | MOD-201 | Curator-produced content for “Veja isso…” row. | Defined | Ordered by latest published (future: most viewed); links to partner/event. |
-| `/v1/app/contacts/import` | MOD-201 | Hashed contact import for friend suggestions and invite matching. | Planned | Accepts salted hashes only; no raw PII stored. |
+| `/api/v1/anonymous/identities` | MOD-101 | Anonymous identity bootstrap (Sanctum token issuance for web/app guest flows). | Implemented | Unauthenticated route returns `{user_id, identity_state, token, abilities, expires_at?}`; abilities/TTL controlled by `tenant.anonymous_access_policy`. |
+| `/api/v1/environment` | MOD-101 | Tenant/landlord resolution + branding payload for app/web bootstraps. | Defined | Returns tenant identity + theme settings; uses host/app domain context. |
+| `/api/v1/invites` | MOD-201 | Invite feed and referral graph. | Mocked | Prioritizes nearest events; enforces 1 invite per person/event; limits pending invites by role. |
+| `/api/v1/invites/stream` | MOD-201 | Invite delta stream (SSE). | Planned | Emits invite created/updated/deleted events for authenticated user. |
+| `/api/v1/invites/settings` | MOD-201 | Backend-owned invite quotas, anti-spam limits, and UX messaging settings. | Planned | Backend enforces over-quota responses (`429`) and returns reset metadata; Flutter fetches for messaging/UX. |
+| `/api/v1/invites/share` | MOD-201 | External share codes for event invites (new user install/signup attribution). | Planned | Anyone who can invite can generate; resolves to `inviter_principal` (user or partner) + `event_id`; includes `/consume` to bind attribution post-install. |
+| `/api/v1/invites/share/{code}/accept` | MOD-201 | Web landing acceptance for invite share codes. | Planned | Requires Sanctum (anonymous token); binds attribution and returns invite state. |
+| `/api/v1/agenda` | MOD-201 | Paged agenda feed with search + past toggle, includes happening-now events. | Defined | Request: `page`, `page_size`, `past_only`, `search`, `categories`, `tags`, `taxonomy`, `confirmed_only`, `origin_lat/lng`, `max_distance_meters`. Response: full event DTO items (type, actions, tags, invites, sent_invites, friends_going, is_confirmed, total_confirmed), `has_more` flag. Happening-now rule: `date_time_start <= now < date_time_end` (default end = start + 3h). |
+| `/api/v1/events/stream` | MOD-201 | Event delta stream (SSE). | Planned | Emits event created/updated/deleted events for filtered feeds. |
+| `/api/v1/events/{event_id}` | MOD-201 | Event detail payload. | Defined | Event detail contract aligned to agenda cards + map POI references. |
+| `/api/v1/map/pois` | MOD-201 | Map POIs (projection-backed). | Defined | `map_pois` projection updated from StaticAssets, Events, and POI-enabled Accounts; use MongoDB GeoQuery with viewport + optional origin/radius and filters (`categories`, `tags`, `taxonomy`, `search`). |
+| `/api/v1/map/pois/stream` | MOD-201 | Map POI delta stream (SSE). | Planned | Emits POI created/updated/deleted events for active viewport/filters. |
+| `/api/v1/map/filters` | MOD-201 | Map filter discovery (categories/tags). | Planned | Required to remove hardcoded filter catalogs from mocks. |
+| `/api/v1/me` | MOD-201 | Authenticated profile summary and role claims. | Defined | Mock payload authoring queued in FCX-02. |
+| `/api/v1/partners/discovery` | MOD-201 | Partner discovery cards with engagement metrics and invite counts. | Mocked | Needs DTO/value-object mapping and shared prototype data for Laravel alignment. |
+| `/api/v1/events/{event_id}/check-in` | MOD-201 | Presence confirmation with geofence/QR/staff methods. | Mocked | Partner-defined radius; QR optional; accepted without check-in becomes no-show. |
+| `/api/v1/missions` | MOD-201 | Partner-created missions with metric targets and rewards. | Defined | Metrics selectable per mission; partner dashboard must show rankings/progress. |
+| `/api/v1/partner-links` | MOD-201 | Partner ↔ curador/pessoa linkage. | Defined | Bidirectional proposals; statuses pending/accepted; monthly proof-of-presence window. |
+| `/api/v1/discover/people` | MOD-201 | People/Influencer row ordered by monthly Social Score. | Defined | Prefer verified on ties; respects privacy by anonymizing friends-only profiles. |
+| `/api/v1/discover/curator-content` | MOD-201 | Curator-produced content for “Veja isso…” row. | Defined | Ordered by latest published (future: most viewed); links to partner/event. |
+| `/api/v1/contacts/import` | MOD-201 | Hashed contact import for friend suggestions and invite matching. | Planned | Accepts salted hashes only; no raw PII stored. |
+| `/api/v1/push/register` | MOD-201 | Register device token for push notifications. | Planned | Stores per-device tokens; used for invites/reminders. |
+| `/api/v1/accounts` | Tenant Admin | List accounts (unmanaged + managed). | Planned | Admin/tenant scoped, page-based. |
+| `/api/v1/accounts` | Tenant Admin | Create account (unmanaged). | Planned | Creates account without linked user. |
+| `/api/v1/accounts/{account_id}` | Tenant Admin | Update account (partial). | Planned | Patch account metadata + lifecycle state. |
+| `/api/v1/assets` | Tenant Admin | List assets. | Planned | Page-based admin listing. |
+| `/api/v1/assets/{asset_id}` | Tenant Admin | Get asset detail. | Planned | Returns asset metadata + URLs. |
+| `/api/v1/assets` | Tenant Admin | Create asset. | Planned | Upload/register media for tenant assets. |
+| `/api/v1/assets/{asset_id}` | Tenant Admin | Update asset (partial). | Planned | Patch asset metadata. |
+| `/api/v1/events` | Tenant Admin | List events (admin). | Planned | Admin listing, page-based. |
+| `/api/v1/events` | Tenant Admin | Create event. | Planned | Admin/partner creates event. |
+| `/api/v1/events/{event_id}` | Tenant Admin | Update event (partial). | Planned | Patch event metadata + schedule. |
+| `/api/v1/branding/update` | Tenant Admin | Update tenant branding settings. | Planned | Drives `/environment` payload + asset paths. |
 
 ## 4. Risk & Mitigation Log
 
@@ -67,7 +85,7 @@ These roadmap phases extend the Flutter persona track and remain aligned with th
 - Map browsing (read-only) for discovery; guide users into app for confirmations.
 - Install / Open-App CTAs that preserve the invite share code for attribution.
 - Invite acceptance is allowed only from invite landing reached via a single `code` (narrow V1 exception); credited to that code’s inviter principal.
-- Web “unauthenticated” surfaces may mint a backend-issued anonymous Sanctum token via `/v1/anonymous/identities` to call allowed endpoints.
+- Web “unauthenticated” surfaces may mint a backend-issued anonymous Sanctum token via `/api/v1/anonymous/identities` to call allowed endpoints.
 
 **Web authenticated allowed (V1):**
 - Tenant/Admin area: accounts, events, assets, and branding management.

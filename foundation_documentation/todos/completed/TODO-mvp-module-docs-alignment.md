@@ -5,12 +5,12 @@
 ---
 
 ## Scope
-- Perform a full scan of `foundation_documentation/modules/` to identify any mismatches with the current MVP contracts.
-- Update module docs to reflect the MVP endpoint contracts:
-  - Remove `/v1/app/home-overview` references (no aggregated home endpoint).
-  - Replace `/v1/app/profile` with `/v1/app/me`.
-  - Replace `/v1/app/onboarding/context` with `/v1/environment`.
-  - Ensure module references to agenda/map align with current filters and SSE notes where applicable.
+- [x] ✅ Perform a full scan of `foundation_documentation/modules/` to identify any mismatches with the current MVP contracts.
+- [x] ✅ Update module docs to reflect the MVP endpoint contracts:
+  - [x] ✅ Remove `/v1/app/home-overview` references (no aggregated home endpoint).
+  - [x] ✅ Replace `/v1/app/profile` with `/me`.
+  - [x] ✅ Replace `/v1/app/onboarding/context` with `/environment`.
+  - [x] ✅ Ensure module references to agenda/map align with current filters and SSE notes where applicable.
 - Update affected module documents in `foundation_documentation/modules/`.
 
 ## Out of Scope

@@ -15,10 +15,10 @@
 ## Invite Flow Summary (MVP)
 - User confirms presence on an event (enables invite context + metrics).
 - To invite:
-  - **Matched user**: app uses `POST /v1/app/contacts/import` (hashed contacts). If a match exists, backend creates invite and sends push.
-  - **No match**: app generates a share link via `POST /v1/app/invites/share` and sends externally (e.g., WhatsApp).
+  - **Matched user**: app uses `POST /api/v1/contacts/import` (hashed contacts). If a match exists, backend creates invite and sends push.
+  - **No match**: app generates a share link via `POST /api/v1/invites/share` and sends externally (e.g., WhatsApp).
 - Acceptance:
-  - `POST /v1/app/invites/share/{code}/accept` binds attribution to `inviter_principal`.
+  - `POST /api/v1/invites/share/{code}/accept` binds attribution to `inviter_principal`.
   - Acceptance counts as `invite_accepted` with `source = share_url`.
   - Only one accepted invite per `(tenant_id, event_id, receiver_user_id)`; others become `closed_duplicate`.
 - Tracking:
@@ -46,16 +46,16 @@
 - [ ] ⚪ Ensure share code does not bypass invite uniqueness (no duplicate invite spam)
 
 ### A1.2) Web acceptance (invite landing only) + same-event re-share
-- [ ] ⚪ Implement `POST /v1/app/invites/share/{code}/accept` (or equivalent) for web landing acceptance
+- [ ] ⚪ Implement `POST /api/v1/invites/share/{code}/accept` (or equivalent) for web landing acceptance
 - [ ] ⚪ Acceptance credits the inviter principal bound to `code` (no multi-inviter selection on web)
-- [ ] ⚪ Require Sanctum (`auth:sanctum`) even on web landing acceptance; web obtains an anonymous token first via `POST /v1/anonymous/identities`
+- [ ] ⚪ Require Sanctum (`auth:sanctum`) even on web landing acceptance; web obtains an anonymous token first via `POST /api/v1/anonymous/identities`
 - [ ] ⚪ Create/bind an anonymous identity on web acceptance so the backend can persist acceptance + attribution (anonymous user + Sanctum token is sufficient)
 - [ ] ⚪ Allow external re-share only for the same `event_id` after acceptance, with strict backend limits
 - [ ] ⚪ Invite share links must carry the `code` as a GET parameter in the URL
 
 ### A1.3) Contacts + realtime deltas
-- [ ] ⚪ Implement `POST /v1/app/contacts/import` (hashed contact matching for friend suggestions)
-- [ ] ⚪ Expose `/v1/app/invites/stream` SSE for invite deltas (created/updated/deleted)
+- [ ] ⚪ Implement `POST /api/v1/contacts/import` (hashed contact matching for friend suggestions)
+- [ ] ⚪ Expose `/api/v1/invites/stream` SSE for invite deltas (created/updated/deleted)
 
 ### A2) Uniqueness + responses
 - [ ] ⚪ Enforce uniqueness key:
@@ -70,7 +70,7 @@
 - [ ] ⚪ Make this transactional (single source of truth for accepted conversions)
 
 ### A4) Limits (tenant settings)
-- [ ] ⚪ Implement `GET /v1/app/invites/settings` and enforce:
+- [ ] ⚪ Implement `GET /api/v1/invites/settings` and enforce:
   - [ ] ⚪ per-event per-inviter limits
   - [ ] ⚪ per-day limits (partner + user actor)
   - [ ] ⚪ pending invites cap per receiver
@@ -101,7 +101,7 @@
 - [ ] ⚪ When sending invite returns `already_invited`, show state “Já convidado” and avoid duplicate UI entries
 
 ### B3) Client settings fetch
-- [ ] ⚪ Add a repository call for `/v1/app/invites/settings` (cache briefly)
+- [ ] ⚪ Add a repository call for `/api/v1/invites/settings` (cache briefly)
 - [ ] ⚪ Use settings only for UX messaging; do not assume limits client-side as authoritative
 
 ### B3.1) External share deep links (new users attribution)
@@ -113,7 +113,7 @@
 ### B3.2) Web acceptance UX constraints (for Web Team)
 - [ ] ⚪ Web invite landing can show “Aceitar” only when reached via a single `code`
 - [ ] ⚪ Do not expose agenda-based acceptance on web; agenda-first acceptance remains app-only
-- [ ] ⚪ On web landing, mint/resume anonymous identity via `POST /v1/anonymous/identities` and use the returned Sanctum token for accept + same-event re-share calls
+- [ ] ⚪ On web landing, mint/resume anonymous identity via `POST /api/v1/anonymous/identities` and use the returned Sanctum token for accept + same-event re-share calls
 
 ### B4) Metrics surfacing
 - [ ] ⚪ Bind invite-related metrics pills (Profile + Menu hero) to repository streams:
