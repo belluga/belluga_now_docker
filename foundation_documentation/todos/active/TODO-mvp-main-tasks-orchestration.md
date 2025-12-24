@@ -19,9 +19,9 @@
 **Status legend:** `- [ ] ⚪ Pending` · `- [ ] 🟡 Provisional` · `- [x] ✅ Production‑Ready`.
 
 **Route status tracking (MVP endpoints):**
-- [ ] ⚪ `POST /anonymous/identities`
-- [ ] ⚪ `GET /environment`
-- [ ] ⚪ `GET /me`
+- [ ] ⚪ `POST /anonymous/identities` (Upstream/Boilerplate)
+- [ ] ⚪ `GET /environment` (Upstream/Boilerplate)
+- [ ] ⚪ `GET /me` (Upstream/Boilerplate)
 - [ ] ⚪ `GET /invites`
 - [ ] ⚪ `GET /invites/stream` (SSE)
 - [ ] ⚪ `GET /invites/settings`
@@ -35,7 +35,7 @@
 - [ ] ⚪ `GET /map/pois`
 - [ ] ⚪ `GET /map/pois/stream` (SSE)
 - [ ] ⚪ `GET /map/filters`
-- [ ] ⚪ `POST /push/register`
+- [ ] ⚪ `POST /push/register` (Upstream/Boilerplate)
 - [ ] ⚪ `GET /accounts`
 - [ ] ⚪ `POST /accounts`
 - [ ] ⚪ `PATCH /accounts/{account_id}`
@@ -77,6 +77,9 @@
 ---
 
 ## Backend TODO (Laravel/API)
+- [ ] ⚪ Upstream (Boilerplate) prerequisites:
+  - [ ] ⚪ Disallow wildcard (`*`) abilities for tenant/app tokens.
+  - [ ] ⚪ Require project-specific API route files; do not expose boilerplate CRUD routes by default.
 - [ ] ⚪ Accounts can be created without users (Unmanaged state).
 - [ ] ⚪ Unmanaged accounts become managed by linking/creating a user and granting access.
 - [ ] ⚪ StaticAssets exist as non-partner sources for POIs (landlord-managed; account users read-only).
@@ -96,6 +99,11 @@
 - [ ] ⚪ Audit coverage:
   - [ ] ⚪ `created_by` / `updated_by` + `*_by_type` on entities.
   - [ ] ⚪ `action_audit_log` for all create/update/delete actions (single collection, not capped).
+
+---
+
+## Upstream (Boilerplate) TODOs
+- [ ] ⚪ Profile endpoint: `foundation_documentation/todos/active/TODO-upstream-profile-me.md`
 
 ---
 
