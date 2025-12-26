@@ -11,3 +11,6 @@
 	url = https://github.com/belluga/belluga_now_web.git
 	ignore = all
 	branch = main
+[submodule "foundation_documentation"]
+	path = foundation_documentation
+	url = https://github.com/belluga/belluga_now_foundation_documentation.git
