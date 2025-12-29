@@ -14,3 +14,5 @@
 [submodule "foundation_documentation"]
 	path = foundation_documentation
 	url = https://github.com/belluga/belluga_now_foundation_documentation.git
+	ignore = all
+	branch = main
