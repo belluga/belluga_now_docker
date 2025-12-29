@@ -46,10 +46,10 @@ server {
     # --- Laravel API and other backend routes ---
     # These also have high priority. If the file doesn't exist, they fall back to Laravel.
     location ^~ /api/ {
-        try_files $uri @laravel;
+        try_files $uri /index.php?$query_string;
     }
     location ^~ /admin/ {
-        try_files $uri @laravel;
+        try_files $uri /index.php?$query_string;
     }
     location = /manifest.json {
         try_files $uri /index.php?$query_string;

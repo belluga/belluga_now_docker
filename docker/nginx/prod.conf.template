@@ -67,10 +67,10 @@ server {
     }
 
     location ^~ /api/ {
-        try_files $uri @laravel;
+        try_files $uri /index.php?$query_string;
     }
     location ^~ /admin/ {
-        try_files $uri @laravel;
+        try_files $uri /index.php?$query_string;
     }
 
     # --- PHP-FPM Handler ---
