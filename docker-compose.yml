@@ -62,6 +62,22 @@ services:
     command: ["php", "artisan", "queue:work", "--sleep=1", "--tries=3", "--timeout=120"]
     restart: unless-stopped
 
+  scheduler:
+    build:
+      context: .
+      dockerfile: ./docker/laravel-app/Dockerfile
+    depends_on:
+      mongo-init:
+        condition: service_completed_successfully
+        required: false
+    volumes:
+      - ./laravel-app:/var/www
+      - app-storage:/var/www/storage
+    networks:
+      - app-network
+    command: ["sh", "-lc", "while true; do php artisan schedule:run; sleep 60; done"]
+    restart: unless-stopped
+
   nginx:
     build: ./docker/nginx
     env_file: .env

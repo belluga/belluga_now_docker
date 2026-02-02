@@ -182,6 +182,16 @@ Execute todos os comandos de desenvolvimento através do `docker compose exec`.
     docker compose logs -f worker
     ```
 
+* **Subir o scheduler (cron do Laravel):**
+    ```bash
+    docker compose up -d scheduler
+    ```
+
+* **Ver logs do scheduler:**
+    ```bash
+    docker compose logs -f scheduler
+    ```
+
 * **Executar o Composer:**
     ```bash
     docker compose exec app composer install
