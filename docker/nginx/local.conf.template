@@ -43,6 +43,10 @@ server {
         try_files $request_filename =404;
     }
 
+    location ^~ /account-profiles/ {
+        try_files $uri /index.php?$query_string;
+    }
+
     # --- Laravel API and other backend routes ---
     # These also have high priority. If the file doesn't exist, they fall back to Laravel.
     location ^~ /api/ {

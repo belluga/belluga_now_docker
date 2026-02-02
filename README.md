@@ -177,6 +177,17 @@ Execute todos os comandos de desenvolvimento através do `docker compose exec`.
     docker compose exec app composer install
     ```
 
+* **Rodar migrações (Spatie Multitenancy — landlord + tenant):**
+    ```bash
+    # Landlord (central) migrations
+    docker compose exec app php artisan migrate --database=landlord --path=database/migrations/landlord
+
+    # Tenant migrations (all tenants)
+    docker compose exec app php artisan tenants:artisan "migrate --database=tenant --path=database/migrations/tenants"
+    ```
+
+    > Use `migrate:fresh` apenas em ambientes locais descartáveis.
+
 * **Acessar o shell de um contêiner:**
     ```bash
     docker compose exec app sh

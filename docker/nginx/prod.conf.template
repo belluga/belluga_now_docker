@@ -72,6 +72,9 @@ server {
     location ^~ /admin/ {
         try_files $uri /index.php?$query_string;
     }
+    location ^~ /account-profiles/ {
+        try_files $uri /index.php?$query_string;
+    }
 
     # --- PHP-FPM Handler ---
     location ~ \.php$ {

@@ -21,6 +21,7 @@ COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
 WORKDIR /var/www
 
 COPY ./laravel-app /var/www
+COPY docker/laravel-app/uploads.ini /usr/local/etc/php/conf.d/uploads.ini
 
 RUN mkdir -p /var/www/bootstrap/cache && \
     chown -R www-data:www-data /var/www/bootstrap/cache && \

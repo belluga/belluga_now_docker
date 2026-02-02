@@ -15,6 +15,7 @@ delphi-ai
 GEMINI.md
 gemini_memory.md
 .agent
+.codex
 !.agent/rules/
 !.agent/workflows/
 !flutter-app/.agent/rules/
