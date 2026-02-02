@@ -172,6 +172,16 @@ Execute todos os comandos de desenvolvimento através do `docker compose exec`.
     docker compose exec app php artisan <seu-comando>
     ```
 
+* **Subir o worker de filas (queue):**
+    ```bash
+    docker compose up -d worker
+    ```
+
+* **Ver logs do worker de filas:**
+    ```bash
+    docker compose logs -f worker
+    ```
+
 * **Executar o Composer:**
     ```bash
     docker compose exec app composer install
