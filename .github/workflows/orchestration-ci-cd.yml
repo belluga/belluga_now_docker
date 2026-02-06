@@ -1,0 +1,48 @@
+name: Orchestration CI/CD
+
+on:
+  push:
+    branches:
+      - dev
+      - stage
+      - main
+  pull_request:
+    branches:
+      - dev
+      - stage
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: orchestration-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  preflight:
+    name: Preflight Validation
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository with submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Determine lane branch
+        id: lane
+        run: |
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            echo "branch=${{ github.base_ref }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "branch=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Verify environment invariants
+        run: bash scripts/verify_environment.sh
+
+      - name: Validate submodule lane alignment
+        run: .github/scripts/check_submodule_branch_alignment.sh "${{ steps.lane.outputs.branch }}"
+
+      - name: Validate web/flutter metadata compatibility
+        run: .github/scripts/check_web_flutter_metadata.sh "${{ steps.lane.outputs.branch }}"
