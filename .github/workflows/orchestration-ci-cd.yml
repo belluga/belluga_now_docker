@@ -7,6 +7,11 @@ on:
       - stage
       - main
   pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
     branches:
       - dev
       - stage
@@ -18,9 +23,24 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  lane_policy:
+    name: Lane Promotion Policy
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Enforce branch promotion lanes
+        run: .github/scripts/check_promotion_lane.sh
+
   preflight:
     name: Preflight Validation
     runs-on: ubuntu-latest
+    needs:
+      - lane_policy
+    if: ${{ github.event_name != 'pull_request' || needs.lane_policy.result == 'success' }}
 
     steps:
       - name: Checkout repository with submodules

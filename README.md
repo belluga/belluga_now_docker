@@ -253,3 +253,33 @@ O Docker **não** executa o build do Flutter automaticamente. O NGINX serve apen
 
 > **Importante:** Como o bundle fica em um repositório dedicado, você pode manter branches/PRs específicos para revisão do conteúdo estático e promover apenas versões estáveis para `main`.
 > **Nota sobre Flutter/FVM:** O time utiliza [FVM](https://fvm.app/) para garantir consistência de versão. Sempre execute comandos locais via `fvm flutter ...` (ou configure o VS Code para apontar para o binário do FVM). Caso prefira o modo Docker, basta invocar o script com `docker run --rm -u "$(id -u)":"$(id -g)" -v "$PWD":/workspace -w /workspace ghcr.io/cirruslabs/flutter:3.35.7 ...` para preservar permissões.
+
+## 🔐 Governança de Branches (GitHub)
+
+Para manter promoção de ambientes com bloqueio real de push direto, use **Branch Protection/Rulesets** + **checks de CI**.
+
+Política de promoção:
+
+* `dev -> stage` (somente PR)
+* `stage -> main` (somente PR)
+* Push direto em `stage/main` deve ficar bloqueado via proteção de branch.
+
+No CI do repositório de orquestração (`.github/workflows/orchestration-ci-cd.yml`):
+
+* O job `Lane Promotion Policy` falha se o PR violar o fluxo acima.
+* O job `Preflight Validation` valida os commits promovidos para `dev`, `stage` e `main`.
+* O bloqueio real de push direto em `stage/main` é feito por Branch Protection/Rulesets.
+
+Checklist recomendado em **Settings > Branches** para `stage` e `main`:
+
+* `Require a pull request before merging`.
+* `Require status checks to pass before merging`.
+* Adicionar checks obrigatórios:
+  * `Lane Promotion Policy`
+  * `Preflight Validation`
+* `Require conversation resolution before merging`.
+* `Do not allow bypassing the above settings` (se disponível no seu plano/repo).
+
+Observação:
+
+* Em plano pago, configure `stage` e `main` com PR obrigatório e checks obrigatórios para bloquear push direto na origem.
