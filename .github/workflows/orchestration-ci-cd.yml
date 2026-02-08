@@ -59,7 +59,7 @@ jobs:
           fi
 
       - name: Verify environment invariants
-        run: bash scripts/verify_environment.sh
+        run: .github/scripts/verify_environment_ci.sh
 
       - name: Validate submodule lane alignment
         run: .github/scripts/check_submodule_branch_alignment.sh "${{ steps.lane.outputs.branch }}"
