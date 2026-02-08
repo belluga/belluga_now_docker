@@ -49,10 +49,9 @@ jobs:
     if: ${{ github.event_name != 'pull_request' || needs.lane_policy.result == 'success' }}
 
     steps:
-      - name: Checkout repository with submodules
+      - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          submodules: recursive
           fetch-depth: 0
 
       - name: Determine lane branch
@@ -64,11 +63,56 @@ jobs:
             echo "branch=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Resolve submodule checkout auth
+        id: submodule_auth
+        env:
+          SUBMODULES_REPO_TOKEN: ${{ secrets.SUBMODULES_REPO_TOKEN }}
+          WEB_APP_REPO_TOKEN: ${{ secrets.WEB_APP_REPO_TOKEN }}
+        run: |
+          token="${SUBMODULES_REPO_TOKEN:-}"
+          if [[ -z "$token" ]]; then
+            token="${WEB_APP_REPO_TOKEN:-}"
+          fi
+
+          if [[ -n "$token" ]]; then
+            echo "::add-mask::$token"
+            echo "has_token=true" >> "$GITHUB_OUTPUT"
+            echo "token=$token" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_token=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout submodules
+        if: steps.submodule_auth.outputs.has_token == 'true'
+        env:
+          SUBMODULE_TOKEN: ${{ steps.submodule_auth.outputs.token }}
+        run: |
+          git config --global --unset-all url.https://github.com/.insteadOf || true
+          git config --global url."https://x-access-token:${SUBMODULE_TOKEN}@github.com/".insteadOf "https://github.com/"
+          git submodule sync --recursive
+          git submodule update --init --recursive
+
+      - name: Handle missing submodule token
+        if: steps.submodule_auth.outputs.has_token != 'true'
+        run: |
+          if [[ "${{ steps.lane.outputs.branch }}" == "dev" ]]; then
+            echo "WARN: missing SUBMODULES_REPO_TOKEN/WEB_APP_REPO_TOKEN. Skipping submodule-based checks on dev."
+            echo "SKIP_SUBMODULE_CHECKS=true" >> "$GITHUB_ENV"
+            exit 0
+          fi
+
+          echo "ERROR: missing required secret for private submodule checkout." >&2
+          echo "Set SUBMODULES_REPO_TOKEN (recommended) or WEB_APP_REPO_TOKEN in this repository secrets." >&2
+          exit 1
+
       - name: Verify environment invariants
+        if: env.SKIP_SUBMODULE_CHECKS != 'true'
         run: .github/scripts/verify_environment_ci.sh
 
       - name: Validate submodule lane alignment
+        if: env.SKIP_SUBMODULE_CHECKS != 'true'
         run: .github/scripts/check_submodule_branch_alignment.sh "${{ steps.lane.outputs.branch }}"
 
       - name: Validate web/flutter metadata compatibility
+        if: env.SKIP_SUBMODULE_CHECKS != 'true'
         run: .github/scripts/check_web_flutter_metadata.sh "${{ steps.lane.outputs.branch }}"
