@@ -90,6 +90,16 @@ run_git reset --hard "origin/\$DEPLOY_BRANCH"
 run_git submodule sync --recursive
 run_git submodule update --init --recursive
 
+if [[ ! -f ".env" ]]; then
+  if [[ -f ".env.example" ]]; then
+    cp .env.example .env
+    echo "INFO: bootstrap .env from .env.example on first deploy."
+  else
+    echo "ERROR: missing both .env and .env.example in deploy path." >&2
+    exit 1
+  fi
+fi
+
 "\${DOCKER_COMPOSE[@]}" up -d --build --remove-orphans
 "\${DOCKER_COMPOSE[@]}" ps
 
