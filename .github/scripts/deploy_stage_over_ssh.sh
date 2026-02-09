@@ -105,14 +105,17 @@ if [[ ! -f ".env" ]]; then
   fi
 fi
 
+# Cleanup from prior malformed upsert runs.
+sed -i '/^\${key}=\${value}$/d' .env || true
+
 upsert_env() {
   local key="\$1"
   local value="\$2"
 
-  if grep -q "^\\\${key}=" .env; then
-    sed -i "s#^\\\${key}=.*#\\\${key}=\\\${value}#" .env
+  if grep -q "^\${key}=" .env; then
+    sed -i "s#^\${key}=.*#\${key}=\${value}#" .env
   else
-    echo "\\\${key}=\\\${value}" >> .env
+    echo "\${key}=\${value}" >> .env
   fi
 }
 
