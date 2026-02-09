@@ -190,6 +190,8 @@ jobs:
           STAGE_SSH_PORT: ${{ vars.STAGE_SSH_PORT }}
           STAGE_SSH_USER: ${{ vars.STAGE_SSH_USER }}
           STAGE_DEPLOY_PATH: ${{ vars.STAGE_DEPLOY_PATH }}
+          STAGE_NGINX_HOST_PORT_80: ${{ vars.STAGE_NGINX_HOST_PORT_80 }}
+          STAGE_NGINX_HOST_PORT_443: ${{ vars.STAGE_NGINX_HOST_PORT_443 }}
           STAGE_SSH_KEY_PATH: ~/.ssh/id_ed25519_stage
           SUBMODULES_REPO_TOKEN: ${{ steps.submodule_auth.outputs.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}

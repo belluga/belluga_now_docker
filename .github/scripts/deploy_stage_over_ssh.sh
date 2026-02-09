@@ -37,6 +37,9 @@ if [[ -z "${SUBMODULES_REPO_TOKEN:-}" ]]; then
   exit 1
 fi
 
+stage_nginx_port_80="${STAGE_NGINX_HOST_PORT_80:-80}"
+stage_nginx_port_443="${STAGE_NGINX_HOST_PORT_443:-443}"
+
 remote="${STAGE_SSH_USER}@${STAGE_SSH_HOST}"
 ssh_opts=(
   -p "${STAGE_SSH_PORT}"
@@ -55,6 +58,8 @@ STAGE_DEPLOY_PATH='${STAGE_DEPLOY_PATH}'
 GITHUB_REPOSITORY='${GITHUB_REPOSITORY}'
 DEPLOY_BRANCH='${GITHUB_REF_NAME}'
 SUBMODULES_REPO_TOKEN='${SUBMODULES_REPO_TOKEN}'
+STAGE_NGINX_HOST_PORT_80='${stage_nginx_port_80}'
+STAGE_NGINX_HOST_PORT_443='${stage_nginx_port_443}'
 
 run_git() {
   GIT_CONFIG_COUNT=1 \
@@ -100,16 +105,25 @@ if [[ ! -f ".env" ]]; then
   fi
 fi
 
+upsert_env() {
+  local key="\$1"
+  local value="\$2"
+
+  if grep -q "^\\\${key}=" .env; then
+    sed -i "s#^\\\${key}=.*#\\\${key}=\\\${value}#" .env
+  else
+    echo "\\\${key}=\\\${value}" >> .env
+  fi
+}
+
+upsert_env NGINX_HOST_PORT_80 "\$STAGE_NGINX_HOST_PORT_80"
+upsert_env NGINX_HOST_PORT_443 "\$STAGE_NGINX_HOST_PORT_443"
+
 "\${DOCKER_COMPOSE[@]}" up -d --build --remove-orphans
 "\${DOCKER_COMPOSE[@]}" ps
 
 # Validate runtime health before declaring deploy success.
-host_port_80="\$(grep '^NGINX_HOST_PORT_80=' .env | cut -d= -f2- | tr -d '[:space:]')"
-if [[ -z "\$host_port_80" ]]; then
-  host_port_80="8081"
-fi
-
-health_url="http://127.0.0.1:\${host_port_80}/api/v1/environment"
+health_url="http://127.0.0.1:\${STAGE_NGINX_HOST_PORT_80}/api/v1/environment"
 echo "INFO: waiting for application health at \${health_url}"
 
 for attempt in \$(seq 1 24); do
