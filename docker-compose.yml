@@ -95,17 +95,6 @@ services:
     networks:
       - app-network
 
-  cloudflared:
-    image: cloudflare/cloudflared:latest
-    restart: unless-stopped
-    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN}
-    depends_on:
-      - nginx
-    networks:
-      - app-network
-    profiles:
-      - staging
-
   certbot:
     image: certbot/certbot
     volumes:
