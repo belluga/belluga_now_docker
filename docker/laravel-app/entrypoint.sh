@@ -52,7 +52,11 @@ composer_install_with_retry() {
     done
 }
 
-if [ ! -f "vendor/autoload.php" ]; then
+composer_autoload_is_valid() {
+    gosu www-data php -r "require '/var/www/vendor/autoload.php';" >/dev/null 2>&1
+}
+
+if [ ! -f "vendor/autoload.php" ] || ! composer_autoload_is_valid; then
     composer_install_with_retry
 fi
 
