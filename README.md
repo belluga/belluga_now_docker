@@ -329,3 +329,37 @@ Checklist recomendado em **Settings > Branches** para `stage` e `main`:
 Observação:
 
 * Em plano pago, configure `stage` e `main` com PR obrigatório e checks obrigatórios para bloquear push direto na origem.
+
+## 🚢 Deploy de Stage (Fase 2)
+
+O workflow `Orchestration CI/CD` agora executa deploy automático de `stage` quando há push na branch `stage` e o `Preflight Validation` passa.
+
+Pré-requisitos no repositório GitHub (`Settings > Secrets and variables > Actions`):
+
+`Secrets`:
+* `SUBMODULES_REPO_TOKEN` (acesso de leitura aos submódulos privados).
+* `STAGE_SSH_PRIVATE_KEY` (chave privada usada pelo GitHub Actions).
+* `STAGE_SSH_KNOWN_HOSTS` (saída do `ssh-keyscan -H <ip-ou-host-stage>`).
+
+`Variables`:
+* `STAGE_SSH_HOST` (ex.: IP público da VPS).
+* `STAGE_SSH_PORT` (ex.: `22`).
+* `STAGE_SSH_USER` (ex.: `ubuntu`).
+* `STAGE_DEPLOY_PATH` (ex.: `/srv/belluga_now_docker`).
+
+Primeira preparação no servidor de stage:
+
+```bash
+sudo mkdir -p /srv/belluga_now_docker
+sudo chown -R "$USER":"$USER" /srv/belluga_now_docker
+```
+
+Comportamento do deploy:
+* Faz checkout da branch `stage` no servidor.
+* Atualiza submódulos para os SHAs pinados no commit do repositório de orquestração.
+* Executa `docker compose up -d --build --remove-orphans`.
+
+Rollback operacional:
+1. Reverter o commit na branch `stage` no repositório de orquestração.
+2. Fazer push da reversão para `stage`.
+3. O workflow aplica novamente os SHAs anteriores e recompõe os containers.
