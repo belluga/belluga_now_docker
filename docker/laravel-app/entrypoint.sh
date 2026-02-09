@@ -71,7 +71,8 @@ if [ ! -L "public/storage" ]; then
 fi
 
 # Only run caches in production.
-if [ "$APP_ENV" = "production" ]; then
+app_env="${APP_ENV:-local}"
+if [ "$app_env" = "production" ]; then
     echo ">>> Caching configuration for production..."
     gosu www-data php artisan config:cache
     gosu www-data php artisan route:cache
