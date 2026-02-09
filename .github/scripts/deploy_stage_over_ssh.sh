@@ -103,5 +103,28 @@ fi
 "\${DOCKER_COMPOSE[@]}" up -d --build --remove-orphans
 "\${DOCKER_COMPOSE[@]}" ps
 
-echo "INFO: Stage deploy completed successfully."
+# Validate runtime health before declaring deploy success.
+host_port_80="\$(grep '^NGINX_HOST_PORT_80=' .env | cut -d= -f2- | tr -d '[:space:]')"
+if [[ -z "\$host_port_80" ]]; then
+  host_port_80="8081"
+fi
+
+health_url="http://127.0.0.1:\${host_port_80}/api/v1/environment"
+echo "INFO: waiting for application health at \${health_url}"
+
+for attempt in \$(seq 1 24); do
+  if curl -fsS --max-time 5 "\${health_url}" >/dev/null 2>&1; then
+    echo "INFO: stage health check passed."
+    echo "INFO: Stage deploy completed successfully."
+    exit 0
+  fi
+
+  echo "INFO: health check attempt \${attempt}/24 failed; retrying in 5s..."
+  sleep 5
+done
+
+echo "ERROR: stage deploy finished but application is not healthy." >&2
+"\${DOCKER_COMPOSE[@]}" ps || true
+"\${DOCKER_COMPOSE[@]}" logs --tail=200 app worker scheduler nginx || true
+exit 1
 EOF_REMOTE
