@@ -17,6 +17,11 @@ require_env GITHUB_REPOSITORY
 require_env GITHUB_REF_NAME
 require_env STAGE_SSH_KEY_PATH
 
+# Normalize "~" because env vars are not shell-expanded automatically.
+if [[ "${STAGE_SSH_KEY_PATH}" == "~/"* ]]; then
+  STAGE_SSH_KEY_PATH="${HOME}/${STAGE_SSH_KEY_PATH#~/}"
+fi
+
 if [[ "${GITHUB_REF_NAME}" != "stage" ]]; then
   echo "ERROR: deploy_stage_over_ssh.sh must run on branch 'stage' (received '${GITHUB_REF_NAME}')." >&2
   exit 1
