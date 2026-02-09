@@ -136,6 +136,66 @@ Quick sanity checks:
 docker compose --profile local-db ps
 ```
 
+### Local Dev Without Cloudflare (Recommended)
+
+Use this flow when you want full local development (Docker + Flutter) without tunnel/domain dependencies.
+
+1. Start the local stack without `staging` profile:
+
+```bash
+COMPOSE_PROFILES=local-db docker compose up -d --build
+```
+
+If you are using Atlas instead of local Mongo:
+
+```bash
+COMPOSE_PROFILES= docker compose up -d --build
+```
+
+2. Validate local backend/NGINX is reachable:
+
+```bash
+curl -I http://localhost:8081/api/v1/environment
+```
+
+3. Run Flutter (mobile/desktop) against local backend.
+
+The Flutter app now uses compile-time lane define files (`--dart-define-from-file`).
+Local runs default to the `dev` lane plus an optional local override file.
+
+Create your local override file once:
+
+```bash
+cd flutter-app
+cp config/defines/local.override.example.json config/defines/local.override.json
+```
+
+Edit `config/defines/local.override.json` for your machine (for Android emulator, `10.0.2.2:8081` is typical).
+
+```bash
+cd flutter-app
+./tool/with_lane_defines.sh dev run --flavor <your_flavor>
+```
+
+If you prefer direct command usage (without helper script):
+
+```bash
+fvm flutter run --flavor <your_flavor> \
+  --dart-define-from-file=config/defines/dev.json \
+  --dart-define-from-file=config/defines/local.override.json
+```
+
+4. Web local access (served by Laravel/NGINX bundle):
+
+- Open `http://localhost:8081` in your browser.
+
+Notes:
+- This flow does not require Cloudflare.
+- Flutter local bootstrap does not use `.env`; it is controlled by compile-time define files.
+- Lane files live in `flutter-app/config/defines/{dev,stage,main}.json`.
+- `flutter-app/config/defines/local.override.json` is gitignored and machine-specific.
+- If `cloudflared` is still running from an older staging session, stop it with `docker compose stop cloudflared`.
+
 O ambiente é controlado pela variável `COMPOSE_PROFILES` no seu arquivo `.env`.
 
 ### Ambiente de Staging (Padrão)
