@@ -11,9 +11,9 @@ Um ambiente de desenvolvimento, staging e produção completo para aplicações 
 
 * **Ambiente Unificado**: Backend e frontend gerenciados em um único projeto com Git Submodules.
 * **Containerizado**: Esqueça a necessidade de instalar PHP, Composer ou Flutter SDK na sua máquina. O Docker cuida de tudo.
-* **Perfis de Ambiente**: Alterne facilmente entre `staging` e `production` usando Perfis do Docker Compose.
-    * **Staging**: Exponha seu ambiente local na internet com um único comando usando o Cloudflare Tunnel.
-    * **Production**: Geração e renovação automática de certificados SSL/TLS com Certbot (Let's Encrypt).
+* **Perfis de Ambiente**: Use o mesmo stack para desenvolvimento local e produção com Perfis do Docker Compose.
+    * **Local Dev**: execução local completa sem túnel.
+    * **Production**: geração e renovação automática de certificados SSL/TLS com Certbot (Let's Encrypt).
 * **Consistência de Código**: O arquivo `.gitattributes` garante que as terminações de linha sejam consistentes em qualquer sistema operacional, evitando erros no Docker.
 
 ***
@@ -82,20 +82,7 @@ Agora, aponte os submódulos para os seus novos repositórios.
     ```
 2.  **Edite o arquivo `.env`** com as configurações básicas do projeto, como `PROJECT_NAME`. As variáveis específicas de cada ambiente serão preenchidas a seguir.
 
-### Passo 5: Configure o Túnel para Staging (Opcional)
-
-Para usar o perfil de `staging` e expor seu ambiente local na internet, você precisa de um **Cloudflare Tunnel**.
-
-1.  Siga o **tutorial oficial do Cloudflare** para criar seu túnel:
-    * **[Guia de Início Rápido do Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/get-started/)**
-
-2.  Após seguir o tutorial, você terá um **token do túnel** e um **domínio público** (ex: `meu-app.meudominio.com`).
-
-3.  Abra seu arquivo `.env` e atualize as seguintes variáveis:
-    * `CLOUDFLARE_TUNNEL_TOKEN`: Cole o token do seu túnel aqui.
-    * `DOMAIN`: Insira o domínio público que você configurou para o túnel.
-
-### Passo 6: Envie o Código Inicial
+### Passo 5: Envie o Código Inicial
 
 Finalmente, envie as alterações de configuração e o código inicial para seus novos repositórios.
 
@@ -136,18 +123,77 @@ Quick sanity checks:
 docker compose --profile local-db ps
 ```
 
+### Local Dev (Recommended)
+
+Use this flow when you want full local development (Docker + Flutter) with no tunnel dependencies.
+
+1. Start the local stack:
+
+```bash
+COMPOSE_PROFILES=local-db docker compose up -d --build
+```
+
+If you are using Atlas instead of local Mongo:
+
+```bash
+COMPOSE_PROFILES= docker compose up -d --build
+```
+
+2. Validate local backend/NGINX is reachable:
+
+```bash
+curl -I http://localhost:8081/api/v1/environment
+```
+
+3. Run Flutter (mobile/desktop) against local backend.
+
+The Flutter app now uses compile-time lane define files (`--dart-define-from-file`).
+Local runs default to the `dev` lane plus an optional local override file.
+
+Create your local override file once:
+
+```bash
+cd flutter-app
+cp config/defines/local.override.example.json config/defines/local.override.json
+```
+
+Edit `config/defines/local.override.json` for your machine (for Android emulator, `10.0.2.2:8081` is typical).
+
+```bash
+cd flutter-app
+./tool/with_lane_defines.sh dev run --flavor <your_flavor>
+```
+
+If you prefer direct command usage (without helper script):
+
+```bash
+fvm flutter run --flavor <your_flavor> \
+  --dart-define-from-file=config/defines/dev.json \
+  --dart-define-from-file=config/defines/local.override.json
+```
+
+4. Web local access (served by Laravel/NGINX bundle):
+
+- Open `http://localhost:8081` in your browser.
+
+Notes:
+- This flow does not require tunneling.
+- Flutter local bootstrap does not use `.env`; it is controlled by compile-time define files.
+- Lane files live in `flutter-app/config/defines/{dev,stage,main}.json`.
+- `flutter-app/config/defines/local.override.json` is gitignored and machine-specific.
+
 O ambiente é controlado pela variável `COMPOSE_PROFILES` no seu arquivo `.env`.
 
-### Ambiente de Staging (Padrão)
+### Ambiente de Stage (Hospedado)
 
-Ideal para desenvolvimento e para compartilhar seu progresso. Utiliza o Cloudflare Tunnel para criar um túnel seguro para seu ambiente local.
+O stage é hospedado em infraestrutura remota (sem túnel local).  
+Use este repositório para empacotar e executar o stack no servidor de stage com domínio próprio.
 
-1.  No arquivo `.env`, garanta que `COMPOSE_PROFILES=staging`.
-2.  Confirme que as variáveis `CLOUDFLARE_TUNNEL_TOKEN` e `DOMAIN` foram preenchidas conforme o **Passo 5**.
-3.  Suba os contêineres:
-    ```bash
-    docker compose up -d --build
-    ```
+Sugestão de perfil para servidor de stage:
+
+```bash
+COMPOSE_PROFILES=production docker compose up -d --build
+```
 
 ### Ambiente de Produção
 
