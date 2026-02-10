@@ -1,6 +1,6 @@
 server {
     listen 80;
-    server_name localhost;
+    server_name _;
     
     # Increase client max body size for file uploads
     client_max_body_size 100M;
@@ -17,17 +17,47 @@ server {
     }
 
     # --- Flutter Web (Frontend) ---
-    # This is the primary catch-all location.
+    # Cloudflare can serve stale cached JS for Flutter core files (e.g. `main.dart.js`)
+    # which can re-introduce removed behavior. Force revalidation for these files.
+    location = /index.html {
+        root /var/www/flutter;
+        try_files $uri =404;
+        add_header Cache-Control "no-cache" always;
+    }
+    location = /main.dart.js {
+        root /var/www/flutter;
+        try_files $uri =404;
+        add_header Cache-Control "no-cache" always;
+    }
+    location = /flutter_bootstrap.js {
+        root /var/www/flutter;
+        try_files $uri =404;
+        add_header Cache-Control "no-cache" always;
+    }
+    location = /flutter_service_worker.js {
+        root /var/www/flutter;
+        try_files $uri =404;
+        add_header Cache-Control "no-cache" always;
+    }
+    location = /version.json {
+        root /var/www/flutter;
+        try_files $uri =404;
+        add_header Cache-Control "no-cache" always;
+    }
+
+    # Immutable Flutter build assets can be cached aggressively.
+    location ^~ /assets/ {
+        root /var/www/flutter;
+        try_files $uri =404;
+        expires 1y;
+        add_header Cache-Control "public, immutable" always;
+    }
+
+    # Primary SPA catch-all.
     location / {
         root /var/www/flutter;
         index index.html;
         try_files $uri $uri/ /index.html;
-        
-        # Add headers for better caching on Flutter's static assets
-        location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg)$ {
-            expires 1y;
-            add_header Cache-Control "public, immutable";
-        }
     }
 
     location ^~ /storage/ {
@@ -104,6 +134,14 @@ server {
         fastcgi_index index.php;
         fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
         fastcgi_param PATH_INFO $fastcgi_path_info;
+
+        # Forward proxy scheme. With Cloudflare Flexible SSL, origin is HTTP but browser is HTTPS.
+        # Laravel will read this header only if trusted proxies are configured.
+        set $forwarded_proto $http_x_forwarded_proto;
+        if ($forwarded_proto = '') {
+            set $forwarded_proto $scheme;
+        }
+        fastcgi_param HTTP_X_FORWARDED_PROTO $forwarded_proto;
         
         # Timeouts for long-running requests
         fastcgi_read_timeout 300;
