@@ -149,6 +149,14 @@ server {
         if ($http_cf_visitor ~* "\"scheme\":\"http\"") {
             set $forwarded_proto http;
         }
+        # Last-resort: if we're serving a known HTTPS-only zone, force `https` even if
+        # Cloudflare doesn't forward scheme headers (common on some configurations).
+        if ($host = 'belluga.app') {
+            set $forwarded_proto https;
+        }
+        if ($host ~* "\\.belluga\\.app$") {
+            set $forwarded_proto https;
+        }
         fastcgi_param HTTP_X_FORWARDED_PROTO $forwarded_proto;
         
         # Timeouts for long-running requests
