@@ -150,6 +150,18 @@ server {
             set $forwarded_proto http;
         }
         fastcgi_param HTTP_X_FORWARDED_PROTO $forwarded_proto;
+
+        # Make PHP/Laravel see the correct scheme even if proxy trust config is imperfect.
+        # Symfony considers the request secure when `HTTPS=on` (and/or REQUEST_SCHEME=https).
+        set $fastcgi_https '';
+        set $fastcgi_server_port $server_port;
+        if ($forwarded_proto = 'https') {
+            set $fastcgi_https 'on';
+            set $fastcgi_server_port 443;
+        }
+        fastcgi_param HTTPS $fastcgi_https;
+        fastcgi_param REQUEST_SCHEME $forwarded_proto;
+        fastcgi_param SERVER_PORT $fastcgi_server_port;
         
         # Timeouts for long-running requests
         fastcgi_read_timeout 300;
