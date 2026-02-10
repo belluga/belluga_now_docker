@@ -141,6 +141,14 @@ server {
         if ($forwarded_proto = '') {
             set $forwarded_proto $scheme;
         }
+        # Cloudflare always forwards `CF-Visitor` (JSON) and it contains the *edge* scheme.
+        # On Flexible SSL, `$scheme` is `http` at origin, but the browser uses `https`.
+        if ($http_cf_visitor ~* "\"scheme\":\"https\"") {
+            set $forwarded_proto https;
+        }
+        if ($http_cf_visitor ~* "\"scheme\":\"http\"") {
+            set $forwarded_proto http;
+        }
         fastcgi_param HTTP_X_FORWARDED_PROTO $forwarded_proto;
         
         # Timeouts for long-running requests
