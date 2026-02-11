@@ -201,16 +201,12 @@ jobs:
           short_sha="$(echo "$TARGET_SHA" | cut -c1-7)"
           title="🔗 chore(submodules): sync ${SUBMODULE} pin (${short_sha})"
 
-          body="Automated submodule pin sync.
-
-- Submodule: ${SUBMODULE}
-- Commit: ${TARGET_SHA}
-"
+          body=$'Automated submodule pin sync.\n\n- Submodule: '"${SUBMODULE}"$'\n- Commit: '"${TARGET_SHA}"$'\n'
           if [[ -n "${SOURCE_REPO}" ]]; then
-            body="${body}\n- Source repo: ${SOURCE_REPO}"
+            body="${body}"$'\n'"- Source repo: ${SOURCE_REPO}"
           fi
           if [[ -n "${SOURCE_BRANCH}" ]]; then
-            body="${body}\n- Source branch: ${SOURCE_BRANCH}"
+            body="${body}"$'\n'"- Source branch: ${SOURCE_BRANCH}"
           fi
 
           existing="$(gh pr list --repo "$GITHUB_REPOSITORY" --base "$BASE_BRANCH" --head "$BOT_BRANCH" --json number --jq '.[0].number // empty')"
