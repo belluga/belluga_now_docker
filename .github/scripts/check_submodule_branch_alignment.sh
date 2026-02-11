@@ -76,15 +76,19 @@ for submodule in "${SUBMODULES[@]}"; do
   fi
 
   # For dev PR validation, allow the submodule commit to come from the PR head branch
-  # so cross-repo CI branches can be validated before merging into dev.
+  # only when that branch also exists in the submodule repository.
+  pr_head_fallback_checked=0
   if [[ "$TARGET_BRANCH" == "dev" && -n "$PR_HEAD_BRANCH" && "$PR_HEAD_BRANCH" != "$TARGET_BRANCH" ]]; then
-    if is_pinned_on_remote_branch "$submodule" "$pinned_sha" "$PR_HEAD_BRANCH"; then
-      echo "OK: $submodule pinned SHA $pinned_sha is on origin/$PR_HEAD_BRANCH (dev PR head fallback)"
-      continue
+    if remote_branch_exists "$submodule" "$PR_HEAD_BRANCH"; then
+      pr_head_fallback_checked=1
+      if is_pinned_on_remote_branch "$submodule" "$pinned_sha" "$PR_HEAD_BRANCH"; then
+        echo "OK: $submodule pinned SHA $pinned_sha is on origin/$PR_HEAD_BRANCH (dev PR head fallback)"
+        continue
+      fi
     fi
   fi
 
-  if [[ "$TARGET_BRANCH" == "dev" && -n "$PR_HEAD_BRANCH" && "$PR_HEAD_BRANCH" != "$TARGET_BRANCH" ]]; then
+  if [[ "$pr_head_fallback_checked" -eq 1 ]]; then
     echo "ERROR: $submodule pinned SHA $pinned_sha is neither on expected lanes (${expected_branches[*]}) nor origin/$PR_HEAD_BRANCH" >&2
   else
     echo "ERROR: $submodule pinned SHA $pinned_sha is not on expected lanes (${expected_branches[*]})" >&2
