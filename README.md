@@ -343,9 +343,14 @@ Observação:
 
 * Em plano pago, configure `stage` e `main` com PR obrigatório e checks obrigatórios para bloquear push direto na origem.
 
-## 🚢 Deploy de Stage (Fase 2)
+## 🚢 Deploy de Stage e Produção (Fase 2)
 
-O workflow `Orchestration CI/CD` agora executa deploy automático de `stage` quando há push na branch `stage` e o `Preflight Validation` passa.
+O workflow `Orchestration CI/CD` executa deploy automático:
+
+* `stage` quando há push na branch `stage`.
+* `main` quando há push na branch `main`.
+
+Em ambos os casos, o `Preflight Validation` precisa passar antes do deploy.
 
 Pré-requisitos no repositório GitHub (`Settings > Secrets and variables > Actions`):
 
@@ -359,6 +364,20 @@ Pré-requisitos no repositório GitHub (`Settings > Secrets and variables > Acti
 * `STAGE_SSH_PORT` (ex.: `22`).
 * `STAGE_SSH_USER` (ex.: `ubuntu`).
 * `STAGE_DEPLOY_PATH` (ex.: `/srv/belluga_now_docker`).
+* `STAGE_NGINX_HOST_PORT_80` (opcional, padrão `80`).
+* `STAGE_NGINX_HOST_PORT_443` (opcional, padrão `443`).
+
+Secrets de produção (`main`):
+* `MAIN_SSH_PRIVATE_KEY`
+* `MAIN_SSH_KNOWN_HOSTS`
+
+Variables de produção (`main`):
+* `MAIN_SSH_HOST`
+* `MAIN_SSH_PORT`
+* `MAIN_SSH_USER`
+* `MAIN_DEPLOY_PATH`
+* `MAIN_NGINX_HOST_PORT_80` (opcional, padrão `80`)
+* `MAIN_NGINX_HOST_PORT_443` (opcional, padrão `443`)
 
 Primeira preparação no servidor de stage:
 
@@ -368,11 +387,16 @@ sudo chown -R "$USER":"$USER" /srv/belluga_now_docker
 ```
 
 Comportamento do deploy:
-* Faz checkout da branch `stage` no servidor.
+* Faz checkout da branch do lane (`stage` ou `main`) no servidor.
 * Atualiza submódulos para os SHAs pinados no commit do repositório de orquestração.
 * Executa `docker compose up -d --build --remove-orphans`.
+* Executa health check em `http://127.0.0.1:<NGINX_HOST_PORT_80>/api/v1/environment`.
 
-Rollback operacional:
-1. Reverter o commit na branch `stage` no repositório de orquestração.
-2. Fazer push da reversão para `stage`.
-3. O workflow aplica novamente os SHAs anteriores e recompõe os containers.
+Rollback automático:
+* Se o health check falhar, o workflow tenta rollback para o commit anterior no servidor e recompõe os containers.
+* O job termina em falha mesmo após rollback bem-sucedido (para manter visibilidade no CI), mas a versão anterior permanece ativa.
+
+Rollback manual (opcional):
+1. Reverta o commit no lane (`stage` ou `main`) no repositório de orquestração.
+2. Faça push da reversão para o lane.
+3. O workflow reaplica os SHAs anteriores e recompõe os containers.
