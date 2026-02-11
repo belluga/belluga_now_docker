@@ -64,6 +64,7 @@ set -euo pipefail
 DEPLOY_PATH='${deploy_path}'
 GITHUB_REPOSITORY='${GITHUB_REPOSITORY}'
 DEPLOY_BRANCH='${GITHUB_REF_NAME}'
+DEPLOY_LANE='${deploy_lane}'
 SUBMODULES_REPO_TOKEN='${SUBMODULES_REPO_TOKEN}'
 DEPLOY_NGINX_HOST_PORT_80='${deploy_nginx_port_80}'
 DEPLOY_NGINX_HOST_PORT_443='${deploy_nginx_port_443}'
@@ -139,11 +140,18 @@ deploy_and_check_health() {
   "\${DOCKER_COMPOSE[@]}" ps
 
   # Validate runtime health before declaring deploy success.
-  health_url="http://127.0.0.1:\${DEPLOY_NGINX_HOST_PORT_80}/api/v1/environment"
+  if [[ "\$DEPLOY_LANE" == "main" ]]; then
+    health_url="https://127.0.0.1:\${DEPLOY_NGINX_HOST_PORT_443}/api/v1/environment"
+    health_curl=(curl -kfsS --max-time 5 "\${health_url}")
+  else
+    health_url="http://127.0.0.1:\${DEPLOY_NGINX_HOST_PORT_80}/api/v1/environment"
+    health_curl=(curl -fsS --max-time 5 "\${health_url}")
+  fi
   echo "INFO: waiting for application health at \${health_url}"
 
   for attempt in \$(seq 1 24); do
-    if curl -fsS --max-time 5 "\${health_url}" >/dev/null 2>&1; then
+    response="\$("\${health_curl[@]}" 2>/dev/null || true)"
+    if [[ -n "\$response" ]] && grep -q '"main_domain"' <<<"\$response"; then
       echo "INFO: health check passed."
       return 0
     fi

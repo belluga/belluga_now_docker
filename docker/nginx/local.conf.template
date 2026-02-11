@@ -1,6 +1,15 @@
 server {
     listen 80;
+    listen [::]:80;
+    listen 443 ssl;
+    listen [::]:443 ssl;
     server_name _;
+
+    # Local/origin TLS certificate (self-signed, baked in image).
+    # The edge (Cloudflare) should terminate public certs; this cert is only
+    # to keep HTTPS origin handshakes valid when proxy mode expects TLS upstream.
+    ssl_certificate /etc/nginx/certs/local/fullchain.pem;
+    ssl_certificate_key /etc/nginx/certs/local/privkey.pem;
     
     # Increase client max body size for file uploads
     client_max_body_size 100M;
