@@ -14,6 +14,11 @@ on:
         description: "Target commit SHA in that submodule repo"
         required: true
         type: string
+      lane:
+        description: "Target lane/base branch in docker repo (dev, stage, main)"
+        required: false
+        default: dev
+        type: string
       source_repo:
         description: "Optional: source repo that triggered this sync (for PR body)"
         required: false
@@ -28,12 +33,12 @@ permissions:
   pull-requests: write
 
 concurrency:
-  group: docker-submodule-sync-dev
+  group: docker-submodule-sync-${{ github.event.client_payload.lane || github.event.client_payload.source_branch || inputs.lane || 'dev' }}
   cancel-in-progress: false
 
 jobs:
   sync:
-    name: Open/Update PR Syncing Submodule Pins (dev)
+    name: Open/Update PR Syncing Submodule Pins
     runs-on: ubuntu-latest
 
     steps:
@@ -42,10 +47,12 @@ jobs:
         env:
           DISPATCH_SUBMODULE: ${{ github.event.client_payload.submodule }}
           DISPATCH_SHA: ${{ github.event.client_payload.sha }}
+          DISPATCH_LANE: ${{ github.event.client_payload.lane }}
           DISPATCH_SOURCE_REPO: ${{ github.event.client_payload.source_repo }}
           DISPATCH_SOURCE_BRANCH: ${{ github.event.client_payload.source_branch }}
           INPUT_SUBMODULE: ${{ inputs.submodule }}
           INPUT_SHA: ${{ inputs.sha }}
+          INPUT_LANE: ${{ inputs.lane }}
           INPUT_SOURCE_REPO: ${{ inputs.source_repo }}
           INPUT_SOURCE_BRANCH: ${{ inputs.source_branch }}
         run: |
@@ -54,11 +61,13 @@ jobs:
           if [[ "${GITHUB_EVENT_NAME}" == "repository_dispatch" ]]; then
             submodule="${DISPATCH_SUBMODULE:-}"
             sha="${DISPATCH_SHA:-}"
+            lane="${DISPATCH_LANE:-${DISPATCH_SOURCE_BRANCH:-}}"
             source_repo="${DISPATCH_SOURCE_REPO:-}"
             source_branch="${DISPATCH_SOURCE_BRANCH:-}"
           else
             submodule="${INPUT_SUBMODULE:-}"
             sha="${INPUT_SHA:-}"
+            lane="${INPUT_LANE:-}"
             source_repo="${INPUT_SOURCE_REPO:-}"
             source_branch="${INPUT_SOURCE_BRANCH:-}"
           fi
@@ -68,8 +77,24 @@ jobs:
             exit 1
           fi
 
+          if [[ -z "$lane" ]]; then
+            lane="dev"
+          fi
+
+          case "$lane" in
+            dev|stage|main) ;;
+            *)
+              echo "ERROR: unsupported lane '$lane'. Allowed lanes: dev, stage, main." >&2
+              exit 1
+              ;;
+          esac
+
+          bot_branch="bot/submodule-sync-${lane}"
+
           echo "submodule=$submodule" >> "$GITHUB_OUTPUT"
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "lane=$lane" >> "$GITHUB_OUTPUT"
+          echo "bot_branch=$bot_branch" >> "$GITHUB_OUTPUT"
           echo "source_repo=$source_repo" >> "$GITHUB_OUTPUT"
           echo "source_branch=$source_branch" >> "$GITHUB_OUTPUT"
 
@@ -91,10 +116,10 @@ jobs:
           git config --global --unset-all url.https://github.com/.insteadOf || true
           git config --global url."https://x-access-token:${SUBMODULES_REPO_TOKEN}@github.com/".insteadOf "https://github.com/"
 
-      - name: Create/update bot branch from dev
+      - name: Create/update bot branch from lane base
         env:
-          BASE_BRANCH: dev
-          BOT_BRANCH: bot/submodule-sync
+          BASE_BRANCH: ${{ steps.inputs.outputs.lane }}
+          BOT_BRANCH: ${{ steps.inputs.outputs.bot_branch }}
         run: |
           set -euo pipefail
           git fetch origin "$BASE_BRANCH" --quiet
@@ -180,28 +205,29 @@ jobs:
       - name: Push bot branch
         if: steps.commit.outputs.no_changes != 'true'
         env:
-          BOT_BRANCH: bot/submodule-sync
+          BOT_BRANCH: ${{ steps.inputs.outputs.bot_branch }}
         run: |
           set -euo pipefail
           git push -u origin "$BOT_BRANCH"
 
-      - name: Create or update PR into dev
+      - name: Create or update PR into lane base
         if: steps.commit.outputs.no_changes != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-          BASE_BRANCH: dev
-          BOT_BRANCH: bot/submodule-sync
+          BASE_BRANCH: ${{ steps.inputs.outputs.lane }}
+          BOT_BRANCH: ${{ steps.inputs.outputs.bot_branch }}
           SUBMODULE: ${{ steps.inputs.outputs.submodule }}
           TARGET_SHA: ${{ steps.inputs.outputs.sha }}
+          LANE: ${{ steps.inputs.outputs.lane }}
           SOURCE_REPO: ${{ steps.inputs.outputs.source_repo }}
           SOURCE_BRANCH: ${{ steps.inputs.outputs.source_branch }}
         run: |
           set -euo pipefail
 
           short_sha="$(echo "$TARGET_SHA" | cut -c1-7)"
-          title="🔗 chore(submodules): sync ${SUBMODULE} pin (${short_sha})"
+          title="🔗 chore(submodules): sync ${SUBMODULE} pin (${short_sha}) [${LANE}]"
 
-          body=$'Automated submodule pin sync.\n\n- Submodule: '"${SUBMODULE}"$'\n- Commit: '"${TARGET_SHA}"$'\n'
+          body=$'Automated submodule pin sync.\n\n- Lane: '"${LANE}"$'\n- Submodule: '"${SUBMODULE}"$'\n- Commit: '"${TARGET_SHA}"$'\n'
           if [[ -n "${SOURCE_REPO}" ]]; then
             body="${body}"$'\n'"- Source repo: ${SOURCE_REPO}"
           fi
