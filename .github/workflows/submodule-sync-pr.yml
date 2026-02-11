@@ -122,8 +122,16 @@ jobs:
           BOT_BRANCH: ${{ steps.inputs.outputs.bot_branch }}
         run: |
           set -euo pipefail
-          git fetch origin "$BASE_BRANCH" --quiet
-          git checkout -B "$BOT_BRANCH" "origin/$BASE_BRANCH"
+          git fetch origin "$BASE_BRANCH" "$BOT_BRANCH" --quiet || true
+
+          # Reuse the existing bot branch when present so sequential sync runs
+          # (e.g., laravel-app then web-app for the same lane) accumulate in a
+          # single PR instead of overwriting earlier commits.
+          if git show-ref --verify --quiet "refs/remotes/origin/$BOT_BRANCH"; then
+            git checkout -B "$BOT_BRANCH" "origin/$BOT_BRANCH"
+          else
+            git checkout -B "$BOT_BRANCH" "origin/$BASE_BRANCH"
+          fi
 
       - name: Update submodule pin (and flutter pin if web-app)
         env:
