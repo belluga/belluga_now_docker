@@ -118,18 +118,33 @@ if [[ -f ".env" ]]; then
   fi
 fi
 
+resolve_health_host() {
+  local app_url_line app_url host
+
+  app_url_line="\$(grep '^APP_URL=' .env | tail -n 1 || true)"
+  app_url="\${app_url_line#APP_URL=}"
+  app_url="\${app_url%\$'\\r'}"
+
+  host="\${app_url#*://}"
+  host="\${host%%/*}"
+  host="\${host%%:*}"
+  host="\${host//[[:space:]]/}"
+
+  if [[ -z "\$host" ]]; then
+    host="localhost"
+  fi
+
+  echo "\$host"
+}
+
 "\${DOCKER_COMPOSE[@]}" up -d --build --remove-orphans
 "\${DOCKER_COMPOSE[@]}" ps
 
-if [[ "\$DEPLOY_LANE" == "main" ]]; then
-  health_url="https://127.0.0.1:\${DEPLOY_NGINX_HOST_PORT_443}/api/v1/environment"
-  health_curl=(curl -kfsS --max-time 5 "\${health_url}")
-else
-  health_url="http://127.0.0.1:\${DEPLOY_NGINX_HOST_PORT_80}/api/v1/environment"
-  health_curl=(curl -fsS --max-time 5 "\${health_url}")
-fi
+health_host="\$(resolve_health_host)"
+health_url="http://127.0.0.1:\${DEPLOY_NGINX_HOST_PORT_80}/api/v1/environment"
+health_curl=(curl -fsS --max-time 5 -H "Host: \${health_host}" "\${health_url}")
 
-echo "INFO: waiting for rollback health at \${health_url}"
+echo "INFO: waiting for rollback health at \${health_url} (Host: \${health_host})"
 for attempt in \$(seq 1 24); do
   response="\$("\${health_curl[@]}" 2>/dev/null || true)"
   if [[ -n "\$response" ]] && grep -q '"main_domain"' <<<"\$response"; then
