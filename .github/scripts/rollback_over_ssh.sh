@@ -33,14 +33,8 @@ if [[ -z "${deploy_ssh_host}" || -z "${deploy_ssh_port}" || -z "${deploy_ssh_use
   exit 1
 fi
 
-# Normalize "~" because env vars are not shell-expanded automatically.
 if [[ "${deploy_ssh_key_path}" == "~/"* ]]; then
   deploy_ssh_key_path="${HOME}/${deploy_ssh_key_path#\~/}"
-fi
-
-if [[ "${GITHUB_REF_NAME}" != "${deploy_lane}" ]]; then
-  echo "ERROR: deploy script expects branch '${deploy_lane}' (received '${GITHUB_REF_NAME}')." >&2
-  exit 1
 fi
 
 if [[ ! -f "${deploy_ssh_key_path}" ]]; then
@@ -57,7 +51,7 @@ ssh_opts=(
   -o StrictHostKeyChecking=yes
 )
 
-echo "INFO: Starting ${deploy_lane} deploy to ${remote}:${deploy_path}"
+echo "INFO: starting rollback on ${remote}:${deploy_path}"
 
 ssh "${ssh_opts[@]}" "${remote}" "bash -se" <<EOF_REMOTE
 set -euo pipefail
@@ -78,11 +72,6 @@ run_git() {
   git "\$@"
 }
 
-if ! command -v git >/dev/null 2>&1; then
-  echo "ERROR: git is not installed on remote host." >&2
-  exit 1
-fi
-
 if docker compose version >/dev/null 2>&1; then
   DOCKER_COMPOSE=(docker compose)
 elif sudo docker compose version >/dev/null 2>&1; then
@@ -92,50 +81,44 @@ else
   exit 1
 fi
 
-mkdir -p "\$DEPLOY_PATH"
-
-if [[ ! -d "\$DEPLOY_PATH/.git" ]]; then
-  run_git clone --recurse-submodules "https://github.com/\$GITHUB_REPOSITORY.git" "\$DEPLOY_PATH"
-fi
-
 cd "\$DEPLOY_PATH"
-previous_revision=""
-if git rev-parse --verify HEAD >/dev/null 2>&1; then
-  previous_revision="\$(git rev-parse HEAD)"
+
+target_revision=""
+if [[ -f ".last_successful_revision" ]]; then
+  target_revision="\$(cat .last_successful_revision | tr -d '[:space:]')"
 fi
+
+if [[ -z "\$target_revision" ]]; then
+  echo "WARN: .last_successful_revision missing; falling back to HEAD~1." >&2
+  target_revision="\$(git rev-parse HEAD~1)"
+fi
+
+if [[ -z "\$target_revision" ]]; then
+  echo "ERROR: unable to resolve rollback target revision." >&2
+  exit 1
+fi
+
+echo "INFO: rollback target revision: \${target_revision}"
 
 run_git fetch --prune origin "\$DEPLOY_BRANCH"
 run_git checkout "\$DEPLOY_BRANCH"
-run_git reset --hard "origin/\$DEPLOY_BRANCH"
+run_git reset --hard "\$target_revision"
 run_git submodule sync --recursive
 run_git submodule update --init --recursive
 
-if [[ ! -f ".env" ]]; then
-  if [[ -f ".env.example" ]]; then
-    cp .env.example .env
-    echo "INFO: bootstrap .env from .env.example on first deploy."
+if [[ -f ".env" ]]; then
+  if grep -q '^NGINX_HOST_PORT_80=' .env; then
+    sed -i "s#^NGINX_HOST_PORT_80=.*#NGINX_HOST_PORT_80=\$DEPLOY_NGINX_HOST_PORT_80#" .env
   else
-    echo "ERROR: missing both .env and .env.example in deploy path." >&2
-    exit 1
+    echo "NGINX_HOST_PORT_80=\$DEPLOY_NGINX_HOST_PORT_80" >> .env
+  fi
+
+  if grep -q '^NGINX_HOST_PORT_443=' .env; then
+    sed -i "s#^NGINX_HOST_PORT_443=.*#NGINX_HOST_PORT_443=\$DEPLOY_NGINX_HOST_PORT_443#" .env
+  else
+    echo "NGINX_HOST_PORT_443=\$DEPLOY_NGINX_HOST_PORT_443" >> .env
   fi
 fi
-
-# Cleanup from prior malformed upsert runs.
-sed -i '/^\${key}=\${value}$/d' .env || true
-
-upsert_env() {
-  local key="\$1"
-  local value="\$2"
-
-  if grep -q "^\${key}=" .env; then
-    sed -i "s#^\${key}=.*#\${key}=\${value}#" .env
-  else
-    echo "\${key}=\${value}" >> .env
-  fi
-}
-
-upsert_env NGINX_HOST_PORT_80 "\$DEPLOY_NGINX_HOST_PORT_80"
-upsert_env NGINX_HOST_PORT_443 "\$DEPLOY_NGINX_HOST_PORT_443"
 
 resolve_health_host() {
   local app_url_line source host
@@ -160,60 +143,25 @@ resolve_health_host() {
   echo "\$host"
 }
 
-deploy_and_check_health() {
-  local health_host health_url response
+"\${DOCKER_COMPOSE[@]}" up -d --build --remove-orphans
+"\${DOCKER_COMPOSE[@]}" ps
 
-  "\${DOCKER_COMPOSE[@]}" up -d --build --remove-orphans
-  "\${DOCKER_COMPOSE[@]}" ps
+health_host="\$(resolve_health_host)"
+health_url="http://127.0.0.1:\${DEPLOY_NGINX_HOST_PORT_80}/api/v1/environment"
+health_curl=(curl -fsS --max-time 5 -H "Host: \${health_host}" "\${health_url}")
 
-  # Validate runtime health using the canonical landlord host, even when hitting localhost.
-  health_host="\$(resolve_health_host)"
-  health_url="http://127.0.0.1:\${DEPLOY_NGINX_HOST_PORT_80}/api/v1/environment"
-  health_curl=(curl -fsS --max-time 5 -H "Host: \${health_host}" "\${health_url}")
-  echo "INFO: waiting for application health at \${health_url} (Host: \${health_host})"
+echo "INFO: waiting for rollback health at \${health_url} (Host: \${health_host})"
+for attempt in \$(seq 1 24); do
+  response="\$("\${health_curl[@]}" 2>/dev/null || true)"
+  if [[ -n "\$response" ]] && grep -q '"main_domain"' <<<"\$response"; then
+    echo "INFO: rollback health check passed."
+    exit 0
+  fi
+  sleep 5
+done
 
-  for attempt in \$(seq 1 24); do
-    response="\$("\${health_curl[@]}" 2>/dev/null || true)"
-    if [[ -n "\$response" ]] && grep -q '"main_domain"' <<<"\$response"; then
-      echo "INFO: health check passed."
-      return 0
-    fi
-
-    echo "INFO: health check attempt \${attempt}/24 failed; retrying in 5s..."
-    sleep 5
-  done
-
-  return 1
-}
-
-if deploy_and_check_health; then
-  current_revision="\$(git rev-parse HEAD)"
-  echo "\$current_revision" > .last_successful_revision
-  echo "INFO: recorded last successful revision: \$current_revision"
-  echo "INFO: \$DEPLOY_LANE deploy completed successfully."
-  exit 0
-fi
-
-echo "ERROR: deploy finished but application is not healthy." >&2
+echo "ERROR: rollback deployed but health check did not pass." >&2
 "\${DOCKER_COMPOSE[@]}" ps || true
 "\${DOCKER_COMPOSE[@]}" logs --tail=200 app worker scheduler nginx || true
-
-if [[ -n "\$previous_revision" ]]; then
-  echo "INFO: attempting rollback to previous revision \${previous_revision}..."
-  run_git reset --hard "\${previous_revision}"
-  run_git submodule sync --recursive
-  run_git submodule update --init --recursive
-
-  if deploy_and_check_health; then
-    echo "INFO: rollback succeeded; previous version restored."
-  else
-    echo "ERROR: rollback failed; service may be degraded." >&2
-    "\${DOCKER_COMPOSE[@]}" ps || true
-    "\${DOCKER_COMPOSE[@]}" logs --tail=200 app worker scheduler nginx || true
-  fi
-else
-  echo "WARN: previous revision not found; rollback skipped." >&2
-fi
-
 exit 1
 EOF_REMOTE

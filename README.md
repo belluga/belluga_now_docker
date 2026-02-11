@@ -119,6 +119,29 @@ Finalmente, envie as alterações de configuração e o código inicial para seu
 
 ## 🐳 Executando com Docker
 
+### Comandos Padronizados por Lane
+
+Para evitar variação entre máquinas da equipe, use os alvos do `Makefile`:
+
+```bash
+make up-dev
+make up-stage
+make up-main
+make down
+make ps
+```
+
+Regras:
+- `up-dev`: sobe com `COMPOSE_PROFILES=local-db` (inclui Mongo local do projeto).
+- `up-stage`: sobe sem profile extra (sem Mongo local do projeto).
+- `up-main`: sobe com `COMPOSE_PROFILES=production`.
+
+Para rodar a suíte completa do Laravel no ambiente local:
+
+```bash
+make test-laravel-full
+```
+
 ### Optional: Local MongoDB (Replica Set) for Dev
 
 Default setup assumes Atlas (configure it in `laravel-app/.env`). For offline/reproducible development you can run a local Mongo replica set:
