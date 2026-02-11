@@ -135,19 +135,36 @@ upsert_env() {
 upsert_env NGINX_HOST_PORT_80 "\$DEPLOY_NGINX_HOST_PORT_80"
 upsert_env NGINX_HOST_PORT_443 "\$DEPLOY_NGINX_HOST_PORT_443"
 
+resolve_health_host() {
+  local app_url_line app_url host
+
+  app_url_line="\$(grep '^APP_URL=' .env | tail -n 1 || true)"
+  app_url="\${app_url_line#APP_URL=}"
+  app_url="\${app_url%\$'\\r'}"
+
+  host="\${app_url#*://}"
+  host="\${host%%/*}"
+  host="\${host%%:*}"
+  host="\${host//[[:space:]]/}"
+
+  if [[ -z "\$host" ]]; then
+    host="localhost"
+  fi
+
+  echo "\$host"
+}
+
 deploy_and_check_health() {
+  local health_host health_url response
+
   "\${DOCKER_COMPOSE[@]}" up -d --build --remove-orphans
   "\${DOCKER_COMPOSE[@]}" ps
 
-  # Validate runtime health before declaring deploy success.
-  if [[ "\$DEPLOY_LANE" == "main" ]]; then
-    health_url="https://127.0.0.1:\${DEPLOY_NGINX_HOST_PORT_443}/api/v1/environment"
-    health_curl=(curl -kfsS --max-time 5 "\${health_url}")
-  else
-    health_url="http://127.0.0.1:\${DEPLOY_NGINX_HOST_PORT_80}/api/v1/environment"
-    health_curl=(curl -fsS --max-time 5 "\${health_url}")
-  fi
-  echo "INFO: waiting for application health at \${health_url}"
+  # Validate runtime health using the canonical landlord host, even when hitting localhost.
+  health_host="\$(resolve_health_host)"
+  health_url="http://127.0.0.1:\${DEPLOY_NGINX_HOST_PORT_80}/api/v1/environment"
+  health_curl=(curl -fsS --max-time 5 -H "Host: \${health_host}" "\${health_url}")
+  echo "INFO: waiting for application health at \${health_url} (Host: \${health_host})"
 
   for attempt in \$(seq 1 24); do
     response="\$("\${health_curl[@]}" 2>/dev/null || true)"
@@ -164,7 +181,10 @@ deploy_and_check_health() {
 }
 
 if deploy_and_check_health; then
-  echo "INFO: ${deploy_lane} deploy completed successfully."
+  current_revision="\$(git rev-parse HEAD)"
+  echo "\$current_revision" > .last_successful_revision
+  echo "INFO: recorded last successful revision: \$current_revision"
+  echo "INFO: \$DEPLOY_LANE deploy completed successfully."
   exit 0
 fi
 
