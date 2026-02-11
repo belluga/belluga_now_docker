@@ -26,6 +26,7 @@ deploy_path="${DEPLOY_PATH:-${STAGE_DEPLOY_PATH:-}}"
 deploy_ssh_key_path="${DEPLOY_SSH_KEY_PATH:-${STAGE_SSH_KEY_PATH:-}}"
 deploy_nginx_port_80="${DEPLOY_NGINX_HOST_PORT_80:-${STAGE_NGINX_HOST_PORT_80:-80}}"
 deploy_nginx_port_443="${DEPLOY_NGINX_HOST_PORT_443:-${STAGE_NGINX_HOST_PORT_443:-443}}"
+deploy_health_host="${DEPLOY_HEALTH_HOST:-}"
 
 if [[ -z "${deploy_ssh_host}" || -z "${deploy_ssh_port}" || -z "${deploy_ssh_user}" || -z "${deploy_path}" || -z "${deploy_ssh_key_path}" ]]; then
   echo "ERROR: missing deploy SSH config. Set DEPLOY_SSH_HOST/PORT/USER/PATH/KEY_PATH (or legacy STAGE_* equivalents)." >&2
@@ -68,6 +69,7 @@ DEPLOY_LANE='${deploy_lane}'
 SUBMODULES_REPO_TOKEN='${SUBMODULES_REPO_TOKEN}'
 DEPLOY_NGINX_HOST_PORT_80='${deploy_nginx_port_80}'
 DEPLOY_NGINX_HOST_PORT_443='${deploy_nginx_port_443}'
+DEPLOY_HEALTH_HOST_RAW='${deploy_health_host}'
 
 run_git() {
   GIT_CONFIG_COUNT=1 \
@@ -136,13 +138,17 @@ upsert_env NGINX_HOST_PORT_80 "\$DEPLOY_NGINX_HOST_PORT_80"
 upsert_env NGINX_HOST_PORT_443 "\$DEPLOY_NGINX_HOST_PORT_443"
 
 resolve_health_host() {
-  local app_url_line app_url host
+  local app_url_line source host
 
-  app_url_line="\$(grep '^APP_URL=' .env | tail -n 1 || true)"
-  app_url="\${app_url_line#APP_URL=}"
-  app_url="\${app_url%\$'\\r'}"
+  source="\${DEPLOY_HEALTH_HOST_RAW:-}"
+  if [[ -z "\$source" ]]; then
+    app_url_line="\$(grep '^APP_URL=' .env | tail -n 1 || true)"
+    source="\${app_url_line#APP_URL=}"
+  fi
 
-  host="\${app_url#*://}"
+  source="\${source%\$'\\r'}"
+
+  host="\${source#*://}"
   host="\${host%%/*}"
   host="\${host%%:*}"
   host="\${host//[[:space:]]/}"
