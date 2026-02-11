@@ -189,7 +189,10 @@ jobs:
         run: |
           set -euo pipefail
 
-          if git diff --cached --quiet; then
+          # Submodules are configured with ignore=all in this repository.
+          # Force diff to consider staged gitlink updates; otherwise this
+          # check can incorrectly report "no changes" for submodule pin bumps.
+          if git diff --cached --ignore-submodules=none --quiet; then
             echo "no_changes=true" >> "$GITHUB_OUTPUT"
             echo "INFO: no gitlink changes to commit."
             exit 0
