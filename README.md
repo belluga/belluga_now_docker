@@ -11,9 +11,9 @@ Um ambiente de desenvolvimento, staging e produção completo para aplicações 
 
 * **Ambiente Unificado**: Backend e frontend gerenciados em um único projeto com Git Submodules.
 * **Containerizado**: Esqueça a necessidade de instalar PHP, Composer ou Flutter SDK na sua máquina. O Docker cuida de tudo.
-* **Perfis de Ambiente**: Alterne facilmente entre `staging` e `production` usando Perfis do Docker Compose.
-    * **Staging**: Exponha seu ambiente local na internet com um único comando usando o Cloudflare Tunnel.
-    * **Production**: Geração e renovação automática de certificados SSL/TLS com Certbot (Let's Encrypt).
+* **Perfis de Ambiente**: Use o mesmo stack para desenvolvimento local e produção com Perfis do Docker Compose.
+    * **Local Dev**: execução local completa sem túnel.
+    * **Production**: geração e renovação automática de certificados SSL/TLS com Certbot (Let's Encrypt).
 * **Consistência de Código**: O arquivo `.gitattributes` garante que as terminações de linha sejam consistentes em qualquer sistema operacional, evitando erros no Docker.
 
 ***
@@ -34,6 +34,19 @@ Antes de começar, garanta que você tenha o seguinte software instalado:
 
 Siga estes passos cuidadosamente para configurar seu projeto pela primeira vez.  
 > **Importante:** Antes do passo 1, siga as instruções publicadas no repositório `delphi-ai` (documentação de onboarding) para trazer o Delphi e criar os symlinks necessários (`AGENTS.md`, `foundation_documentation/`, etc.). Execute o script diretamente a partir de lá (`./delphi-ai/scripts/setup_delphi.sh`).
+
+## Submodule Workspace Rules (Pin vs Track)
+
+**CI/deploy always uses the superproject pins** (the gitlink SHAs stored in this repo). Your local submodule checkout can drift if you `git pull` inside a submodule, so follow one of these modes:
+
+* **Pinned (recommended before deploy/debug/CI parity)**: submodules are checked out to the exact SHAs recorded by `belluga_now_docker`.
+* **Lane tracking (convenience)**: submodules are switched to lane branches (`dev`/`stage`/`main`) for browsing/work. This does *not* change what CI/deploy uses until you update the pins via PR in this repo.
+
+Safe scripts (non-destructive; refuse to run if any submodule is dirty):
+
+* `tools/submodules/status.sh`
+* `tools/submodules/pin_to_superproject.sh`
+* `tools/submodules/track_lanes.sh <dev|stage|main>`
 
 ### Passo 1: Fork e Clone
 
@@ -82,20 +95,7 @@ Agora, aponte os submódulos para os seus novos repositórios.
     ```
 2.  **Edite o arquivo `.env`** com as configurações básicas do projeto, como `PROJECT_NAME`. As variáveis específicas de cada ambiente serão preenchidas a seguir.
 
-### Passo 5: Configure o Túnel para Staging (Opcional)
-
-Para usar o perfil de `staging` e expor seu ambiente local na internet, você precisa de um **Cloudflare Tunnel**.
-
-1.  Siga o **tutorial oficial do Cloudflare** para criar seu túnel:
-    * **[Guia de Início Rápido do Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/get-started/)**
-
-2.  Após seguir o tutorial, você terá um **token do túnel** e um **domínio público** (ex: `meu-app.meudominio.com`).
-
-3.  Abra seu arquivo `.env` e atualize as seguintes variáveis:
-    * `CLOUDFLARE_TUNNEL_TOKEN`: Cole o token do seu túnel aqui.
-    * `DOMAIN`: Insira o domínio público que você configurou para o túnel.
-
-### Passo 6: Envie o Código Inicial
+### Passo 5: Envie o Código Inicial
 
 Finalmente, envie as alterações de configuração e o código inicial para seus novos repositórios.
 
@@ -136,18 +136,77 @@ Quick sanity checks:
 docker compose --profile local-db ps
 ```
 
+### Local Dev (Recommended)
+
+Use this flow when you want full local development (Docker + Flutter) with no tunnel dependencies.
+
+1. Start the local stack:
+
+```bash
+COMPOSE_PROFILES=local-db docker compose up -d --build
+```
+
+If you are using Atlas instead of local Mongo:
+
+```bash
+COMPOSE_PROFILES= docker compose up -d --build
+```
+
+2. Validate local backend/NGINX is reachable:
+
+```bash
+curl -I http://localhost:8081/api/v1/environment
+```
+
+3. Run Flutter (mobile/desktop) against local backend.
+
+The Flutter app now uses compile-time lane define files (`--dart-define-from-file`).
+Local runs default to the `dev` lane plus an optional local override file.
+
+Create your local override file once:
+
+```bash
+cd flutter-app
+cp config/defines/local.override.example.json config/defines/local.override.json
+```
+
+Edit `config/defines/local.override.json` for your machine (for Android emulator, `10.0.2.2:8081` is typical).
+
+```bash
+cd flutter-app
+./tool/with_lane_defines.sh dev run --flavor <your_flavor>
+```
+
+If you prefer direct command usage (without helper script):
+
+```bash
+fvm flutter run --flavor <your_flavor> \
+  --dart-define-from-file=config/defines/dev.json \
+  --dart-define-from-file=config/defines/local.override.json
+```
+
+4. Web local access (served by Laravel/NGINX bundle):
+
+- Open `http://localhost:8081` in your browser.
+
+Notes:
+- This flow does not require tunneling.
+- Flutter local bootstrap does not use `.env`; it is controlled by compile-time define files.
+- Lane files live in `flutter-app/config/defines/{dev,stage,main}.json`.
+- `flutter-app/config/defines/local.override.json` is gitignored and machine-specific.
+
 O ambiente é controlado pela variável `COMPOSE_PROFILES` no seu arquivo `.env`.
 
-### Ambiente de Staging (Padrão)
+### Ambiente de Stage (Hospedado)
 
-Ideal para desenvolvimento e para compartilhar seu progresso. Utiliza o Cloudflare Tunnel para criar um túnel seguro para seu ambiente local.
+O stage é hospedado em infraestrutura remota (sem túnel local).  
+Use este repositório para empacotar e executar o stack no servidor de stage com domínio próprio.
 
-1.  No arquivo `.env`, garanta que `COMPOSE_PROFILES=staging`.
-2.  Confirme que as variáveis `CLOUDFLARE_TUNNEL_TOKEN` e `DOMAIN` foram preenchidas conforme o **Passo 5**.
-3.  Suba os contêineres:
-    ```bash
-    docker compose up -d --build
-    ```
+Sugestão de perfil para servidor de stage:
+
+```bash
+COMPOSE_PROFILES=production docker compose up -d --build
+```
 
 ### Ambiente de Produção
 
@@ -253,3 +312,91 @@ O Docker **não** executa o build do Flutter automaticamente. O NGINX serve apen
 
 > **Importante:** Como o bundle fica em um repositório dedicado, você pode manter branches/PRs específicos para revisão do conteúdo estático e promover apenas versões estáveis para `main`.
 > **Nota sobre Flutter/FVM:** O time utiliza [FVM](https://fvm.app/) para garantir consistência de versão. Sempre execute comandos locais via `fvm flutter ...` (ou configure o VS Code para apontar para o binário do FVM). Caso prefira o modo Docker, basta invocar o script com `docker run --rm -u "$(id -u)":"$(id -g)" -v "$PWD":/workspace -w /workspace ghcr.io/cirruslabs/flutter:3.35.7 ...` para preservar permissões.
+
+## 🔐 Governança de Branches (GitHub)
+
+Para manter promoção de ambientes com bloqueio real de push direto, use **Branch Protection/Rulesets** + **checks de CI**.
+
+Política de promoção:
+
+* `dev -> stage` (somente PR)
+* `stage -> main` (somente PR)
+* Push direto em `stage/main` deve ficar bloqueado via proteção de branch.
+
+No CI do repositório de orquestração (`.github/workflows/orchestration-ci-cd.yml`):
+
+* O job `Lane Promotion Policy` falha se o PR violar o fluxo acima.
+* O job `Preflight Validation` valida os commits promovidos para `dev`, `stage` e `main`.
+* O bloqueio real de push direto em `stage/main` é feito por Branch Protection/Rulesets.
+
+Checklist recomendado em **Settings > Branches** para `stage` e `main`:
+
+* `Require a pull request before merging`.
+* `Require status checks to pass before merging`.
+* Adicionar checks obrigatórios:
+  * `Lane Promotion Policy`
+  * `Preflight Validation`
+* `Require conversation resolution before merging`.
+* `Do not allow bypassing the above settings` (se disponível no seu plano/repo).
+
+Observação:
+
+* Em plano pago, configure `stage` e `main` com PR obrigatório e checks obrigatórios para bloquear push direto na origem.
+
+## 🚢 Deploy de Stage e Produção (Fase 2)
+
+O workflow `Orchestration CI/CD` executa deploy automático:
+
+* `stage` quando há push na branch `stage`.
+* `main` quando há push na branch `main`.
+
+Em ambos os casos, o `Preflight Validation` precisa passar antes do deploy.
+
+Pré-requisitos no repositório GitHub (`Settings > Secrets and variables > Actions`):
+
+`Secrets`:
+* `SUBMODULES_REPO_TOKEN` (acesso de leitura aos submódulos privados).
+* `STAGE_SSH_PRIVATE_KEY` (chave privada usada pelo GitHub Actions).
+* `STAGE_SSH_KNOWN_HOSTS` (saída do `ssh-keyscan -H <ip-ou-host-stage>`).
+
+`Variables`:
+* `STAGE_SSH_HOST` (ex.: IP público da VPS).
+* `STAGE_SSH_PORT` (ex.: `22`).
+* `STAGE_SSH_USER` (ex.: `ubuntu`).
+* `STAGE_DEPLOY_PATH` (ex.: `/srv/belluga_now_docker`).
+* `STAGE_NGINX_HOST_PORT_80` (opcional, padrão `80`).
+* `STAGE_NGINX_HOST_PORT_443` (opcional, padrão `443`).
+
+Secrets de produção (`main`):
+* `MAIN_SSH_PRIVATE_KEY`
+* `MAIN_SSH_KNOWN_HOSTS`
+
+Variables de produção (`main`):
+* `MAIN_SSH_HOST`
+* `MAIN_SSH_PORT`
+* `MAIN_SSH_USER`
+* `MAIN_DEPLOY_PATH`
+* `MAIN_NGINX_HOST_PORT_80` (opcional, padrão `80`)
+* `MAIN_NGINX_HOST_PORT_443` (opcional, padrão `443`)
+
+Primeira preparação no servidor de stage:
+
+```bash
+sudo mkdir -p /srv/belluga_now_docker
+sudo chown -R "$USER":"$USER" /srv/belluga_now_docker
+```
+
+Comportamento do deploy:
+* Faz checkout da branch do lane (`stage` ou `main`) no servidor.
+* Atualiza submódulos para os SHAs pinados no commit do repositório de orquestração.
+* Executa `docker compose up -d --build --remove-orphans`.
+* Executa health check em `http://127.0.0.1:<NGINX_HOST_PORT_80>/api/v1/environment`.
+
+Rollback automático:
+* Se o health check falhar, o workflow tenta rollback para o commit anterior no servidor e recompõe os containers.
+* O job termina em falha mesmo após rollback bem-sucedido (para manter visibilidade no CI), mas a versão anterior permanece ativa.
+
+Rollback manual (opcional):
+1. Reverta o commit no lane (`stage` ou `main`) no repositório de orquestração.
+2. Faça push da reversão para o lane.
+3. O workflow reaplica os SHAs anteriores e recompõe os containers.

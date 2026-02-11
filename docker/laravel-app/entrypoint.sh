@@ -1,5 +1,5 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
 # Set user and group ID to match the host user
 USER_ID=${LOCAL_UID:-1000}
@@ -27,9 +27,37 @@ chown -R www-data:www-data /var/www/storage
 
 # --- The rest of your setup logic ---
 
-if [ ! -f "vendor/autoload.php" ]; then
-    echo ">>> Installing Laravel dependencies..."
-    gosu www-data composer install --no-interaction --prefer-dist --optimize-autoloader
+composer_install_with_retry() {
+    local max_attempts=5
+    local attempt=1
+
+    while [ "$attempt" -le "$max_attempts" ]; do
+        echo ">>> Installing Laravel dependencies (attempt ${attempt}/${max_attempts})..."
+        rm -rf /var/www/vendor
+        rm -rf /var/www/vendor/composer 2>/dev/null || true
+
+        if COMPOSER_MEMORY_LIMIT=-1 gosu www-data composer install --no-interaction --prefer-dist --optimize-autoloader --no-progress; then
+            return 0
+        fi
+
+        if [ "$attempt" -eq "$max_attempts" ]; then
+            echo "ERROR: composer install failed after ${max_attempts} attempts." >&2
+            return 1
+        fi
+
+        local backoff=$((attempt * 5))
+        echo "WARN: composer install failed, retrying in ${backoff}s..."
+        sleep "$backoff"
+        attempt=$((attempt + 1))
+    done
+}
+
+composer_autoload_is_valid() {
+    gosu www-data php -r "require '/var/www/vendor/autoload.php';" >/dev/null 2>&1
+}
+
+if [ ! -f "vendor/autoload.php" ] || ! composer_autoload_is_valid; then
+    composer_install_with_retry
 fi
 
 if [ ! -f ".env" ]; then
@@ -43,7 +71,8 @@ if [ ! -L "public/storage" ]; then
 fi
 
 # Only run caches in production.
-if [ "$APP_ENV" = "production" ]; then
+app_env="${APP_ENV:-local}"
+if [ "$app_env" = "production" ]; then
     echo ">>> Caching configuration for production..."
     gosu www-data php artisan config:cache
     gosu www-data php artisan route:cache
