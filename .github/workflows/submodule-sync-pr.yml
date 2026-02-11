@@ -211,7 +211,10 @@ jobs:
           BOT_BRANCH: ${{ steps.inputs.outputs.bot_branch }}
         run: |
           set -euo pipefail
-          git push -u origin "$BOT_BRANCH"
+          # Bot branches are lane-scoped and intentionally rewritten on each sync.
+          # Force-with-lease avoids non-fast-forward failures while still protecting
+          # against unexpected remote updates.
+          git push --force-with-lease -u origin "$BOT_BRANCH"
 
       - name: Create or update PR into lane base
         if: steps.commit.outputs.no_changes != 'true'
