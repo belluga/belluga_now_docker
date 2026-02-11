@@ -113,6 +113,9 @@ jobs:
             exit 1
           fi
           echo "::add-mask::$SUBMODULES_REPO_TOKEN"
+          # Avoid forcing GITHUB_TOKEN auth for subsequent git pushes. We want
+          # to use the PAT so synchronize events can trigger downstream PR CI.
+          git config --local --unset-all http.https://github.com/.extraheader || true
           git config --global --unset-all url.https://github.com/.insteadOf || true
           git config --global url."https://x-access-token:${SUBMODULES_REPO_TOKEN}@github.com/".insteadOf "https://github.com/"
 
