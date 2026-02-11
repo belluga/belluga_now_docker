@@ -164,6 +164,9 @@ deploy_and_check_health() {
 }
 
 if deploy_and_check_health; then
+  current_revision="$(git rev-parse HEAD)"
+  echo "$current_revision" > .last_successful_revision
+  echo "INFO: recorded last successful revision: ${current_revision}"
   echo "INFO: ${deploy_lane} deploy completed successfully."
   exit 0
 fi
