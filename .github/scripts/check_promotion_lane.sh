@@ -16,14 +16,14 @@ fi
 
 case "$BASE_REF" in
   stage)
-    if [[ "$HEAD_REF" != "dev" ]]; then
-      echo "ERROR: only 'dev' is allowed to open PRs into 'stage' (received '$HEAD_REF' -> '$BASE_REF')." >&2
+    if [[ "$HEAD_REF" != "dev" && "$HEAD_REF" != "bot/submodule-sync-stage" ]]; then
+      echo "ERROR: only 'dev' or 'bot/submodule-sync-stage' are allowed to open PRs into 'stage' (received '$HEAD_REF' -> '$BASE_REF')." >&2
       exit 1
     fi
     ;;
   main)
-    if [[ "$HEAD_REF" != "stage" ]]; then
-      echo "ERROR: only 'stage' is allowed to open PRs into 'main' (received '$HEAD_REF' -> '$BASE_REF')." >&2
+    if [[ "$HEAD_REF" != "stage" && "$HEAD_REF" != "bot/submodule-sync-main" ]]; then
+      echo "ERROR: only 'stage' or 'bot/submodule-sync-main' are allowed to open PRs into 'main' (received '$HEAD_REF' -> '$BASE_REF')." >&2
       exit 1
     fi
     ;;
