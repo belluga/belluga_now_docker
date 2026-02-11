@@ -1,0 +1,228 @@
+name: Sync Submodule Pins PR
+
+on:
+  repository_dispatch:
+    types:
+      - submodule-updated
+  workflow_dispatch:
+    inputs:
+      submodule:
+        description: "Submodule path in this repo (e.g. web-app, laravel-app)"
+        required: true
+        type: string
+      sha:
+        description: "Target commit SHA in that submodule repo"
+        required: true
+        type: string
+      source_repo:
+        description: "Optional: source repo that triggered this sync (for PR body)"
+        required: false
+        type: string
+      source_branch:
+        description: "Optional: source branch that triggered this sync (for PR body)"
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: docker-submodule-sync-dev
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Open/Update PR Syncing Submodule Pins (dev)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Resolve inputs
+        id: inputs
+        env:
+          DISPATCH_SUBMODULE: ${{ github.event.client_payload.submodule }}
+          DISPATCH_SHA: ${{ github.event.client_payload.sha }}
+          DISPATCH_SOURCE_REPO: ${{ github.event.client_payload.source_repo }}
+          DISPATCH_SOURCE_BRANCH: ${{ github.event.client_payload.source_branch }}
+          INPUT_SUBMODULE: ${{ inputs.submodule }}
+          INPUT_SHA: ${{ inputs.sha }}
+          INPUT_SOURCE_REPO: ${{ inputs.source_repo }}
+          INPUT_SOURCE_BRANCH: ${{ inputs.source_branch }}
+        run: |
+          set -euo pipefail
+
+          if [[ "${GITHUB_EVENT_NAME}" == "repository_dispatch" ]]; then
+            submodule="${DISPATCH_SUBMODULE:-}"
+            sha="${DISPATCH_SHA:-}"
+            source_repo="${DISPATCH_SOURCE_REPO:-}"
+            source_branch="${DISPATCH_SOURCE_BRANCH:-}"
+          else
+            submodule="${INPUT_SUBMODULE:-}"
+            sha="${INPUT_SHA:-}"
+            source_repo="${INPUT_SOURCE_REPO:-}"
+            source_branch="${INPUT_SOURCE_BRANCH:-}"
+          fi
+
+          if [[ -z "$submodule" || -z "$sha" ]]; then
+            echo "ERROR: missing required submodule/sha." >&2
+            exit 1
+          fi
+
+          echo "submodule=$submodule" >> "$GITHUB_OUTPUT"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "source_repo=$source_repo" >> "$GITHUB_OUTPUT"
+          echo "source_branch=$source_branch" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout docker repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure private submodule auth
+        env:
+          SUBMODULES_REPO_TOKEN: ${{ secrets.SUBMODULES_REPO_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${SUBMODULES_REPO_TOKEN:-}" ]]; then
+            echo "ERROR: missing required secret SUBMODULES_REPO_TOKEN." >&2
+            exit 1
+          fi
+          echo "::add-mask::$SUBMODULES_REPO_TOKEN"
+          git config --global --unset-all url.https://github.com/.insteadOf || true
+          git config --global url."https://x-access-token:${SUBMODULES_REPO_TOKEN}@github.com/".insteadOf "https://github.com/"
+
+      - name: Create/update bot branch from dev
+        env:
+          BASE_BRANCH: dev
+          BOT_BRANCH: bot/submodule-sync
+        run: |
+          set -euo pipefail
+          git fetch origin "$BASE_BRANCH" --quiet
+          git checkout -B "$BOT_BRANCH" "origin/$BASE_BRANCH"
+
+      - name: Update submodule pin (and flutter pin if web-app)
+        env:
+          SUBMODULE: ${{ steps.inputs.outputs.submodule }}
+          TARGET_SHA: ${{ steps.inputs.outputs.sha }}
+        run: |
+          set -euo pipefail
+
+          case "$SUBMODULE" in
+            web-app|laravel-app) ;;
+            *)
+              echo "ERROR: unsupported submodule '$SUBMODULE'." >&2
+              echo "Allowed: web-app, laravel-app" >&2
+              exit 1
+              ;;
+          esac
+
+          git submodule sync --recursive
+
+          # Ensure submodule is present at the currently pinned gitlink so we can
+          # compare build metadata before/after updating the pin.
+          git submodule update --init --recursive "$SUBMODULE"
+
+          old_flutter_sha=""
+          if [[ "$SUBMODULE" == "web-app" && -f "$SUBMODULE/build_metadata.json" ]]; then
+            old_flutter_sha="$(jq -r '.flutter_git_sha // empty' "$SUBMODULE/build_metadata.json" 2>/dev/null || true)"
+          fi
+
+          git -C "$SUBMODULE" fetch origin --prune --quiet
+          git -C "$SUBMODULE" checkout --detach "$TARGET_SHA"
+
+          # If the web bundle metadata changed, update flutter-app pin to match the
+          # exact flutter commit the new bundle was built from.
+          if [[ "$SUBMODULE" == "web-app" ]]; then
+            if [[ ! -f "$SUBMODULE/build_metadata.json" ]]; then
+              echo "ERROR: missing $SUBMODULE/build_metadata.json after checkout ($TARGET_SHA)" >&2
+              exit 1
+            fi
+
+            new_flutter_sha="$(jq -r '.flutter_git_sha // empty' "$SUBMODULE/build_metadata.json" 2>/dev/null || true)"
+            if [[ -z "$new_flutter_sha" || "$new_flutter_sha" == "null" ]]; then
+              echo "ERROR: missing flutter_git_sha in $SUBMODULE/build_metadata.json" >&2
+              exit 1
+            fi
+
+            if [[ -n "$old_flutter_sha" && "$old_flutter_sha" == "$new_flutter_sha" ]]; then
+              echo "INFO: web build_metadata flutter_git_sha unchanged ($new_flutter_sha); leaving flutter-app pin unchanged."
+            else
+              git submodule update --init --recursive flutter-app
+              git -C flutter-app fetch origin --prune --quiet
+              git -C flutter-app checkout --detach "$new_flutter_sha"
+              git add flutter-app
+            fi
+          fi
+
+          git add "$SUBMODULE"
+
+      - name: Commit changes (if any)
+        id: commit
+        env:
+          SUBMODULE: ${{ steps.inputs.outputs.submodule }}
+          TARGET_SHA: ${{ steps.inputs.outputs.sha }}
+        run: |
+          set -euo pipefail
+
+          if git diff --cached --quiet; then
+            echo "no_changes=true" >> "$GITHUB_OUTPUT"
+            echo "INFO: no gitlink changes to commit."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          short_sha="$(echo "$TARGET_SHA" | cut -c1-7)"
+          git commit -m "🔗 chore(submodules): sync ${SUBMODULE} pin to ${short_sha}"
+          echo "no_changes=false" >> "$GITHUB_OUTPUT"
+
+      - name: Push bot branch
+        if: steps.commit.outputs.no_changes != 'true'
+        env:
+          BOT_BRANCH: bot/submodule-sync
+        run: |
+          set -euo pipefail
+          git push -u origin "$BOT_BRANCH"
+
+      - name: Create or update PR into dev
+        if: steps.commit.outputs.no_changes != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_BRANCH: dev
+          BOT_BRANCH: bot/submodule-sync
+          SUBMODULE: ${{ steps.inputs.outputs.submodule }}
+          TARGET_SHA: ${{ steps.inputs.outputs.sha }}
+          SOURCE_REPO: ${{ steps.inputs.outputs.source_repo }}
+          SOURCE_BRANCH: ${{ steps.inputs.outputs.source_branch }}
+        run: |
+          set -euo pipefail
+
+          short_sha="$(echo "$TARGET_SHA" | cut -c1-7)"
+          title="🔗 chore(submodules): sync ${SUBMODULE} pin (${short_sha})"
+
+          body="Automated submodule pin sync.
+
+- Submodule: ${SUBMODULE}
+- Commit: ${TARGET_SHA}
+"
+          if [[ -n "${SOURCE_REPO}" ]]; then
+            body="${body}\n- Source repo: ${SOURCE_REPO}"
+          fi
+          if [[ -n "${SOURCE_BRANCH}" ]]; then
+            body="${body}\n- Source branch: ${SOURCE_BRANCH}"
+          fi
+
+          existing="$(gh pr list --repo "$GITHUB_REPOSITORY" --base "$BASE_BRANCH" --head "$BOT_BRANCH" --json number --jq '.[0].number // empty')"
+          if [[ -n "$existing" ]]; then
+            gh pr edit "$existing" --repo "$GITHUB_REPOSITORY" --title "$title" --body "$body"
+            echo "INFO: updated existing PR #$existing"
+            exit 0
+          fi
+
+          gh pr create \
+            --repo "$GITHUB_REPOSITORY" \
+            --base "$BASE_BRANCH" \
+            --head "$BOT_BRANCH" \
+            --title "$title" \
+            --body "$body"
