@@ -216,7 +216,10 @@ jobs:
       - name: Create or update PR into lane base
         if: steps.commit.outputs.no_changes != 'true'
         env:
-          GH_TOKEN: ${{ github.token }}
+          # Some repositories disable "Allow GitHub Actions to create pull requests".
+          # Use the PAT secret (already required for private submodule checkout) so
+          # PR creation works regardless of that repository setting.
+          GH_TOKEN: ${{ secrets.SUBMODULES_REPO_TOKEN || secrets.WEB_APP_REPO_TOKEN || github.token }}
           BASE_BRANCH: ${{ steps.inputs.outputs.lane }}
           BOT_BRANCH: ${{ steps.inputs.outputs.bot_branch }}
           SUBMODULE: ${{ steps.inputs.outputs.submodule }}
