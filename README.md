@@ -35,6 +35,19 @@ Antes de começar, garanta que você tenha o seguinte software instalado:
 Siga estes passos cuidadosamente para configurar seu projeto pela primeira vez.  
 > **Importante:** Antes do passo 1, siga as instruções publicadas no repositório `delphi-ai` (documentação de onboarding) para trazer o Delphi e criar os symlinks necessários (`AGENTS.md`, `foundation_documentation/`, etc.). Execute o script diretamente a partir de lá (`./delphi-ai/scripts/setup_delphi.sh`).
 
+## Submodule Workspace Rules (Pin vs Track)
+
+**CI/deploy always uses the superproject pins** (the gitlink SHAs stored in this repo). Your local submodule checkout can drift if you `git pull` inside a submodule, so follow one of these modes:
+
+* **Pinned (recommended before deploy/debug/CI parity)**: submodules are checked out to the exact SHAs recorded by `belluga_now_docker`.
+* **Lane tracking (convenience)**: submodules are switched to lane branches (`dev`/`stage`/`main`) for browsing/work. This does *not* change what CI/deploy uses until you update the pins via PR in this repo.
+
+Safe scripts (non-destructive; refuse to run if any submodule is dirty):
+
+* `tools/submodules/status.sh`
+* `tools/submodules/pin_to_superproject.sh`
+* `tools/submodules/track_lanes.sh <dev|stage|main>`
+
 ### Passo 1: Fork e Clone
 
 1.  **Fork** este repositório para a sua conta do GitHub.
