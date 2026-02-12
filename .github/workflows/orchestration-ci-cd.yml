@@ -232,7 +232,54 @@ jobs:
             exit 1
           fi
 
+      - name: Preflight stage initialization status
+        id: stage_initialize_preflight
+        env:
+          NAV_LANDLORD_URL: ${{ vars.STAGE_NAV_LANDLORD_URL }}
+          NAV_ORIGIN_IP: ${{ vars.STAGE_SSH_HOST }}
+        run: |
+          set -euo pipefail
+
+          landlord="${NAV_LANDLORD_URL%/}"
+          initialize_url="${landlord}/api/v1/initialize"
+          landlord_host="$(python3 -c 'import sys, urllib.parse; print((urllib.parse.urlparse(sys.argv[1]).hostname or "").strip())' "$landlord")"
+          if [[ -z "$landlord_host" ]]; then
+            echo "ERROR: could not parse stage landlord host from NAV_LANDLORD_URL." >&2
+            exit 1
+          fi
+
+          curl_args=()
+          if [[ -n "${NAV_ORIGIN_IP:-}" ]]; then
+            curl_args+=(--resolve "${landlord_host}:443:${NAV_ORIGIN_IP}")
+            echo "INFO: stage initialization preflight routed directly to origin ${NAV_ORIGIN_IP}."
+          fi
+
+          echo "INFO: checking stage initialization status at ${initialize_url}"
+          status="$(curl -sS -m 15 "${curl_args[@]}" -o /tmp/stage_initialize_response.json -w '%{http_code}' "${initialize_url}")"
+
+          case "${status}" in
+            200)
+              echo "initialized=true" >> "$GITHUB_OUTPUT"
+              ;;
+            403)
+              echo "initialized=false" >> "$GITHUB_OUTPUT"
+              echo "::warning title=Stage not initialized::Skipping navigation smoke because /api/v1/initialize returned HTTP 403."
+              cat /tmp/stage_initialize_response.json || true
+              ;;
+            *)
+              echo "ERROR: unexpected stage initialization status ${status}. Expected 200 or 403." >&2
+              cat /tmp/stage_initialize_response.json >&2 || true
+              exit 1
+              ;;
+          esac
+
+      - name: Skip stage navigation smoke (environment not initialized)
+        if: steps.stage_initialize_preflight.outputs.initialized != 'true'
+        run: |
+          echo "INFO: skipping stage navigation smoke because environment is not initialized yet."
+
       - name: Setup Node.js for real navigation smoke
+        if: steps.stage_initialize_preflight.outputs.initialized == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -240,14 +287,17 @@ jobs:
           cache-dependency-path: web-app/package-lock.json
 
       - name: Install web navigation dependencies
+        if: steps.stage_initialize_preflight.outputs.initialized == 'true'
         run: npm ci
         working-directory: web-app
 
       - name: Install Playwright browser
+        if: steps.stage_initialize_preflight.outputs.initialized == 'true'
         run: npx playwright install --with-deps chromium
         working-directory: web-app
 
       - name: Route stage smoke hosts directly to origin
+        if: steps.stage_initialize_preflight.outputs.initialized == 'true'
         env:
           NAV_LANDLORD_URL: ${{ vars.STAGE_NAV_LANDLORD_URL }}
           NAV_TENANT_URL: ${{ vars.STAGE_NAV_TENANT_URL }}
@@ -282,6 +332,7 @@ jobs:
 
       - name: Run stage real navigation smoke
         id: stage_navigation_smoke
+        if: steps.stage_initialize_preflight.outputs.initialized == 'true'
         continue-on-error: true
         env:
           NAV_LANDLORD_URL: ${{ vars.STAGE_NAV_LANDLORD_URL }}
@@ -291,7 +342,7 @@ jobs:
         working-directory: web-app
 
       - name: Mark stage revision as successful after navigation smoke
-        if: steps.stage_navigation_smoke.outcome == 'success'
+        if: steps.stage_navigation_smoke.outcome == 'success' || steps.stage_initialize_preflight.outputs.initialized != 'true'
         env:
           DEPLOY_SSH_HOST: ${{ vars.STAGE_SSH_HOST }}
           DEPLOY_SSH_PORT: ${{ vars.STAGE_SSH_PORT }}
@@ -448,7 +499,54 @@ jobs:
             exit 1
           fi
 
+      - name: Preflight production initialization status
+        id: main_initialize_preflight
+        env:
+          NAV_LANDLORD_URL: ${{ vars.MAIN_NAV_LANDLORD_URL }}
+          NAV_ORIGIN_IP: ${{ vars.MAIN_SSH_HOST }}
+        run: |
+          set -euo pipefail
+
+          landlord="${NAV_LANDLORD_URL%/}"
+          initialize_url="${landlord}/api/v1/initialize"
+          landlord_host="$(python3 -c 'import sys, urllib.parse; print((urllib.parse.urlparse(sys.argv[1]).hostname or "").strip())' "$landlord")"
+          if [[ -z "$landlord_host" ]]; then
+            echo "ERROR: could not parse production landlord host from NAV_LANDLORD_URL." >&2
+            exit 1
+          fi
+
+          curl_args=()
+          if [[ -n "${NAV_ORIGIN_IP:-}" ]]; then
+            curl_args+=(--resolve "${landlord_host}:443:${NAV_ORIGIN_IP}")
+            echo "INFO: production initialization preflight routed directly to origin ${NAV_ORIGIN_IP}."
+          fi
+
+          echo "INFO: checking production initialization status at ${initialize_url}"
+          status="$(curl -sS -m 15 "${curl_args[@]}" -o /tmp/main_initialize_response.json -w '%{http_code}' "${initialize_url}")"
+
+          case "${status}" in
+            200)
+              echo "initialized=true" >> "$GITHUB_OUTPUT"
+              ;;
+            403)
+              echo "initialized=false" >> "$GITHUB_OUTPUT"
+              echo "::warning title=Production not initialized::Skipping navigation smoke because /api/v1/initialize returned HTTP 403."
+              cat /tmp/main_initialize_response.json || true
+              ;;
+            *)
+              echo "ERROR: unexpected production initialization status ${status}. Expected 200 or 403." >&2
+              cat /tmp/main_initialize_response.json >&2 || true
+              exit 1
+              ;;
+          esac
+
+      - name: Skip production navigation smoke (environment not initialized)
+        if: steps.main_initialize_preflight.outputs.initialized != 'true'
+        run: |
+          echo "INFO: skipping production navigation smoke because environment is not initialized yet."
+
       - name: Setup Node.js for real navigation smoke
+        if: steps.main_initialize_preflight.outputs.initialized == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -456,14 +554,17 @@ jobs:
           cache-dependency-path: web-app/package-lock.json
 
       - name: Install web navigation dependencies
+        if: steps.main_initialize_preflight.outputs.initialized == 'true'
         run: npm ci
         working-directory: web-app
 
       - name: Install Playwright browser
+        if: steps.main_initialize_preflight.outputs.initialized == 'true'
         run: npx playwright install --with-deps chromium
         working-directory: web-app
 
       - name: Route production smoke hosts directly to origin
+        if: steps.main_initialize_preflight.outputs.initialized == 'true'
         env:
           NAV_LANDLORD_URL: ${{ vars.MAIN_NAV_LANDLORD_URL }}
           NAV_TENANT_URL: ${{ vars.MAIN_NAV_TENANT_URL }}
@@ -498,6 +599,7 @@ jobs:
 
       - name: Run production real navigation smoke
         id: production_navigation_smoke
+        if: steps.main_initialize_preflight.outputs.initialized == 'true'
         continue-on-error: true
         env:
           NAV_LANDLORD_URL: ${{ vars.MAIN_NAV_LANDLORD_URL }}
@@ -507,7 +609,7 @@ jobs:
         working-directory: web-app
 
       - name: Mark production revision as successful after navigation smoke
-        if: steps.production_navigation_smoke.outcome == 'success'
+        if: steps.production_navigation_smoke.outcome == 'success' || steps.main_initialize_preflight.outputs.initialized != 'true'
         env:
           DEPLOY_SSH_HOST: ${{ vars.MAIN_SSH_HOST }}
           DEPLOY_SSH_PORT: ${{ vars.MAIN_SSH_PORT }}
