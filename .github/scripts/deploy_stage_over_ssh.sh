@@ -161,25 +161,38 @@ resolve_health_host() {
 }
 
 deploy_and_check_health() {
-  local health_host health_url response
+  local health_host health_url status body
 
   "\${DOCKER_COMPOSE[@]}" up -d --build --remove-orphans
   "\${DOCKER_COMPOSE[@]}" ps
 
-  # Validate runtime health using the canonical landlord host, even when hitting localhost.
+  # Validate runtime readiness without requiring initialized domain data.
+  # /api/v1/initialize is expected to return:
+  # - 200 (already initialized) or
+  # - 403 (not initialized yet)
   health_host="\$(resolve_health_host)"
-  health_url="http://127.0.0.1:\${DEPLOY_NGINX_HOST_PORT_80}/api/v1/environment"
-  health_curl=(curl -fsS --max-time 5 -H "Host: \${health_host}" "\${health_url}")
-  echo "INFO: waiting for application health at \${health_url} (Host: \${health_host})"
+  health_url="http://127.0.0.1:\${DEPLOY_NGINX_HOST_PORT_80}/api/v1/initialize"
+  echo "INFO: waiting for application readiness at \${health_url} (Host: \${health_host})"
 
   for attempt in \$(seq 1 24); do
-    response="\$("\${health_curl[@]}" 2>/dev/null || true)"
-    if [[ -n "\$response" ]] && grep -q '"main_domain"' <<<"\$response"; then
-      echo "INFO: health check passed."
+    status="\$(
+      curl -sS --max-time 5 \
+        -H \"Host: \${health_host}\" \
+        -o /tmp/deploy_health_response.json \
+        -w '%{http_code}' \
+        \"\${health_url}\" || true
+    )"
+
+    if [[ "\${status}" == "200" || "\${status}" == "403" ]]; then
+      body="\$(cat /tmp/deploy_health_response.json 2>/dev/null || true)"
+      echo "INFO: readiness check passed with HTTP \${status}."
+      if [[ -n "\${body}" ]]; then
+        echo "INFO: readiness response: \${body}"
+      fi
       return 0
     fi
 
-    echo "INFO: health check attempt \${attempt}/24 failed; retrying in 5s..."
+    echo "INFO: readiness attempt \${attempt}/24 failed (HTTP \${status:-unknown}); retrying in 5s..."
     sleep 5
   done
 
