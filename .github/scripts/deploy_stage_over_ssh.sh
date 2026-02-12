@@ -33,6 +33,14 @@ if [[ -z "${deploy_ssh_host}" || -z "${deploy_ssh_port}" || -z "${deploy_ssh_use
   exit 1
 fi
 
+for port_var in deploy_nginx_port_80 deploy_nginx_port_443; do
+  port_value="${!port_var}"
+  if ! [[ "${port_value}" =~ ^[0-9]+$ ]] || (( port_value < 1 || port_value > 65535 )); then
+    echo "ERROR: ${port_var} must be a numeric TCP port between 1 and 65535 (received '${port_value}')." >&2
+    exit 1
+  fi
+done
+
 # Normalize "~" because env vars are not shell-expanded automatically.
 if [[ "${deploy_ssh_key_path}" == "~/"* ]]; then
   deploy_ssh_key_path="${HOME}/${deploy_ssh_key_path#\~/}"
@@ -146,15 +154,36 @@ resolve_health_host() {
     source="\${app_url_line#APP_URL=}"
   fi
 
-  source="\${source%\$'\\r'}"
+  source="\$(printf '%s' "\$source" | tr -d '\r')"
+  source="\${source%%\$'\\n'*}"
+  source="\${source#\"\${source%%[![:space:]]*}\"}"
+  source="\${source%\"\${source##*[![:space:]]}\"}"
 
-  host="\${source#*://}"
+  if [[ "\$source" == *\"://\"* ]]; then
+    host="\$(
+      python3 - "\$source" <<'PY'
+import sys
+from urllib.parse import urlparse
+
+parsed = urlparse(sys.argv[1].strip())
+print((parsed.hostname or "").strip())
+PY
+    )"
+  else
+    host="\$source"
+  fi
+
   host="\${host%%/*}"
   host="\${host%%:*}"
-  host="\${host//[[:space:]]/}"
+  host="\$(printf '%s' "\$host" | tr -d '\r\n' | xargs)"
 
   if [[ -z "\$host" ]]; then
     host="localhost"
+  fi
+
+  if ! [[ "\$host" =~ ^[A-Za-z0-9.-]+$ ]]; then
+    echo "ERROR: invalid health host '\$host' resolved from DEPLOY_HEALTH_HOST/APP_URL." >&2
+    return 1
   fi
 
   echo "\$host"
