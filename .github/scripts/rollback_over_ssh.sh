@@ -170,6 +170,7 @@ resolve_health_host() {
 
 health_host="\$(resolve_health_host)"
 health_url="http://127.0.0.1:\${DEPLOY_NGINX_HOST_PORT_80}/api/v1/initialize"
+root_health_url="http://127.0.0.1:\${DEPLOY_NGINX_HOST_PORT_80}/"
 
 echo "INFO: waiting for rollback health at \${health_url} (Host: \${health_host})"
 for attempt in \$(seq 1 24); do
@@ -195,6 +196,23 @@ for attempt in \$(seq 1 24); do
       echo "INFO: rollback readiness response: \${response_body}"
     fi
     exit 0
+  fi
+
+  # Older rollback targets may not expose /api/v1/initialize.
+  # In rollback mode only, accept 404 there if landlord root is healthy.
+  if [[ "\${status}" == "404" ]]; then
+    root_status="$(
+      curl -sS --max-time 5 \
+        -H "Host: \${health_host}" \
+        -o /tmp/rollback_root_health_response.html \
+        -w '%{http_code}' \
+        "\${root_health_url}" || true
+    )"
+
+    if [[ "\${root_status}" == "200" || "\${root_status}" == "301" || "\${root_status}" == "302" ]]; then
+      echo "WARN: rollback target returned 404 on /api/v1/initialize; accepting root health HTTP \${root_status} at \${root_health_url}."
+      exit 0
+    fi
   fi
 
   echo "INFO: rollback readiness attempt \${attempt}/24 failed (HTTP \${status:-unknown}); retrying in 5s..."
