@@ -191,13 +191,20 @@ deploy_and_check_health() {
   echo "INFO: waiting for application readiness at \${health_url} (Host: \${health_host})"
 
   for attempt in \$(seq 1 24); do
-    status="\$(
-      curl -sS --max-time 5 \
-        -H \"Host: \${health_host}\" \
-        -o /tmp/deploy_health_response.json \
-        -w '%{http_code}' \
-        \"\${health_url}\" || true
-    )"
+    if [[ "\${attempt}" == "1" ]]; then
+      printf 'INFO: readiness probe host=%q url=%q\n' "\${health_host}" "\${health_url}"
+    fi
+
+    curl_cmd=(
+      curl
+      -sS
+      --max-time 5
+      -H "Host: \${health_host}"
+      -o /tmp/deploy_health_response.json
+      -w '%{http_code}'
+      "\${health_url}"
+    )
+    status="\$("\${curl_cmd[@]}" || true)"
 
     if [[ "\${status}" == "200" || "\${status}" == "403" ]]; then
       body="\$(cat /tmp/deploy_health_response.json 2>/dev/null || true)"
