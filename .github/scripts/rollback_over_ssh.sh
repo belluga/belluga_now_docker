@@ -33,6 +33,14 @@ if [[ -z "${deploy_ssh_host}" || -z "${deploy_ssh_port}" || -z "${deploy_ssh_use
   exit 1
 fi
 
+for port_var in deploy_nginx_port_80 deploy_nginx_port_443; do
+  port_value="${!port_var}"
+  if ! [[ "${port_value}" =~ ^[0-9]+$ ]] || (( port_value < 1 || port_value > 65535 )); then
+    echo "ERROR: ${port_var} must be a numeric TCP port between 1 and 65535 (received '${port_value}')." >&2
+    exit 1
+  fi
+done
+
 if [[ "${deploy_ssh_key_path}" == "~/"* ]]; then
   deploy_ssh_key_path="${HOME}/${deploy_ssh_key_path#\~/}"
 fi
@@ -135,15 +143,23 @@ resolve_health_host() {
     source="\${app_url_line#APP_URL=}"
   fi
 
-  source="\${source%\$'\\r'}"
+  source="\$(printf '%s' "\$source" | tr -d '\r')"
+  source="\${source%%\$'\\n'*}"
+  source="\${source#\"\${source%%[![:space:]]*}\"}"
+  source="\${source%\"\${source##*[![:space:]]}\"}"
 
   host="\${source#*://}"
   host="\${host%%/*}"
   host="\${host%%:*}"
-  host="\${host//[[:space:]]/}"
+  host="\$(printf '%s' "\$host" | tr -d '\r\n' | xargs)"
 
   if [[ -z "\$host" ]]; then
     host="localhost"
+  fi
+
+  if ! [[ "\$host" =~ ^[A-Za-z0-9.-]+$ ]]; then
+    echo "ERROR: invalid health host '\$host' resolved from DEPLOY_HEALTH_HOST/APP_URL." >&2
+    return 1
   fi
 
   echo "\$host"
@@ -153,16 +169,35 @@ resolve_health_host() {
 "\${DOCKER_COMPOSE[@]}" ps
 
 health_host="\$(resolve_health_host)"
-health_url="http://127.0.0.1:\${DEPLOY_NGINX_HOST_PORT_80}/api/v1/environment"
-health_curl=(curl -fsS --max-time 5 -H "Host: \${health_host}" "\${health_url}")
+health_url="http://127.0.0.1:\${DEPLOY_NGINX_HOST_PORT_80}/api/v1/initialize"
 
 echo "INFO: waiting for rollback health at \${health_url} (Host: \${health_host})"
 for attempt in \$(seq 1 24); do
-  response="\$("\${health_curl[@]}" 2>/dev/null || true)"
-  if [[ -n "\$response" ]] && grep -q '"main_domain"' <<<"\$response"; then
-    echo "INFO: rollback health check passed."
+  if [[ "\${attempt}" == "1" ]]; then
+    printf 'INFO: rollback probe host=%q url=%q\n' "\${health_host}" "\${health_url}"
+  fi
+
+  curl_cmd=(
+    curl
+    -sS
+    --max-time 5
+    -H "Host: \${health_host}"
+    -o /tmp/rollback_health_response.json
+    -w '%{http_code}'
+    "\${health_url}"
+  )
+  status="\$("\${curl_cmd[@]}" || true)"
+
+  if [[ "\${status}" == "200" || "\${status}" == "403" ]]; then
+    echo "INFO: rollback health check passed with HTTP \${status}."
+    response_body="\$(cat /tmp/rollback_health_response.json 2>/dev/null || true)"
+    if [[ -n "\${response_body}" ]]; then
+      echo "INFO: rollback readiness response: \${response_body}"
+    fi
     exit 0
   fi
+
+  echo "INFO: rollback readiness attempt \${attempt}/24 failed (HTTP \${status:-unknown}); retrying in 5s..."
   sleep 5
 done
 
