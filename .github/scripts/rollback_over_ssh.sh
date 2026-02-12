@@ -201,7 +201,11 @@ for attempt in \$(seq 1 24); do
   # Older rollback targets may not expose /api/v1/initialize.
   # In rollback mode only, accept 404 there if landlord root is healthy.
   if [[ "\${status}" == "404" ]]; then
+<<<<<<< HEAD
     root_status="\$(
+=======
+    root_status="$(
+>>>>>>> origin/stage
       curl -sS --max-time 5 \
         -H "Host: \${health_host}" \
         -o /tmp/rollback_root_health_response.html \
