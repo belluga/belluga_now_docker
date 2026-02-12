@@ -1,0 +1,125 @@
+name: Lane Promotion PR Broker
+
+on:
+  repository_dispatch:
+    types:
+      - lane-promotion-request
+  workflow_dispatch:
+    inputs:
+      source_repo:
+        description: "Source repository (owner/repo)"
+        required: true
+        type: string
+      head:
+        description: "Source lane branch (dev|stage)"
+        required: true
+        type: string
+      base:
+        description: "Target lane branch (stage|main)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lane-promotion-pr-${{ github.event.client_payload.source_repo || inputs.source_repo || github.run_id }}-${{ github.event.client_payload.head || inputs.head || 'unknown' }}-${{ github.event.client_payload.base || inputs.base || 'unknown' }}
+  cancel-in-progress: false
+
+jobs:
+  open_or_update_source_pr:
+    name: Open/Update source repo lane PR
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.SUBMODULES_REPO_TOKEN || secrets.WEB_APP_REPO_TOKEN }}
+
+    steps:
+      - name: Validate broker token availability
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${GH_TOKEN:-}" ]]; then
+            echo "ERROR: missing broker token. Configure SUBMODULES_REPO_TOKEN (recommended) or WEB_APP_REPO_TOKEN in belluga_now_docker." >&2
+            exit 1
+          fi
+
+      - name: Resolve request payload
+        id: payload
+        env:
+          DISPATCH_SOURCE_REPO: ${{ github.event.client_payload.source_repo }}
+          DISPATCH_HEAD: ${{ github.event.client_payload.head }}
+          DISPATCH_BASE: ${{ github.event.client_payload.base }}
+          DISPATCH_TRIGGER_EVENT: ${{ github.event.client_payload.trigger_event }}
+          INPUT_SOURCE_REPO: ${{ inputs.source_repo }}
+          INPUT_HEAD: ${{ inputs.head }}
+          INPUT_BASE: ${{ inputs.base }}
+        run: |
+          set -euo pipefail
+
+          if [[ "${GITHUB_EVENT_NAME}" == "repository_dispatch" ]]; then
+            source_repo="${DISPATCH_SOURCE_REPO:-}"
+            head="${DISPATCH_HEAD:-}"
+            base="${DISPATCH_BASE:-}"
+            trigger_event="${DISPATCH_TRIGGER_EVENT:-repository_dispatch}"
+          else
+            source_repo="${INPUT_SOURCE_REPO:-}"
+            head="${INPUT_HEAD:-}"
+            base="${INPUT_BASE:-}"
+            trigger_event="workflow_dispatch"
+          fi
+
+          if [[ -z "$source_repo" || -z "$head" || -z "$base" ]]; then
+            echo "ERROR: missing required payload fields (source_repo/head/base)." >&2
+            exit 1
+          fi
+
+          if [[ "$source_repo" != belluga/* ]]; then
+            echo "ERROR: unsupported source_repo '$source_repo'. Expected belluga/*." >&2
+            exit 1
+          fi
+
+          case "${head}->${base}" in
+            "dev->stage"|"stage->main") ;;
+            *)
+              echo "ERROR: invalid lane mapping '${head}->${base}'." >&2
+              exit 1
+              ;;
+          esac
+
+          echo "source_repo=$source_repo" >> "$GITHUB_OUTPUT"
+          echo "head=$head" >> "$GITHUB_OUTPUT"
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+          echo "trigger_event=$trigger_event" >> "$GITHUB_OUTPUT"
+
+      - name: Verify source repository access
+        env:
+          SOURCE_REPO: ${{ steps.payload.outputs.source_repo }}
+        run: |
+          set -euo pipefail
+          gh repo view "$SOURCE_REPO" >/dev/null
+
+      - name: Open or update lane promotion PR
+        env:
+          SOURCE_REPO: ${{ steps.payload.outputs.source_repo }}
+          HEAD_BRANCH: ${{ steps.payload.outputs.head }}
+          BASE_BRANCH: ${{ steps.payload.outputs.base }}
+          TRIGGER_EVENT: ${{ steps.payload.outputs.trigger_event }}
+        run: |
+          set -euo pipefail
+
+          title="chore(lane): promote ${HEAD_BRANCH} -> ${BASE_BRANCH}"
+          body=$'Automated lane promotion PR (brokered by belluga_now_docker).\n\n- Source lane: '"${HEAD_BRANCH}"$'\n- Target lane: '"${BASE_BRANCH}"$'\n- Trigger: '"${TRIGGER_EVENT}"$'\n'
+
+          existing="$(gh pr list --repo "${SOURCE_REPO}" --base "${BASE_BRANCH}" --head "${HEAD_BRANCH}" --json number --jq '.[0].number // empty')"
+          if [[ -n "${existing}" ]]; then
+            gh pr edit "${existing}" --repo "${SOURCE_REPO}" --title "${title}" --body "${body}"
+            echo "Updated existing PR #${existing} in ${SOURCE_REPO}: ${HEAD_BRANCH} -> ${BASE_BRANCH}"
+            exit 0
+          fi
+
+          gh pr create \
+            --repo "${SOURCE_REPO}" \
+            --base "${BASE_BRANCH}" \
+            --head "${HEAD_BRANCH}" \
+            --title "${title}" \
+            --body "${body}"
