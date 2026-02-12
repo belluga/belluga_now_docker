@@ -173,13 +173,20 @@ health_url="http://127.0.0.1:\${DEPLOY_NGINX_HOST_PORT_80}/api/v1/initialize"
 
 echo "INFO: waiting for rollback health at \${health_url} (Host: \${health_host})"
 for attempt in \$(seq 1 24); do
-  status="\$(
-    curl -sS --max-time 5 \
-      -H "Host: \${health_host}" \
-      -o /tmp/rollback_health_response.json \
-      -w '%{http_code}' \
-      "\${health_url}" || true
-  )"
+  if [[ "\${attempt}" == "1" ]]; then
+    printf 'INFO: rollback probe host=%q url=%q\n' "\${health_host}" "\${health_url}"
+  fi
+
+  curl_cmd=(
+    curl
+    -sS
+    --max-time 5
+    -H "Host: \${health_host}"
+    -o /tmp/rollback_health_response.json
+    -w '%{http_code}'
+    "\${health_url}"
+  )
+  status="\$("\${curl_cmd[@]}" || true)"
 
   if [[ "\${status}" == "200" || "\${status}" == "403" ]]; then
     echo "INFO: rollback health check passed with HTTP \${status}."
