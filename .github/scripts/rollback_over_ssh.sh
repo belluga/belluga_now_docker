@@ -148,20 +148,7 @@ resolve_health_host() {
   source="\${source#\"\${source%%[![:space:]]*}\"}"
   source="\${source%\"\${source##*[![:space:]]}\"}"
 
-  if [[ "\$source" == *\"://\"* ]]; then
-    host="\$(
-      python3 - "\$source" <<'PY'
-import sys
-from urllib.parse import urlparse
-
-parsed = urlparse(sys.argv[1].strip())
-print((parsed.hostname or "").strip())
-PY
-    )"
-  else
-    host="\$source"
-  fi
-
+  host="\${source#*://}"
   host="\${host%%/*}"
   host="\${host%%:*}"
   host="\$(printf '%s' "\$host" | tr -d '\r\n' | xargs)"
