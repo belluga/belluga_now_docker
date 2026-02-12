@@ -251,6 +251,7 @@ jobs:
           curl_args=()
           if [[ -n "${NAV_ORIGIN_IP:-}" ]]; then
             curl_args+=(--resolve "${landlord_host}:443:${NAV_ORIGIN_IP}")
+            curl_args+=(--insecure)
             echo "INFO: stage initialization preflight routed directly to origin ${NAV_ORIGIN_IP}."
           fi
 
@@ -518,6 +519,7 @@ jobs:
           curl_args=()
           if [[ -n "${NAV_ORIGIN_IP:-}" ]]; then
             curl_args+=(--resolve "${landlord_host}:443:${NAV_ORIGIN_IP}")
+            curl_args+=(--insecure)
             echo "INFO: production initialization preflight routed directly to origin ${NAV_ORIGIN_IP}."
           fi
 
