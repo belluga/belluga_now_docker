@@ -187,10 +187,8 @@ deploy_and_check_health() {
 }
 
 if deploy_and_check_health; then
-  current_revision="\$(git rev-parse HEAD)"
-  echo "\$current_revision" > .last_successful_revision
-  echo "INFO: recorded last successful revision: \$current_revision"
   echo "INFO: \$DEPLOY_LANE deploy completed successfully."
+  echo "INFO: last successful revision marker will be updated only after navigation smoke passes."
   exit 0
 fi
 

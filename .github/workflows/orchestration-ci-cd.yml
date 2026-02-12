@@ -184,6 +184,31 @@ jobs:
           printf '%s\n' "$STAGE_SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
 
+      - name: Capture stage rollback target revision
+        id: stage_rollback_target
+        env:
+          DEPLOY_SSH_HOST: ${{ vars.STAGE_SSH_HOST }}
+          DEPLOY_SSH_PORT: ${{ vars.STAGE_SSH_PORT }}
+          DEPLOY_SSH_USER: ${{ vars.STAGE_SSH_USER }}
+          DEPLOY_PATH: ${{ vars.STAGE_DEPLOY_PATH }}
+          DEPLOY_SSH_KEY_PATH: ~/.ssh/id_ed25519_stage
+        run: |
+          set -euo pipefail
+
+          target="$(
+            ssh -p "${DEPLOY_SSH_PORT}" -i "${DEPLOY_SSH_KEY_PATH}" \
+              -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+              "${DEPLOY_SSH_USER}@${DEPLOY_SSH_HOST}" "set -euo pipefail; if [[ -d '${DEPLOY_PATH}/.git' ]]; then cd '${DEPLOY_PATH}'; if [[ -f '.last_successful_revision' ]]; then cat '.last_successful_revision'; elif git rev-parse --verify HEAD >/dev/null 2>&1; then git rev-parse HEAD; fi; fi"
+          )"
+
+          target="$(echo "$target" | tr -d '[:space:]')"
+          if [[ -n "$target" ]]; then
+            echo "revision=$target" >> "$GITHUB_OUTPUT"
+            echo "INFO: stage rollback target revision captured: $target"
+          else
+            echo "INFO: stage rollback target revision unavailable (first deployment path or no git HEAD)."
+          fi
+
       - name: Deploy pinned stage stack over SSH
         env:
           DEPLOY_LANE: stage
@@ -222,14 +247,58 @@ jobs:
         run: npx playwright install --with-deps chromium
         working-directory: web-app
 
+      - name: Route stage smoke hosts directly to origin
+        env:
+          NAV_LANDLORD_URL: ${{ vars.STAGE_NAV_LANDLORD_URL }}
+          NAV_TENANT_URL: ${{ vars.STAGE_NAV_TENANT_URL }}
+          NAV_ORIGIN_IP: ${{ vars.STAGE_SSH_HOST }}
+        run: |
+          set -euo pipefail
+
+          parse_host() {
+            local input_url="$1"
+            python3 -c 'import sys, urllib.parse; print((urllib.parse.urlparse(sys.argv[1]).hostname or "").strip())' "$input_url"
+          }
+
+          landlord_host="$(parse_host "$NAV_LANDLORD_URL")"
+          tenant_host="$(parse_host "$NAV_TENANT_URL")"
+
+          if [[ -z "$landlord_host" || -z "$tenant_host" ]]; then
+            echo "ERROR: could not parse stage landlord/tenant hosts from navigation URLs." >&2
+            exit 1
+          fi
+
+          if [[ -n "${NAV_ORIGIN_IP:-}" ]]; then
+            {
+              echo "${NAV_ORIGIN_IP} ${landlord_host}"
+              echo "${NAV_ORIGIN_IP} ${tenant_host}"
+            } | sudo tee -a /etc/hosts >/dev/null
+            echo "PLAYWRIGHT_IGNORE_HTTPS_ERRORS=true" >> "$GITHUB_ENV"
+            echo "INFO: stage smoke mapped ${landlord_host}/${tenant_host} to ${NAV_ORIGIN_IP}."
+          else
+            echo "PLAYWRIGHT_IGNORE_HTTPS_ERRORS=false" >> "$GITHUB_ENV"
+            echo "INFO: stage smoke using public DNS resolution."
+          fi
+
       - name: Run stage real navigation smoke
         id: stage_navigation_smoke
         continue-on-error: true
         env:
           NAV_LANDLORD_URL: ${{ vars.STAGE_NAV_LANDLORD_URL }}
           NAV_TENANT_URL: ${{ vars.STAGE_NAV_TENANT_URL }}
+          PLAYWRIGHT_IGNORE_HTTPS_ERRORS: ${{ env.PLAYWRIGHT_IGNORE_HTTPS_ERRORS }}
         run: npm run test:navigation
         working-directory: web-app
+
+      - name: Mark stage revision as successful after navigation smoke
+        if: steps.stage_navigation_smoke.outcome == 'success'
+        env:
+          DEPLOY_SSH_HOST: ${{ vars.STAGE_SSH_HOST }}
+          DEPLOY_SSH_PORT: ${{ vars.STAGE_SSH_PORT }}
+          DEPLOY_SSH_USER: ${{ vars.STAGE_SSH_USER }}
+          DEPLOY_PATH: ${{ vars.STAGE_DEPLOY_PATH }}
+          DEPLOY_SSH_KEY_PATH: ~/.ssh/id_ed25519_stage
+        run: bash .github/scripts/mark_successful_revision_over_ssh.sh
 
       - name: Roll back stage deploy when navigation smoke fails
         if: steps.stage_navigation_smoke.outcome == 'failure'
@@ -246,6 +315,7 @@ jobs:
           SUBMODULES_REPO_TOKEN: ${{ steps.submodule_auth.outputs.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           GITHUB_REF_NAME: ${{ github.ref_name }}
+          ROLLBACK_TARGET_REVISION: ${{ steps.stage_rollback_target.outputs.revision }}
         run: bash .github/scripts/rollback_over_ssh.sh
 
       - name: Fail stage deploy after rollback
@@ -330,6 +400,31 @@ jobs:
           printf '%s\n' "$MAIN_SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
 
+      - name: Capture production rollback target revision
+        id: main_rollback_target
+        env:
+          DEPLOY_SSH_HOST: ${{ vars.MAIN_SSH_HOST }}
+          DEPLOY_SSH_PORT: ${{ vars.MAIN_SSH_PORT }}
+          DEPLOY_SSH_USER: ${{ vars.MAIN_SSH_USER }}
+          DEPLOY_PATH: ${{ vars.MAIN_DEPLOY_PATH }}
+          DEPLOY_SSH_KEY_PATH: ~/.ssh/id_ed25519_main
+        run: |
+          set -euo pipefail
+
+          target="$(
+            ssh -p "${DEPLOY_SSH_PORT}" -i "${DEPLOY_SSH_KEY_PATH}" \
+              -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+              "${DEPLOY_SSH_USER}@${DEPLOY_SSH_HOST}" "set -euo pipefail; if [[ -d '${DEPLOY_PATH}/.git' ]]; then cd '${DEPLOY_PATH}'; if [[ -f '.last_successful_revision' ]]; then cat '.last_successful_revision'; elif git rev-parse --verify HEAD >/dev/null 2>&1; then git rev-parse HEAD; fi; fi"
+          )"
+
+          target="$(echo "$target" | tr -d '[:space:]')"
+          if [[ -n "$target" ]]; then
+            echo "revision=$target" >> "$GITHUB_OUTPUT"
+            echo "INFO: production rollback target revision captured: $target"
+          else
+            echo "INFO: production rollback target revision unavailable (first deployment path or no git HEAD)."
+          fi
+
       - name: Deploy pinned production stack over SSH
         env:
           DEPLOY_LANE: main
@@ -368,14 +463,58 @@ jobs:
         run: npx playwright install --with-deps chromium
         working-directory: web-app
 
+      - name: Route production smoke hosts directly to origin
+        env:
+          NAV_LANDLORD_URL: ${{ vars.MAIN_NAV_LANDLORD_URL }}
+          NAV_TENANT_URL: ${{ vars.MAIN_NAV_TENANT_URL }}
+          NAV_ORIGIN_IP: ${{ vars.MAIN_SSH_HOST }}
+        run: |
+          set -euo pipefail
+
+          parse_host() {
+            local input_url="$1"
+            python3 -c 'import sys, urllib.parse; print((urllib.parse.urlparse(sys.argv[1]).hostname or "").strip())' "$input_url"
+          }
+
+          landlord_host="$(parse_host "$NAV_LANDLORD_URL")"
+          tenant_host="$(parse_host "$NAV_TENANT_URL")"
+
+          if [[ -z "$landlord_host" || -z "$tenant_host" ]]; then
+            echo "ERROR: could not parse production landlord/tenant hosts from navigation URLs." >&2
+            exit 1
+          fi
+
+          if [[ -n "${NAV_ORIGIN_IP:-}" ]]; then
+            {
+              echo "${NAV_ORIGIN_IP} ${landlord_host}"
+              echo "${NAV_ORIGIN_IP} ${tenant_host}"
+            } | sudo tee -a /etc/hosts >/dev/null
+            echo "PLAYWRIGHT_IGNORE_HTTPS_ERRORS=true" >> "$GITHUB_ENV"
+            echo "INFO: production smoke mapped ${landlord_host}/${tenant_host} to ${NAV_ORIGIN_IP}."
+          else
+            echo "PLAYWRIGHT_IGNORE_HTTPS_ERRORS=false" >> "$GITHUB_ENV"
+            echo "INFO: production smoke using public DNS resolution."
+          fi
+
       - name: Run production real navigation smoke
         id: production_navigation_smoke
         continue-on-error: true
         env:
           NAV_LANDLORD_URL: ${{ vars.MAIN_NAV_LANDLORD_URL }}
           NAV_TENANT_URL: ${{ vars.MAIN_NAV_TENANT_URL }}
+          PLAYWRIGHT_IGNORE_HTTPS_ERRORS: ${{ env.PLAYWRIGHT_IGNORE_HTTPS_ERRORS }}
         run: npm run test:navigation
         working-directory: web-app
+
+      - name: Mark production revision as successful after navigation smoke
+        if: steps.production_navigation_smoke.outcome == 'success'
+        env:
+          DEPLOY_SSH_HOST: ${{ vars.MAIN_SSH_HOST }}
+          DEPLOY_SSH_PORT: ${{ vars.MAIN_SSH_PORT }}
+          DEPLOY_SSH_USER: ${{ vars.MAIN_SSH_USER }}
+          DEPLOY_PATH: ${{ vars.MAIN_DEPLOY_PATH }}
+          DEPLOY_SSH_KEY_PATH: ~/.ssh/id_ed25519_main
+        run: bash .github/scripts/mark_successful_revision_over_ssh.sh
 
       - name: Roll back production deploy when navigation smoke fails
         if: steps.production_navigation_smoke.outcome == 'failure'
@@ -392,6 +531,7 @@ jobs:
           SUBMODULES_REPO_TOKEN: ${{ steps.submodule_auth.outputs.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           GITHUB_REF_NAME: ${{ github.ref_name }}
+          ROLLBACK_TARGET_REVISION: ${{ steps.main_rollback_target.outputs.revision }}
         run: bash .github/scripts/rollback_over_ssh.sh
 
       - name: Fail production deploy after rollback

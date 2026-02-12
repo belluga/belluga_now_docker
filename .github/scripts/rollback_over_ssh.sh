@@ -64,6 +64,7 @@ SUBMODULES_REPO_TOKEN='${SUBMODULES_REPO_TOKEN}'
 DEPLOY_NGINX_HOST_PORT_80='${deploy_nginx_port_80}'
 DEPLOY_NGINX_HOST_PORT_443='${deploy_nginx_port_443}'
 DEPLOY_HEALTH_HOST_RAW='${deploy_health_host}'
+ROLLBACK_TARGET_REVISION='${ROLLBACK_TARGET_REVISION:-}'
 
 run_git() {
   GIT_CONFIG_COUNT=1 \
@@ -84,12 +85,17 @@ fi
 cd "\$DEPLOY_PATH"
 
 target_revision=""
-if [[ -f ".last_successful_revision" ]]; then
+explicit_target="\${ROLLBACK_TARGET_REVISION:-}"
+if [[ -n "\$explicit_target" ]]; then
+  target_revision="\$(echo "\$explicit_target" | tr -d '[:space:]')"
+fi
+
+if [[ -z "\$target_revision" && -f ".last_successful_revision" ]]; then
   target_revision="\$(cat .last_successful_revision | tr -d '[:space:]')"
 fi
 
 if [[ -z "\$target_revision" ]]; then
-  echo "WARN: .last_successful_revision missing; falling back to HEAD~1." >&2
+  echo "WARN: rollback target marker missing; falling back to HEAD~1." >&2
   target_revision="\$(git rev-parse HEAD~1)"
 fi
 
