@@ -54,7 +54,38 @@ find_existing_lane_pr_number() {
     | head -n1
 }
 
+is_pinned_on_remote_branch() {
+  local submodule="$1"
+  local pinned_sha="$2"
+  local branch="$3"
+
+  if [[ -z "$branch" ]]; then
+    return 1
+  fi
+
+  if ! git -C "$submodule" fetch origin "$branch" --quiet; then
+    return 1
+  fi
+
+  if ! git -C "$submodule" rev-parse --verify "origin/$branch" >/dev/null 2>&1; then
+    return 1
+  fi
+
+  git -C "$submodule" merge-base --is-ancestor "$pinned_sha" "origin/$branch"
+}
+
 for submodule in "${SUBMODULES[@]}"; do
+  if [[ ! -d "$submodule/.git" && ! -f "$submodule/.git" ]]; then
+    echo "ERROR: submodule '$submodule' is not initialized." >&2
+    exit 1
+  fi
+
+  pinned_sha="$(git ls-tree HEAD "$submodule" | awk '{print $3}')"
+  if [[ -z "${pinned_sha}" ]]; then
+    echo "ERROR: failed to resolve pinned SHA for '${submodule}'." >&2
+    exit 1
+  fi
+
   submodule_url="$(git config -f .gitmodules --get "submodule.${submodule}.url" || true)"
   if [[ -z "${submodule_url}" ]]; then
     echo "ERROR: missing .gitmodules URL for '${submodule}'." >&2
@@ -67,7 +98,28 @@ for submodule in "${SUBMODULES[@]}"; do
     exit 1
   fi
 
+  already_promoted_noop=0
+  if [[ "${BASE_BRANCH}" == "stage" ]]; then
+    if is_pinned_on_remote_branch "$submodule" "$pinned_sha" "stage" || is_pinned_on_remote_branch "$submodule" "$pinned_sha" "main"; then
+      already_promoted_noop=1
+    fi
+  else
+    if is_pinned_on_remote_branch "$submodule" "$pinned_sha" "main"; then
+      already_promoted_noop=1
+    fi
+  fi
+
   pr_number="$(find_existing_lane_pr_number "${source_repo}" "${BASE_BRANCH}" "${HEAD_BRANCH}")"
+
+  if [[ "${already_promoted_noop}" -eq 1 ]]; then
+    if [[ -n "${pr_number}" ]]; then
+      echo "INFO: ${submodule} (${source_repo}@${pinned_sha}) is no-op; source PR #${pr_number} exists but is not required."
+    else
+      echo "INFO: ${submodule} (${source_repo}@${pinned_sha}) already promoted to ${BASE_BRANCH} (or advanced lane). No source PR required."
+    fi
+    continue
+  fi
+
   if [[ -z "${pr_number}" ]]; then
     echo "ERROR: missing source promotion PR in ${source_repo} for ${HEAD_BRANCH} -> ${BASE_BRANCH}." >&2
     exit 1
