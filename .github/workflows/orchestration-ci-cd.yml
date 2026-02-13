@@ -114,6 +114,66 @@ jobs:
           GH_TOKEN: ${{ steps.submodule_auth.outputs.token }}
         run: bash .github/scripts/check_submodule_sha_ci_green.sh
 
+      - name: Prepare source promotion PRs (exact SHA, no auto-merge)
+        if: ${{ github.event_name == 'pull_request' && (github.base_ref == 'stage' || github.base_ref == 'main') }}
+        env:
+          GH_TOKEN: ${{ steps.submodule_auth.outputs.token }}
+        run: bash .github/scripts/prepare_source_promotion_prs.sh
+
+  promote_source_repos:
+    name: Promote Source Repos (Post-Merge)
+    runs-on: ubuntu-latest
+    needs:
+      - preflight
+    if: ${{ github.event_name == 'push' && (github.ref_name == 'stage' || github.ref_name == 'main') && needs.preflight.result == 'success' }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve submodule checkout auth
+        id: submodule_auth
+        env:
+          SUBMODULES_REPO_TOKEN: ${{ secrets.SUBMODULES_REPO_TOKEN }}
+          WEB_APP_REPO_TOKEN: ${{ secrets.WEB_APP_REPO_TOKEN }}
+        run: |
+          token="${SUBMODULES_REPO_TOKEN:-}"
+          if [[ -z "$token" ]]; then
+            token="${WEB_APP_REPO_TOKEN:-}"
+          fi
+
+          if [[ -n "$token" ]]; then
+            echo "::add-mask::$token"
+            echo "has_token=true" >> "$GITHUB_OUTPUT"
+            echo "token=$token" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_token=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout submodules
+        if: steps.submodule_auth.outputs.has_token == 'true'
+        env:
+          SUBMODULE_TOKEN: ${{ steps.submodule_auth.outputs.token }}
+        run: |
+          git config --global --unset-all url.https://github.com/.insteadOf || true
+          git config --global url."https://x-access-token:${SUBMODULE_TOKEN}@github.com/".insteadOf "https://github.com/"
+          git submodule sync --recursive
+          git submodule update --init --recursive
+
+      - name: Fail when missing submodule token
+        if: steps.submodule_auth.outputs.has_token != 'true'
+        run: |
+          echo "ERROR: missing required secret for private submodule checkout." >&2
+          echo "Set SUBMODULES_REPO_TOKEN (recommended) or WEB_APP_REPO_TOKEN in this repository secrets." >&2
+          exit 1
+
+      - name: Execute source promotion merges (exact SHA + green checks)
+        env:
+          GH_TOKEN: ${{ steps.submodule_auth.outputs.token }}
+        run: bash .github/scripts/merge_source_promotion_prs.sh
+
   deploy_stage:
     name: Deploy Stage
     runs-on: ubuntu-latest
