@@ -108,6 +108,12 @@ jobs:
       - name: Validate web/flutter metadata compatibility
         run: bash .github/scripts/check_web_flutter_metadata.sh "${{ steps.lane.outputs.branch }}"
 
+      - name: Validate pinned submodule SHA CI status (promotion PRs)
+        if: ${{ github.event_name == 'pull_request' && (github.base_ref == 'stage' || github.base_ref == 'main') }}
+        env:
+          GH_TOKEN: ${{ steps.submodule_auth.outputs.token }}
+        run: bash .github/scripts/check_submodule_sha_ci_green.sh
+
   deploy_stage:
     name: Deploy Stage
     runs-on: ubuntu-latest
