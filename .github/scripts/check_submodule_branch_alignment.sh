@@ -86,11 +86,23 @@ for submodule in "${SUBMODULES[@]}"; do
         ;;
     esac
   else
-    # Push/workflow validation stays lane-based.
-    expected_branches=("$TARGET_BRANCH")
-    if [[ "$TARGET_BRANCH" == "dev" ]] && ! remote_branch_exists "$submodule" "dev"; then
-      expected_branches+=("main")
-    fi
+    # Push/workflow validation is lane-aware for promotions:
+    # - push to stage may still carry SHAs only on dev until source repos are promoted
+    # - push to main may still carry SHAs only on stage until source repos are promoted
+    case "$TARGET_BRANCH" in
+      stage)
+        expected_branches=("dev" "stage" "main")
+        ;;
+      main)
+        expected_branches=("stage" "main")
+        ;;
+      *)
+        expected_branches=("$TARGET_BRANCH")
+        if [[ "$TARGET_BRANCH" == "dev" ]] && ! remote_branch_exists "$submodule" "dev"; then
+          expected_branches+=("main")
+        fi
+        ;;
+    esac
   fi
 
   found_on_expected=0
