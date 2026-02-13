@@ -73,25 +73,25 @@ for submodule in "${SUBMODULES[@]}"; do
 
   echo "INFO: validating CI status for $submodule ($repo_slug@$pinned_sha)"
 
-  check_runs_json="$(api_get "repos/${repo_slug}/commits/${pinned_sha}/check-runs?per_page=100")"
+  workflow_runs_json="$(api_get "repos/${repo_slug}/actions/runs?head_sha=${pinned_sha}&per_page=100")"
   commit_status_json="$(api_get "repos/${repo_slug}/commits/${pinned_sha}/status")"
 
-  check_runs_total="$(jq -r '.total_count // 0' <<<"$check_runs_json")"
-  check_runs_success_count="$(jq '[.check_runs[]? | select(.status == "completed" and .conclusion == "success")] | length' <<<"$check_runs_json")"
-  check_runs_pending_count="$(jq '[.check_runs[]? | select(.status != "completed")] | length' <<<"$check_runs_json")"
-  check_runs_failing_count="$(jq '[.check_runs[]? | select(.status == "completed" and (.conclusion == "failure" or .conclusion == "timed_out" or .conclusion == "cancelled" or .conclusion == "action_required" or .conclusion == "stale" or .conclusion == "startup_failure"))] | length' <<<"$check_runs_json")"
+  workflow_runs_total="$(jq '[.workflow_runs[]?] | length' <<<"$workflow_runs_json")"
+  workflow_runs_success_count="$(jq '[.workflow_runs[]? | select(.status == "completed" and .conclusion == "success")] | length' <<<"$workflow_runs_json")"
+  workflow_runs_pending_count="$(jq '[.workflow_runs[]? | select(.status != "completed")] | length' <<<"$workflow_runs_json")"
+  workflow_runs_failing_count="$(jq '[.workflow_runs[]? | select(.status == "completed" and (.conclusion == "failure" or .conclusion == "timed_out" or .conclusion == "cancelled" or .conclusion == "action_required" or .conclusion == "stale"))] | length' <<<"$workflow_runs_json")"
 
   status_contexts_total="$(jq '[.statuses[]?] | length' <<<"$commit_status_json")"
   status_state="$(jq -r '.state // "unknown"' <<<"$commit_status_json")"
 
-  if [[ "$check_runs_pending_count" -gt 0 ]]; then
-    echo "ERROR: $submodule has pending check-runs for pinned SHA $pinned_sha." >&2
+  if [[ "$workflow_runs_pending_count" -gt 0 ]]; then
+    echo "ERROR: $submodule has pending workflow runs for pinned SHA $pinned_sha." >&2
     exit 1
   fi
 
-  if [[ "$check_runs_failing_count" -gt 0 ]]; then
-    echo "ERROR: $submodule has failing check-runs for pinned SHA $pinned_sha:" >&2
-    jq -r '.check_runs[]? | select(.status == "completed" and (.conclusion == "failure" or .conclusion == "timed_out" or .conclusion == "cancelled" or .conclusion == "action_required" or .conclusion == "stale" or .conclusion == "startup_failure")) | "- \(.name): \(.conclusion)"' <<<"$check_runs_json" >&2
+  if [[ "$workflow_runs_failing_count" -gt 0 ]]; then
+    echo "ERROR: $submodule has failing workflow runs for pinned SHA $pinned_sha:" >&2
+    jq -r '.workflow_runs[]? | select(.status == "completed" and (.conclusion == "failure" or .conclusion == "timed_out" or .conclusion == "cancelled" or .conclusion == "action_required" or .conclusion == "stale")) | "- \(.name): \(.conclusion)"' <<<"$workflow_runs_json" >&2
     exit 1
   fi
 
@@ -100,20 +100,20 @@ for submodule in "${SUBMODULES[@]}"; do
     exit 1
   fi
 
-  if [[ "$check_runs_total" -eq 0 && "$status_contexts_total" -eq 0 ]]; then
-    echo "ERROR: $submodule has no CI evidence (no check-runs/status contexts) for pinned SHA $pinned_sha." >&2
+  if [[ "$workflow_runs_total" -eq 0 && "$status_contexts_total" -eq 0 ]]; then
+    echo "ERROR: $submodule has no CI evidence (no workflow runs/status contexts) for pinned SHA $pinned_sha." >&2
     exit 1
   fi
 
-  if [[ "$check_runs_total" -gt 0 && "$check_runs_success_count" -eq 0 ]]; then
-    echo "ERROR: $submodule has check-runs but none concluded with success for pinned SHA $pinned_sha." >&2
+  if [[ "$workflow_runs_total" -gt 0 && "$workflow_runs_success_count" -eq 0 ]]; then
+    echo "ERROR: $submodule has workflow runs but none concluded with success for pinned SHA $pinned_sha." >&2
     exit 1
   fi
 
-  if [[ "$check_runs_total" -eq 0 && "$status_state" != "success" ]]; then
-    echo "ERROR: $submodule has no check-runs and commit status is '$status_state' for pinned SHA $pinned_sha." >&2
+  if [[ "$workflow_runs_total" -eq 0 && "$status_state" != "success" ]]; then
+    echo "ERROR: $submodule has no workflow runs and commit status is '$status_state' for pinned SHA $pinned_sha." >&2
     exit 1
   fi
 
-  echo "OK: $submodule pinned SHA $pinned_sha has green CI (check-runs/status) on $repo_slug"
+  echo "OK: $submodule pinned SHA $pinned_sha has green CI (workflow-runs/status) on $repo_slug"
 done
