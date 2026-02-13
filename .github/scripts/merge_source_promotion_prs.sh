@@ -142,10 +142,27 @@ for submodule in "${SUBMODULES[@]}"; do
     continue
   fi
 
-  promotion_branch="bot/promote-${HEAD_BRANCH}-to-${TARGET_BRANCH}"
-  pr_number="$(gh pr list --repo "${source_repo}" --base "${TARGET_BRANCH}" --head "${promotion_branch}" --json number --jq '.[0].number // empty')"
+  head_selector="${source_repo%%/*}:${HEAD_BRANCH}"
+  pr_number="$(gh pr list --repo "${source_repo}" --state open --base "${TARGET_BRANCH}" --head "${head_selector}" --json number --jq '.[0].number // empty')"
   if [[ -z "${pr_number}" ]]; then
-    echo "ERROR: missing source promotion PR in ${source_repo} for ${promotion_branch} -> ${TARGET_BRANCH}." >&2
+    echo "ERROR: missing source promotion PR in ${source_repo} for ${HEAD_BRANCH} -> ${TARGET_BRANCH}." >&2
+    exit 1
+  fi
+
+  pr_expected_sha="$(
+    gh pr view "${pr_number}" --repo "${source_repo}" --json body \
+      --jq '.body // ""' \
+      | sed -n 's/^- Expected SHA:[[:space:]]*//p' \
+      | head -n1 \
+      | tr -d '\r' \
+      | tr '[:upper:]' '[:lower:]'
+  )"
+  if [[ -z "${pr_expected_sha}" ]]; then
+    echo "ERROR: PR #${pr_number} in ${source_repo} is missing '- Expected SHA: <sha>' lock metadata." >&2
+    exit 1
+  fi
+  if [[ "${pr_expected_sha}" != "${expected_sha}" ]]; then
+    echo "ERROR: PR #${pr_number} in ${source_repo} has expected SHA ${pr_expected_sha}, but docker pins ${expected_sha}." >&2
     exit 1
   fi
 
@@ -159,13 +176,13 @@ for submodule in "${SUBMODULES[@]}"; do
   assert_sha_green_ci "${source_repo}" "${expected_sha}"
 
   echo "INFO: merging source PR #${pr_number} in ${source_repo}."
-  if gh pr merge "${pr_number}" --repo "${source_repo}" --merge --delete-branch; then
+  if gh pr merge "${pr_number}" --repo "${source_repo}" --merge; then
     continue
   fi
-  if gh pr merge "${pr_number}" --repo "${source_repo}" --squash --delete-branch; then
+  if gh pr merge "${pr_number}" --repo "${source_repo}" --squash; then
     continue
   fi
-  if gh pr merge "${pr_number}" --repo "${source_repo}" --rebase --delete-branch; then
+  if gh pr merge "${pr_number}" --repo "${source_repo}" --rebase; then
     continue
   fi
 
