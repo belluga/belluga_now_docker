@@ -181,8 +181,15 @@ for submodule in "${SUBMODULES[@]}"; do
   fi
 
   pr_head_sha="$(gh pr view "${pr_number}" --repo "${source_repo}" --json headRefOid --jq '.headRefOid')"
-  if [[ "${pr_head_sha}" != "${expected_sha}" ]]; then
-    echo "ERROR: PR #${pr_number} in ${source_repo} drifted. Expected head ${expected_sha}, got ${pr_head_sha}." >&2
+  if ! git -C "${submodule}" cat-file -e "${pr_head_sha}^{commit}" 2>/dev/null; then
+    git -C "${submodule}" fetch origin "${pr_head_sha}" --quiet || true
+  fi
+  if ! git -C "${submodule}" cat-file -e "${pr_head_sha}^{commit}" 2>/dev/null; then
+    echo "ERROR: unable to resolve PR head commit ${pr_head_sha} for ${source_repo}." >&2
+    exit 1
+  fi
+  if ! git -C "${submodule}" merge-base --is-ancestor "${expected_sha}" "${pr_head_sha}"; then
+    echo "ERROR: PR #${pr_number} in ${source_repo} head ${pr_head_sha} does not contain expected SHA ${expected_sha}." >&2
     exit 1
   fi
 
