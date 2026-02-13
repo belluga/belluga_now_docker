@@ -72,14 +72,13 @@ find_existing_lane_pr_number() {
   local repo_slug="$1"
   local base_branch="$2"
   local head_branch="$3"
-  local repo_owner="${repo_slug%%/*}"
 
   gh pr list \
     --repo "${repo_slug}" \
     --state open \
     --base "${base_branch}" \
-    --json number,headRefName,headRepositoryOwner \
-    --jq ".[] | select(.headRefName == \"${head_branch}\" and .headRepositoryOwner.login == \"${repo_owner}\") | .number" \
+    --json number,headRefName \
+    --jq ".[] | select(.headRefName == \"${head_branch}\") | .number" \
     | head -n1
 }
 
