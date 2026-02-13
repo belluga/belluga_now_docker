@@ -1,0 +1,36 @@
+name: Source Promotion Status Callback
+
+on:
+  repository_dispatch:
+    types:
+      - lane-promotion-source-pr-status
+
+permissions:
+  actions: write
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: source-promotion-status-${{ github.event.client_payload.head || 'unknown' }}-${{ github.event.client_payload.base || 'unknown' }}
+  cancel-in-progress: true
+
+jobs:
+  rerun_orchestration_checks:
+    name: Rerun Orchestration PR Checks
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      CALLBACK_SOURCE_REPO: ${{ github.event.client_payload.source_repo }}
+      CALLBACK_HEAD_BRANCH: ${{ github.event.client_payload.head }}
+      CALLBACK_BASE_BRANCH: ${{ github.event.client_payload.base }}
+      CALLBACK_SOURCE_PR_NUMBER: ${{ github.event.client_payload.source_pr_number }}
+      CALLBACK_SOURCE_PR_URL: ${{ github.event.client_payload.source_pr_url }}
+      CALLBACK_RESULT: ${{ github.event.client_payload.result }}
+    steps:
+      - name: Checkout orchestrator repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate callback payload and rerun checks
+        run: bash .github/scripts/handle_source_promotion_status_callback.sh
