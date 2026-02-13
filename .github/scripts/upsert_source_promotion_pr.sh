@@ -34,13 +34,12 @@ case "${HEAD_BRANCH}->${BASE_BRANCH}" in
     ;;
 esac
 
-if [[ ! "${EXPECTED_SHA}" =~ ^[0-9a-fA-F]{7,40}$ ]]; then
-  echo "ERROR: EXPECTED_SHA must be a git SHA (7-40 hex chars)." >&2
+if [[ ! "${EXPECTED_SHA}" =~ ^[0-9a-fA-F]{40}$ ]]; then
+  echo "ERROR: EXPECTED_SHA must be a full 40-char git SHA." >&2
   exit 1
 fi
 
 EXPECTED_SHA="$(printf '%s' "${EXPECTED_SHA}" | tr '[:upper:]' '[:lower:]')"
-BRANCH_NAME="bot/promote-${HEAD_BRANCH}-to-${BASE_BRANCH}"
 SHORT_SHA="$(echo "${EXPECTED_SHA}" | cut -c1-12)"
 
 tmp_dir="$(mktemp -d)"
@@ -53,7 +52,7 @@ repo_url="https://x-access-token:${GH_TOKEN}@github.com/${SOURCE_REPO}.git"
 git clone --quiet --filter=blob:none --no-checkout "${repo_url}" "${repo_dir}"
 cd "${repo_dir}"
 
-git fetch origin --prune --quiet "${HEAD_BRANCH}" "${BASE_BRANCH}" main || true
+git fetch origin --prune --quiet "${HEAD_BRANCH}" "${BASE_BRANCH}" stage main || true
 git fetch origin --quiet "${EXPECTED_SHA}" || true
 
 if ! git cat-file -e "${EXPECTED_SHA}^{commit}" 2>/dev/null; then
@@ -80,26 +79,25 @@ else
   fi
 fi
 
-existing_pr_number="$(gh pr list --repo "${SOURCE_REPO}" --base "${BASE_BRANCH}" --head "${BRANCH_NAME}" --json number --jq '.[0].number // empty')"
+if ! is_sha_on_remote_branch "${HEAD_BRANCH}"; then
+  echo "ERROR: expected SHA ${EXPECTED_SHA} is not on source lane ${SOURCE_REPO}:${HEAD_BRANCH}." >&2
+  exit 1
+fi
+
+head_selector="${SOURCE_REPO%%/*}:${HEAD_BRANCH}"
+existing_pr_number="$(gh pr list --repo "${SOURCE_REPO}" --state open --base "${BASE_BRANCH}" --head "${head_selector}" --json number --jq '.[0].number // empty')"
 
 if [[ "${already_promoted_noop}" -eq 1 ]]; then
   echo "INFO: ${SOURCE_REPO}@${EXPECTED_SHA} already present on ${BASE_BRANCH} (or advanced lane). Marking no-op."
-  if [[ -n "${existing_pr_number}" ]]; then
-    gh pr close "${existing_pr_number}" --repo "${SOURCE_REPO}" \
-      --comment "Closed by orchestrator: exact SHA ${EXPECTED_SHA} is already promoted for ${HEAD_BRANCH}->${BASE_BRANCH}."
-  fi
   exit 0
 fi
 
-# Force the fixed promotion branch to the exact expected SHA so any drift is reconciled.
-git push --force origin "${EXPECTED_SHA}:refs/heads/${BRANCH_NAME}"
-
 title="chore(lane): promote ${HEAD_BRANCH} -> ${BASE_BRANCH} (${SHORT_SHA})"
-body=$'Automated lane promotion PR (exact SHA pinned by belluga_now_docker).\n\n'"- Source lane: ${HEAD_BRANCH}"$'\n'"- Target lane: ${BASE_BRANCH}"$'\n'"- Expected SHA: ${EXPECTED_SHA}"$'\n'
+body=$'Automated lane promotion PR (exact SHA lock requested by belluga_now_docker).\n\n'"- Source lane: ${HEAD_BRANCH}"$'\n'"- Target lane: ${BASE_BRANCH}"$'\n'"- Expected SHA: ${EXPECTED_SHA}"$'\n\n'"<!-- ORCHESTRATOR_EXPECTED_SHA:${EXPECTED_SHA} -->"$'\n'
 
 if [[ -n "${existing_pr_number}" ]]; then
   gh pr edit "${existing_pr_number}" --repo "${SOURCE_REPO}" --title "${title}" --body "${body}"
-  echo "INFO: updated PR #${existing_pr_number} in ${SOURCE_REPO} (${BRANCH_NAME} -> ${BASE_BRANCH})."
+  echo "INFO: updated PR #${existing_pr_number} in ${SOURCE_REPO} (${HEAD_BRANCH} -> ${BASE_BRANCH}) with expected SHA lock."
   exit 0
 fi
 
@@ -107,10 +105,10 @@ pr_url="$(
   gh pr create \
     --repo "${SOURCE_REPO}" \
     --base "${BASE_BRANCH}" \
-    --head "${BRANCH_NAME}" \
+    --head "${HEAD_BRANCH}" \
     --title "${title}" \
     --body "${body}"
 )"
 
 pr_number="$(gh pr view "${pr_url}" --repo "${SOURCE_REPO}" --json number --jq '.number')"
-echo "INFO: created PR #${pr_number} in ${SOURCE_REPO} (${BRANCH_NAME} -> ${BASE_BRANCH})."
+echo "INFO: created PR #${pr_number} in ${SOURCE_REPO} (${HEAD_BRANCH} -> ${BASE_BRANCH}) with expected SHA lock."
