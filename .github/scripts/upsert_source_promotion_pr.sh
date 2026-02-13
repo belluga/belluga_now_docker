@@ -109,7 +109,12 @@ title="chore(lane): promote ${HEAD_BRANCH} -> ${BASE_BRANCH} (${SHORT_SHA})"
 body=$'Automated lane promotion PR (exact SHA lock requested by belluga_now_docker).\n\n'"- Source lane: ${HEAD_BRANCH}"$'\n'"- Target lane: ${BASE_BRANCH}"$'\n'"- Expected SHA: ${EXPECTED_SHA}"$'\n\n'"<!-- ORCHESTRATOR_EXPECTED_SHA:${EXPECTED_SHA} -->"$'\n'
 
 if [[ -n "${existing_pr_number}" ]]; then
-  gh pr edit "${existing_pr_number}" --repo "${SOURCE_REPO}" --title "${title}" --body "${body}"
+  gh api \
+    --method PATCH \
+    "repos/${SOURCE_REPO}/pulls/${existing_pr_number}" \
+    -f title="${title}" \
+    -f body="${body}" \
+    >/dev/null
   echo "INFO: updated PR #${existing_pr_number} in ${SOURCE_REPO} (${HEAD_BRANCH} -> ${BASE_BRANCH}) with expected SHA lock."
   exit 0
 fi
