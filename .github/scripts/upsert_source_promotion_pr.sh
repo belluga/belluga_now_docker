@@ -84,12 +84,25 @@ if ! is_sha_on_remote_branch "${HEAD_BRANCH}"; then
   exit 1
 fi
 
+source_lane_tip="$(git rev-parse --verify "origin/${HEAD_BRANCH}" 2>/dev/null || true)"
+if [[ -z "${source_lane_tip}" ]]; then
+  echo "ERROR: unable to resolve source lane tip for ${SOURCE_REPO}:${HEAD_BRANCH}." >&2
+  exit 1
+fi
+source_lane_tip="$(printf '%s' "${source_lane_tip}" | tr '[:upper:]' '[:lower:]')"
+
 head_selector="${SOURCE_REPO%%/*}:${HEAD_BRANCH}"
 existing_pr_number="$(gh pr list --repo "${SOURCE_REPO}" --state open --base "${BASE_BRANCH}" --head "${head_selector}" --json number --jq '.[0].number // empty')"
 
 if [[ "${already_promoted_noop}" -eq 1 ]]; then
   echo "INFO: ${SOURCE_REPO}@${EXPECTED_SHA} already present on ${BASE_BRANCH} (or advanced lane). Marking no-op."
   exit 0
+fi
+
+if [[ "${EXPECTED_SHA}" != "${source_lane_tip}" ]]; then
+  echo "ERROR: expected SHA ${EXPECTED_SHA} is not the current tip of ${SOURCE_REPO}:${HEAD_BRANCH} (${source_lane_tip})." >&2
+  echo "ERROR: lane promotion requires exact source-lane tip, unless already-promoted no-op applies." >&2
+  exit 1
 fi
 
 title="chore(lane): promote ${HEAD_BRANCH} -> ${BASE_BRANCH} (${SHORT_SHA})"
