@@ -67,13 +67,6 @@ for submodule in "${SUBMODULES[@]}"; do
       "stage->main")
         expected_branches=("stage" "main")
         ;;
-      # Lane-scoped bot sync into stage/main should validate against the target lane (plus no-op allowance for stage->main).
-      "bot/submodule-sync-stage->stage")
-        expected_branches=("stage" "main")
-        ;;
-      "bot/submodule-sync-main->main")
-        expected_branches=("main")
-        ;;
       # For normal integration PRs (typically into dev), keep target-lane validation and allow PR-head fallback.
       *)
         expected_branches=("$TARGET_BRANCH")
