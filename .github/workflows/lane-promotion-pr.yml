@@ -18,12 +18,17 @@ on:
         description: "Target lane branch (stage|main)"
         required: true
         type: string
+      expected_sha:
+        description: "Exact SHA that source PR head must point to"
+        required: true
+        type: string
 
 permissions:
   contents: read
+  pull-requests: write
 
 concurrency:
-  group: lane-promotion-pr-${{ github.event.client_payload.source_repo || inputs.source_repo || github.run_id }}-${{ github.event.client_payload.head || inputs.head || 'unknown' }}-${{ github.event.client_payload.base || inputs.base || 'unknown' }}
+  group: lane-promotion-pr-${{ github.event.client_payload.source_repo || inputs.source_repo || github.run_id }}-${{ github.event.client_payload.head || inputs.head || 'unknown' }}-${{ github.event.client_payload.base || inputs.base || 'unknown' }}-${{ github.event.client_payload.expected_sha || inputs.expected_sha || 'unknown' }}
   cancel-in-progress: false
 
 jobs:
@@ -49,10 +54,12 @@ jobs:
           DISPATCH_SOURCE_REPO: ${{ github.event.client_payload.source_repo }}
           DISPATCH_HEAD: ${{ github.event.client_payload.head }}
           DISPATCH_BASE: ${{ github.event.client_payload.base }}
+          DISPATCH_EXPECTED_SHA: ${{ github.event.client_payload.expected_sha }}
           DISPATCH_TRIGGER_EVENT: ${{ github.event.client_payload.trigger_event }}
           INPUT_SOURCE_REPO: ${{ inputs.source_repo }}
           INPUT_HEAD: ${{ inputs.head }}
           INPUT_BASE: ${{ inputs.base }}
+          INPUT_EXPECTED_SHA: ${{ inputs.expected_sha }}
         run: |
           set -euo pipefail
 
@@ -60,16 +67,18 @@ jobs:
             source_repo="${DISPATCH_SOURCE_REPO:-}"
             head="${DISPATCH_HEAD:-}"
             base="${DISPATCH_BASE:-}"
+            expected_sha="${DISPATCH_EXPECTED_SHA:-}"
             trigger_event="${DISPATCH_TRIGGER_EVENT:-repository_dispatch}"
           else
             source_repo="${INPUT_SOURCE_REPO:-}"
             head="${INPUT_HEAD:-}"
             base="${INPUT_BASE:-}"
+            expected_sha="${INPUT_EXPECTED_SHA:-}"
             trigger_event="workflow_dispatch"
           fi
 
-          if [[ -z "$source_repo" || -z "$head" || -z "$base" ]]; then
-            echo "ERROR: missing required payload fields (source_repo/head/base)." >&2
+          if [[ -z "$source_repo" || -z "$head" || -z "$base" || -z "$expected_sha" ]]; then
+            echo "ERROR: missing required payload fields (source_repo/head/base/expected_sha)." >&2
             exit 1
           fi
 
@@ -89,6 +98,7 @@ jobs:
           echo "source_repo=$source_repo" >> "$GITHUB_OUTPUT"
           echo "head=$head" >> "$GITHUB_OUTPUT"
           echo "base=$base" >> "$GITHUB_OUTPUT"
+          echo "expected_sha=$expected_sha" >> "$GITHUB_OUTPUT"
           echo "trigger_event=$trigger_event" >> "$GITHUB_OUTPUT"
 
       - name: Verify source repository access
@@ -98,28 +108,18 @@ jobs:
           set -euo pipefail
           gh repo view "$SOURCE_REPO" >/dev/null
 
-      - name: Open or update lane promotion PR
+      - name: Checkout orchestrator repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Open or update exact-SHA lane promotion PR
         env:
           SOURCE_REPO: ${{ steps.payload.outputs.source_repo }}
           HEAD_BRANCH: ${{ steps.payload.outputs.head }}
           BASE_BRANCH: ${{ steps.payload.outputs.base }}
-          TRIGGER_EVENT: ${{ steps.payload.outputs.trigger_event }}
+          EXPECTED_SHA: ${{ steps.payload.outputs.expected_sha }}
+          GH_TOKEN: ${{ env.GH_TOKEN }}
         run: |
           set -euo pipefail
-
-          title="chore(lane): promote ${HEAD_BRANCH} -> ${BASE_BRANCH}"
-          body=$'Automated lane promotion PR (brokered by belluga_now_docker).\n\n- Source lane: '"${HEAD_BRANCH}"$'\n- Target lane: '"${BASE_BRANCH}"$'\n- Trigger: '"${TRIGGER_EVENT}"$'\n'
-
-          existing="$(gh pr list --repo "${SOURCE_REPO}" --base "${BASE_BRANCH}" --head "${HEAD_BRANCH}" --json number --jq '.[0].number // empty')"
-          if [[ -n "${existing}" ]]; then
-            gh pr edit "${existing}" --repo "${SOURCE_REPO}" --title "${title}" --body "${body}"
-            echo "Updated existing PR #${existing} in ${SOURCE_REPO}: ${HEAD_BRANCH} -> ${BASE_BRANCH}"
-            exit 0
-          fi
-
-          gh pr create \
-            --repo "${SOURCE_REPO}" \
-            --base "${BASE_BRANCH}" \
-            --head "${HEAD_BRANCH}" \
-            --title "${title}" \
-            --body "${body}"
+          bash .github/scripts/upsert_source_promotion_pr.sh
