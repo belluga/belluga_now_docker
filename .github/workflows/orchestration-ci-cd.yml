@@ -179,7 +179,8 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - preflight
-    if: ${{ github.event_name == 'push' && github.ref_name == 'stage' && needs.preflight.result == 'success' }}
+      - promote_source_repos
+    if: ${{ github.event_name == 'push' && github.ref_name == 'stage' && needs.preflight.result == 'success' && needs.promote_source_repos.result == 'success' }}
     environment: stage
 
     steps:
@@ -447,7 +448,8 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - preflight
-    if: ${{ github.event_name == 'push' && github.ref_name == 'main' && needs.preflight.result == 'success' }}
+      - promote_source_repos
+    if: ${{ github.event_name == 'push' && github.ref_name == 'main' && needs.preflight.result == 'success' && needs.promote_source_repos.result == 'success' }}
     environment: production
 
     steps:
