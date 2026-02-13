@@ -190,18 +190,22 @@ for submodule in "${SUBMODULES[@]}"; do
   assert_sha_green_ci "${source_repo}" "${expected_sha}"
 
   echo "INFO: merging source PR #${pr_number} in ${source_repo}."
-  if gh pr merge "${pr_number}" --repo "${source_repo}" --merge; then
-    continue
-  fi
-  if gh pr merge "${pr_number}" --repo "${source_repo}" --squash; then
-    continue
-  fi
-  if gh pr merge "${pr_number}" --repo "${source_repo}" --rebase; then
-    continue
+  if ! gh pr merge "${pr_number}" --repo "${source_repo}" --merge; then
+    echo "ERROR: failed to merge source PR #${pr_number} in ${source_repo} with --merge." >&2
+    echo "ERROR: exact-SHA promotion forbids squash/rebase because they rewrite commit identity." >&2
+    exit 1
   fi
 
-  echo "ERROR: failed to merge source PR #${pr_number} in ${source_repo}." >&2
-  exit 1
+  # Post-merge guard: promoted lane must still contain the exact expected SHA.
+  if ! git -C "${submodule}" fetch origin "${TARGET_BRANCH}" --quiet; then
+    echo "ERROR: unable to fetch ${source_repo}:${TARGET_BRANCH} for post-merge validation." >&2
+    exit 1
+  fi
+  if ! git -C "${submodule}" merge-base --is-ancestor "${expected_sha}" "origin/${TARGET_BRANCH}"; then
+    echo "ERROR: ${source_repo}:${TARGET_BRANCH} does not contain expected SHA ${expected_sha} after merge." >&2
+    echo "ERROR: promotion aborted because exact-SHA guarantee was not preserved." >&2
+    exit 1
+  fi
 done
 
 echo "INFO: source promotion execution complete for ${HEAD_BRANCH}->${TARGET_BRANCH}."

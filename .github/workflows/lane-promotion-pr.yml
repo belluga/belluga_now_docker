@@ -28,7 +28,7 @@ permissions:
   pull-requests: write
 
 concurrency:
-  group: lane-promotion-pr-${{ github.event.client_payload.source_repo || inputs.source_repo || github.run_id }}-${{ github.event.client_payload.head || inputs.head || 'unknown' }}-${{ github.event.client_payload.base || inputs.base || 'unknown' }}-${{ github.event.client_payload.expected_sha || inputs.expected_sha || 'unknown' }}
+  group: lane-promotion-pr-${{ github.event.client_payload.source_repo || inputs.source_repo || github.run_id }}-${{ github.event.client_payload.head || inputs.head || 'unknown' }}-${{ github.event.client_payload.base || inputs.base || 'unknown' }}
   cancel-in-progress: false
 
 jobs:
