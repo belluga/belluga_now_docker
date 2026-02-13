@@ -154,6 +154,7 @@ for submodule in "${SUBMODULES[@]}"; do
       --jq '.body // ""' \
       | sed -n 's/^- Expected SHA:[[:space:]]*//p' \
       | head -n1 \
+      | tr -d '\r' \
       | tr '[:upper:]' '[:lower:]'
   )"
   if [[ -z "${pr_expected_sha}" ]]; then
