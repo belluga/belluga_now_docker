@@ -68,6 +68,21 @@ is_sha_on_remote_branch() {
   git merge-base --is-ancestor "${EXPECTED_SHA}" "origin/${branch}"
 }
 
+find_existing_lane_pr_number() {
+  local repo_slug="$1"
+  local base_branch="$2"
+  local head_branch="$3"
+  local repo_owner="${repo_slug%%/*}"
+
+  gh pr list \
+    --repo "${repo_slug}" \
+    --state open \
+    --base "${base_branch}" \
+    --json number,headRefName,headRepositoryOwner \
+    --jq ".[] | select(.headRefName == \"${head_branch}\" and .headRepositoryOwner.login == \"${repo_owner}\") | .number" \
+    | head -n1
+}
+
 already_promoted_noop=0
 if [[ "${BASE_BRANCH}" == "stage" ]]; then
   if is_sha_on_remote_branch "stage" || is_sha_on_remote_branch "main"; then
@@ -102,8 +117,7 @@ if [[ "${EXPECTED_SHA}" != "${source_lane_tip}" ]]; then
   exit 1
 fi
 
-head_selector="${SOURCE_REPO%%/*}:${HEAD_BRANCH}"
-existing_pr_number="$(gh pr list --repo "${SOURCE_REPO}" --state open --base "${BASE_BRANCH}" --head "${head_selector}" --json number --jq '.[0].number // empty')"
+existing_pr_number="$(find_existing_lane_pr_number "${SOURCE_REPO}" "${BASE_BRANCH}" "${HEAD_BRANCH}")"
 
 title="chore(lane): promote ${HEAD_BRANCH} -> ${BASE_BRANCH} (${SHORT_SHA})"
 body=$'Automated lane promotion PR (exact SHA lock requested by belluga_now_docker).\n\n'"- Source lane: ${HEAD_BRANCH}"$'\n'"- Target lane: ${BASE_BRANCH}"$'\n'"- Expected SHA: ${EXPECTED_SHA}"$'\n\n'"<!-- ORCHESTRATOR_EXPECTED_SHA:${EXPECTED_SHA} -->"$'\n'

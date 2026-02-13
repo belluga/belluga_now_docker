@@ -103,6 +103,21 @@ is_sha_on_remote_branch() {
   git -C "${submodule}" merge-base --is-ancestor "${sha}" "origin/${branch}"
 }
 
+find_existing_lane_pr_number() {
+  local repo_slug="$1"
+  local base_branch="$2"
+  local head_branch="$3"
+  local repo_owner="${repo_slug%%/*}"
+
+  gh pr list \
+    --repo "${repo_slug}" \
+    --state open \
+    --base "${base_branch}" \
+    --json number,headRefName,headRepositoryOwner \
+    --jq ".[] | select(.headRefName == \"${head_branch}\" and .headRepositoryOwner.login == \"${repo_owner}\") | .number" \
+    | head -n1
+}
+
 SUBMODULES=(flutter-app web-app laravel-app)
 
 for submodule in "${SUBMODULES[@]}"; do
@@ -142,8 +157,7 @@ for submodule in "${SUBMODULES[@]}"; do
     continue
   fi
 
-  head_selector="${source_repo%%/*}:${HEAD_BRANCH}"
-  pr_number="$(gh pr list --repo "${source_repo}" --state open --base "${TARGET_BRANCH}" --head "${head_selector}" --json number --jq '.[0].number // empty')"
+  pr_number="$(find_existing_lane_pr_number "${source_repo}" "${TARGET_BRANCH}" "${HEAD_BRANCH}")"
   if [[ -z "${pr_number}" ]]; then
     echo "ERROR: missing source promotion PR in ${source_repo} for ${HEAD_BRANCH} -> ${TARGET_BRANCH}." >&2
     exit 1
