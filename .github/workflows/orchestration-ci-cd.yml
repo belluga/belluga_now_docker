@@ -120,6 +120,12 @@ jobs:
           GH_TOKEN: ${{ steps.submodule_auth.outputs.token }}
         run: bash .github/scripts/prepare_source_promotion_prs.sh
 
+      - name: Validate source promotion PRs are merge-ready
+        if: ${{ github.event_name == 'pull_request' && (github.base_ref == 'stage' || github.base_ref == 'main') }}
+        env:
+          GH_TOKEN: ${{ steps.submodule_auth.outputs.token }}
+        run: bash .github/scripts/check_source_promotion_prs_ready.sh
+
   promote_source_repos:
     name: Promote Source Repos (Post-Merge)
     runs-on: ubuntu-latest
