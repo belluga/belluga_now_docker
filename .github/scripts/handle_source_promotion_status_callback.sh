@@ -68,15 +68,13 @@ if [[ "${GITHUB_REPOSITORY:-}" != */* ]]; then
   exit 1
 fi
 
-repo_owner="${GITHUB_REPOSITORY%%/*}"
-
 promotion_pr_number="$(
   gh pr list \
     --repo "${GITHUB_REPOSITORY}" \
     --state open \
     --base "${BASE_BRANCH}" \
-    --json number,headRefName,headRepositoryOwner \
-    --jq ".[] | select(.headRefName == \"${HEAD_BRANCH}\" and .headRepositoryOwner.login == \"${repo_owner}\") | .number" \
+    --json number,headRefName \
+    --jq ".[] | select(.headRefName == \"${HEAD_BRANCH}\") | .number" \
     | head -n1
 )"
 
