@@ -21,6 +21,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: write
 
 concurrency:
   group: lane-promotion-pr-${{ github.event.client_payload.source_repo || inputs.source_repo || github.run_id }}-${{ github.event.client_payload.head || inputs.head || 'unknown' }}-${{ github.event.client_payload.base || inputs.base || 'unknown' }}
@@ -99,6 +100,7 @@ jobs:
           gh repo view "$SOURCE_REPO" >/dev/null
 
       - name: Open or update lane promotion PR
+        id: lane_pr
         env:
           SOURCE_REPO: ${{ steps.payload.outputs.source_repo }}
           HEAD_BRANCH: ${{ steps.payload.outputs.head }}
@@ -114,12 +116,55 @@ jobs:
           if [[ -n "${existing}" ]]; then
             gh pr edit "${existing}" --repo "${SOURCE_REPO}" --title "${title}" --body "${body}"
             echo "Updated existing PR #${existing} in ${SOURCE_REPO}: ${HEAD_BRANCH} -> ${BASE_BRANCH}"
+            echo "pr_number=${existing}" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          gh pr create \
+          pr_url="$(
+            gh pr create \
             --repo "${SOURCE_REPO}" \
             --base "${BASE_BRANCH}" \
             --head "${HEAD_BRANCH}" \
             --title "${title}" \
             --body "${body}"
+          )"
+
+          pr_number="$(gh pr view "${pr_url}" --repo "${SOURCE_REPO}" --json number --jq '.number')"
+          echo "Created PR #${pr_number} in ${SOURCE_REPO}: ${HEAD_BRANCH} -> ${BASE_BRANCH}"
+          echo "pr_number=${pr_number}" >> "$GITHUB_OUTPUT"
+
+      - name: Enable auto-merge on lane promotion PR
+        env:
+          SOURCE_REPO: ${{ steps.payload.outputs.source_repo }}
+          PR_NUMBER: ${{ steps.lane_pr.outputs.pr_number }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${PR_NUMBER:-}" ]]; then
+            echo "ERROR: missing PR number for lane auto-merge enablement." >&2
+            exit 1
+          fi
+
+          is_auto_enabled="$(gh pr view "${PR_NUMBER}" --repo "${SOURCE_REPO}" --json autoMergeRequest --jq '.autoMergeRequest != null')"
+          if [[ "${is_auto_enabled}" == "true" ]]; then
+            echo "INFO: auto-merge already enabled for PR #${PR_NUMBER} in ${SOURCE_REPO}."
+            exit 0
+          fi
+
+          if gh pr merge "${PR_NUMBER}" --repo "${SOURCE_REPO}" --auto --merge; then
+            echo "Enabled auto-merge using merge strategy for PR #${PR_NUMBER}."
+            exit 0
+          fi
+
+          if gh pr merge "${PR_NUMBER}" --repo "${SOURCE_REPO}" --auto --squash; then
+            echo "Enabled auto-merge using squash strategy for PR #${PR_NUMBER}."
+            exit 0
+          fi
+
+          if gh pr merge "${PR_NUMBER}" --repo "${SOURCE_REPO}" --auto --rebase; then
+            echo "Enabled auto-merge using rebase strategy for PR #${PR_NUMBER}."
+            exit 0
+          fi
+
+          echo "ERROR: failed to enable auto-merge for PR #${PR_NUMBER}. Check repository merge settings and token permissions." >&2
+          exit 1
