@@ -93,11 +93,12 @@ promotion_pr_head_sha="$(
 echo "INFO: callback received from ${SOURCE_REPO} result=${CALLBACK_RESULT} source_pr=${SOURCE_PR_NUMBER:-n/a} url=${SOURCE_PR_URL:-n/a}"
 echo "INFO: targeting docker PR #${promotion_pr_number} (${promotion_pr_url}) head=${promotion_pr_head_sha}"
 
-runs_json="$(
-  gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/orchestration-ci-cd.yml/runs?event=pull_request&branch=${HEAD_BRANCH}&per_page=50"
-)"
+fetch_matching_run_json() {
+  local runs_json
+  runs_json="$(
+    gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/orchestration-ci-cd.yml/runs?event=pull_request&branch=${HEAD_BRANCH}&per_page=50"
+  )"
 
-selected_run_json="$(
   printf '%s' "${runs_json}" | jq -c --arg sha "${promotion_pr_head_sha}" --argjson pr "${promotion_pr_number}" '
     [
       .workflow_runs[]
@@ -109,23 +110,79 @@ selected_run_json="$(
     | sort_by(.created_at)
     | last
   '
-)"
+}
 
-run_id="$(printf '%s' "${selected_run_json}" | jq -r '.id // empty')"
-run_status="$(printf '%s' "${selected_run_json}" | jq -r '.status // empty')"
-run_conclusion="$(printf '%s' "${selected_run_json}" | jq -r '.conclusion // empty')"
-run_url="$(printf '%s' "${selected_run_json}" | jq -r '.html_url // empty')"
+selected_run_json=''
+run_id=''
+run_status=''
+run_conclusion=''
+run_url=''
+
+lookup_timeout="${CALLBACK_RUN_LOOKUP_TIMEOUT_SECONDS:-120}"
+lookup_interval="${CALLBACK_RUN_LOOKUP_INTERVAL_SECONDS:-5}"
+lookup_deadline=$((SECONDS + lookup_timeout))
+
+while (( SECONDS < lookup_deadline )); do
+  selected_run_json="$(fetch_matching_run_json)"
+  run_id="$(printf '%s' "${selected_run_json}" | jq -r '.id // empty')"
+  run_status="$(printf '%s' "${selected_run_json}" | jq -r '.status // empty')"
+  run_conclusion="$(printf '%s' "${selected_run_json}" | jq -r '.conclusion // empty')"
+  run_url="$(printf '%s' "${selected_run_json}" | jq -r '.html_url // empty')"
+
+  if [[ -n "${run_id}" ]]; then
+    break
+  fi
+
+  sleep "${lookup_interval}"
+done
 
 if [[ -z "${run_id}" ]]; then
-  echo "ERROR: unable to find matching orchestration pull_request run for docker PR #${promotion_pr_number}." >&2
-  exit 1
+  echo "INFO: no matching orchestration pull_request run yet for docker PR #${promotion_pr_number}; skipping callback rerun."
+  exit 0
 fi
 
+wait_timeout="${CALLBACK_WAIT_FOR_RUN_COMPLETION_SECONDS:-900}"
+wait_interval="${CALLBACK_WAIT_FOR_RUN_COMPLETION_INTERVAL_SECONDS:-10}"
+wait_deadline=$((SECONDS + wait_timeout))
+
+while [[ "${run_status}" != "completed" ]] && (( SECONDS < wait_deadline )); do
+  echo "INFO: orchestration run ${run_id} is '${run_status}'. Waiting for completion before rerun decision."
+  sleep "${wait_interval}"
+
+  run_json="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}")"
+  run_status="$(printf '%s' "${run_json}" | jq -r '.status // empty')"
+  run_conclusion="$(printf '%s' "${run_json}" | jq -r '.conclusion // empty')"
+  run_url="$(printf '%s' "${run_json}" | jq -r '.html_url // empty')"
+done
+
 if [[ "${run_status}" != "completed" ]]; then
-  echo "INFO: orchestration run ${run_id} is currently '${run_status}'. Skipping rerun."
+  echo "INFO: orchestration run ${run_id} is still '${run_status}' after wait timeout; skipping callback rerun."
   echo "INFO: run URL: ${run_url}"
   exit 0
 fi
+
+if [[ "${run_conclusion}" == "success" ]]; then
+  echo "INFO: orchestration run ${run_id} already succeeded; rerun is not required."
+  echo "INFO: run URL: ${run_url}"
+  exit 0
+fi
+
+normalized_callback_result="$(printf '%s' "${CALLBACK_RESULT}" | tr '[:upper:]' '[:lower:]')"
+if [[ "${normalized_callback_result}" != "success" ]]; then
+  echo "INFO: callback result is '${CALLBACK_RESULT}' (non-success); skipping rerun."
+  echo "INFO: run URL: ${run_url}"
+  exit 0
+fi
+
+ready_log="$(mktemp)"
+if ! GITHUB_HEAD_REF="${HEAD_BRANCH}" GITHUB_BASE_REF="${BASE_BRANCH}" GH_TOKEN="${GH_TOKEN}" \
+  bash .github/scripts/check_source_promotion_prs_ready.sh >"${ready_log}" 2>&1; then
+  echo "INFO: source promotion PRs are not fully merge-ready yet; skipping rerun."
+  sed 's/^/INFO: readiness -> /' "${ready_log}"
+  rm -f "${ready_log}"
+  exit 0
+fi
+rm -f "${ready_log}"
 
 echo "INFO: rerunning orchestration run ${run_id} (conclusion=${run_conclusion:-none})."
 gh api --method POST "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/rerun" >/dev/null
