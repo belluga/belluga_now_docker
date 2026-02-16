@@ -33,4 +33,7 @@ jobs:
           fetch-depth: 0
 
       - name: Validate callback payload and rerun checks
+        env:
+          SUBMODULES_REPO_TOKEN: ${{ secrets.SUBMODULES_REPO_TOKEN }}
+          WEB_APP_REPO_TOKEN: ${{ secrets.WEB_APP_REPO_TOKEN }}
         run: bash .github/scripts/handle_source_promotion_status_callback.sh
