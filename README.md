@@ -311,10 +311,9 @@ O Docker **não** executa o build do Flutter automaticamente. O NGINX serve apen
 
 1. Gere o bundle localmente (ou em CI) com o script auxiliar:
    ```bash
-   ./scripts/flutter/build_web.sh            # saída padrão: ./web-app
+   ./tools/flutter/build_web_bundle.sh       # saída padrão: ./web-app
    ```
-   (Dentro de `flutter-app/scripts` há um wrapper que aponta para o mesmo script, caso prefira executar a partir do submódulo.)
-2. O script grava os artefatos na pasta `web-app/`, já removendo `favicon.ico`, `manifest.json` e `icons/` (esses assets são servidos pelo backend). Revise o diff do submódulo:
+2. O script grava os artefatos na pasta `web-app/`, removendo `favicon.ico`, `manifest.json` e `icons/` (esses assets são servidos pelo backend) e protegendo arquivos de governança do submódulo (`.github/`, `package*.json`, `playwright.config.js`, `tests/`). Revise o diff do submódulo:
    ```bash
    git status web-app
    ```
