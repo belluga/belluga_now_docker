@@ -32,35 +32,8 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Resolve submodule checkout auth
-        id: submodule_auth
+      - name: Validate callback payload and rerun checks
         env:
           SUBMODULES_REPO_TOKEN: ${{ secrets.SUBMODULES_REPO_TOKEN }}
           WEB_APP_REPO_TOKEN: ${{ secrets.WEB_APP_REPO_TOKEN }}
-        run: |
-          set -euo pipefail
-          token="${SUBMODULES_REPO_TOKEN:-}"
-          if [[ -z "$token" ]]; then
-            token="${WEB_APP_REPO_TOKEN:-}"
-          fi
-
-          if [[ -z "$token" ]]; then
-            echo "ERROR: missing required secret for private submodule checkout." >&2
-            echo "Set SUBMODULES_REPO_TOKEN (recommended) or WEB_APP_REPO_TOKEN in this repository secrets." >&2
-            exit 1
-          fi
-
-          echo "::add-mask::$token"
-          echo "token=$token" >> "$GITHUB_OUTPUT"
-
-      - name: Checkout submodules
-        env:
-          SUBMODULE_TOKEN: ${{ steps.submodule_auth.outputs.token }}
-        run: |
-          set -euo pipefail
-          git config --global url."https://x-access-token:${SUBMODULE_TOKEN}@github.com/".insteadOf "https://github.com/"
-          git submodule sync --recursive
-          git submodule update --init --recursive
-
-      - name: Validate callback payload and rerun checks
         run: bash .github/scripts/handle_source_promotion_status_callback.sh
