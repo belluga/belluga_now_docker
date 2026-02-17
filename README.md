@@ -448,7 +448,8 @@ Comportamento do deploy:
 * Faz checkout da branch do lane (`stage` ou `main`) no servidor.
 * Atualiza submódulos para os SHAs pinados no commit do repositório de orquestração.
 * Executa `docker compose up -d --build --remove-orphans`.
-* Executa health check em `http://127.0.0.1:<NGINX_HOST_PORT_80>/api/v1/environment`.
+* Executa migrations (landlord + tenants quando existirem) via `php artisan` dentro do container `app`.
+* Executa health check em `http://127.0.0.1:<NGINX_HOST_PORT_80>/api/v1/initialize` (espera HTTP `200` ou `403`).
 
 Rollback automático:
 * Se o health check falhar, o workflow tenta rollback para o commit anterior no servidor e recompõe os containers.
