@@ -32,7 +32,9 @@ parse_repo_slug_from_url() {
   printf '%s\n' "${url}"
 }
 
-SUBMODULES=(flutter-app web-app laravel-app)
+# Source promotion applies only to true source repos.
+# web-app is a derived artifact generated from flutter-app per lane.
+SUBMODULES=(flutter-app laravel-app)
 
 for submodule in "${SUBMODULES[@]}"; do
   expected_sha="$(git ls-tree HEAD "${submodule}" | awk '{print $3}')"

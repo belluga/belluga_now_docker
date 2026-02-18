@@ -144,10 +144,20 @@ for submodule in "${SUBMODULES[@]}"; do
     case "${PR_HEAD_BRANCH}->${PR_BASE_BRANCH}" in
       # Docker promotion PR is only mergeable after source repos are already promoted.
       "dev->stage")
-        expected_branches=("stage" "main")
+        if [[ "$submodule" == "web-app" ]]; then
+          # web-app is a derived artifact and is not source-promoted by docker.
+          expected_branches=("dev" "stage" "main")
+        else
+          expected_branches=("stage" "main")
+        fi
         ;;
       "stage->main")
-        expected_branches=("main")
+        if [[ "$submodule" == "web-app" ]]; then
+          # web-app is a derived artifact and is not source-promoted by docker.
+          expected_branches=("dev" "stage" "main")
+        else
+          expected_branches=("main")
+        fi
         ;;
       # For dev integration PRs, tolerate commits already promoted in forward lanes.
       *)
@@ -226,11 +236,13 @@ for submodule in "${SUBMODULES[@]}"; do
   if [[ "${GITHUB_EVENT_NAME:-}" == "pull_request" ]]; then
     case "${PR_HEAD_BRANCH}->${PR_BASE_BRANCH}" in
       "dev->stage"|"stage->main")
-        pr_url="$(find_promotion_pr_url "$source_repo" "$PR_HEAD_BRANCH" "$PR_BASE_BRANCH" || true)"
-        if [[ -n "$pr_url" ]]; then
-          echo "ERROR: [$submodule] Awaiting source promotion merge (${PR_HEAD_BRANCH}->${PR_BASE_BRANCH}) in ${source_repo_display}: ${pr_url}" >&2
-        else
-          echo "ERROR: [$submodule] Awaiting source promotion merge (${PR_HEAD_BRANCH}->${PR_BASE_BRANCH}) in ${source_repo_display}. Open/merge the source PR for this lane mapping." >&2
+        if [[ "$submodule" != "web-app" ]]; then
+          pr_url="$(find_promotion_pr_url "$source_repo" "$PR_HEAD_BRANCH" "$PR_BASE_BRANCH" || true)"
+          if [[ -n "$pr_url" ]]; then
+            echo "ERROR: [$submodule] Awaiting source promotion merge (${PR_HEAD_BRANCH}->${PR_BASE_BRANCH}) in ${source_repo_display}: ${pr_url}" >&2
+          else
+            echo "ERROR: [$submodule] Awaiting source promotion merge (${PR_HEAD_BRANCH}->${PR_BASE_BRANCH}) in ${source_repo_display}. Open/merge the source PR for this lane mapping." >&2
+          fi
         fi
         ;;
     esac
