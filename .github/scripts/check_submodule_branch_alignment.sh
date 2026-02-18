@@ -8,6 +8,7 @@ if [[ -z "$TARGET_BRANCH" ]]; then
 fi
 
 SUBMODULES=(flutter-app laravel-app web-app)
+SOURCE_PROMOTION_SUBMODULES=(flutter-app laravel-app)
 PR_HEAD_BRANCH="${GITHUB_HEAD_REF:-}"
 PR_BASE_BRANCH="${GITHUB_BASE_REF:-}"
 GH_TOKEN="${GH_TOKEN:-}"
@@ -161,6 +162,12 @@ for submodule in "${SUBMODULES[@]}"; do
         fi
         ;;
     esac
+
+    # web-app is a derived artifact published by flutter-app per lane.
+    # Its promotion is validated via metadata/host checks, not source-repo lane promotion.
+    if [[ "$submodule" == "web-app" && ("${PR_HEAD_BRANCH}->${PR_BASE_BRANCH}" == "dev->stage" || "${PR_HEAD_BRANCH}->${PR_BASE_BRANCH}" == "stage->main") ]]; then
+      expected_branches=("dev" "stage" "main")
+    fi
   else
     # Push/workflow validation is strict on target lanes.
     case "$TARGET_BRANCH" in
@@ -223,7 +230,15 @@ for submodule in "${SUBMODULES[@]}"; do
     echo "ERROR: [$submodule] pinned SHA $pinned_sha is not on required lanes (${expected_branches[*]}). Found on lanes: ${found_summary}." >&2
   fi
 
-  if [[ "${GITHUB_EVENT_NAME:-}" == "pull_request" ]]; then
+  requires_source_promotion=0
+  for source_submodule in "${SOURCE_PROMOTION_SUBMODULES[@]}"; do
+    if [[ "$submodule" == "$source_submodule" ]]; then
+      requires_source_promotion=1
+      break
+    fi
+  done
+
+  if [[ "${GITHUB_EVENT_NAME:-}" == "pull_request" && "$requires_source_promotion" -eq 1 ]]; then
     case "${PR_HEAD_BRANCH}->${PR_BASE_BRANCH}" in
       "dev->stage"|"stage->main")
         pr_url="$(find_promotion_pr_url "$source_repo" "$PR_HEAD_BRANCH" "$PR_BASE_BRANCH" || true)"

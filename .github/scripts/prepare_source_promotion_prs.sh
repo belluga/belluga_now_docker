@@ -32,7 +32,9 @@ parse_repo_slug_from_url() {
   printf '%s\n' "${url}"
 }
 
-SUBMODULES=(flutter-app web-app laravel-app)
+# Source promotion PRs are required only for source repos.
+# web-app is treated as a derived artifact published by flutter-app per lane.
+SUBMODULES=(flutter-app laravel-app)
 
 for submodule in "${SUBMODULES[@]}"; do
   expected_sha="$(git ls-tree HEAD "${submodule}" | awk '{print $3}')"
