@@ -176,11 +176,59 @@ resolve_health_host() {
   echo "\$host"
 }
 
+wait_for_laravel_artisan() {
+  # Entry-point may still be running composer/install/caches on fresh deploys.
+  # We wait for artisan to become available before running migrations.
+  for attempt in \$(seq 1 30); do
+    if "\${DOCKER_COMPOSE[@]}" exec -T app php artisan --version >/dev/null 2>&1; then
+      return 0
+    fi
+    if [[ "\$attempt" == "1" ]]; then
+      echo "INFO: waiting for Laravel artisan to become available..."
+    fi
+    sleep 2
+  done
+  echo "ERROR: Laravel artisan did not become available in time." >&2
+  "\${DOCKER_COMPOSE[@]}" ps || true
+  "\${DOCKER_COMPOSE[@]}" logs --tail=200 app || true
+  return 1
+}
+
+run_migrations() {
+  echo "INFO: running landlord migrations..."
+  "\${DOCKER_COMPOSE[@]}" exec -T app php artisan migrate \
+    --database=landlord \
+    --path=database/migrations/landlord \
+    --force
+
+  # Tenant migrations should not block first deploys before initialization.
+  # We detect tenant count via landlord connection and only then run tenants:artisan.
+  local tenant_count
+  tenant_count="\$(
+    "\${DOCKER_COMPOSE[@]}" exec -T app php -r \
+      'require "vendor/autoload.php"; \$app=require "bootstrap/app.php"; \$app->make(\Illuminate\Contracts\Console\Kernel::class)->bootstrap(); echo (string) \App\Models\Landlord\Tenant::query()->count();' \
+      2>/dev/null | tr -d '\r' | tail -n 1 || true
+  )"
+  tenant_count="\$(printf '%s' "\${tenant_count}" | tr -dc '0-9')"
+
+  if [[ -z "\${tenant_count}" || "\${tenant_count}" == "0" ]]; then
+    echo "INFO: no tenants found; skipping tenant migrations."
+    return 0
+  fi
+
+  echo "INFO: running tenant migrations for \${tenant_count} tenants..."
+  "\${DOCKER_COMPOSE[@]}" exec -T app php artisan tenants:artisan \
+    "migrate --database=tenant --path=database/migrations/tenants --path=packages/belluga/belluga_push_handler/database/migrations --force"
+}
+
 deploy_and_check_health() {
   local health_host health_url status body
 
   "\${DOCKER_COMPOSE[@]}" up -d --build --remove-orphans
   "\${DOCKER_COMPOSE[@]}" ps
+
+  wait_for_laravel_artisan
+  run_migrations
 
   # Validate runtime readiness without requiring initialized domain data.
   # /api/v1/initialize is expected to return:

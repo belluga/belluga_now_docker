@@ -161,7 +161,7 @@ docker compose --profile local-db ps
 
 ### Local Dev (Recommended)
 
-Use this flow when you want full local development (Docker + Flutter) with no tunnel dependencies.
+Use this flow when you want full local development (Docker + Flutter). Tunnel is optional.
 
 1. Start the local stack:
 
@@ -217,6 +217,42 @@ Notes:
 - Flutter local bootstrap does not use `.env`; it is controlled by compile-time define files.
 - Lane files live in `flutter-app/config/defines/{dev,stage,main}.json`.
 - `flutter-app/config/defines/local.override.json` is gitignored and machine-specific.
+
+### Optional: Local Cloudflare Tunnel (Local Only)
+
+Use this only if you need a public HTTPS URL for your **local** stack.
+
+1. Create your local tunnel secrets file (not tracked by git):
+
+```bash
+cp .env.local.tunnel.example .env.local.tunnel
+```
+
+2. Edit `.env.local.tunnel` and set your personal `CLOUDFLARE_TUNNEL_TOKEN`.
+
+3. Start local stack with tunnel profile:
+
+```bash
+make up-dev-tunnel
+```
+
+Equivalent raw command:
+
+```bash
+COMPOSE_PROFILES=local-db,local-tunnel \
+docker compose --env-file .env --env-file .env.local.tunnel up -d --build
+```
+
+4. Check tunnel logs:
+
+```bash
+docker compose logs -f cloudflared
+```
+
+Notes:
+- This is local-only and does not change stage/main deployment flow.
+- Keep `.env.local.tunnel` untracked (already gitignored).
+- If token is invalid or missing, only `cloudflared` fails; core local stack remains unchanged.
 
 O ambiente é controlado pela variável `COMPOSE_PROFILES` no seu arquivo `.env`.
 
@@ -412,7 +448,8 @@ Comportamento do deploy:
 * Faz checkout da branch do lane (`stage` ou `main`) no servidor.
 * Atualiza submódulos para os SHAs pinados no commit do repositório de orquestração.
 * Executa `docker compose up -d --build --remove-orphans`.
-* Executa health check em `http://127.0.0.1:<NGINX_HOST_PORT_80>/api/v1/environment`.
+* Executa migrations (landlord + tenants quando existirem) via `php artisan` dentro do container `app`.
+* Executa health check em `http://127.0.0.1:<NGINX_HOST_PORT_80>/api/v1/initialize` (espera HTTP `200` ou `403`).
 
 Rollback automático:
 * Se o health check falhar, o workflow tenta rollback para o commit anterior no servidor e recompõe os containers.

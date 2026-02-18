@@ -1,9 +1,12 @@
 SHELL := /bin/bash
 
-.PHONY: up-dev up-stage up-main down ps logs test-laravel-full
+.PHONY: up-dev up-dev-tunnel up-stage up-main down ps logs test-laravel-full
 
 up-dev:
 	COMPOSE_PROFILES=local-db docker compose up -d --build
+
+up-dev-tunnel:
+	COMPOSE_PROFILES=local-db,local-tunnel docker compose --env-file .env --env-file .env.local.tunnel up -d --build
 
 up-stage:
 	COMPOSE_PROFILES= docker compose up -d --build
