@@ -44,7 +44,7 @@ parse_repo_slug_from_url() {
 }
 
 ensure_submodules_initialized_for_readiness() {
-  local required_submodules=(flutter-app web-app laravel-app)
+  local required_submodules=(flutter-app laravel-app)
   local submodule
   local all_initialized="true"
 
@@ -76,13 +76,14 @@ ensure_submodules_initialized_for_readiness() {
 }
 
 allowed_source_repos=()
-while IFS= read -r submodule_key; do
+for submodule in flutter-app laravel-app; do
+  submodule_key="submodule.${submodule}.url"
   submodule_url="$(git config -f .gitmodules --get "${submodule_key}" || true)"
   if [[ -z "${submodule_url}" ]]; then
     continue
   fi
   allowed_source_repos+=("$(parse_repo_slug_from_url "${submodule_url}")")
-done < <(git config -f .gitmodules --name-only --get-regexp '^submodule\..*\.url$' || true)
+done
 
 is_allowed="false"
 for repo in "${allowed_source_repos[@]}"; do
