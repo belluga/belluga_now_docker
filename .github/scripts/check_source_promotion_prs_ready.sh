@@ -27,8 +27,7 @@ case "${HEAD_BRANCH}->${BASE_BRANCH}" in
     ;;
 esac
 
-# Source promotion PR readiness is enforced only for source repos.
-SUBMODULES=(flutter-app laravel-app)
+SUBMODULES=(flutter-app web-app laravel-app)
 
 parse_repo_slug_from_url() {
   local url="$1"
