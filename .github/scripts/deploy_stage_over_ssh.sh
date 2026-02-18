@@ -196,10 +196,13 @@ wait_for_laravel_artisan() {
 
 run_migrations() {
   echo "INFO: running landlord migrations..."
-  "\${DOCKER_COMPOSE[@]}" exec -T app php artisan migrate \
+  if ! "\${DOCKER_COMPOSE[@]}" exec -T app php artisan migrate \
     --database=landlord \
     --path=database/migrations/landlord \
-    --force
+    --force; then
+    echo "ERROR: landlord migrations failed." >&2
+    return 1
+  fi
 
   # Tenant migrations should not block first deploys before initialization.
   # We detect tenant count via landlord connection and only then run tenants:artisan.
@@ -217,18 +220,28 @@ run_migrations() {
   fi
 
   echo "INFO: running tenant migrations for \${tenant_count} tenants..."
-  "\${DOCKER_COMPOSE[@]}" exec -T app php artisan tenants:artisan \
-    "migrate --database=tenant --path=database/migrations/tenants --path=packages/belluga/belluga_push_handler/database/migrations --force"
+  if ! "\${DOCKER_COMPOSE[@]}" exec -T app php artisan tenants:artisan \
+    "migrate --database=tenant --path=database/migrations/tenants --path=packages/belluga/belluga_push_handler/database/migrations --force"; then
+    echo "ERROR: tenant migrations failed." >&2
+    return 1
+  fi
 }
 
 deploy_and_check_health() {
   local health_host health_url status body
 
-  "\${DOCKER_COMPOSE[@]}" up -d --build --remove-orphans
+  if ! "\${DOCKER_COMPOSE[@]}" up -d --build --remove-orphans; then
+    echo "ERROR: docker compose up failed." >&2
+    return 1
+  fi
   "\${DOCKER_COMPOSE[@]}" ps
 
-  wait_for_laravel_artisan
-  run_migrations
+  if ! wait_for_laravel_artisan; then
+    return 1
+  fi
+  if ! run_migrations; then
+    return 1
+  fi
 
   # Validate runtime readiness without requiring initialized domain data.
   # /api/v1/initialize is expected to return:
