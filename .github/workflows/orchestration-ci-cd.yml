@@ -103,6 +103,8 @@ jobs:
         run: bash .github/scripts/verify_environment_ci.sh
 
       - name: Validate submodule lane alignment
+        env:
+          GH_TOKEN: ${{ steps.submodule_auth.outputs.token }}
         run: bash .github/scripts/check_submodule_branch_alignment.sh "${{ steps.lane.outputs.branch }}"
 
       - name: Validate web/flutter metadata compatibility
