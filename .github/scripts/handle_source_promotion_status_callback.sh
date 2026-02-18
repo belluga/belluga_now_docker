@@ -17,6 +17,8 @@ BASE_BRANCH="${CALLBACK_BASE_BRANCH:-}"
 CALLBACK_RESULT="${CALLBACK_RESULT:-unknown}"
 SOURCE_PR_NUMBER="${CALLBACK_SOURCE_PR_NUMBER:-}"
 SOURCE_PR_URL="${CALLBACK_SOURCE_PR_URL:-}"
+SUBMODULES_REPO_TOKEN="${SUBMODULES_REPO_TOKEN:-}"
+WEB_APP_REPO_TOKEN="${WEB_APP_REPO_TOKEN:-}"
 
 if [[ -z "${SOURCE_REPO}" || -z "${HEAD_BRANCH}" || -z "${BASE_BRANCH}" ]]; then
   echo "ERROR: callback payload is missing source_repo/head/base." >&2
@@ -39,6 +41,38 @@ parse_repo_slug_from_url() {
   url="${url#http://github.com/}"
   url="${url%.git}"
   printf '%s\n' "${url}"
+}
+
+ensure_submodules_initialized_for_readiness() {
+  local required_submodules=(flutter-app web-app laravel-app)
+  local submodule
+  local all_initialized="true"
+
+  for submodule in "${required_submodules[@]}"; do
+    if [[ ! -d "${submodule}/.git" && ! -f "${submodule}/.git" ]]; then
+      all_initialized="false"
+      break
+    fi
+  done
+
+  if [[ "${all_initialized}" == "true" ]]; then
+    return 0
+  fi
+
+  local token="${SUBMODULES_REPO_TOKEN}"
+  if [[ -z "${token}" ]]; then
+    token="${WEB_APP_REPO_TOKEN}"
+  fi
+
+  if [[ -z "${token}" ]]; then
+    echo "INFO: submodules are not initialized and no submodule token is available; skipping readiness check."
+    return 1
+  fi
+
+  echo "::add-mask::${token}"
+  git config --global url."https://x-access-token:${token}@github.com/".insteadOf "https://github.com/"
+  git submodule sync --recursive
+  git submodule update --init --recursive
 }
 
 allowed_source_repos=()
@@ -170,6 +204,12 @@ fi
 normalized_callback_result="$(printf '%s' "${CALLBACK_RESULT}" | tr '[:upper:]' '[:lower:]')"
 if [[ "${normalized_callback_result}" != "success" ]]; then
   echo "INFO: callback result is '${CALLBACK_RESULT}' (non-success); skipping rerun."
+  echo "INFO: run URL: ${run_url}"
+  exit 0
+fi
+
+if ! ensure_submodules_initialized_for_readiness; then
+  echo "INFO: skipping rerun because readiness check prerequisites are unavailable."
   echo "INFO: run URL: ${run_url}"
   exit 0
 fi
