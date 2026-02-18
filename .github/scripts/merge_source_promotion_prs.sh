@@ -117,7 +117,8 @@ find_existing_lane_pr_number() {
     | head -n1
 }
 
-SUBMODULES=(flutter-app web-app laravel-app)
+# Execute source promotion merges only for source repos.
+SUBMODULES=(flutter-app laravel-app)
 
 for submodule in "${SUBMODULES[@]}"; do
   expected_sha="$(git ls-tree HEAD "${submodule}" | awk '{print $3}')"
