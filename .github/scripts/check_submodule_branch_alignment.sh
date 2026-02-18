@@ -10,6 +10,28 @@ fi
 SUBMODULES=(flutter-app laravel-app web-app)
 PR_HEAD_BRANCH="${GITHUB_HEAD_REF:-}"
 PR_BASE_BRANCH="${GITHUB_BASE_REF:-}"
+GH_TOKEN="${GH_TOKEN:-}"
+declare -A FETCHED_REMOTE_BRANCHES
+
+ensure_remote_branch_fetched() {
+  local submodule="$1"
+  local branch="$2"
+
+  if [[ -z "$branch" ]]; then
+    return 1
+  fi
+
+  local key="${submodule}:${branch}"
+  if [[ -n "${FETCHED_REMOTE_BRANCHES[$key]:-}" ]]; then
+    return 0
+  fi
+
+  if ! git -C "$submodule" fetch origin "$branch" --quiet; then
+    return 1
+  fi
+
+  FETCHED_REMOTE_BRANCHES["$key"]=1
+}
 
 remote_branch_exists() {
   local submodule="$1"
@@ -31,7 +53,7 @@ is_pinned_on_remote_branch() {
     return 1
   fi
 
-  if ! git -C "$submodule" fetch origin "$branch" --quiet; then
+  if ! ensure_remote_branch_fetched "$submodule" "$branch"; then
     return 1
   fi
 
@@ -41,6 +63,56 @@ is_pinned_on_remote_branch() {
 
   git -C "$submodule" merge-base --is-ancestor "$pinned_sha" "origin/$branch"
 }
+
+parse_repo_slug_from_url() {
+  local url="$1"
+  url="${url#git@github.com:}"
+  url="${url#ssh://git@github.com/}"
+  url="${url#https://github.com/}"
+  url="${url#http://github.com/}"
+  url="${url%.git}"
+  printf '%s\n' "${url}"
+}
+
+find_promotion_pr_url() {
+  local repo_slug="$1"
+  local head_branch="$2"
+  local base_branch="$3"
+
+  if [[ -z "$repo_slug" || -z "$head_branch" || -z "$base_branch" ]]; then
+    return 1
+  fi
+
+  if [[ -z "$GH_TOKEN" ]] || ! command -v gh >/dev/null 2>&1; then
+    return 1
+  fi
+
+  local pr_number=""
+  pr_number="$(
+    GH_TOKEN="$GH_TOKEN" gh pr list \
+      --repo "$repo_slug" \
+      --state open \
+      --base "$base_branch" \
+      --json number,headRefName \
+      --jq ".[] | select(.headRefName == \"${head_branch}\") | .number" \
+      | head -n1
+  )"
+
+  if [[ -z "$pr_number" ]]; then
+    return 1
+  fi
+
+  GH_TOKEN="$GH_TOKEN" gh pr view "$pr_number" --repo "$repo_slug" --json url --jq '.url'
+}
+
+is_pinned_on_any_lane() {
+  local submodule="$1"
+  local pinned_sha="$2"
+  local lane="$3"
+  is_pinned_on_remote_branch "$submodule" "$pinned_sha" "$lane"
+}
+
+overall_failed=0
 
 for submodule in "${SUBMODULES[@]}"; do
   if [[ ! -d "$submodule/.git" && ! -f "$submodule/.git" ]]; then
@@ -56,22 +128,33 @@ for submodule in "${SUBMODULES[@]}"; do
 
   expected_branches=()
   source_fallback_branch=""
+  source_repo=""
+  source_repo_display=""
+  submodule_url="$(git config -f .gitmodules --get "submodule.${submodule}.url" || true)"
+  if [[ -n "$submodule_url" ]]; then
+    source_repo="$(parse_repo_slug_from_url "$submodule_url")"
+  fi
+  if [[ -n "$source_repo" ]]; then
+    source_repo_display="$source_repo"
+  else
+    source_repo_display="${submodule} (repo slug unresolved from .gitmodules)"
+  fi
 
   if [[ "${GITHUB_EVENT_NAME:-}" == "pull_request" ]]; then
     case "${PR_HEAD_BRANCH}->${PR_BASE_BRANCH}" in
-      # Promotion PR: source lane is dev; if already promoted to stage/main, it is a no-op and should pass.
+      # Docker promotion PR is only mergeable after source repos are already promoted.
       "dev->stage")
-        expected_branches=("dev" "stage" "main")
-        ;;
-      # Promotion PR: source lane is stage; if already promoted to main, it is a no-op and should pass.
-      "stage->main")
         expected_branches=("stage" "main")
         ;;
-      # For normal integration PRs (typically into dev), keep target-lane validation and allow PR-head fallback.
+      "stage->main")
+        expected_branches=("main")
+        ;;
+      # For dev integration PRs, tolerate commits already promoted in forward lanes.
       *)
-        expected_branches=("$TARGET_BRANCH")
-        if [[ "$TARGET_BRANCH" == "dev" ]] && ! remote_branch_exists "$submodule" "dev"; then
-          expected_branches+=("main")
+        if [[ "$TARGET_BRANCH" == "dev" ]]; then
+          expected_branches=("dev" "stage" "main")
+        else
+          expected_branches=("$TARGET_BRANCH")
         fi
         if [[ "$TARGET_BRANCH" == "dev" && -n "$PR_HEAD_BRANCH" && "$PR_HEAD_BRANCH" != "$TARGET_BRANCH" ]]; then
           source_fallback_branch="$PR_HEAD_BRANCH"
@@ -79,20 +162,19 @@ for submodule in "${SUBMODULES[@]}"; do
         ;;
     esac
   else
-    # Push/workflow validation is lane-aware for promotions:
-    # - push to stage may still carry SHAs only on dev until source repos are promoted
-    # - push to main may still carry SHAs only on stage until source repos are promoted
+    # Push/workflow validation is strict on target lanes.
     case "$TARGET_BRANCH" in
       stage)
-        expected_branches=("dev" "stage" "main")
-        ;;
-      main)
         expected_branches=("stage" "main")
         ;;
+      main)
+        expected_branches=("main")
+        ;;
       *)
-        expected_branches=("$TARGET_BRANCH")
-        if [[ "$TARGET_BRANCH" == "dev" ]] && ! remote_branch_exists "$submodule" "dev"; then
-          expected_branches+=("main")
+        if [[ "$TARGET_BRANCH" == "dev" ]]; then
+          expected_branches=("dev" "stage" "main")
+        else
+          expected_branches=("$TARGET_BRANCH")
         fi
         ;;
     esac
@@ -123,10 +205,40 @@ for submodule in "${SUBMODULES[@]}"; do
     fi
   fi
 
-  if [[ "$pr_head_fallback_checked" -eq 1 ]]; then
-    echo "ERROR: $submodule pinned SHA $pinned_sha is neither on expected lanes (${expected_branches[*]}) nor origin/$source_fallback_branch" >&2
-  else
-    echo "ERROR: $submodule pinned SHA $pinned_sha is not on expected lanes (${expected_branches[*]})" >&2
+  found_on_lanes=()
+  for lane in dev stage main; do
+    if is_pinned_on_any_lane "$submodule" "$pinned_sha" "$lane"; then
+      found_on_lanes+=("$lane")
+    fi
+  done
+
+  found_summary="none"
+  if [[ ${#found_on_lanes[@]} -gt 0 ]]; then
+    found_summary="${found_on_lanes[*]}"
   fi
-  exit 1
+
+  if [[ "$pr_head_fallback_checked" -eq 1 ]]; then
+    echo "ERROR: [$submodule] pinned SHA $pinned_sha is neither on required lanes (${expected_branches[*]}) nor origin/$source_fallback_branch." >&2
+  else
+    echo "ERROR: [$submodule] pinned SHA $pinned_sha is not on required lanes (${expected_branches[*]}). Found on lanes: ${found_summary}." >&2
+  fi
+
+  if [[ "${GITHUB_EVENT_NAME:-}" == "pull_request" ]]; then
+    case "${PR_HEAD_BRANCH}->${PR_BASE_BRANCH}" in
+      "dev->stage"|"stage->main")
+        pr_url="$(find_promotion_pr_url "$source_repo" "$PR_HEAD_BRANCH" "$PR_BASE_BRANCH" || true)"
+        if [[ -n "$pr_url" ]]; then
+          echo "ERROR: [$submodule] Awaiting source promotion merge (${PR_HEAD_BRANCH}->${PR_BASE_BRANCH}) in ${source_repo_display}: ${pr_url}" >&2
+        else
+          echo "ERROR: [$submodule] Awaiting source promotion merge (${PR_HEAD_BRANCH}->${PR_BASE_BRANCH}) in ${source_repo_display}. Open/merge the source PR for this lane mapping." >&2
+        fi
+        ;;
+    esac
+  fi
+
+  overall_failed=1
 done
+
+if [[ "$overall_failed" -ne 0 ]]; then
+  exit 1
+fi
