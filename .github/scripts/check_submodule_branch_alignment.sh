@@ -162,6 +162,12 @@ for submodule in "${SUBMODULES[@]}"; do
         fi
         ;;
     esac
+
+    # web-app is a derived artifact published by flutter-app per lane.
+    # Its promotion is validated via metadata/host checks, not source-repo lane promotion.
+    if [[ "$submodule" == "web-app" && ("${PR_HEAD_BRANCH}->${PR_BASE_BRANCH}" == "dev->stage" || "${PR_HEAD_BRANCH}->${PR_BASE_BRANCH}" == "stage->main") ]]; then
+      expected_branches=("dev" "stage" "main")
+    fi
   else
     # Push/workflow validation is strict on target lanes.
     case "$TARGET_BRANCH" in
