@@ -144,20 +144,10 @@ for submodule in "${SUBMODULES[@]}"; do
     case "${PR_HEAD_BRANCH}->${PR_BASE_BRANCH}" in
       # Docker promotion PR is only mergeable after source repos are already promoted.
       "dev->stage")
-        if [[ "$submodule" == "web-app" ]]; then
-          # web-app is a derived artifact and is not source-promoted by docker.
-          expected_branches=("dev" "stage" "main")
-        else
-          expected_branches=("stage" "main")
-        fi
+        expected_branches=("stage" "main")
         ;;
       "stage->main")
-        if [[ "$submodule" == "web-app" ]]; then
-          # web-app is a derived artifact and is not source-promoted by docker.
-          expected_branches=("dev" "stage" "main")
-        else
-          expected_branches=("main")
-        fi
+        expected_branches=("main")
         ;;
       # For dev integration PRs, tolerate commits already promoted in forward lanes.
       *)
