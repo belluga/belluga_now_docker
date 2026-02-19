@@ -19,6 +19,10 @@ on:
         required: false
         default: dev
         type: string
+      flutter_sha:
+        description: "Optional: full flutter-app SHA that produced the web artifact"
+        required: false
+        type: string
       source_repo:
         description: "Optional: source repo that triggered this sync (for PR body)"
         required: false
@@ -48,11 +52,13 @@ jobs:
           DISPATCH_SUBMODULE: ${{ github.event.client_payload.submodule }}
           DISPATCH_SHA: ${{ github.event.client_payload.sha }}
           DISPATCH_LANE: ${{ github.event.client_payload.lane }}
+          DISPATCH_FLUTTER_SHA: ${{ github.event.client_payload.flutter_sha }}
           DISPATCH_SOURCE_REPO: ${{ github.event.client_payload.source_repo }}
           DISPATCH_SOURCE_BRANCH: ${{ github.event.client_payload.source_branch }}
           INPUT_SUBMODULE: ${{ inputs.submodule }}
           INPUT_SHA: ${{ inputs.sha }}
           INPUT_LANE: ${{ inputs.lane }}
+          INPUT_FLUTTER_SHA: ${{ inputs.flutter_sha }}
           INPUT_SOURCE_REPO: ${{ inputs.source_repo }}
           INPUT_SOURCE_BRANCH: ${{ inputs.source_branch }}
         run: |
@@ -62,12 +68,14 @@ jobs:
             submodule="${DISPATCH_SUBMODULE:-}"
             sha="${DISPATCH_SHA:-}"
             lane="${DISPATCH_LANE:-${DISPATCH_SOURCE_BRANCH:-}}"
+            flutter_sha="${DISPATCH_FLUTTER_SHA:-}"
             source_repo="${DISPATCH_SOURCE_REPO:-}"
             source_branch="${DISPATCH_SOURCE_BRANCH:-}"
           else
             submodule="${INPUT_SUBMODULE:-}"
             sha="${INPUT_SHA:-}"
             lane="${INPUT_LANE:-}"
+            flutter_sha="${INPUT_FLUTTER_SHA:-}"
             source_repo="${INPUT_SOURCE_REPO:-}"
             source_branch="${INPUT_SOURCE_BRANCH:-}"
           fi
@@ -96,6 +104,7 @@ jobs:
             echo "submodule=$submodule" >> "$GITHUB_OUTPUT"
             echo "sha=$sha" >> "$GITHUB_OUTPUT"
             echo "lane=$lane" >> "$GITHUB_OUTPUT"
+            echo "flutter_sha=$flutter_sha" >> "$GITHUB_OUTPUT"
             echo "source_repo=$source_repo" >> "$GITHUB_OUTPUT"
             echo "source_branch=$source_branch" >> "$GITHUB_OUTPUT"
             exit 0
@@ -107,6 +116,7 @@ jobs:
           echo "submodule=$submodule" >> "$GITHUB_OUTPUT"
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
           echo "lane=$lane" >> "$GITHUB_OUTPUT"
+          echo "flutter_sha=$flutter_sha" >> "$GITHUB_OUTPUT"
           echo "bot_branch=$bot_branch" >> "$GITHUB_OUTPUT"
           echo "source_repo=$source_repo" >> "$GITHUB_OUTPUT"
           echo "source_branch=$source_branch" >> "$GITHUB_OUTPUT"
@@ -163,6 +173,7 @@ jobs:
         env:
           SUBMODULE: ${{ steps.inputs.outputs.submodule }}
           TARGET_SHA: ${{ steps.inputs.outputs.sha }}
+          DISPATCH_FLUTTER_SHA: ${{ steps.inputs.outputs.flutter_sha }}
         run: |
           set -euo pipefail
 
@@ -181,11 +192,6 @@ jobs:
           # compare build metadata before/after updating the pin.
           git submodule update --init --recursive "$SUBMODULE"
 
-          old_flutter_sha=""
-          if [[ "$SUBMODULE" == "web-app" && -f "$SUBMODULE/build_metadata.json" ]]; then
-            old_flutter_sha="$(jq -r '.flutter_git_sha // empty' "$SUBMODULE/build_metadata.json" 2>/dev/null || true)"
-          fi
-
           git -C "$SUBMODULE" fetch origin --prune --quiet
           git -C "$SUBMODULE" checkout --detach "$TARGET_SHA"
 
@@ -203,14 +209,26 @@ jobs:
               exit 1
             fi
 
-            if [[ -n "$old_flutter_sha" && "$old_flutter_sha" == "$new_flutter_sha" ]]; then
-              echo "INFO: web build_metadata flutter_git_sha unchanged ($new_flutter_sha); leaving flutter-app pin unchanged."
-            else
-              git submodule update --init --recursive flutter-app
-              git -C flutter-app fetch origin --prune --quiet
-              git -C flutter-app checkout --detach "$new_flutter_sha"
-              git add flutter-app
+            target_flutter_sha="$new_flutter_sha"
+            if [[ -n "${DISPATCH_FLUTTER_SHA:-}" ]]; then
+              if [[ ! "${DISPATCH_FLUTTER_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+                echo "ERROR: invalid dispatch flutter_sha '${DISPATCH_FLUTTER_SHA}' (expected 40-char SHA)." >&2
+                exit 1
+              fi
+
+              short_dispatch_sha="${DISPATCH_FLUTTER_SHA:0:${#new_flutter_sha}}"
+              if [[ "${new_flutter_sha}" != "${short_dispatch_sha}" ]]; then
+                echo "ERROR: web build_metadata.flutter_git_sha (${new_flutter_sha}) does not match dispatch flutter_sha (${DISPATCH_FLUTTER_SHA})." >&2
+                exit 1
+              fi
+
+              target_flutter_sha="${DISPATCH_FLUTTER_SHA}"
             fi
+
+            git submodule update --init --recursive flutter-app
+            git -C flutter-app fetch origin --prune --quiet
+            git -C flutter-app checkout --detach "$target_flutter_sha"
+            git add flutter-app
           fi
 
           git add "$SUBMODULE"

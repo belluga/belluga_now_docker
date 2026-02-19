@@ -32,8 +32,8 @@ parse_repo_slug_from_url() {
   printf '%s\n' "${url}"
 }
 
-# Source promotion applies only to true source repos.
-# web-app is a derived artifact generated from flutter-app per lane.
+# Source promotion PRs apply only to source repos.
+# web-app is derived from flutter-app publication on the target lane.
 SUBMODULES=(flutter-app laravel-app)
 
 for submodule in "${SUBMODULES[@]}"; do

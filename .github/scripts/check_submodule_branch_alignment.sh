@@ -144,20 +144,10 @@ for submodule in "${SUBMODULES[@]}"; do
     case "${PR_HEAD_BRANCH}->${PR_BASE_BRANCH}" in
       # Docker promotion PR is only mergeable after source repos are already promoted.
       "dev->stage")
-        if [[ "$submodule" == "web-app" ]]; then
-          # web-app is a derived artifact and is not source-promoted by docker.
-          expected_branches=("dev" "stage" "main")
-        else
-          expected_branches=("stage" "main")
-        fi
+        expected_branches=("stage" "main")
         ;;
       "stage->main")
-        if [[ "$submodule" == "web-app" ]]; then
-          # web-app is a derived artifact and is not source-promoted by docker.
-          expected_branches=("dev" "stage" "main")
-        else
-          expected_branches=("main")
-        fi
+        expected_branches=("main")
         ;;
       # For dev integration PRs, tolerate commits already promoted in forward lanes.
       *)
@@ -188,6 +178,13 @@ for submodule in "${SUBMODULES[@]}"; do
         fi
         ;;
     esac
+  fi
+
+  # web-app is a derived artifact from flutter-app publication.
+  # Branch lane enforcement for web-app is handled via compatibility validation
+  # (build_metadata flutter_git_sha + host injection), not source lane ancestry.
+  if [[ "$submodule" == "web-app" ]]; then
+    expected_branches=("dev" "stage" "main")
   fi
 
   found_on_expected=0
@@ -236,7 +233,9 @@ for submodule in "${SUBMODULES[@]}"; do
   if [[ "${GITHUB_EVENT_NAME:-}" == "pull_request" ]]; then
     case "${PR_HEAD_BRANCH}->${PR_BASE_BRANCH}" in
       "dev->stage"|"stage->main")
-        if [[ "$submodule" != "web-app" ]]; then
+        if [[ "$submodule" == "web-app" ]]; then
+          echo "ERROR: [web-app] Awaiting derived publish on target lane (${PR_BASE_BRANCH}) after flutter-app promotion." >&2
+        else
           pr_url="$(find_promotion_pr_url "$source_repo" "$PR_HEAD_BRANCH" "$PR_BASE_BRANCH" || true)"
           if [[ -n "$pr_url" ]]; then
             echo "ERROR: [$submodule] Awaiting source promotion merge (${PR_HEAD_BRANCH}->${PR_BASE_BRANCH}) in ${source_repo_display}: ${pr_url}" >&2
