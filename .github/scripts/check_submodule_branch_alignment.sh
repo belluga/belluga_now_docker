@@ -180,13 +180,6 @@ for submodule in "${SUBMODULES[@]}"; do
     esac
   fi
 
-  # web-app is a derived artifact from flutter-app publication.
-  # Branch lane enforcement for web-app is handled via compatibility validation
-  # (build_metadata flutter_git_sha + host injection), not source lane ancestry.
-  if [[ "$submodule" == "web-app" ]]; then
-    expected_branches=("dev" "stage" "main")
-  fi
-
   found_on_expected=0
   for expected_branch in "${expected_branches[@]}"; do
     if is_pinned_on_remote_branch "$submodule" "$pinned_sha" "$expected_branch"; then
