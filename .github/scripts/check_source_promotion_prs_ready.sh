@@ -27,8 +27,9 @@ case "${HEAD_BRANCH}->${BASE_BRANCH}" in
     ;;
 esac
 
-# Source promotion PR readiness must cover every lane-gated submodule.
-SUBMODULES=(flutter-app laravel-app web-app)
+# Source promotion PR readiness applies only to source repos.
+# web-app is derived from flutter-app publication on the target lane.
+SUBMODULES=(flutter-app laravel-app)
 
 parse_repo_slug_from_url() {
   local url="$1"

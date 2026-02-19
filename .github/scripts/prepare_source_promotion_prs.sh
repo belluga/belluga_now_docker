@@ -32,8 +32,9 @@ parse_repo_slug_from_url() {
   printf '%s\n' "${url}"
 }
 
-# Source promotion PRs must exist for lane mappings that this docker PR depends on.
-SUBMODULES=(flutter-app laravel-app web-app)
+# Source promotion PRs apply only to source repos.
+# web-app is derived from flutter-app publication on the target lane.
+SUBMODULES=(flutter-app laravel-app)
 
 for submodule in "${SUBMODULES[@]}"; do
   expected_sha="$(git ls-tree HEAD "${submodule}" | awk '{print $3}')"
