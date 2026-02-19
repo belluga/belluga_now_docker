@@ -117,7 +117,7 @@ jobs:
         run: bash .github/scripts/check_submodule_sha_ci_green.sh
 
       - name: Prepare source promotion PRs (exact SHA, no auto-merge)
-        if: ${{ github.event_name == 'pull_request' && (github.base_ref == 'stage' || github.base_ref == 'main') }}
+        if: ${{ always() && github.event_name == 'pull_request' && (github.base_ref == 'stage' || github.base_ref == 'main') }}
         env:
           GH_TOKEN: ${{ steps.submodule_auth.outputs.token }}
         run: bash .github/scripts/prepare_source_promotion_prs.sh

@@ -27,9 +27,8 @@ case "${HEAD_BRANCH}->${BASE_BRANCH}" in
     ;;
 esac
 
-# Source promotion applies only to true source repos.
-# web-app is a derived artifact generated from flutter-app per lane.
-SUBMODULES=(flutter-app laravel-app)
+# Source promotion PR readiness must cover every lane-gated submodule.
+SUBMODULES=(flutter-app laravel-app web-app)
 
 parse_repo_slug_from_url() {
   local url="$1"
