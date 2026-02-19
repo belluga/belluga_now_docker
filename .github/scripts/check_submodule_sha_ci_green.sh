@@ -76,10 +76,19 @@ for submodule in "${SUBMODULES[@]}"; do
   workflow_runs_json="$(api_get "repos/${repo_slug}/actions/runs?head_sha=${pinned_sha}&per_page=100")"
   commit_status_json="$(api_get "repos/${repo_slug}/commits/${pinned_sha}/status")"
 
-  workflow_runs_total="$(jq '[.workflow_runs[]?] | length' <<<"$workflow_runs_json")"
-  workflow_runs_success_count="$(jq '[.workflow_runs[]? | select(.status == "completed" and .conclusion == "success")] | length' <<<"$workflow_runs_json")"
-  workflow_runs_pending_count="$(jq '[.workflow_runs[]? | select(.status != "completed")] | length' <<<"$workflow_runs_json")"
-  workflow_runs_failing_count="$(jq '[.workflow_runs[]? | select(.status == "completed" and (.conclusion == "failure" or .conclusion == "timed_out" or .conclusion == "cancelled" or .conclusion == "action_required" or .conclusion == "stale"))] | length' <<<"$workflow_runs_json")"
+  # Only consider lane publication evidence for a pinned SHA.
+  # PR/concurrency-related failures on the same SHA should not block promotions.
+  relevant_runs_json="$(
+    jq '[
+      .workflow_runs[]?
+      | select((.event // "") == "push" or (.event // "") == "workflow_dispatch" or (.event // "") == "repository_dispatch")
+    ]' <<<"$workflow_runs_json"
+  )"
+
+  workflow_runs_total="$(jq 'length' <<<"$relevant_runs_json")"
+  workflow_runs_success_count="$(jq '[.[] | select(.status == "completed" and .conclusion == "success")] | length' <<<"$relevant_runs_json")"
+  workflow_runs_pending_count="$(jq '[.[] | select(.status != "completed")] | length' <<<"$relevant_runs_json")"
+  workflow_runs_failing_count="$(jq '[.[] | select(.status == "completed" and (.conclusion == "failure" or .conclusion == "timed_out" or .conclusion == "action_required"))] | length' <<<"$relevant_runs_json")"
 
   status_contexts_total="$(jq '[.statuses[]?] | length' <<<"$commit_status_json")"
   status_state="$(jq -r '.state // "unknown"' <<<"$commit_status_json")"
@@ -91,11 +100,13 @@ for submodule in "${SUBMODULES[@]}"; do
 
   if [[ "$workflow_runs_failing_count" -gt 0 ]]; then
     echo "ERROR: $submodule has failing workflow runs for pinned SHA $pinned_sha:" >&2
-    jq -r '.workflow_runs[]? | select(.status == "completed" and (.conclusion == "failure" or .conclusion == "timed_out" or .conclusion == "cancelled" or .conclusion == "action_required" or .conclusion == "stale")) | "- \(.name): \(.conclusion)"' <<<"$workflow_runs_json" >&2
+    jq -r '.[] | select(.status == "completed" and (.conclusion == "failure" or .conclusion == "timed_out" or .conclusion == "action_required")) | "- \(.name) [event=\(.event), branch=\(.head_branch // "n/a")]: \(.conclusion)"' <<<"$relevant_runs_json" >&2
     exit 1
   fi
 
-  if [[ "$status_contexts_total" -gt 0 && "$status_state" != "success" ]]; then
+  # Commit statuses aggregate heterogeneous contexts and can remain non-success
+  # after a green rerun. Use them only when there are no relevant workflow runs.
+  if [[ "$workflow_runs_total" -eq 0 && "$status_contexts_total" -gt 0 && "$status_state" != "success" ]]; then
     echo "ERROR: $submodule commit status is '$status_state' for pinned SHA $pinned_sha (expected 'success')." >&2
     exit 1
   fi
