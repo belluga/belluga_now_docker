@@ -85,10 +85,20 @@ for submodule in "${SUBMODULES[@]}"; do
     ]' <<<"$workflow_runs_json"
   )"
 
-  workflow_runs_total="$(jq 'length' <<<"$relevant_runs_json")"
-  workflow_runs_success_count="$(jq '[.[] | select(.status == "completed" and .conclusion == "success")] | length' <<<"$relevant_runs_json")"
-  workflow_runs_pending_count="$(jq '[.[] | select(.status != "completed")] | length' <<<"$relevant_runs_json")"
-  workflow_runs_failing_count="$(jq '[.[] | select(.status == "completed" and (.conclusion == "failure" or .conclusion == "timed_out" or .conclusion == "action_required"))] | length' <<<"$relevant_runs_json")"
+  # Evaluate only the latest run per workflow to avoid blocking on stale failures
+  # when a newer rerun/workflow-dispatch already passed for the same SHA.
+  latest_relevant_runs_json="$(
+    jq '
+      sort_by(.created_at // .updated_at // "")
+      | reverse
+      | unique_by((.workflow_id // .name // "unknown") | tostring)
+    ' <<<"$relevant_runs_json"
+  )"
+
+  workflow_runs_total="$(jq 'length' <<<"$latest_relevant_runs_json")"
+  workflow_runs_success_count="$(jq '[.[] | select(.status == "completed" and .conclusion == "success")] | length' <<<"$latest_relevant_runs_json")"
+  workflow_runs_pending_count="$(jq '[.[] | select(.status != "completed")] | length' <<<"$latest_relevant_runs_json")"
+  workflow_runs_failing_count="$(jq '[.[] | select(.status == "completed" and (.conclusion == "failure" or .conclusion == "timed_out" or .conclusion == "action_required"))] | length' <<<"$latest_relevant_runs_json")"
 
   status_contexts_total="$(jq '[.statuses[]?] | length' <<<"$commit_status_json")"
   status_state="$(jq -r '.state // "unknown"' <<<"$commit_status_json")"
@@ -100,7 +110,7 @@ for submodule in "${SUBMODULES[@]}"; do
 
   if [[ "$workflow_runs_failing_count" -gt 0 ]]; then
     echo "ERROR: $submodule has failing workflow runs for pinned SHA $pinned_sha:" >&2
-    jq -r '.[] | select(.status == "completed" and (.conclusion == "failure" or .conclusion == "timed_out" or .conclusion == "action_required")) | "- \(.name) [event=\(.event), branch=\(.head_branch // "n/a")]: \(.conclusion)"' <<<"$relevant_runs_json" >&2
+    jq -r '.[] | select(.status == "completed" and (.conclusion == "failure" or .conclusion == "timed_out" or .conclusion == "action_required")) | "- \(.name) [event=\(.event), branch=\(.head_branch // "n/a"), run_id=\(.id)]: \(.conclusion)"' <<<"$latest_relevant_runs_json" >&2
     exit 1
   fi
 
