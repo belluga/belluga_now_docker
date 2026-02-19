@@ -97,22 +97,8 @@ jobs:
               ;;
           esac
 
-          # Stage/main are promoted only via docker lane PRs (dev->stage, stage->main).
-          # Direct submodule-sync PRs into stage/main are intentionally disabled.
-          if [[ "$lane" != "dev" ]]; then
-            echo "skip_non_dev=true" >> "$GITHUB_OUTPUT"
-            echo "submodule=$submodule" >> "$GITHUB_OUTPUT"
-            echo "sha=$sha" >> "$GITHUB_OUTPUT"
-            echo "lane=$lane" >> "$GITHUB_OUTPUT"
-            echo "flutter_sha=$flutter_sha" >> "$GITHUB_OUTPUT"
-            echo "source_repo=$source_repo" >> "$GITHUB_OUTPUT"
-            echo "source_branch=$source_branch" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
           bot_branch="bot/submodule-sync-${lane}"
 
-          echo "skip_non_dev=false" >> "$GITHUB_OUTPUT"
           echo "submodule=$submodule" >> "$GITHUB_OUTPUT"
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
           echo "lane=$lane" >> "$GITHUB_OUTPUT"
@@ -121,20 +107,12 @@ jobs:
           echo "source_repo=$source_repo" >> "$GITHUB_OUTPUT"
           echo "source_branch=$source_branch" >> "$GITHUB_OUTPUT"
 
-      - name: Skip non-dev lane sync
-        if: steps.inputs.outputs.skip_non_dev == 'true'
-        run: |
-          echo "INFO: skipping submodule sync PR for lane '${{ steps.inputs.outputs.lane }}'."
-          echo "INFO: stage/main must receive changes only through docker lane promotion PRs."
-
       - name: Checkout docker repo
-        if: steps.inputs.outputs.skip_non_dev != 'true'
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
       - name: Configure private submodule auth
-        if: steps.inputs.outputs.skip_non_dev != 'true'
         env:
           SUBMODULES_REPO_TOKEN: ${{ secrets.SUBMODULES_REPO_TOKEN }}
         run: |
@@ -151,7 +129,6 @@ jobs:
           git config --global url."https://x-access-token:${SUBMODULES_REPO_TOKEN}@github.com/".insteadOf "https://github.com/"
 
       - name: Create/update bot branch from lane base
-        if: steps.inputs.outputs.skip_non_dev != 'true'
         env:
           BASE_BRANCH: ${{ steps.inputs.outputs.lane }}
           BOT_BRANCH: ${{ steps.inputs.outputs.bot_branch }}
@@ -169,7 +146,6 @@ jobs:
           fi
 
       - name: Update submodule pin (and flutter pin if web-app)
-        if: steps.inputs.outputs.skip_non_dev != 'true'
         env:
           SUBMODULE: ${{ steps.inputs.outputs.submodule }}
           TARGET_SHA: ${{ steps.inputs.outputs.sha }}
@@ -234,7 +210,6 @@ jobs:
           git add "$SUBMODULE"
 
       - name: Commit changes (if any)
-        if: steps.inputs.outputs.skip_non_dev != 'true'
         id: commit
         env:
           SUBMODULE: ${{ steps.inputs.outputs.submodule }}
@@ -259,7 +234,7 @@ jobs:
           echo "no_changes=false" >> "$GITHUB_OUTPUT"
 
       - name: Push bot branch
-        if: steps.inputs.outputs.skip_non_dev != 'true' && steps.commit.outputs.no_changes != 'true'
+        if: steps.commit.outputs.no_changes != 'true'
         env:
           BOT_BRANCH: ${{ steps.inputs.outputs.bot_branch }}
         run: |
@@ -270,7 +245,7 @@ jobs:
           git push --force-with-lease -u origin "$BOT_BRANCH"
 
       - name: Create or update PR into lane base
-        if: steps.inputs.outputs.skip_non_dev != 'true' && steps.commit.outputs.no_changes != 'true'
+        if: steps.commit.outputs.no_changes != 'true'
         env:
           # Some repositories disable "Allow GitHub Actions to create pull requests".
           # Use the PAT secret (already required for private submodule checkout) so
