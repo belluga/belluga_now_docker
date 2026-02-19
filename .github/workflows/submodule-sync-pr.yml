@@ -97,7 +97,7 @@ jobs:
               ;;
           esac
 
-          bot_branch="bot/submodule-sync-${lane}"
+          bot_branch="bot/submodule-sync-${lane}-${submodule}-${GITHUB_RUN_ID}"
 
           echo "submodule=$submodule" >> "$GITHUB_OUTPUT"
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
@@ -134,16 +134,8 @@ jobs:
           BOT_BRANCH: ${{ steps.inputs.outputs.bot_branch }}
         run: |
           set -euo pipefail
-          git fetch origin "$BASE_BRANCH" "$BOT_BRANCH" --quiet || true
-
-          # Reuse the existing bot branch when present so sequential sync runs
-          # (e.g., laravel-app then web-app for the same lane) accumulate in a
-          # single PR instead of overwriting earlier commits.
-          if git show-ref --verify --quiet "refs/remotes/origin/$BOT_BRANCH"; then
-            git checkout -B "$BOT_BRANCH" "origin/$BOT_BRANCH"
-          else
-            git checkout -B "$BOT_BRANCH" "origin/$BASE_BRANCH"
-          fi
+          git fetch origin "$BASE_BRANCH" --quiet
+          git checkout -B "$BOT_BRANCH" "origin/$BASE_BRANCH"
 
       - name: Update submodule pin (and flutter pin if web-app)
         env:
@@ -243,6 +235,40 @@ jobs:
           # Force-with-lease avoids non-fast-forward failures while still protecting
           # against unexpected remote updates.
           git push --force-with-lease -u origin "$BOT_BRANCH"
+
+      - name: Close superseded sync PRs for same lane/submodule
+        if: steps.commit.outputs.no_changes != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.SUBMODULES_REPO_TOKEN || secrets.WEB_APP_REPO_TOKEN || github.token }}
+          BASE_BRANCH: ${{ steps.inputs.outputs.lane }}
+          BOT_BRANCH: ${{ steps.inputs.outputs.bot_branch }}
+          SUBMODULE: ${{ steps.inputs.outputs.submodule }}
+        run: |
+          set -euo pipefail
+
+          prefix="bot/submodule-sync-${BASE_BRANCH}-${SUBMODULE}-"
+          superseded="$(
+            gh pr list \
+              --repo "$GITHUB_REPOSITORY" \
+              --state open \
+              --base "$BASE_BRANCH" \
+              --json number,headRefName \
+              --jq ".[] | select((.headRefName | startswith(\"${prefix}\")) and (.headRefName != \"${BOT_BRANCH}\")) | .number"
+          )"
+
+          if [[ -z "${superseded}" ]]; then
+            echo "INFO: no superseded sync PRs for ${SUBMODULE} on lane ${BASE_BRANCH}."
+            exit 0
+          fi
+
+          while IFS= read -r pr_number; do
+            if [[ -z "${pr_number}" ]]; then
+              continue
+            fi
+            gh pr close "${pr_number}" \
+              --repo "$GITHUB_REPOSITORY" \
+              --comment "Superseded by ${BOT_BRANCH} for ${SUBMODULE} on lane ${BASE_BRANCH}."
+          done <<< "${superseded}"
 
       - name: Create or update PR into lane base
         if: steps.commit.outputs.no_changes != 'true'
