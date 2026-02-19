@@ -103,6 +103,7 @@ jobs:
         run: bash .github/scripts/verify_environment_ci.sh
 
       - name: Validate submodule lane alignment
+        id: submodule_lane_alignment
         env:
           GH_TOKEN: ${{ steps.submodule_auth.outputs.token }}
         run: bash .github/scripts/check_submodule_branch_alignment.sh "${{ steps.lane.outputs.branch }}"
@@ -117,7 +118,7 @@ jobs:
         run: bash .github/scripts/check_submodule_sha_ci_green.sh
 
       - name: Prepare source promotion PRs (exact SHA, no auto-merge)
-        if: ${{ always() && github.event_name == 'pull_request' && (github.base_ref == 'stage' || github.base_ref == 'main') }}
+        if: ${{ always() && github.event_name == 'pull_request' && (github.base_ref == 'stage' || github.base_ref == 'main') && steps.submodule_lane_alignment.outcome == 'failure' }}
         env:
           GH_TOKEN: ${{ steps.submodule_auth.outputs.token }}
         run: bash .github/scripts/prepare_source_promotion_prs.sh
