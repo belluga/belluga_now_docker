@@ -226,11 +226,15 @@ for submodule in "${SUBMODULES[@]}"; do
   if [[ "${GITHUB_EVENT_NAME:-}" == "pull_request" ]]; then
     case "${PR_HEAD_BRANCH}->${PR_BASE_BRANCH}" in
       "dev->stage"|"stage->main")
-        pr_url="$(find_promotion_pr_url "$source_repo" "$PR_HEAD_BRANCH" "$PR_BASE_BRANCH" || true)"
-        if [[ -n "$pr_url" ]]; then
-          echo "ERROR: [$submodule] Awaiting source promotion merge (${PR_HEAD_BRANCH}->${PR_BASE_BRANCH}) in ${source_repo_display}: ${pr_url}" >&2
+        if [[ "$submodule" == "web-app" ]]; then
+          echo "ERROR: [web-app] Awaiting derived publish on target lane (${PR_BASE_BRANCH}) after flutter-app promotion." >&2
         else
-          echo "ERROR: [$submodule] Awaiting source promotion merge (${PR_HEAD_BRANCH}->${PR_BASE_BRANCH}) in ${source_repo_display}. Open/merge the source PR for this lane mapping." >&2
+          pr_url="$(find_promotion_pr_url "$source_repo" "$PR_HEAD_BRANCH" "$PR_BASE_BRANCH" || true)"
+          if [[ -n "$pr_url" ]]; then
+            echo "ERROR: [$submodule] Awaiting source promotion merge (${PR_HEAD_BRANCH}->${PR_BASE_BRANCH}) in ${source_repo_display}: ${pr_url}" >&2
+          else
+            echo "ERROR: [$submodule] Awaiting source promotion merge (${PR_HEAD_BRANCH}->${PR_BASE_BRANCH}) in ${source_repo_display}. Open/merge the source PR for this lane mapping." >&2
+          fi
         fi
         ;;
     esac
