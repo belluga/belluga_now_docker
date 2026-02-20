@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       submodule:
-        description: "Submodule path in this repo (e.g. flutter-app, web-app, laravel-app)"
+        description: "Submodule path in this repo (flutter-app or laravel-app)"
         required: true
         type: string
       sha:
@@ -15,7 +15,7 @@ on:
         required: true
         type: string
       lane:
-        description: "Target lane/base branch in docker repo (dev, stage, main)"
+        description: "Target lane/base branch in docker repo (dev only for automatic sync)"
         required: false
         default: dev
         type: string
@@ -89,6 +89,9 @@ jobs:
             lane="dev"
           fi
 
+          skip="false"
+          skip_reason=""
+
           case "$lane" in
             dev|stage|main) ;;
             *)
@@ -96,6 +99,19 @@ jobs:
               exit 1
               ;;
           esac
+
+          case "$submodule" in
+            flutter-app|laravel-app) ;;
+            *)
+              skip="true"
+              skip_reason="unsupported submodule '$submodule' (automatic sync supports only flutter-app and laravel-app)"
+              ;;
+          esac
+
+          if [[ "$skip" != "true" && "$lane" != "dev" ]]; then
+            skip="true"
+            skip_reason="automatic submodule sync is restricted to lane 'dev' (received lane='$lane')"
+          fi
 
           bot_branch="bot/submodule-sync-${lane}-${submodule}-${GITHUB_RUN_ID}"
 
@@ -106,13 +122,22 @@ jobs:
           echo "bot_branch=$bot_branch" >> "$GITHUB_OUTPUT"
           echo "source_repo=$source_repo" >> "$GITHUB_OUTPUT"
           echo "source_branch=$source_branch" >> "$GITHUB_OUTPUT"
+          echo "skip=$skip" >> "$GITHUB_OUTPUT"
+          echo "skip_reason=$skip_reason" >> "$GITHUB_OUTPUT"
+
+      - name: Skip unsupported dispatch
+        if: steps.inputs.outputs.skip == 'true'
+        run: |
+          echo "INFO: skipping submodule sync dispatch: ${{ steps.inputs.outputs.skip_reason }}"
 
       - name: Checkout docker repo
+        if: steps.inputs.outputs.skip != 'true'
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
       - name: Configure private submodule auth
+        if: steps.inputs.outputs.skip != 'true'
         env:
           SUBMODULES_REPO_TOKEN: ${{ secrets.SUBMODULES_REPO_TOKEN }}
         run: |
@@ -129,6 +154,7 @@ jobs:
           git config --global url."https://x-access-token:${SUBMODULES_REPO_TOKEN}@github.com/".insteadOf "https://github.com/"
 
       - name: Create/update bot branch from lane base
+        if: steps.inputs.outputs.skip != 'true'
         env:
           BASE_BRANCH: ${{ steps.inputs.outputs.lane }}
           BOT_BRANCH: ${{ steps.inputs.outputs.bot_branch }}
@@ -137,19 +163,19 @@ jobs:
           git fetch origin "$BASE_BRANCH" --quiet
           git checkout -B "$BOT_BRANCH" "origin/$BASE_BRANCH"
 
-      - name: Update submodule pin (and flutter pin if web-app)
+      - name: Update submodule pin
+        if: steps.inputs.outputs.skip != 'true'
         env:
           SUBMODULE: ${{ steps.inputs.outputs.submodule }}
           TARGET_SHA: ${{ steps.inputs.outputs.sha }}
-          DISPATCH_FLUTTER_SHA: ${{ steps.inputs.outputs.flutter_sha }}
         run: |
           set -euo pipefail
 
           case "$SUBMODULE" in
-            flutter-app|web-app|laravel-app) ;;
+            flutter-app|laravel-app) ;;
             *)
               echo "ERROR: unsupported submodule '$SUBMODULE'." >&2
-              echo "Allowed: flutter-app, web-app, laravel-app" >&2
+              echo "Allowed: flutter-app, laravel-app" >&2
               exit 1
               ;;
           esac
@@ -163,45 +189,10 @@ jobs:
           git -C "$SUBMODULE" fetch origin --prune --quiet
           git -C "$SUBMODULE" checkout --detach "$TARGET_SHA"
 
-          # If the web bundle metadata changed, update flutter-app pin to match the
-          # exact flutter commit the new bundle was built from.
-          if [[ "$SUBMODULE" == "web-app" ]]; then
-            if [[ ! -f "$SUBMODULE/build_metadata.json" ]]; then
-              echo "ERROR: missing $SUBMODULE/build_metadata.json after checkout ($TARGET_SHA)" >&2
-              exit 1
-            fi
-
-            new_flutter_sha="$(jq -r '.flutter_git_sha // empty' "$SUBMODULE/build_metadata.json" 2>/dev/null || true)"
-            if [[ -z "$new_flutter_sha" || "$new_flutter_sha" == "null" ]]; then
-              echo "ERROR: missing flutter_git_sha in $SUBMODULE/build_metadata.json" >&2
-              exit 1
-            fi
-
-            target_flutter_sha="$new_flutter_sha"
-            if [[ -n "${DISPATCH_FLUTTER_SHA:-}" ]]; then
-              if [[ ! "${DISPATCH_FLUTTER_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
-                echo "ERROR: invalid dispatch flutter_sha '${DISPATCH_FLUTTER_SHA}' (expected 40-char SHA)." >&2
-                exit 1
-              fi
-
-              short_dispatch_sha="${DISPATCH_FLUTTER_SHA:0:${#new_flutter_sha}}"
-              if [[ "${new_flutter_sha}" != "${short_dispatch_sha}" ]]; then
-                echo "ERROR: web build_metadata.flutter_git_sha (${new_flutter_sha}) does not match dispatch flutter_sha (${DISPATCH_FLUTTER_SHA})." >&2
-                exit 1
-              fi
-
-              target_flutter_sha="${DISPATCH_FLUTTER_SHA}"
-            fi
-
-            git submodule update --init --recursive flutter-app
-            git -C flutter-app fetch origin --prune --quiet
-            git -C flutter-app checkout --detach "$target_flutter_sha"
-            git add flutter-app
-          fi
-
           git add "$SUBMODULE"
 
       - name: Commit changes (if any)
+        if: steps.inputs.outputs.skip != 'true'
         id: commit
         env:
           SUBMODULE: ${{ steps.inputs.outputs.submodule }}
@@ -226,7 +217,7 @@ jobs:
           echo "no_changes=false" >> "$GITHUB_OUTPUT"
 
       - name: Push bot branch
-        if: steps.commit.outputs.no_changes != 'true'
+        if: steps.inputs.outputs.skip != 'true' && steps.commit.outputs.no_changes != 'true'
         env:
           BOT_BRANCH: ${{ steps.inputs.outputs.bot_branch }}
         run: |
@@ -237,7 +228,7 @@ jobs:
           git push --force-with-lease -u origin "$BOT_BRANCH"
 
       - name: Close superseded sync PRs for same lane/submodule
-        if: steps.commit.outputs.no_changes != 'true'
+        if: steps.inputs.outputs.skip != 'true' && steps.commit.outputs.no_changes != 'true'
         env:
           GH_TOKEN: ${{ secrets.SUBMODULES_REPO_TOKEN || secrets.WEB_APP_REPO_TOKEN || github.token }}
           BASE_BRANCH: ${{ steps.inputs.outputs.lane }}
@@ -271,7 +262,7 @@ jobs:
           done <<< "${superseded}"
 
       - name: Create or update PR into lane base
-        if: steps.commit.outputs.no_changes != 'true'
+        if: steps.inputs.outputs.skip != 'true' && steps.commit.outputs.no_changes != 'true'
         env:
           # Some repositories disable "Allow GitHub Actions to create pull requests".
           # Use the PAT secret (already required for private submodule checkout) so

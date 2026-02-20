@@ -109,6 +109,8 @@ jobs:
         run: bash .github/scripts/check_submodule_branch_alignment.sh "${{ steps.lane.outputs.branch }}"
 
       - name: Validate web/flutter metadata compatibility
+        env:
+          GH_TOKEN: ${{ steps.submodule_auth.outputs.token }}
         run: bash .github/scripts/check_web_flutter_metadata.sh "${{ steps.lane.outputs.branch }}"
 
       - name: Validate pinned submodule SHA CI status (promotion PRs)

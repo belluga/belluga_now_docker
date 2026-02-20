@@ -16,7 +16,7 @@ if [[ -z "${GH_TOKEN:-}" ]]; then
   exit 1
 fi
 
-SUBMODULES=(flutter-app laravel-app web-app)
+SUBMODULES=(flutter-app laravel-app)
 
 parse_repo_slug_from_url() {
   local url="$1"
