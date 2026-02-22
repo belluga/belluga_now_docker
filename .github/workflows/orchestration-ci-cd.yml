@@ -354,19 +354,66 @@ jobs:
             echo "INFO: stage smoke using public DNS resolution."
           fi
 
+      - name: Warm up stage environment endpoints
+        if: steps.stage_initialize_preflight.outputs.initialized == 'true'
+        env:
+          NAV_LANDLORD_URL: ${{ vars.STAGE_NAV_LANDLORD_URL }}
+          NAV_TENANT_URL: ${{ vars.STAGE_NAV_TENANT_URL }}
+          NAV_ORIGIN_IP: ${{ vars.STAGE_SSH_HOST }}
+          NAV_WARMUP_MAX_ATTEMPTS: '12'
+          NAV_WARMUP_SLEEP_SECONDS: '5'
+        run: bash .github/scripts/warmup_navigation_environment_over_https.sh stage
+
+      - name: Validate deployed stage web provenance
+        id: stage_provenance_check
+        if: steps.stage_initialize_preflight.outputs.initialized == 'true'
+        continue-on-error: true
+        env:
+          DEPLOY_LANE: stage
+          NAV_LANDLORD_URL: ${{ vars.STAGE_NAV_LANDLORD_URL }}
+          NAV_ORIGIN_IP: ${{ vars.STAGE_SSH_HOST }}
+        run: bash .github/scripts/check_deployed_web_provenance.sh stage
+
       - name: Run stage real navigation smoke
         id: stage_navigation_smoke
-        if: steps.stage_initialize_preflight.outputs.initialized == 'true'
+        if: steps.stage_initialize_preflight.outputs.initialized == 'true' && steps.stage_provenance_check.outcome != 'failure'
         continue-on-error: true
         env:
           NAV_LANDLORD_URL: ${{ vars.STAGE_NAV_LANDLORD_URL }}
           NAV_TENANT_URL: ${{ vars.STAGE_NAV_TENANT_URL }}
           PLAYWRIGHT_IGNORE_HTTPS_ERRORS: ${{ env.PLAYWRIGHT_IGNORE_HTTPS_ERRORS }}
-        run: npm run test:navigation
+        run: npm run test:navigation -- --retries=1 --reporter=line
         working-directory: web-app
 
+      - name: Collect stage deploy diagnostics before rollback
+        if: steps.stage_initialize_preflight.outputs.initialized == 'true' && (steps.stage_provenance_check.outcome == 'failure' || steps.stage_navigation_smoke.outcome == 'failure')
+        continue-on-error: true
+        env:
+          DEPLOY_LANE: stage
+          DEPLOY_SSH_HOST: ${{ vars.STAGE_SSH_HOST }}
+          DEPLOY_SSH_PORT: ${{ vars.STAGE_SSH_PORT }}
+          DEPLOY_SSH_USER: ${{ vars.STAGE_SSH_USER }}
+          DEPLOY_PATH: ${{ vars.STAGE_DEPLOY_PATH }}
+          DEPLOY_SSH_KEY_PATH: ~/.ssh/id_ed25519_stage
+          NAV_LANDLORD_URL: ${{ vars.STAGE_NAV_LANDLORD_URL }}
+          NAV_ORIGIN_IP: ${{ vars.STAGE_SSH_HOST }}
+          OUTPUT_FILE: /tmp/stage_deploy_diagnostics.txt
+        run: bash .github/scripts/collect_remote_deploy_diagnostics.sh
+
+      - name: Upload stage navigation smoke artifacts
+        if: steps.stage_provenance_check.outcome == 'failure' || steps.stage_navigation_smoke.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage-navigation-smoke-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            web-app/test-results
+            web-app/playwright-report
+            /tmp/stage_deploy_diagnostics.txt
+          if-no-files-found: warn
+          retention-days: 7
+
       - name: Mark stage revision as successful after navigation smoke
-        if: steps.stage_navigation_smoke.outcome == 'success' || steps.stage_initialize_preflight.outputs.initialized != 'true'
+        if: steps.stage_initialize_preflight.outputs.initialized != 'true' || (steps.stage_provenance_check.outcome != 'failure' && steps.stage_navigation_smoke.outcome == 'success')
         env:
           DEPLOY_SSH_HOST: ${{ vars.STAGE_SSH_HOST }}
           DEPLOY_SSH_PORT: ${{ vars.STAGE_SSH_PORT }}
@@ -376,7 +423,7 @@ jobs:
         run: bash .github/scripts/mark_successful_revision_over_ssh.sh
 
       - name: Roll back stage deploy when navigation smoke fails
-        if: steps.stage_navigation_smoke.outcome == 'failure'
+        if: steps.stage_initialize_preflight.outputs.initialized == 'true' && (steps.stage_provenance_check.outcome == 'failure' || steps.stage_navigation_smoke.outcome == 'failure')
         env:
           DEPLOY_LANE: stage
           DEPLOY_SSH_HOST: ${{ vars.STAGE_SSH_HOST }}
@@ -394,9 +441,13 @@ jobs:
         run: bash .github/scripts/rollback_over_ssh.sh
 
       - name: Fail stage deploy after rollback
-        if: steps.stage_navigation_smoke.outcome == 'failure'
+        if: steps.stage_initialize_preflight.outputs.initialized == 'true' && (steps.stage_provenance_check.outcome == 'failure' || steps.stage_navigation_smoke.outcome == 'failure')
         run: |
-          echo "ERROR: stage navigation smoke failed; rollback executed." >&2
+          if [[ "${{ steps.stage_provenance_check.outcome }}" == "failure" ]]; then
+            echo "ERROR: stage deployed build provenance validation failed; rollback executed." >&2
+          else
+            echo "ERROR: stage navigation smoke failed; rollback executed." >&2
+          fi
           exit 1
 
   deploy_main:
@@ -622,19 +673,66 @@ jobs:
             echo "INFO: production smoke using public DNS resolution."
           fi
 
+      - name: Warm up production environment endpoints
+        if: steps.main_initialize_preflight.outputs.initialized == 'true'
+        env:
+          NAV_LANDLORD_URL: ${{ vars.MAIN_NAV_LANDLORD_URL }}
+          NAV_TENANT_URL: ${{ vars.MAIN_NAV_TENANT_URL }}
+          NAV_ORIGIN_IP: ${{ vars.MAIN_SSH_HOST }}
+          NAV_WARMUP_MAX_ATTEMPTS: '12'
+          NAV_WARMUP_SLEEP_SECONDS: '5'
+        run: bash .github/scripts/warmup_navigation_environment_over_https.sh main
+
+      - name: Validate deployed production web provenance
+        id: main_provenance_check
+        if: steps.main_initialize_preflight.outputs.initialized == 'true'
+        continue-on-error: true
+        env:
+          DEPLOY_LANE: main
+          NAV_LANDLORD_URL: ${{ vars.MAIN_NAV_LANDLORD_URL }}
+          NAV_ORIGIN_IP: ${{ vars.MAIN_SSH_HOST }}
+        run: bash .github/scripts/check_deployed_web_provenance.sh main
+
       - name: Run production real navigation smoke
         id: production_navigation_smoke
-        if: steps.main_initialize_preflight.outputs.initialized == 'true'
+        if: steps.main_initialize_preflight.outputs.initialized == 'true' && steps.main_provenance_check.outcome != 'failure'
         continue-on-error: true
         env:
           NAV_LANDLORD_URL: ${{ vars.MAIN_NAV_LANDLORD_URL }}
           NAV_TENANT_URL: ${{ vars.MAIN_NAV_TENANT_URL }}
           PLAYWRIGHT_IGNORE_HTTPS_ERRORS: ${{ env.PLAYWRIGHT_IGNORE_HTTPS_ERRORS }}
-        run: npm run test:navigation
+        run: npm run test:navigation -- --retries=1 --reporter=line
         working-directory: web-app
 
+      - name: Collect production deploy diagnostics before rollback
+        if: steps.main_initialize_preflight.outputs.initialized == 'true' && (steps.main_provenance_check.outcome == 'failure' || steps.production_navigation_smoke.outcome == 'failure')
+        continue-on-error: true
+        env:
+          DEPLOY_LANE: main
+          DEPLOY_SSH_HOST: ${{ vars.MAIN_SSH_HOST }}
+          DEPLOY_SSH_PORT: ${{ vars.MAIN_SSH_PORT }}
+          DEPLOY_SSH_USER: ${{ vars.MAIN_SSH_USER }}
+          DEPLOY_PATH: ${{ vars.MAIN_DEPLOY_PATH }}
+          DEPLOY_SSH_KEY_PATH: ~/.ssh/id_ed25519_main
+          NAV_LANDLORD_URL: ${{ vars.MAIN_NAV_LANDLORD_URL }}
+          NAV_ORIGIN_IP: ${{ vars.MAIN_SSH_HOST }}
+          OUTPUT_FILE: /tmp/main_deploy_diagnostics.txt
+        run: bash .github/scripts/collect_remote_deploy_diagnostics.sh
+
+      - name: Upload production navigation smoke artifacts
+        if: steps.main_provenance_check.outcome == 'failure' || steps.production_navigation_smoke.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-navigation-smoke-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            web-app/test-results
+            web-app/playwright-report
+            /tmp/main_deploy_diagnostics.txt
+          if-no-files-found: warn
+          retention-days: 7
+
       - name: Mark production revision as successful after navigation smoke
-        if: steps.production_navigation_smoke.outcome == 'success' || steps.main_initialize_preflight.outputs.initialized != 'true'
+        if: steps.main_initialize_preflight.outputs.initialized != 'true' || (steps.main_provenance_check.outcome != 'failure' && steps.production_navigation_smoke.outcome == 'success')
         env:
           DEPLOY_SSH_HOST: ${{ vars.MAIN_SSH_HOST }}
           DEPLOY_SSH_PORT: ${{ vars.MAIN_SSH_PORT }}
@@ -644,7 +742,7 @@ jobs:
         run: bash .github/scripts/mark_successful_revision_over_ssh.sh
 
       - name: Roll back production deploy when navigation smoke fails
-        if: steps.production_navigation_smoke.outcome == 'failure'
+        if: steps.main_initialize_preflight.outputs.initialized == 'true' && (steps.main_provenance_check.outcome == 'failure' || steps.production_navigation_smoke.outcome == 'failure')
         env:
           DEPLOY_LANE: main
           DEPLOY_SSH_HOST: ${{ vars.MAIN_SSH_HOST }}
@@ -662,7 +760,11 @@ jobs:
         run: bash .github/scripts/rollback_over_ssh.sh
 
       - name: Fail production deploy after rollback
-        if: steps.production_navigation_smoke.outcome == 'failure'
+        if: steps.main_initialize_preflight.outputs.initialized == 'true' && (steps.main_provenance_check.outcome == 'failure' || steps.production_navigation_smoke.outcome == 'failure')
         run: |
-          echo "ERROR: production navigation smoke failed; rollback executed." >&2
+          if [[ "${{ steps.main_provenance_check.outcome }}" == "failure" ]]; then
+            echo "ERROR: production deployed build provenance validation failed; rollback executed." >&2
+          else
+            echo "ERROR: production navigation smoke failed; rollback executed." >&2
+          fi
           exit 1
