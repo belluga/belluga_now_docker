@@ -81,6 +81,15 @@ server {
 
     # --- PHP-FPM Handler ---
     location ~ \.php$ {
+        # Temporary normalizer: upstream (Laravel HandleCors) may also emit CORS
+        # headers on /api/* responses. Hide upstream CORS headers so Nginx is the
+        # single source on this lane until the definitive VNext unification.
+        fastcgi_hide_header Access-Control-Allow-Origin;
+        fastcgi_hide_header Access-Control-Allow-Credentials;
+        fastcgi_hide_header Access-Control-Allow-Methods;
+        fastcgi_hide_header Access-Control-Allow-Headers;
+        fastcgi_hide_header Access-Control-Max-Age;
+
         if ($request_method = 'OPTIONS') {
             add_header 'Access-Control-Allow-Origin' "$http_origin" always;
             add_header 'Access-Control-Allow-Methods' 'GET, POST, PUT, PATCH, DELETE, OPTIONS' always;
