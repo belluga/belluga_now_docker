@@ -354,6 +354,16 @@ jobs:
             echo "INFO: stage smoke using public DNS resolution."
           fi
 
+      - name: Warm up stage environment endpoints
+        if: steps.stage_initialize_preflight.outputs.initialized == 'true'
+        env:
+          NAV_LANDLORD_URL: ${{ vars.STAGE_NAV_LANDLORD_URL }}
+          NAV_TENANT_URL: ${{ vars.STAGE_NAV_TENANT_URL }}
+          NAV_ORIGIN_IP: ${{ vars.STAGE_SSH_HOST }}
+          NAV_WARMUP_MAX_ATTEMPTS: '12'
+          NAV_WARMUP_SLEEP_SECONDS: '5'
+        run: bash .github/scripts/warmup_navigation_environment_over_https.sh stage
+
       - name: Run stage real navigation smoke
         id: stage_navigation_smoke
         if: steps.stage_initialize_preflight.outputs.initialized == 'true'
@@ -362,8 +372,19 @@ jobs:
           NAV_LANDLORD_URL: ${{ vars.STAGE_NAV_LANDLORD_URL }}
           NAV_TENANT_URL: ${{ vars.STAGE_NAV_TENANT_URL }}
           PLAYWRIGHT_IGNORE_HTTPS_ERRORS: ${{ env.PLAYWRIGHT_IGNORE_HTTPS_ERRORS }}
-        run: npm run test:navigation
+        run: npm run test:navigation -- --retries=1 --reporter=line
         working-directory: web-app
+
+      - name: Upload stage navigation smoke artifacts
+        if: steps.stage_navigation_smoke.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage-navigation-smoke-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            web-app/test-results
+            web-app/playwright-report
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: Mark stage revision as successful after navigation smoke
         if: steps.stage_navigation_smoke.outcome == 'success' || steps.stage_initialize_preflight.outputs.initialized != 'true'
@@ -622,6 +643,16 @@ jobs:
             echo "INFO: production smoke using public DNS resolution."
           fi
 
+      - name: Warm up production environment endpoints
+        if: steps.main_initialize_preflight.outputs.initialized == 'true'
+        env:
+          NAV_LANDLORD_URL: ${{ vars.MAIN_NAV_LANDLORD_URL }}
+          NAV_TENANT_URL: ${{ vars.MAIN_NAV_TENANT_URL }}
+          NAV_ORIGIN_IP: ${{ vars.MAIN_SSH_HOST }}
+          NAV_WARMUP_MAX_ATTEMPTS: '12'
+          NAV_WARMUP_SLEEP_SECONDS: '5'
+        run: bash .github/scripts/warmup_navigation_environment_over_https.sh main
+
       - name: Run production real navigation smoke
         id: production_navigation_smoke
         if: steps.main_initialize_preflight.outputs.initialized == 'true'
@@ -630,8 +661,19 @@ jobs:
           NAV_LANDLORD_URL: ${{ vars.MAIN_NAV_LANDLORD_URL }}
           NAV_TENANT_URL: ${{ vars.MAIN_NAV_TENANT_URL }}
           PLAYWRIGHT_IGNORE_HTTPS_ERRORS: ${{ env.PLAYWRIGHT_IGNORE_HTTPS_ERRORS }}
-        run: npm run test:navigation
+        run: npm run test:navigation -- --retries=1 --reporter=line
         working-directory: web-app
+
+      - name: Upload production navigation smoke artifacts
+        if: steps.production_navigation_smoke.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-navigation-smoke-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            web-app/test-results
+            web-app/playwright-report
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: Mark production revision as successful after navigation smoke
         if: steps.production_navigation_smoke.outcome == 'success' || steps.main_initialize_preflight.outputs.initialized != 'true'
