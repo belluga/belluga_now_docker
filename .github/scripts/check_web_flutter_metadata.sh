@@ -26,6 +26,11 @@ if [[ -z "$FLUTTER_SHA" ]]; then
   echo "ERROR: failed to resolve pinned flutter-app SHA" >&2
   exit 1
 fi
+WEB_SHA="$(git ls-tree HEAD web-app | awk '{print $3}')"
+if [[ -z "$WEB_SHA" ]]; then
+  echo "ERROR: failed to resolve pinned web-app SHA" >&2
+  exit 1
+fi
 
 parse_repo_slug_from_url() {
   local url="$1"
@@ -55,12 +60,6 @@ get_remote_file_content() {
   printf '%s' "$encoded" | tr -d '\n' | base64 -d 2>/dev/null
 }
 
-web_repo_url="$(git config -f .gitmodules --get submodule.web-app.url || true)"
-web_repo_slug=""
-if [[ -n "$web_repo_url" ]]; then
-  web_repo_slug="$(parse_repo_slug_from_url "$web_repo_url")"
-fi
-
 flutter_repo_url="$(git config -f .gitmodules --get submodule.flutter-app.url || true)"
 flutter_repo_slug=""
 if [[ -n "$flutter_repo_url" ]]; then
@@ -69,38 +68,32 @@ fi
 
 metadata_content=""
 web_index_content=""
-source_mode="remote"
+source_mode="gitlink-local"
 
-if [[ -n "$web_repo_slug" ]]; then
-  metadata_content="$(get_remote_file_content "$web_repo_slug" "build_metadata.json" "$TARGET_BRANCH" || true)"
-  web_index_content="$(get_remote_file_content "$web_repo_slug" "index.html" "$TARGET_BRANCH" || true)"
+# Always validate against the pinned web-app gitlink checked out by this repository.
+# Using remote lane heads can hide drift between docker gitlinks and source branches.
+if [[ -f "web-app/build_metadata.json" ]]; then
+  metadata_content="$(cat web-app/build_metadata.json)"
 fi
-
-if [[ -z "$metadata_content" || -z "$web_index_content" ]]; then
-  source_mode="local"
-  if [[ -f "web-app/build_metadata.json" ]]; then
-    metadata_content="$(cat web-app/build_metadata.json)"
-  fi
-  if [[ -f "web-app/index.html" ]]; then
-    web_index_content="$(cat web-app/index.html)"
-  fi
+if [[ -f "web-app/index.html" ]]; then
+  web_index_content="$(cat web-app/index.html)"
 fi
 
 if [[ -z "$metadata_content" ]]; then
   if [[ "$is_dev_lane" -eq 1 ]]; then
-    echo "WARN: could not resolve web build_metadata.json for lane '$TARGET_BRANCH' (remote/local). Advisory on dev."
+    echo "WARN: could not resolve pinned web build_metadata.json for lane '$TARGET_BRANCH' (gitlink/local checkout). Advisory on dev."
     exit 0
   fi
-  echo "ERROR: could not resolve web build_metadata.json for lane '$TARGET_BRANCH' (remote/local)." >&2
+  echo "ERROR: could not resolve pinned web build_metadata.json for lane '$TARGET_BRANCH' (gitlink/local checkout)." >&2
   exit 1
 fi
 
 if [[ -z "$web_index_content" ]]; then
   if [[ "$is_dev_lane" -eq 1 ]]; then
-    echo "WARN: could not resolve web index.html for lane '$TARGET_BRANCH' (remote/local). Advisory on dev."
+    echo "WARN: could not resolve pinned web index.html for lane '$TARGET_BRANCH' (gitlink/local checkout). Advisory on dev."
     exit 0
   fi
-  echo "ERROR: could not resolve web index.html for lane '$TARGET_BRANCH' (remote/local)." >&2
+  echo "ERROR: could not resolve pinned web index.html for lane '$TARGET_BRANCH' (gitlink/local checkout)." >&2
   exit 1
 fi
 
@@ -171,11 +164,11 @@ else
 fi
 
 if [[ -z "$metadata_match_mode" ]]; then
-  echo "ERROR: metadata mismatch on lane '$TARGET_BRANCH'. web flutter_git_sha=$metadata_sha, pinned flutter-app SHA=$FLUTTER_SHA [mode=$source_mode]" >&2
+  echo "ERROR: metadata mismatch on lane '$TARGET_BRANCH'. web flutter_git_sha=$metadata_sha, pinned flutter-app SHA=$FLUTTER_SHA, pinned web-app SHA=$WEB_SHA [mode=$source_mode]" >&2
   exit 1
 fi
 
-echo "OK: web metadata flutter_git_sha ($metadata_sha) is compatible with pinned flutter-app SHA ($FLUTTER_SHA) via $metadata_match_mode [mode=$source_mode lane=$TARGET_BRANCH]"
+echo "OK: pinned web metadata flutter_git_sha ($metadata_sha) is compatible with pinned flutter-app SHA ($FLUTTER_SHA) via $metadata_match_mode [mode=$source_mode lane=$TARGET_BRANCH web_sha=$WEB_SHA]"
 
 expected_landlord_domain=""
 expected_landlord_host_ready=1
