@@ -102,6 +102,9 @@ jobs:
       - name: Verify environment invariants
         run: bash .github/scripts/verify_environment_ci.sh
 
+      - name: Enforce protected submodule gitlink guardrail on dev PRs
+        run: bash .github/scripts/check_submodule_gitlink_guardrail.sh
+
       - name: Validate submodule lane alignment
         id: submodule_lane_alignment
         env:
