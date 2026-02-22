@@ -15,9 +15,19 @@ on:
         required: true
         type: string
       lane:
-        description: "Target lane/base branch in docker repo (dev only for automatic sync)"
+        description: "Deprecated: use base_branch. Target base branch in docker repo (automatic sync uses dev)."
         required: false
         default: dev
+        type: string
+      base_branch:
+        description: "Target base branch in docker repo (automatic sync uses dev)."
+        required: false
+        default: dev
+        type: string
+      target_branch:
+        description: "Target branch to receive submodule pin updates."
+        required: false
+        default: bot/next-version
         type: string
       flutter_sha:
         description: "Optional: full flutter-app SHA that produced the web artifact"
@@ -37,7 +47,7 @@ permissions:
   pull-requests: write
 
 concurrency:
-  group: docker-submodule-sync-${{ github.event.client_payload.lane || github.event.client_payload.source_branch || inputs.lane || 'dev' }}
+  group: docker-submodule-sync-${{ github.event.client_payload.base_branch || github.event.client_payload.lane || github.event.client_payload.source_branch || inputs.base_branch || inputs.lane || 'dev' }}
   cancel-in-progress: false
 
 jobs:
@@ -52,12 +62,16 @@ jobs:
           DISPATCH_SUBMODULE: ${{ github.event.client_payload.submodule }}
           DISPATCH_SHA: ${{ github.event.client_payload.sha }}
           DISPATCH_LANE: ${{ github.event.client_payload.lane }}
+          DISPATCH_BASE_BRANCH: ${{ github.event.client_payload.base_branch }}
+          DISPATCH_TARGET_BRANCH: ${{ github.event.client_payload.target_branch }}
           DISPATCH_FLUTTER_SHA: ${{ github.event.client_payload.flutter_sha }}
           DISPATCH_SOURCE_REPO: ${{ github.event.client_payload.source_repo }}
           DISPATCH_SOURCE_BRANCH: ${{ github.event.client_payload.source_branch }}
           INPUT_SUBMODULE: ${{ inputs.submodule }}
           INPUT_SHA: ${{ inputs.sha }}
           INPUT_LANE: ${{ inputs.lane }}
+          INPUT_BASE_BRANCH: ${{ inputs.base_branch }}
+          INPUT_TARGET_BRANCH: ${{ inputs.target_branch }}
           INPUT_FLUTTER_SHA: ${{ inputs.flutter_sha }}
           INPUT_SOURCE_REPO: ${{ inputs.source_repo }}
           INPUT_SOURCE_BRANCH: ${{ inputs.source_branch }}
@@ -67,14 +81,16 @@ jobs:
           if [[ "${GITHUB_EVENT_NAME}" == "repository_dispatch" ]]; then
             submodule="${DISPATCH_SUBMODULE:-}"
             sha="${DISPATCH_SHA:-}"
-            lane="${DISPATCH_LANE:-${DISPATCH_SOURCE_BRANCH:-}}"
+            lane="${DISPATCH_BASE_BRANCH:-${DISPATCH_LANE:-${DISPATCH_SOURCE_BRANCH:-}}}"
+            target_branch="${DISPATCH_TARGET_BRANCH:-}"
             flutter_sha="${DISPATCH_FLUTTER_SHA:-}"
             source_repo="${DISPATCH_SOURCE_REPO:-}"
             source_branch="${DISPATCH_SOURCE_BRANCH:-}"
           else
             submodule="${INPUT_SUBMODULE:-}"
             sha="${INPUT_SHA:-}"
-            lane="${INPUT_LANE:-}"
+            lane="${INPUT_BASE_BRANCH:-${INPUT_LANE:-}}"
+            target_branch="${INPUT_TARGET_BRANCH:-}"
             flutter_sha="${INPUT_FLUTTER_SHA:-}"
             source_repo="${INPUT_SOURCE_REPO:-}"
             source_branch="${INPUT_SOURCE_BRANCH:-}"
@@ -87,6 +103,9 @@ jobs:
 
           if [[ -z "$lane" ]]; then
             lane="dev"
+          fi
+          if [[ -z "$target_branch" ]]; then
+            target_branch="bot/next-version"
           fi
 
           skip="false"
@@ -108,16 +127,22 @@ jobs:
               ;;
           esac
 
+          if [[ "$skip" != "true" && "$target_branch" != "bot/next-version" ]]; then
+            skip="true"
+            skip_reason="target branch must be 'bot/next-version' (received '$target_branch')"
+          fi
+
           if [[ "$skip" != "true" && "$lane" != "dev" ]]; then
             skip="true"
             skip_reason="automatic submodule sync is restricted to lane 'dev' (received lane='$lane')"
           fi
 
-          bot_branch="bot/submodule-sync-${lane}-${submodule}-${GITHUB_RUN_ID}"
+          bot_branch="$target_branch"
 
           echo "submodule=$submodule" >> "$GITHUB_OUTPUT"
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
           echo "lane=$lane" >> "$GITHUB_OUTPUT"
+          echo "target_branch=$target_branch" >> "$GITHUB_OUTPUT"
           echo "flutter_sha=$flutter_sha" >> "$GITHUB_OUTPUT"
           echo "bot_branch=$bot_branch" >> "$GITHUB_OUTPUT"
           echo "source_repo=$source_repo" >> "$GITHUB_OUTPUT"
@@ -153,7 +178,7 @@ jobs:
           git config --global --unset-all url.https://github.com/.insteadOf || true
           git config --global url."https://x-access-token:${SUBMODULES_REPO_TOKEN}@github.com/".insteadOf "https://github.com/"
 
-      - name: Create/update bot branch from lane base
+      - name: Create/update fixed candidate branch from lane base
         if: steps.inputs.outputs.skip != 'true'
         env:
           BASE_BRANCH: ${{ steps.inputs.outputs.lane }}
@@ -161,7 +186,12 @@ jobs:
         run: |
           set -euo pipefail
           git fetch origin "$BASE_BRANCH" --quiet
-          git checkout -B "$BOT_BRANCH" "origin/$BASE_BRANCH"
+          if git ls-remote --exit-code --heads origin "$BOT_BRANCH" >/dev/null 2>&1; then
+            git fetch origin "$BOT_BRANCH" --quiet
+            git checkout -B "$BOT_BRANCH" "origin/$BOT_BRANCH"
+          else
+            git checkout -B "$BOT_BRANCH" "origin/$BASE_BRANCH"
+          fi
 
       - name: Update submodule pin
         if: steps.inputs.outputs.skip != 'true'
@@ -222,44 +252,9 @@ jobs:
           BOT_BRANCH: ${{ steps.inputs.outputs.bot_branch }}
         run: |
           set -euo pipefail
-          # Bot branches are lane-scoped and intentionally rewritten on each sync.
-          # Force-with-lease avoids non-fast-forward failures while still protecting
-          # against unexpected remote updates.
+          # Keep a single fixed candidate branch and protect against unexpected
+          # remote updates while allowing iterative sync commits.
           git push --force-with-lease -u origin "$BOT_BRANCH"
-
-      - name: Close superseded sync PRs for same lane/submodule
-        if: steps.inputs.outputs.skip != 'true' && steps.commit.outputs.no_changes != 'true'
-        env:
-          GH_TOKEN: ${{ secrets.SUBMODULES_REPO_TOKEN || secrets.WEB_APP_REPO_TOKEN || github.token }}
-          BASE_BRANCH: ${{ steps.inputs.outputs.lane }}
-          BOT_BRANCH: ${{ steps.inputs.outputs.bot_branch }}
-          SUBMODULE: ${{ steps.inputs.outputs.submodule }}
-        run: |
-          set -euo pipefail
-
-          prefix="bot/submodule-sync-${BASE_BRANCH}-${SUBMODULE}-"
-          superseded="$(
-            gh pr list \
-              --repo "$GITHUB_REPOSITORY" \
-              --state open \
-              --base "$BASE_BRANCH" \
-              --json number,headRefName \
-              --jq ".[] | select((.headRefName | startswith(\"${prefix}\")) and (.headRefName != \"${BOT_BRANCH}\")) | .number"
-          )"
-
-          if [[ -z "${superseded}" ]]; then
-            echo "INFO: no superseded sync PRs for ${SUBMODULE} on lane ${BASE_BRANCH}."
-            exit 0
-          fi
-
-          while IFS= read -r pr_number; do
-            if [[ -z "${pr_number}" ]]; then
-              continue
-            fi
-            gh pr close "${pr_number}" \
-              --repo "$GITHUB_REPOSITORY" \
-              --comment "Superseded by ${BOT_BRANCH} for ${SUBMODULE} on lane ${BASE_BRANCH}."
-          done <<< "${superseded}"
 
       - name: Create or update PR into lane base
         if: steps.inputs.outputs.skip != 'true' && steps.commit.outputs.no_changes != 'true'
