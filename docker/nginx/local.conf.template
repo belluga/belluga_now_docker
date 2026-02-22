@@ -124,6 +124,15 @@ server {
     location ~ \.php$ {
 
         # --- CORS Handling START ---
+        # Temporary normalizer: upstream (Laravel HandleCors) may also emit CORS
+        # headers on /api/* responses. Hide upstream CORS headers so Nginx is the
+        # single source on this lane until the definitive VNext unification.
+        fastcgi_hide_header Access-Control-Allow-Origin;
+        fastcgi_hide_header Access-Control-Allow-Credentials;
+        fastcgi_hide_header Access-Control-Allow-Methods;
+        fastcgi_hide_header Access-Control-Allow-Headers;
+        fastcgi_hide_header Access-Control-Max-Age;
+
         # Handle CORS preflight requests
         if ($request_method = 'OPTIONS') {
             add_header 'Access-Control-Allow-Origin' "$http_origin" always;
