@@ -118,6 +118,29 @@ run_git reset --hard "origin/\$DEPLOY_BRANCH"
 run_git submodule sync --recursive
 run_git submodule update --init --recursive
 
+sync_web_runtime_lane() {
+  local lane_ref runtime_web_sha
+
+  lane_ref="origin/\${DEPLOY_LANE}"
+  if [[ ! -d "web-app" ]]; then
+    echo "ERROR: missing web-app directory after submodule checkout." >&2
+    return 1
+  fi
+
+  # Web is a lane-derived runtime artifact. Always deploy from lane branch
+  # instead of relying on promotable web gitlink contracts.
+  run_git -C web-app fetch --prune origin "\${DEPLOY_LANE}"
+  run_git -C web-app checkout --detach "\${lane_ref}"
+
+  runtime_web_sha="\$(git -C web-app rev-parse HEAD | tr -d '[:space:]')"
+  echo "INFO: runtime web-app lane '\${DEPLOY_LANE}' resolved to \${runtime_web_sha}"
+}
+
+if ! sync_web_runtime_lane; then
+  echo "ERROR: failed to resolve runtime web-app lane content." >&2
+  exit 1
+fi
+
 if [[ ! -f ".env" ]]; then
   if [[ -f ".env.example" ]]; then
     cp .env.example .env
