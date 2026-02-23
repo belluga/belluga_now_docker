@@ -120,6 +120,28 @@ run_git reset --hard "\$target_revision"
 run_git submodule sync --recursive
 run_git submodule update --init --recursive
 
+sync_web_runtime_lane() {
+  local lane_ref runtime_web_sha
+
+  lane_ref="origin/\${DEPLOY_LANE}"
+  if [[ ! -d "web-app" ]]; then
+    echo "ERROR: missing web-app directory after submodule checkout." >&2
+    return 1
+  fi
+
+  # Keep rollback aligned with lane runtime web source policy.
+  run_git -C web-app fetch --prune origin "\${DEPLOY_LANE}"
+  run_git -C web-app checkout --detach "\${lane_ref}"
+
+  runtime_web_sha="\$(git -C web-app rev-parse HEAD | tr -d '[:space:]')"
+  echo "INFO: rollback runtime web-app lane '\${DEPLOY_LANE}' resolved to \${runtime_web_sha}"
+}
+
+if ! sync_web_runtime_lane; then
+  echo "ERROR: failed to resolve runtime web-app lane content during rollback." >&2
+  exit 1
+fi
+
 if [[ -f ".env" ]]; then
   if grep -q '^NGINX_HOST_PORT_80=' .env; then
     sed -i "s#^NGINX_HOST_PORT_80=.*#NGINX_HOST_PORT_80=\$DEPLOY_NGINX_HOST_PORT_80#" .env
