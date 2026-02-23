@@ -157,7 +157,7 @@ read_env_value() {
   local key="\$1"
   local raw
 
-  raw="\$(grep -E "^\\\${key}=" .env | tail -n 1 || true)"
+  raw="\$(grep -E "^\${key}=" .env | tail -n 1 || true)"
   raw="\${raw#\${key}=}"
   raw="\$(printf '%s' "\${raw}" | tr -d '\r' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
   raw="\${raw%\"}"
@@ -225,7 +225,7 @@ read_laravel_env_value() {
   local env_file="laravel-app/.env"
   local raw
 
-  raw="\$(grep -E "^\\\${key}=" "\${env_file}" | tail -n 1 || true)"
+  raw="\$(grep -E "^\${key}=" "\${env_file}" | tail -n 1 || true)"
   raw="\${raw#\${key}=}"
   raw="\$(printf '%s' "\${raw}" | tr -d '\r' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
   raw="\${raw%\"}"
