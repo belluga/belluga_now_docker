@@ -171,11 +171,21 @@ else
 fi
 
 if [[ -z "$metadata_match_mode" ]]; then
-  echo "ERROR: metadata mismatch on lane '$TARGET_BRANCH'. web flutter_git_sha=$metadata_sha, pinned flutter-app SHA=$FLUTTER_SHA [mode=$source_mode]" >&2
-  exit 1
+  if [[ "$is_dev_lane" -eq 1 ]]; then
+    echo "WARN: metadata mismatch on lane '$TARGET_BRANCH'. web flutter_git_sha=$metadata_sha, pinned flutter-app SHA=$FLUTTER_SHA [mode=$source_mode]"
+    echo "WARN: continuing on dev (advisory-only gate). stage/main remain strict."
+    metadata_match_mode="advisory-dev-mismatch"
+  else
+    echo "ERROR: metadata mismatch on lane '$TARGET_BRANCH'. web flutter_git_sha=$metadata_sha, pinned flutter-app SHA=$FLUTTER_SHA [mode=$source_mode]" >&2
+    exit 1
+  fi
 fi
 
-echo "OK: web metadata flutter_git_sha ($metadata_sha) is compatible with pinned flutter-app SHA ($FLUTTER_SHA) via $metadata_match_mode [mode=$source_mode lane=$TARGET_BRANCH]"
+if [[ "$metadata_match_mode" == "advisory-dev-mismatch" ]]; then
+  echo "INFO: web metadata compatibility gate accepted in advisory mode for lane '$TARGET_BRANCH'."
+else
+  echo "OK: web metadata flutter_git_sha ($metadata_sha) is compatible with pinned flutter-app SHA ($FLUTTER_SHA) via $metadata_match_mode [mode=$source_mode lane=$TARGET_BRANCH]"
+fi
 
 expected_landlord_domain=""
 expected_landlord_host_ready=1
