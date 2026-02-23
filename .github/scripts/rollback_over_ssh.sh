@@ -209,51 +209,51 @@ ensure_laravel_app_env() {
 }
 
 upsert_laravel_env() {
-  local key="$1"
-  local value="$2"
+  local key="\$1"
+  local value="\$2"
   local env_file="laravel-app/.env"
 
-  if grep -q "^\${key}=" "${env_file}"; then
-    sed -i "s#^\${key}=.*#\${key}=\${value}#" "${env_file}"
+  if grep -q "^\${key}=" "\${env_file}"; then
+    sed -i "s#^\${key}=.*#\${key}=\${value}#" "\${env_file}"
   else
-    echo "\${key}=\${value}" >> "${env_file}"
+    echo "\${key}=\${value}" >> "\${env_file}"
   fi
 }
 
 read_laravel_env_value() {
-  local key="$1"
+  local key="\$1"
   local env_file="laravel-app/.env"
   local raw
 
-  raw="$(grep -E "^\\\${key}=" "${env_file}" | tail -n 1 || true)"
-  raw="${raw#${key}=}"
-  raw="$(printf '%s' "${raw}" | tr -d '\r' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
-  raw="${raw%\"}"
-  raw="${raw#\"}"
-  raw="${raw%\'}"
-  raw="${raw#\'}"
-  printf '%s' "${raw}"
+  raw="\$(grep -E "^\\\${key}=" "\${env_file}" | tail -n 1 || true)"
+  raw="\${raw#\${key}=}"
+  raw="\$(printf '%s' "\${raw}" | tr -d '\r' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+  raw="\${raw%\"}"
+  raw="\${raw#\"}"
+  raw="\${raw%\'}"
+  raw="\${raw#\'}"
+  printf '%s' "\${raw}"
 }
 
 normalize_laravel_queue_env_for_mongo() {
   local db_connection queue_connection db_queue_connection
 
-  db_connection="$(read_laravel_env_value DB_CONNECTION)"
-  db_connection="$(printf '%s' "${db_connection}" | tr '[:upper:]' '[:lower:]')"
-  queue_connection="$(read_laravel_env_value QUEUE_CONNECTION)"
-  queue_connection="$(printf '%s' "${queue_connection}" | tr '[:upper:]' '[:lower:]')"
-  db_queue_connection="$(read_laravel_env_value DB_QUEUE_CONNECTION)"
-  db_queue_connection="$(printf '%s' "${db_queue_connection}" | tr '[:upper:]' '[:lower:]')"
+  db_connection="\$(read_laravel_env_value DB_CONNECTION)"
+  db_connection="\$(printf '%s' "\${db_connection}" | tr '[:upper:]' '[:lower:]')"
+  queue_connection="\$(read_laravel_env_value QUEUE_CONNECTION)"
+  queue_connection="\$(printf '%s' "\${queue_connection}" | tr '[:upper:]' '[:lower:]')"
+  db_queue_connection="\$(read_laravel_env_value DB_QUEUE_CONNECTION)"
+  db_queue_connection="\$(printf '%s' "\${db_queue_connection}" | tr '[:upper:]' '[:lower:]')"
 
-  case "${db_connection}" in
+  case "\${db_connection}" in
     mongodb*|landlord|tenant)
-      if [[ -z "${queue_connection}" ]]; then
+      if [[ -z "\${queue_connection}" ]]; then
         upsert_laravel_env QUEUE_CONNECTION mongodb
-        echo "INFO: rollback normalized laravel-app/.env to QUEUE_CONNECTION=mongodb (DB_CONNECTION=${db_connection})."
+        echo "INFO: rollback normalized laravel-app/.env to QUEUE_CONNECTION=mongodb (DB_CONNECTION=\${db_connection})."
         return 0
       fi
 
-      if [[ "${queue_connection}" == "database" ]] && [[ -z "${db_queue_connection}" || "${db_queue_connection}" == "mongodb" || "${db_queue_connection}" == "landlord" || "${db_queue_connection}" == "tenant" ]]; then
+      if [[ "\${queue_connection}" == "database" ]] && [[ -z "\${db_queue_connection}" || "\${db_queue_connection}" == "mongodb" || "\${db_queue_connection}" == "landlord" || "\${db_queue_connection}" == "tenant" ]]; then
         upsert_laravel_env QUEUE_CONNECTION mongodb
         echo "WARN: rollback normalized laravel-app/.env QUEUE_CONNECTION=database to mongodb because DB_QUEUE_CONNECTION was unsafe for Mongo primary connection."
       fi
