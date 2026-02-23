@@ -369,7 +369,6 @@ jobs:
 
       - name: Validate deployed stage web provenance
         id: stage_provenance_check
-        if: steps.stage_initialize_preflight.outputs.initialized == 'true'
         continue-on-error: true
         env:
           DEPLOY_LANE: stage
@@ -389,7 +388,7 @@ jobs:
         working-directory: web-app
 
       - name: Collect stage deploy diagnostics before rollback
-        if: steps.stage_initialize_preflight.outputs.initialized == 'true' && (steps.stage_provenance_check.outcome == 'failure' || steps.stage_navigation_smoke.outcome == 'failure')
+        if: steps.stage_provenance_check.outcome == 'failure' || (steps.stage_initialize_preflight.outputs.initialized == 'true' && steps.stage_navigation_smoke.outcome == 'failure')
         continue-on-error: true
         env:
           DEPLOY_LANE: stage
@@ -416,7 +415,7 @@ jobs:
           retention-days: 7
 
       - name: Mark stage revision as successful after navigation smoke
-        if: steps.stage_initialize_preflight.outputs.initialized != 'true' || (steps.stage_provenance_check.outcome != 'failure' && steps.stage_navigation_smoke.outcome == 'success')
+        if: steps.stage_provenance_check.outcome != 'failure' && (steps.stage_initialize_preflight.outputs.initialized != 'true' || steps.stage_navigation_smoke.outcome == 'success')
         env:
           DEPLOY_SSH_HOST: ${{ vars.STAGE_SSH_HOST }}
           DEPLOY_SSH_PORT: ${{ vars.STAGE_SSH_PORT }}
@@ -425,8 +424,8 @@ jobs:
           DEPLOY_SSH_KEY_PATH: ~/.ssh/id_ed25519_stage
         run: bash .github/scripts/mark_successful_revision_over_ssh.sh
 
-      - name: Roll back stage deploy when navigation smoke fails
-        if: steps.stage_initialize_preflight.outputs.initialized == 'true' && (steps.stage_provenance_check.outcome == 'failure' || steps.stage_navigation_smoke.outcome == 'failure')
+      - name: Roll back stage deploy when provenance or smoke fails
+        if: steps.stage_provenance_check.outcome == 'failure' || (steps.stage_initialize_preflight.outputs.initialized == 'true' && steps.stage_navigation_smoke.outcome == 'failure')
         env:
           DEPLOY_LANE: stage
           DEPLOY_SSH_HOST: ${{ vars.STAGE_SSH_HOST }}
@@ -444,7 +443,7 @@ jobs:
         run: bash .github/scripts/rollback_over_ssh.sh
 
       - name: Fail stage deploy after rollback
-        if: steps.stage_initialize_preflight.outputs.initialized == 'true' && (steps.stage_provenance_check.outcome == 'failure' || steps.stage_navigation_smoke.outcome == 'failure')
+        if: steps.stage_provenance_check.outcome == 'failure' || (steps.stage_initialize_preflight.outputs.initialized == 'true' && steps.stage_navigation_smoke.outcome == 'failure')
         run: |
           if [[ "${{ steps.stage_provenance_check.outcome }}" == "failure" ]]; then
             echo "ERROR: stage deployed build provenance validation failed; rollback executed." >&2
@@ -688,7 +687,6 @@ jobs:
 
       - name: Validate deployed production web provenance
         id: main_provenance_check
-        if: steps.main_initialize_preflight.outputs.initialized == 'true'
         continue-on-error: true
         env:
           DEPLOY_LANE: main
@@ -708,7 +706,7 @@ jobs:
         working-directory: web-app
 
       - name: Collect production deploy diagnostics before rollback
-        if: steps.main_initialize_preflight.outputs.initialized == 'true' && (steps.main_provenance_check.outcome == 'failure' || steps.production_navigation_smoke.outcome == 'failure')
+        if: steps.main_provenance_check.outcome == 'failure' || (steps.main_initialize_preflight.outputs.initialized == 'true' && steps.production_navigation_smoke.outcome == 'failure')
         continue-on-error: true
         env:
           DEPLOY_LANE: main
@@ -735,7 +733,7 @@ jobs:
           retention-days: 7
 
       - name: Mark production revision as successful after navigation smoke
-        if: steps.main_initialize_preflight.outputs.initialized != 'true' || (steps.main_provenance_check.outcome != 'failure' && steps.production_navigation_smoke.outcome == 'success')
+        if: steps.main_provenance_check.outcome != 'failure' && (steps.main_initialize_preflight.outputs.initialized != 'true' || steps.production_navigation_smoke.outcome == 'success')
         env:
           DEPLOY_SSH_HOST: ${{ vars.MAIN_SSH_HOST }}
           DEPLOY_SSH_PORT: ${{ vars.MAIN_SSH_PORT }}
@@ -744,8 +742,8 @@ jobs:
           DEPLOY_SSH_KEY_PATH: ~/.ssh/id_ed25519_main
         run: bash .github/scripts/mark_successful_revision_over_ssh.sh
 
-      - name: Roll back production deploy when navigation smoke fails
-        if: steps.main_initialize_preflight.outputs.initialized == 'true' && (steps.main_provenance_check.outcome == 'failure' || steps.production_navigation_smoke.outcome == 'failure')
+      - name: Roll back production deploy when provenance or smoke fails
+        if: steps.main_provenance_check.outcome == 'failure' || (steps.main_initialize_preflight.outputs.initialized == 'true' && steps.production_navigation_smoke.outcome == 'failure')
         env:
           DEPLOY_LANE: main
           DEPLOY_SSH_HOST: ${{ vars.MAIN_SSH_HOST }}
@@ -763,7 +761,7 @@ jobs:
         run: bash .github/scripts/rollback_over_ssh.sh
 
       - name: Fail production deploy after rollback
-        if: steps.main_initialize_preflight.outputs.initialized == 'true' && (steps.main_provenance_check.outcome == 'failure' || steps.production_navigation_smoke.outcome == 'failure')
+        if: steps.main_provenance_check.outcome == 'failure' || (steps.main_initialize_preflight.outputs.initialized == 'true' && steps.production_navigation_smoke.outcome == 'failure')
         run: |
           if [[ "${{ steps.main_provenance_check.outcome }}" == "failure" ]]; then
             echo "ERROR: production deployed build provenance validation failed; rollback executed." >&2
