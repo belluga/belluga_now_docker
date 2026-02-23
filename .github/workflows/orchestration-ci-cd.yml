@@ -282,7 +282,18 @@ jobs:
           fi
 
           echo "INFO: checking stage initialization status at ${initialize_url}"
-          status="$(curl -sS -m 15 "${curl_args[@]}" -o /tmp/stage_initialize_response.json -w '%{http_code}' "${initialize_url}")"
+          status=""
+          for attempt in $(seq 1 12); do
+            status="$(curl -sS -m 15 "${curl_args[@]}" -o /tmp/stage_initialize_response.json -w '%{http_code}' "${initialize_url}")"
+            if [[ "${status}" == "200" || "${status}" == "403" ]]; then
+              break
+            fi
+
+            if [[ "${attempt}" -lt 12 ]]; then
+              echo "WARN: stage initialize probe returned HTTP ${status} on attempt ${attempt}/12; retrying in 5s..."
+              sleep 5
+            fi
+          done
 
           case "${status}" in
             200)
@@ -600,7 +611,18 @@ jobs:
           fi
 
           echo "INFO: checking production initialization status at ${initialize_url}"
-          status="$(curl -sS -m 15 "${curl_args[@]}" -o /tmp/main_initialize_response.json -w '%{http_code}' "${initialize_url}")"
+          status=""
+          for attempt in $(seq 1 12); do
+            status="$(curl -sS -m 15 "${curl_args[@]}" -o /tmp/main_initialize_response.json -w '%{http_code}' "${initialize_url}")"
+            if [[ "${status}" == "200" || "${status}" == "403" ]]; then
+              break
+            fi
+
+            if [[ "${attempt}" -lt 12 ]]; then
+              echo "WARN: production initialize probe returned HTTP ${status} on attempt ${attempt}/12; retrying in 5s..."
+              sleep 5
+            fi
+          done
 
           case "${status}" in
             200)

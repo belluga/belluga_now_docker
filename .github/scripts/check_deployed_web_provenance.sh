@@ -105,6 +105,21 @@ if [[ -z "${actual_flutter_sha}" ]]; then
   exit 1
 fi
 
+if [[ -z "${source_branch}" ]]; then
+  echo "ERROR: deployed build metadata is missing 'source_branch' (${metadata_url})." >&2
+  cat "${metadata_file}" >&2 || true
+  exit 1
+fi
+
+if [[ "${source_branch}" != "${lane}" ]]; then
+  echo "ERROR: deployed build metadata source branch mismatch for lane '${lane}'." >&2
+  echo "Expected build_metadata.source_branch: ${lane}" >&2
+  echo "Actual deployed build_metadata.source_branch: ${source_branch}" >&2
+  echo "Metadata URL: ${metadata_url}" >&2
+  cat "${metadata_file}" >&2 || true
+  exit 1
+fi
+
 if ! sha_matches "${expected_flutter_sha}" "${actual_flutter_sha}"; then
   echo "ERROR: deployed flutter sha mismatch for lane '${lane}'." >&2
   echo "Expected flutter-app gitlink: ${expected_flutter_sha}" >&2
@@ -120,12 +135,75 @@ if ! sha_matches "${expected_flutter_sha}" "${actual_flutter_sha}"; then
   exit 1
 fi
 
+lane_defines_file="${repo_root}/flutter-app/config/defines/${lane}.json"
+if [[ ! -f "${lane_defines_file}" ]]; then
+  echo "ERROR: lane defines file not found for '${lane}': ${lane_defines_file}" >&2
+  exit 1
+fi
+
+expected_landlord_host="$(
+  python3 - <<'PY' "${lane_defines_file}"
+import json
+import sys
+from urllib.parse import urlparse
+
+with open(sys.argv[1], "r", encoding="utf-8") as fp:
+    payload = json.load(fp)
+
+domain = str(payload.get("LANDLORD_DOMAIN") or "").strip()
+host = (urlparse(domain).hostname or "").strip().lower()
+print(host)
+PY
+)"
+expected_landlord_host="$(echo "${expected_landlord_host}" | tr -d '[:space:]')"
+if [[ -z "${expected_landlord_host}" ]]; then
+  echo "ERROR: could not resolve expected landlord host from ${lane_defines_file}." >&2
+  exit 1
+fi
+
+index_file="/tmp/${lane}_deployed_index.html"
+index_url="${landlord}/index.html?_ci_probe=${cache_key}"
+index_status="$(curl "${curl_args[@]}" -o "${index_file}" -w '%{http_code}' "${index_url}")"
+if [[ ! "${index_status}" =~ ^[0-9]+$ ]]; then
+  echo "ERROR: invalid HTTP status while reading deployed index: '${index_status}'." >&2
+  exit 1
+fi
+if (( index_status >= 400 )); then
+  echo "ERROR: could not fetch deployed index (${index_url}); HTTP ${index_status}." >&2
+  cat "${index_file}" >&2 || true
+  exit 1
+fi
+
+actual_landlord_host="$(
+  python3 - <<'PY' "${index_file}"
+import re
+import sys
+
+html = open(sys.argv[1], "r", encoding="utf-8").read()
+match = re.search(r"window\.__LANDLORD_HOST__\s*=\s*['\"]([^'\"]+)['\"]", html)
+print((match.group(1) if match else "").strip().lower())
+PY
+)"
+actual_landlord_host="$(echo "${actual_landlord_host}" | tr -d '[:space:]')"
+if [[ -z "${actual_landlord_host}" ]]; then
+  echo "ERROR: deployed web index is missing window.__LANDLORD_HOST__ injection (${index_url})." >&2
+  exit 1
+fi
+
+if [[ "${actual_landlord_host}" != "${expected_landlord_host}" ]]; then
+  echo "ERROR: deployed landlord host mismatch for lane '${lane}'." >&2
+  echo "Expected lane host (${lane_defines_file}): ${expected_landlord_host}" >&2
+  echo "Actual deployed window.__LANDLORD_HOST__: ${actual_landlord_host}" >&2
+  echo "Index URL: ${index_url}" >&2
+  exit 1
+fi
+
 echo "OK: deployed flutter sha matches expected lane gitlink for '${lane}'."
 echo "Expected flutter-app gitlink: ${expected_flutter_sha}"
 echo "Deployed build_metadata.flutter_git_sha: ${actual_flutter_sha}"
-if [[ -n "${source_branch}" ]]; then
-  echo "Deployed build_metadata.source_branch: ${source_branch}"
-fi
+echo "Deployed build_metadata.source_branch: ${source_branch}"
+echo "Expected lane landlord host: ${expected_landlord_host}"
+echo "Deployed window.__LANDLORD_HOST__: ${actual_landlord_host}"
 if [[ -n "${expected_web_sha}" ]]; then
   echo "Expected web-app gitlink (diagnostic): ${expected_web_sha}"
 fi
