@@ -40,7 +40,7 @@ fi
 
 metadata_file="/tmp/${lane}_deployed_build_metadata.json"
 cache_key="${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-1}-$(date +%s)"
-metadata_url="${landlord}/build_metadata.json?_ci_probe=${cache_key}"
+probe_base_url="${landlord}"
 
 curl_args=(
   -sS
@@ -51,12 +51,14 @@ curl_args=(
 )
 
 if [[ -n "${NAV_ORIGIN_IP:-}" ]]; then
-  curl_args+=(--resolve "${landlord_host}:443:${NAV_ORIGIN_IP}" --insecure)
-  echo "INFO: validating deployed web provenance via origin ${NAV_ORIGIN_IP} (host ${landlord_host})."
+  probe_base_url="http://${NAV_ORIGIN_IP}"
+  curl_args+=(-H "Host: ${landlord_host}")
+  echo "INFO: validating deployed web provenance via origin ${NAV_ORIGIN_IP} over HTTP host-header probe (host ${landlord_host})."
 else
   echo "INFO: validating deployed web provenance via public DNS (host ${landlord_host})."
 fi
 
+metadata_url="${probe_base_url}/build_metadata.json?_ci_probe=${cache_key}"
 status="$(curl "${curl_args[@]}" -o "${metadata_file}" -w '%{http_code}' "${metadata_url}")"
 if [[ ! "${status}" =~ ^[0-9]+$ ]]; then
   echo "ERROR: invalid HTTP status while reading deployed build metadata: '${status}'." >&2
@@ -183,7 +185,7 @@ if [[ -z "${expected_landlord_host}" ]]; then
 fi
 
 index_file="/tmp/${lane}_deployed_index.html"
-index_url="${landlord}/index.html?_ci_probe=${cache_key}"
+index_url="${probe_base_url}/index.html?_ci_probe=${cache_key}"
 index_status="$(curl "${curl_args[@]}" -o "${index_file}" -w '%{http_code}' "${index_url}")"
 if [[ ! "${index_status}" =~ ^[0-9]+$ ]]; then
   echo "ERROR: invalid HTTP status while reading deployed index: '${index_status}'." >&2
