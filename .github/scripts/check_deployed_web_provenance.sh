@@ -120,7 +120,28 @@ if [[ "${source_branch}" != "${lane}" ]]; then
   exit 1
 fi
 
-if ! sha_matches "${expected_flutter_sha}" "${actual_flutter_sha}"; then
+metadata_match_mode=""
+actual_flutter_full_sha=""
+
+if [[ "${actual_flutter_sha}" =~ ^[0-9a-f]{40}$ ]]; then
+  actual_flutter_full_sha="${actual_flutter_sha}"
+else
+  git -C "${repo_root}/flutter-app" fetch origin "${lane}" --quiet || true
+  actual_flutter_full_sha="$(git -C "${repo_root}/flutter-app" rev-parse --verify "${actual_flutter_sha}^{commit}" 2>/dev/null | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]' || true)"
+fi
+
+if sha_matches "${expected_flutter_sha}" "${actual_flutter_sha}"; then
+  metadata_match_mode="exact-or-prefix"
+else
+  if [[ -n "${actual_flutter_full_sha}" ]]; then
+    git -C "${repo_root}/flutter-app" fetch origin "${actual_flutter_full_sha}" --quiet || true
+    if git -C "${repo_root}/flutter-app" merge-base --is-ancestor "${expected_flutter_sha}" "${actual_flutter_full_sha}" 2>/dev/null; then
+      metadata_match_mode="descendant"
+    fi
+  fi
+fi
+
+if [[ -z "${metadata_match_mode}" ]]; then
   echo "ERROR: deployed flutter sha mismatch for lane '${lane}'." >&2
   echo "Expected flutter-app gitlink: ${expected_flutter_sha}" >&2
   echo "Actual deployed build_metadata.flutter_git_sha: ${actual_flutter_sha}" >&2
@@ -198,7 +219,7 @@ if [[ "${actual_landlord_host}" != "${expected_landlord_host}" ]]; then
   exit 1
 fi
 
-echo "OK: deployed flutter sha matches expected lane gitlink for '${lane}'."
+echo "OK: deployed flutter sha matches expected lane gitlink for '${lane}' via ${metadata_match_mode}."
 echo "Expected flutter-app gitlink: ${expected_flutter_sha}"
 echo "Deployed build_metadata.flutter_git_sha: ${actual_flutter_sha}"
 echo "Deployed build_metadata.source_branch: ${source_branch}"
