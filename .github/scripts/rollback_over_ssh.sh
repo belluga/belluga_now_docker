@@ -142,18 +142,61 @@ if ! sync_web_runtime_lane; then
   exit 1
 fi
 
-if [[ -f ".env" ]]; then
-  if grep -q '^NGINX_HOST_PORT_80=' .env; then
-    sed -i "s#^NGINX_HOST_PORT_80=.*#NGINX_HOST_PORT_80=\$DEPLOY_NGINX_HOST_PORT_80#" .env
-  else
-    echo "NGINX_HOST_PORT_80=\$DEPLOY_NGINX_HOST_PORT_80" >> .env
-  fi
+upsert_env() {
+  local key="\$1"
+  local value="\$2"
 
-  if grep -q '^NGINX_HOST_PORT_443=' .env; then
-    sed -i "s#^NGINX_HOST_PORT_443=.*#NGINX_HOST_PORT_443=\$DEPLOY_NGINX_HOST_PORT_443#" .env
+  if grep -q "^\${key}=" .env; then
+    sed -i "s#^\${key}=.*#\${key}=\${value}#" .env
   else
-    echo "NGINX_HOST_PORT_443=\$DEPLOY_NGINX_HOST_PORT_443" >> .env
+    echo "\${key}=\${value}" >> .env
   fi
+}
+
+read_env_value() {
+  local key="\$1"
+  local raw
+
+  raw="\$(grep -E "^\\\${key}=" .env | tail -n 1 || true)"
+  raw="\${raw#\${key}=}"
+  raw="\$(printf '%s' "\${raw}" | tr -d '\r' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+  raw="\${raw%\"}"
+  raw="\${raw#\"}"
+  raw="\${raw%\'}"
+  raw="\${raw#\'}"
+  printf '%s' "\${raw}"
+}
+
+normalize_queue_env_for_mongo() {
+  local db_connection queue_connection db_queue_connection
+
+  db_connection="\$(read_env_value DB_CONNECTION)"
+  db_connection="\$(printf '%s' "\${db_connection}" | tr '[:upper:]' '[:lower:]')"
+  queue_connection="\$(read_env_value QUEUE_CONNECTION)"
+  queue_connection="\$(printf '%s' "\${queue_connection}" | tr '[:upper:]' '[:lower:]')"
+  db_queue_connection="\$(read_env_value DB_QUEUE_CONNECTION)"
+  db_queue_connection="\$(printf '%s' "\${db_queue_connection}" | tr '[:upper:]' '[:lower:]')"
+
+  case "\${db_connection}" in
+    mongodb*|landlord|tenant)
+      if [[ -z "\${queue_connection}" ]]; then
+        upsert_env QUEUE_CONNECTION mongodb
+        echo "INFO: rollback normalized QUEUE_CONNECTION=mongodb (DB_CONNECTION=\${db_connection})."
+        return 0
+      fi
+
+      if [[ "\${queue_connection}" == "database" ]] && [[ -z "\${db_queue_connection}" || "\${db_queue_connection}" == "mongodb" || "\${db_queue_connection}" == "landlord" || "\${db_queue_connection}" == "tenant" ]]; then
+        upsert_env QUEUE_CONNECTION mongodb
+        echo "WARN: rollback normalized QUEUE_CONNECTION=database to mongodb because DB_QUEUE_CONNECTION was unsafe for Mongo primary connection."
+      fi
+      ;;
+  esac
+}
+
+if [[ -f ".env" ]]; then
+  upsert_env NGINX_HOST_PORT_80 "\$DEPLOY_NGINX_HOST_PORT_80"
+  upsert_env NGINX_HOST_PORT_443 "\$DEPLOY_NGINX_HOST_PORT_443"
+  normalize_queue_env_for_mongo
 fi
 
 resolve_health_host() {
