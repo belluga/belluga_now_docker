@@ -267,7 +267,7 @@ jobs:
           set -euo pipefail
 
           landlord="${NAV_LANDLORD_URL%/}"
-          initialize_url="${landlord}/api/v1/initialize"
+          initialize_probe_url="${landlord}/api/v1/initialize"
           landlord_host="$(python3 -c 'import sys, urllib.parse; print((urllib.parse.urlparse(sys.argv[1]).hostname or "").strip())' "$landlord")"
           if [[ -z "$landlord_host" ]]; then
             echo "ERROR: could not parse stage landlord host from NAV_LANDLORD_URL." >&2
@@ -276,15 +276,17 @@ jobs:
 
           curl_args=()
           if [[ -n "${NAV_ORIGIN_IP:-}" ]]; then
-            curl_args+=(--resolve "${landlord_host}:443:${NAV_ORIGIN_IP}")
-            curl_args+=(--insecure)
-            echo "INFO: stage initialization preflight routed directly to origin ${NAV_ORIGIN_IP}."
+            initialize_probe_url="http://${NAV_ORIGIN_IP}/api/v1/initialize"
+            curl_args+=(-H "Host: ${landlord_host}")
+            echo "INFO: stage initialization preflight routed directly to origin ${NAV_ORIGIN_IP} over HTTP host-header probe."
+          else
+            echo "INFO: stage initialization preflight using public DNS."
           fi
 
-          echo "INFO: checking stage initialization status at ${initialize_url}"
+          echo "INFO: checking stage initialization status at ${initialize_probe_url}"
           status=""
           for attempt in $(seq 1 12); do
-            status="$(curl -sS -m 15 "${curl_args[@]}" -o /tmp/stage_initialize_response.json -w '%{http_code}' "${initialize_url}")"
+            status="$(curl -sS -m 15 "${curl_args[@]}" -o /tmp/stage_initialize_response.json -w '%{http_code}' "${initialize_probe_url}")"
             if [[ "${status}" == "200" || "${status}" == "403" ]]; then
               break
             fi
@@ -596,7 +598,7 @@ jobs:
           set -euo pipefail
 
           landlord="${NAV_LANDLORD_URL%/}"
-          initialize_url="${landlord}/api/v1/initialize"
+          initialize_probe_url="${landlord}/api/v1/initialize"
           landlord_host="$(python3 -c 'import sys, urllib.parse; print((urllib.parse.urlparse(sys.argv[1]).hostname or "").strip())' "$landlord")"
           if [[ -z "$landlord_host" ]]; then
             echo "ERROR: could not parse production landlord host from NAV_LANDLORD_URL." >&2
@@ -605,15 +607,17 @@ jobs:
 
           curl_args=()
           if [[ -n "${NAV_ORIGIN_IP:-}" ]]; then
-            curl_args+=(--resolve "${landlord_host}:443:${NAV_ORIGIN_IP}")
-            curl_args+=(--insecure)
-            echo "INFO: production initialization preflight routed directly to origin ${NAV_ORIGIN_IP}."
+            initialize_probe_url="http://${NAV_ORIGIN_IP}/api/v1/initialize"
+            curl_args+=(-H "Host: ${landlord_host}")
+            echo "INFO: production initialization preflight routed directly to origin ${NAV_ORIGIN_IP} over HTTP host-header probe."
+          else
+            echo "INFO: production initialization preflight using public DNS."
           fi
 
-          echo "INFO: checking production initialization status at ${initialize_url}"
+          echo "INFO: checking production initialization status at ${initialize_probe_url}"
           status=""
           for attempt in $(seq 1 12); do
-            status="$(curl -sS -m 15 "${curl_args[@]}" -o /tmp/main_initialize_response.json -w '%{http_code}' "${initialize_url}")"
+            status="$(curl -sS -m 15 "${curl_args[@]}" -o /tmp/main_initialize_response.json -w '%{http_code}' "${initialize_probe_url}")"
             if [[ "${status}" == "200" || "${status}" == "403" ]]; then
               break
             fi
