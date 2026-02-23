@@ -33,20 +33,23 @@ sleep_seconds="${NAV_WARMUP_SLEEP_SECONDS:-5}"
 
 curl_args=(-sS -m 15)
 if [[ -n "${NAV_ORIGIN_IP:-}" ]]; then
-  curl_args+=(--resolve "${landlord_host}:443:${NAV_ORIGIN_IP}")
-  curl_args+=(--resolve "${tenant_host}:443:${NAV_ORIGIN_IP}")
-  curl_args+=(--insecure)
-  echo "INFO: ${lane} warmup routed directly to origin ${NAV_ORIGIN_IP}."
+  echo "INFO: ${lane} warmup routed directly to origin ${NAV_ORIGIN_IP} over HTTP host-header probes."
 fi
 
 check_environment() {
   local target_url="$1"
   local target_name="$2"
+  local target_host="${3:-}"
   local body_file="/tmp/${lane}_warmup_${target_name}.json"
 
   for attempt in $(seq 1 "$max_attempts"); do
+    request_args=("${curl_args[@]}")
+    if [[ -n "${target_host}" ]]; then
+      request_args+=(-H "Host: ${target_host}")
+    fi
+
     status="$(
-      curl "${curl_args[@]}" -o "$body_file" -w '%{http_code}' "${target_url}" || true
+      curl "${request_args[@]}" -o "$body_file" -w '%{http_code}' "${target_url}" || true
     )"
     if [[ "$status" == "200" ]]; then
       echo "INFO: ${lane} warmup ${target_name} succeeded (attempt ${attempt}/${max_attempts})."
@@ -64,10 +67,19 @@ check_environment() {
   return 1
 }
 
-landlord_environment_url="${NAV_LANDLORD_URL%/}/api/v1/environment"
-tenant_environment_url="${NAV_TENANT_URL%/}/api/v1/environment"
+landlord_environment_host=""
+tenant_environment_host=""
+if [[ -n "${NAV_ORIGIN_IP:-}" ]]; then
+  landlord_environment_url="http://${NAV_ORIGIN_IP}/api/v1/environment"
+  tenant_environment_url="http://${NAV_ORIGIN_IP}/api/v1/environment"
+  landlord_environment_host="${landlord_host}"
+  tenant_environment_host="${tenant_host}"
+else
+  landlord_environment_url="${NAV_LANDLORD_URL%/}/api/v1/environment"
+  tenant_environment_url="${NAV_TENANT_URL%/}/api/v1/environment"
+fi
 
-check_environment "$landlord_environment_url" "landlord_environment"
-check_environment "$tenant_environment_url" "tenant_environment"
+check_environment "$landlord_environment_url" "landlord_environment" "${landlord_environment_host}"
+check_environment "$tenant_environment_url" "tenant_environment" "${tenant_environment_host}"
 
 echo "INFO: ${lane} navigation environment warmup completed successfully."

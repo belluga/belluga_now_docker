@@ -142,19 +142,135 @@ if ! sync_web_runtime_lane; then
   exit 1
 fi
 
-if [[ -f ".env" ]]; then
-  if grep -q '^NGINX_HOST_PORT_80=' .env; then
-    sed -i "s#^NGINX_HOST_PORT_80=.*#NGINX_HOST_PORT_80=\$DEPLOY_NGINX_HOST_PORT_80#" .env
+upsert_env() {
+  local key="\$1"
+  local value="\$2"
+
+  if grep -q "^\${key}=" .env; then
+    sed -i "s#^\${key}=.*#\${key}=\${value}#" .env
   else
-    echo "NGINX_HOST_PORT_80=\$DEPLOY_NGINX_HOST_PORT_80" >> .env
+    echo "\${key}=\${value}" >> .env
+  fi
+}
+
+read_env_value() {
+  local key="\$1"
+  local raw
+
+  raw="\$(grep -E "^\${key}=" .env | tail -n 1 || true)"
+  raw="\${raw#\${key}=}"
+  raw="\$(printf '%s' "\${raw}" | tr -d '\r' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+  raw="\${raw%\"}"
+  raw="\${raw#\"}"
+  raw="\${raw%\'}"
+  raw="\${raw#\'}"
+  printf '%s' "\${raw}"
+}
+
+normalize_queue_env_for_mongo() {
+  local db_connection queue_connection db_queue_connection
+
+  db_connection="\$(read_env_value DB_CONNECTION)"
+  db_connection="\$(printf '%s' "\${db_connection}" | tr '[:upper:]' '[:lower:]')"
+  queue_connection="\$(read_env_value QUEUE_CONNECTION)"
+  queue_connection="\$(printf '%s' "\${queue_connection}" | tr '[:upper:]' '[:lower:]')"
+  db_queue_connection="\$(read_env_value DB_QUEUE_CONNECTION)"
+  db_queue_connection="\$(printf '%s' "\${db_queue_connection}" | tr '[:upper:]' '[:lower:]')"
+
+  case "\${db_connection}" in
+    mongodb*|landlord|tenant)
+      if [[ -z "\${queue_connection}" ]]; then
+        upsert_env QUEUE_CONNECTION mongodb
+        echo "INFO: rollback normalized QUEUE_CONNECTION=mongodb (DB_CONNECTION=\${db_connection})."
+        return 0
+      fi
+
+      if [[ "\${queue_connection}" == "database" ]] && [[ -z "\${db_queue_connection}" || "\${db_queue_connection}" == "mongodb" || "\${db_queue_connection}" == "landlord" || "\${db_queue_connection}" == "tenant" ]]; then
+        upsert_env QUEUE_CONNECTION mongodb
+        echo "WARN: rollback normalized QUEUE_CONNECTION=database to mongodb because DB_QUEUE_CONNECTION was unsafe for Mongo primary connection."
+      fi
+      ;;
+  esac
+}
+
+ensure_laravel_app_env() {
+  if [[ -f "laravel-app/.env" ]]; then
+    return 0
   fi
 
-  if grep -q '^NGINX_HOST_PORT_443=' .env; then
-    sed -i "s#^NGINX_HOST_PORT_443=.*#NGINX_HOST_PORT_443=\$DEPLOY_NGINX_HOST_PORT_443#" .env
-  else
-    echo "NGINX_HOST_PORT_443=\$DEPLOY_NGINX_HOST_PORT_443" >> .env
+  if [[ -f "laravel-app/.env.example" ]]; then
+    cp laravel-app/.env.example laravel-app/.env
+    echo "INFO: rollback bootstrap laravel-app/.env from laravel-app/.env.example."
+    return 0
   fi
+
+  echo "ERROR: missing both laravel-app/.env and laravel-app/.env.example during rollback." >&2
+  return 1
+}
+
+upsert_laravel_env() {
+  local key="\$1"
+  local value="\$2"
+  local env_file="laravel-app/.env"
+
+  if grep -q "^\${key}=" "\${env_file}"; then
+    sed -i "s#^\${key}=.*#\${key}=\${value}#" "\${env_file}"
+  else
+    echo "\${key}=\${value}" >> "\${env_file}"
+  fi
+}
+
+read_laravel_env_value() {
+  local key="\$1"
+  local env_file="laravel-app/.env"
+  local raw
+
+  raw="\$(grep -E "^\${key}=" "\${env_file}" | tail -n 1 || true)"
+  raw="\${raw#\${key}=}"
+  raw="\$(printf '%s' "\${raw}" | tr -d '\r' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+  raw="\${raw%\"}"
+  raw="\${raw#\"}"
+  raw="\${raw%\'}"
+  raw="\${raw#\'}"
+  printf '%s' "\${raw}"
+}
+
+normalize_laravel_queue_env_for_mongo() {
+  local db_connection queue_connection db_queue_connection
+
+  db_connection="\$(read_laravel_env_value DB_CONNECTION)"
+  db_connection="\$(printf '%s' "\${db_connection}" | tr '[:upper:]' '[:lower:]')"
+  queue_connection="\$(read_laravel_env_value QUEUE_CONNECTION)"
+  queue_connection="\$(printf '%s' "\${queue_connection}" | tr '[:upper:]' '[:lower:]')"
+  db_queue_connection="\$(read_laravel_env_value DB_QUEUE_CONNECTION)"
+  db_queue_connection="\$(printf '%s' "\${db_queue_connection}" | tr '[:upper:]' '[:lower:]')"
+
+  case "\${db_connection}" in
+    mongodb*|landlord|tenant)
+      if [[ -z "\${queue_connection}" ]]; then
+        upsert_laravel_env QUEUE_CONNECTION mongodb
+        echo "INFO: rollback normalized laravel-app/.env to QUEUE_CONNECTION=mongodb (DB_CONNECTION=\${db_connection})."
+        return 0
+      fi
+
+      if [[ "\${queue_connection}" == "database" ]] && [[ -z "\${db_queue_connection}" || "\${db_queue_connection}" == "mongodb" || "\${db_queue_connection}" == "landlord" || "\${db_queue_connection}" == "tenant" ]]; then
+        upsert_laravel_env QUEUE_CONNECTION mongodb
+        echo "WARN: rollback normalized laravel-app/.env QUEUE_CONNECTION=database to mongodb because DB_QUEUE_CONNECTION was unsafe for Mongo primary connection."
+      fi
+      ;;
+  esac
+}
+
+if [[ -f ".env" ]]; then
+  upsert_env NGINX_HOST_PORT_80 "\$DEPLOY_NGINX_HOST_PORT_80"
+  upsert_env NGINX_HOST_PORT_443 "\$DEPLOY_NGINX_HOST_PORT_443"
+  normalize_queue_env_for_mongo
 fi
+
+if ! ensure_laravel_app_env; then
+  exit 1
+fi
+normalize_laravel_queue_env_for_mongo
 
 resolve_health_host() {
   local app_url_line source host
