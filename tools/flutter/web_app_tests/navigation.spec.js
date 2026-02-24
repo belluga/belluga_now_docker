@@ -119,7 +119,7 @@ test('landlord domain bootstraps as landlord and navigates', async ({ page }) =>
     page,
     landlordUrl,
     '/home',
-    ['/'],
+    ['/admin', '/auth/login'],
     'landlord'
   );
   await probePath(
