@@ -24,3 +24,8 @@ gemini_memory.md
 !laravel-app/.agent/rules/
 !laravel-app/.agent/workflows/
 foundation_documentation_tmp/
+
+# CLINE
+CLINE.md
+.cline
+.clinerules
