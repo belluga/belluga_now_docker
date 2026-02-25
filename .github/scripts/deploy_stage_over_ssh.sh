@@ -100,6 +100,12 @@ else
   exit 1
 fi
 
+if [[ "\${DOCKER_COMPOSE[0]}" == "sudo" ]]; then
+  DOCKER_CMD=(sudo docker)
+else
+  DOCKER_CMD=(docker)
+fi
+
 mkdir -p "\$DEPLOY_PATH"
 
 if [[ ! -d "\$DEPLOY_PATH/.git" ]]; then
@@ -364,6 +370,19 @@ run_migrations() {
   fi
 }
 
+prune_docker_artifacts() {
+  local prune_window="168h"
+
+  echo "INFO: running post-success Docker cleanup (window: \${prune_window})..."
+  if ! "\${DOCKER_CMD[@]}" builder prune -af --filter "until=\${prune_window}"; then
+    echo "WARN: docker builder prune failed; continuing without blocking deploy." >&2
+  fi
+
+  if ! "\${DOCKER_CMD[@]}" image prune -af --filter "until=\${prune_window}"; then
+    echo "WARN: docker image prune failed; continuing without blocking deploy." >&2
+  fi
+}
+
 deploy_and_check_health() {
   local health_host health_url status body
 
@@ -421,6 +440,7 @@ deploy_and_check_health() {
 }
 
 if deploy_and_check_health; then
+  prune_docker_artifacts
   echo "INFO: \$DEPLOY_LANE deploy completed successfully."
   echo "INFO: last successful revision marker will be updated only after navigation smoke passes."
   exit 0
@@ -437,6 +457,7 @@ if [[ -n "\$previous_revision" ]]; then
   run_git submodule update --init --recursive
 
   if deploy_and_check_health; then
+    prune_docker_artifacts
     echo "INFO: rollback succeeded; previous version restored."
   else
     echo "ERROR: rollback failed; service may be degraded." >&2

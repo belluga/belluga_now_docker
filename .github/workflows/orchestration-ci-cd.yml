@@ -336,6 +336,19 @@ jobs:
         run: npx playwright install --with-deps chromium
         working-directory: web-app
 
+      - name: Sync source-owned navigation tests into web-app
+        if: steps.stage_initialize_preflight.outputs.initialized == 'true'
+        run: |
+          set -euo pipefail
+
+          if [[ ! -d tools/flutter/web_app_tests ]]; then
+            echo "ERROR: source-owned navigation tests not found at tools/flutter/web_app_tests." >&2
+            exit 1
+          fi
+
+          mkdir -p web-app/tests
+          rsync -a --delete tools/flutter/web_app_tests/ web-app/tests/
+
       - name: Route stage smoke hosts directly to origin
         if: steps.stage_initialize_preflight.outputs.initialized == 'true'
         env:
@@ -666,6 +679,19 @@ jobs:
         if: steps.main_initialize_preflight.outputs.initialized == 'true'
         run: npx playwright install --with-deps chromium
         working-directory: web-app
+
+      - name: Sync source-owned navigation tests into web-app
+        if: steps.main_initialize_preflight.outputs.initialized == 'true'
+        run: |
+          set -euo pipefail
+
+          if [[ ! -d tools/flutter/web_app_tests ]]; then
+            echo "ERROR: source-owned navigation tests not found at tools/flutter/web_app_tests." >&2
+            exit 1
+          fi
+
+          mkdir -p web-app/tests
+          rsync -a --delete tools/flutter/web_app_tests/ web-app/tests/
 
       - name: Route production smoke hosts directly to origin
         if: steps.main_initialize_preflight.outputs.initialized == 'true'

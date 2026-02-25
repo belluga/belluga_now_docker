@@ -90,6 +90,12 @@ else
   exit 1
 fi
 
+if [[ "\${DOCKER_COMPOSE[0]}" == "sudo" ]]; then
+  DOCKER_CMD=(sudo docker)
+else
+  DOCKER_CMD=(docker)
+fi
+
 cd "\$DEPLOY_PATH"
 
 target_revision=""
@@ -303,6 +309,19 @@ resolve_health_host() {
   echo "\$host"
 }
 
+prune_docker_artifacts() {
+  local prune_window="168h"
+
+  echo "INFO: running post-success Docker cleanup (window: \${prune_window})..."
+  if ! "\${DOCKER_CMD[@]}" builder prune -af --filter "until=\${prune_window}"; then
+    echo "WARN: docker builder prune failed; continuing without blocking rollback." >&2
+  fi
+
+  if ! "\${DOCKER_CMD[@]}" image prune -af --filter "until=\${prune_window}"; then
+    echo "WARN: docker image prune failed; continuing without blocking rollback." >&2
+  fi
+}
+
 "\${DOCKER_COMPOSE[@]}" up -d --build --remove-orphans
 "\${DOCKER_COMPOSE[@]}" ps
 
@@ -333,6 +352,7 @@ for attempt in \$(seq 1 24); do
     if [[ -n "\${response_body}" ]]; then
       echo "INFO: rollback readiness response: \${response_body}"
     fi
+    prune_docker_artifacts
     exit 0
   fi
 
@@ -349,6 +369,7 @@ for attempt in \$(seq 1 24); do
 
     if [[ "\${root_status}" == "200" || "\${root_status}" == "301" || "\${root_status}" == "302" ]]; then
       echo "WARN: rollback target returned 404 on /api/v1/initialize; accepting root health HTTP \${root_status} at \${root_health_url}."
+      prune_docker_artifacts
       exit 0
     fi
   fi

@@ -45,6 +45,7 @@ services:
       - app-storage:/var/www/storage
     networks:
       - app-network
+    restart: unless-stopped
 
   worker:
     build:
@@ -94,6 +95,7 @@ services:
       - app
     networks:
       - app-network
+    restart: unless-stopped
 
   certbot:
     image: certbot/certbot
