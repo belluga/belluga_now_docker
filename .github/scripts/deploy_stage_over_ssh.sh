@@ -100,7 +100,7 @@ else
   exit 1
 fi
 
-if [[ "${DOCKER_COMPOSE[0]}" == "sudo" ]]; then
+if [[ "\${DOCKER_COMPOSE[0]}" == "sudo" ]]; then
   DOCKER_CMD=(sudo docker)
 else
   DOCKER_CMD=(docker)
