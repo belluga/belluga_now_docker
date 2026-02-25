@@ -11,8 +11,12 @@ REPO_ROOT="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
 FLUTTER_APP_DIR="${REPO_ROOT}/flutter-app"
 OUTPUT_DIR="${1:-${REPO_ROOT}/web-app}"
 WEB_APP_TESTS_SOURCE_DIR="${REPO_ROOT}/tools/flutter/web_app_tests"
-DEFAULT_DEFINES_FILE="${FLUTTER_APP_DIR}/config/defines/dev.json"
+DEFINES_DIR="${FLUTTER_APP_DIR}/config/defines"
 FLUTTER_DART_DEFINE_FILE="${FLUTTER_DART_DEFINE_FILE:-}"
+FLUTTER_WEB_LANE="${FLUTTER_WEB_LANE:-}"
+DEPLOY_LANE_SIGNAL="${DEPLOY_LANE:-}"
+TARGET_BRANCH_SIGNAL="${TARGET_BRANCH:-}"
+GITHUB_REF_NAME_SIGNAL="${GITHUB_REF_NAME:-}"
 LANDLORD_DOMAIN_INPUT="${LANDLORD_DOMAIN:-${NAV_LANDLORD_URL:-}}"
 
 if [[ ! -f "${FLUTTER_APP_DIR}/pubspec.yaml" ]]; then
@@ -32,12 +36,52 @@ fi
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "${TMP_DIR}"' EXIT
 
+normalize_lane_signal() {
+  local signal="$1"
+
+  signal="${signal#refs/heads/}"
+  signal="${signal#refs/remotes/}"
+  signal="${signal#origin/}"
+  signal="${signal##*/}"
+  signal="${signal,,}"
+  printf '%s\n' "${signal}"
+}
+
+resolve_lane_defines_file() {
+  local signal lane candidate
+
+  for signal in \
+    "${FLUTTER_WEB_LANE}" \
+    "${DEPLOY_LANE_SIGNAL}" \
+    "${TARGET_BRANCH_SIGNAL}" \
+    "${GITHUB_REF_NAME_SIGNAL}"; do
+    [[ -n "${signal}" ]] || continue
+    lane="$(normalize_lane_signal "${signal}")"
+    [[ -n "${lane}" ]] || continue
+
+    candidate="${DEFINES_DIR}/${lane}.json"
+    if [[ -f "${candidate}" ]]; then
+      printf '%s\n' "${candidate}"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
 pushd "${FLUTTER_APP_DIR}" >/dev/null
 "${FLUTTER_CMD[@]}" pub get
 build_args=(build web --release --no-tree-shake-icons -o "${TMP_DIR}")
 
-if [[ -z "${FLUTTER_DART_DEFINE_FILE}" && -f "${DEFAULT_DEFINES_FILE}" ]]; then
-  FLUTTER_DART_DEFINE_FILE="${DEFAULT_DEFINES_FILE}"
+if [[ -z "${FLUTTER_DART_DEFINE_FILE}" ]]; then
+  if FLUTTER_DART_DEFINE_FILE="$(resolve_lane_defines_file)"; then
+    echo "INFO: using lane defines file: ${FLUTTER_DART_DEFINE_FILE}"
+  else
+    echo "ERROR: FLUTTER_DART_DEFINE_FILE is not set and no lane defines file was resolved." >&2
+    echo "Set FLUTTER_DART_DEFINE_FILE explicitly or provide FLUTTER_WEB_LANE/DEPLOY_LANE/TARGET_BRANCH/GITHUB_REF_NAME." >&2
+    echo "Expected lane define path: ${DEFINES_DIR}/<lane>.json" >&2
+    exit 1
+  fi
 fi
 
 if [[ -n "${FLUTTER_DART_DEFINE_FILE}" ]]; then

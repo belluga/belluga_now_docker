@@ -132,6 +132,7 @@ test('landlord domain bootstraps as landlord and navigates', async ({ page }) =>
 
   expect(collectors.runtimeErrors, `Unexpected runtime errors:\n${collectors.runtimeErrors.join('\n')}`).toEqual([]);
   expect(collectors.failedRequests, `Failed requests:\n${collectors.failedRequests.join('\n')}`).toEqual([]);
+  expect(collectors.consoleErrors, `Console errors:\n${collectors.consoleErrors.join('\n')}`).toEqual([]);
 });
 
 test('tenant domain bootstraps as tenant and navigates to tenant routes', async ({ page }) => {
@@ -185,4 +186,5 @@ test('tenant domain bootstraps as tenant and navigates to tenant routes', async 
 
   expect(collectors.runtimeErrors, `Unexpected runtime errors:\n${collectors.runtimeErrors.join('\n')}`).toEqual([]);
   expect(collectors.failedRequests, `Failed requests:\n${collectors.failedRequests.join('\n')}`).toEqual([]);
+  expect(collectors.consoleErrors, `Console errors:\n${collectors.consoleErrors.join('\n')}`).toEqual([]);
 });
