@@ -1,7 +1,7 @@
-// Stage-only mutation suite placeholder.
+// Stage-only mutation suite anchor.
 //
-// Policies:
-// - Create/destroy web scenarios belong to @mutation.
-// - @mutation execution is blocked outside stage by guard_web_navigation_policy.cjs.
+// Current mutation tests are tagged with "@mutation" inside `navigation.spec.js`
+// to reuse the same helpers and assertions.
 //
-// When implementing mutation tests, tag each test title with "@mutation".
+// Keep this file as the canonical place for future mutation-only specs that
+// must run exclusively in stage.

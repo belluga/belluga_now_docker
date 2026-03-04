@@ -20,8 +20,20 @@ function installFailureCollectors(page) {
   const runtimeErrors = [];
   const failedRequests = [];
   const consoleErrors = [];
+  const mutatingApiRequests = [];
 
   page.on('pageerror', (error) => runtimeErrors.push(error.message));
+  page.on('request', (request) => {
+    const method = (request.method() || '').toUpperCase();
+    if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') {
+      return;
+    }
+    const url = request.url();
+    if (!url.includes('/api/')) {
+      return;
+    }
+    mutatingApiRequests.push(`${method} ${url}`);
+  });
   page.on('requestfailed', (request) => {
     const failureText = request.failure()?.errorText || 'unknown';
     if (failureText === 'net::ERR_ABORTED') {
@@ -36,7 +48,7 @@ function installFailureCollectors(page) {
     }
   });
 
-  return { runtimeErrors, failedRequests, consoleErrors };
+  return { runtimeErrors, failedRequests, consoleErrors, mutatingApiRequests };
 }
 
 async function assertAppBooted(page) {
@@ -179,11 +191,22 @@ test('@readonly landlord domain bootstraps as landlord and navigates', async ({ 
   expect(collectors.runtimeErrors, `Unexpected runtime errors:\n${collectors.runtimeErrors.join('\n')}`).toEqual([]);
   expect(collectors.failedRequests, `Failed requests:\n${collectors.failedRequests.join('\n')}`).toEqual([]);
   expect(collectors.consoleErrors, `Console errors:\n${collectors.consoleErrors.join('\n')}`).toEqual([]);
+  expect(
+    collectors.mutatingApiRequests,
+    `Readonly landlord flow must not issue mutating API requests:\n${collectors.mutatingApiRequests.join('\n')}`,
+  ).toEqual([]);
 });
 
-test('@readonly tenant domain bootstraps as tenant and navigates to tenant routes', async ({ page }) => {
+test('@mutation tenant domain bootstraps as tenant and navigates to tenant routes', async ({ page }) => {
   const { tenantUrl } = requireNavigationUrls();
   const collectors = installFailureCollectors(page);
+  let anonymousIdentityStatus = null;
+
+  page.on('response', (response) => {
+    if (response.url().includes('/api/v1/anonymous/identities')) {
+      anonymousIdentityStatus = response.status();
+    }
+  });
 
   const response = await page.goto(tenantUrl, { waitUntil: 'domcontentloaded' });
   expect(response, 'Tenant response should be available').not.toBeNull();
@@ -194,6 +217,14 @@ test('@readonly tenant domain bootstraps as tenant and navigates to tenant route
   await assertAppBooted(page);
   await waitForLanding(page, ['/', '/invites', '/convites', '/profile']);
   await logLandingHref(page, 'tenant');
+  await page.waitForTimeout(1500);
+
+  if (anonymousIdentityStatus != null) {
+    expect(
+      [200, 201],
+      'Anonymous identity bootstrap, when present, must be successful.',
+    ).toContain(anonymousIdentityStatus);
+  }
 
   await probePath(
     page,
@@ -231,12 +262,16 @@ test('@readonly tenant domain bootstraps as tenant and navigates to tenant route
     'tenant'
   );
 
+  expect(
+    collectors.mutatingApiRequests.length,
+    `Mutation tenant flow must issue at least one mutating API request.\nCaptured:\n${collectors.mutatingApiRequests.join('\n')}`,
+  ).toBeGreaterThan(0);
   expect(collectors.runtimeErrors, `Unexpected runtime errors:\n${collectors.runtimeErrors.join('\n')}`).toEqual([]);
   expect(collectors.failedRequests, `Failed requests:\n${collectors.failedRequests.join('\n')}`).toEqual([]);
   expect(collectors.consoleErrors, `Console errors:\n${collectors.consoleErrors.join('\n')}`).toEqual([]);
 });
 
-test('@readonly tenant agenda UI state matches tenant agenda API payload', async ({ browser }) => {
+test('@mutation tenant agenda UI state matches tenant agenda API payload', async ({ browser }) => {
   const { tenantUrl } = requireNavigationUrls();
   const tenantOrigin = new URL(tenantUrl).origin;
   const context = await browser.newContext({
