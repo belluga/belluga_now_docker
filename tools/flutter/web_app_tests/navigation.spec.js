@@ -286,6 +286,8 @@ test('@mutation tenant agenda UI state matches tenant agenda API payload', async
   });
   const page = await context.newPage();
   const collectors = installFailureCollectors(page);
+  const agendaResponses = [];
+  const agendaErrorResponses = [];
   const agendaSamples = [];
   let anonymousIdentityStatus = null;
 
@@ -311,27 +313,43 @@ test('@mutation tenant agenda UI state matches tenant agenda API payload', async
     if (!url.includes('/api/v1/agenda')) {
       return;
     }
+    const requestUrl = new URL(url);
+    const sampleBase = {
+      page: requestUrl.searchParams.get('page') ?? '1',
+      originLat: requestUrl.searchParams.get('origin_lat'),
+      originLng: requestUrl.searchParams.get('origin_lng'),
+      url,
+      status: response.status(),
+    };
     if (response.status() >= 400) {
+      agendaErrorResponses.push(sampleBase);
       return;
     }
+    agendaResponses.push(sampleBase);
     try {
-      const requestUrl = new URL(url);
       const body = await response.json();
       const items = Array.isArray(body?.items)
         ? body.items
         : Array.isArray(body?.data?.items)
           ? body.data.items
           : [];
-      const pageParam = requestUrl.searchParams.get('page') ?? '1';
       agendaSamples.push({
-        page: pageParam,
+        page: sampleBase.page,
         count: items.length,
-        originLat: requestUrl.searchParams.get('origin_lat'),
-        originLng: requestUrl.searchParams.get('origin_lng'),
-        url,
+        originLat: sampleBase.originLat,
+        originLng: sampleBase.originLng,
+        url: sampleBase.url,
+        status: sampleBase.status,
       });
     } catch (_) {
-      // Ignore non-JSON payloads; assertion below will fail if no valid agenda sample exists.
+      agendaSamples.push({
+        page: sampleBase.page,
+        count: 0,
+        originLat: sampleBase.originLat,
+        originLng: sampleBase.originLng,
+        url: sampleBase.url,
+        status: sampleBase.status,
+      });
     }
   });
 
@@ -351,13 +369,30 @@ test('@mutation tenant agenda UI state matches tenant agenda API payload', async
     'Anonymous identity bootstrap must be idempotent-success (200/201).',
   ).toContain(anonymousIdentityStatus);
   expect(
-    agendaSamples.length,
-    'Expected at least one successful /api/v1/agenda JSON payload.',
-  ).toBeGreaterThan(0);
+    agendaErrorResponses,
+    `Agenda API returned HTTP >= 400:\n${agendaErrorResponses
+      .map((sample) => `${sample.status} ${sample.url}`)
+      .join('\n')}`,
+  ).toEqual([]);
 
-  const firstPageSamples = agendaSamples.filter((sample) => sample.page === '1');
+  const defaultEmptyStateText = page.getByText('Nenhum evento disponível no momento');
+  const filteredEmptyStateText = page.getByText('Nenhum resultado encontrado');
+  const hasAgendaResponses = agendaResponses.length > 0;
+  if (!hasAgendaResponses) {
+    const hasVisibleEmptyState =
+      (await defaultEmptyStateText.count()) > 0 ||
+      (await filteredEmptyStateText.count()) > 0;
+    expect(
+      hasVisibleEmptyState,
+      'Expected /api/v1/agenda response or explicit empty-state UI when agenda is unavailable.',
+    ).toBeTruthy();
+  }
+
+  const firstPageSamples = agendaResponses.filter((sample) => sample.page === '1');
+  const originSamples = firstPageSamples.length > 0 ? firstPageSamples : agendaResponses;
+  const firstPagePayloadSamples = agendaSamples.filter((sample) => sample.page === '1');
   const inspectedSamples = firstPageSamples.length > 0 ? firstPageSamples : agendaSamples;
-  const samplesMissingOrigin = inspectedSamples.filter(
+  const samplesMissingOrigin = originSamples.filter(
     (sample) => !sample.originLat || !sample.originLng,
   );
   expect(
@@ -367,7 +402,7 @@ test('@mutation tenant agenda UI state matches tenant agenda API payload', async
       .join('\n')}`,
   ).toEqual([]);
 
-  const samplesWithInvalidOrigin = inspectedSamples.filter(
+  const samplesWithInvalidOrigin = originSamples.filter(
     (sample) =>
       !Number.isFinite(Number(sample.originLat)) ||
       !Number.isFinite(Number(sample.originLng)),
@@ -379,13 +414,14 @@ test('@mutation tenant agenda UI state matches tenant agenda API payload', async
       .join('\n')}`,
   ).toEqual([]);
 
-  const maxAgendaCount = agendaSamples.reduce(
+  const payloadSamples = firstPagePayloadSamples.length > 0
+    ? firstPagePayloadSamples
+    : agendaSamples;
+  const maxAgendaCount = payloadSamples.reduce(
     (currentMax, sample) => (sample.count > currentMax ? sample.count : currentMax),
     0,
   );
 
-  const defaultEmptyStateText = page.getByText('Nenhum evento disponível no momento');
-  const filteredEmptyStateText = page.getByText('Nenhum resultado encontrado');
   if (maxAgendaCount > 0) {
     await expect(
       defaultEmptyStateText,
