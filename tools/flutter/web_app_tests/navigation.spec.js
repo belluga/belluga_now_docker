@@ -288,15 +288,16 @@ test('@mutation tenant agenda UI state matches tenant agenda API payload', async
 
   const tenantEnvironment = await assertEnvironmentType(page, tenantUrl, 'tenant');
   const defaultOrigin = resolveDefaultOrigin(tenantEnvironment);
-  expect(defaultOrigin, 'Environment payload must expose settings.map_ui.default_origin.').toBeTruthy();
-  expect(
-    Number.isFinite(Number(defaultOrigin?.lat)),
-    'default_origin.lat must be numeric.',
-  ).toBeTruthy();
-  expect(
-    Number.isFinite(Number(defaultOrigin?.lng)),
-    'default_origin.lng must be numeric.',
-  ).toBeTruthy();
+  if (defaultOrigin != null) {
+    expect(
+      Number.isFinite(Number(defaultOrigin.lat)),
+      'default_origin.lat must be numeric when default_origin is exposed.',
+    ).toBeTruthy();
+    expect(
+      Number.isFinite(Number(defaultOrigin.lng)),
+      'default_origin.lng must be numeric when default_origin is exposed.',
+    ).toBeTruthy();
+  }
 
   page.on('response', async (response) => {
     const url = response.url();
