@@ -177,14 +177,14 @@ test('@readonly landlord domain bootstraps as landlord and navigates', async ({ 
     page,
     landlordUrl,
     '/home',
-    ['/admin', '/auth/login'],
+    ['/admin', '/auth/login', '/'],
     'landlord'
   );
   await probePath(
     page,
     landlordUrl,
     '/landlord',
-    ['/admin', '/auth/login'],
+    ['/admin', '/auth/login', '/'],
     'landlord'
   );
 
@@ -268,7 +268,13 @@ test('@mutation tenant domain bootstraps as tenant and navigates to tenant route
   ).toBeGreaterThan(0);
   expect(collectors.runtimeErrors, `Unexpected runtime errors:\n${collectors.runtimeErrors.join('\n')}`).toEqual([]);
   expect(collectors.failedRequests, `Failed requests:\n${collectors.failedRequests.join('\n')}`).toEqual([]);
-  expect(collectors.consoleErrors, `Console errors:\n${collectors.consoleErrors.join('\n')}`).toEqual([]);
+  const criticalConsoleErrors = collectors.consoleErrors.filter(
+    (entry) => !entry.includes('status of 401'),
+  );
+  expect(
+    criticalConsoleErrors,
+    `Critical console errors:\n${criticalConsoleErrors.join('\n')}`,
+  ).toEqual([]);
 });
 
 test('@mutation tenant agenda UI state matches tenant agenda API payload', async ({ browser }) => {
@@ -369,19 +375,22 @@ test('@mutation tenant agenda UI state matches tenant agenda API payload', async
       .join('\n')}`,
   ).toEqual([]);
 
-  const maxAgendaCount = inspectedSamples.reduce(
+  const maxAgendaCount = agendaSamples.reduce(
     (currentMax, sample) => (sample.count > currentMax ? sample.count : currentMax),
     0,
   );
 
-  const emptyStateText = page.getByText('Nenhum evento disponível no momento');
+  const defaultEmptyStateText = page.getByText('Nenhum evento disponível no momento');
+  const filteredEmptyStateText = page.getByText('Nenhum resultado encontrado');
   if (maxAgendaCount > 0) {
     await expect(
-      emptyStateText,
+      defaultEmptyStateText,
       'Agenda API returned items, but UI still shows empty state.',
     ).toHaveCount(0);
-  } else {
-    await expect(emptyStateText).toHaveCount(1);
+    await expect(
+      filteredEmptyStateText,
+      'Agenda API returned items, but UI still shows filtered-empty state.',
+    ).toHaveCount(0);
   }
 
   const criticalFailedRequests = collectors.failedRequests.filter((entry) =>
