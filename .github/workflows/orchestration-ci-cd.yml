@@ -407,14 +407,29 @@ jobs:
         if: steps.stage_initialize_preflight.outputs.initialized == 'true' && steps.stage_provenance_check.outcome != 'failure'
         continue-on-error: true
         env:
+          NAV_DEPLOY_LANE: stage
+          NAV_WEB_TEST_TYPE: readonly
           NAV_LANDLORD_URL: ${{ vars.STAGE_NAV_LANDLORD_URL }}
           NAV_TENANT_URL: ${{ vars.STAGE_NAV_TENANT_URL }}
           PLAYWRIGHT_IGNORE_HTTPS_ERRORS: ${{ env.PLAYWRIGHT_IGNORE_HTTPS_ERRORS }}
-        run: npm run test:navigation -- --retries=1 --reporter=line
+        run: node tests/guard_web_navigation_policy.cjs && npx playwright test --grep @readonly --retries=1 --reporter=line
+        working-directory: web-app
+
+      - name: Run stage mutation navigation smoke
+        id: stage_navigation_mutation_smoke
+        if: steps.stage_initialize_preflight.outputs.initialized == 'true' && steps.stage_provenance_check.outcome != 'failure' && steps.stage_navigation_smoke.outcome != 'failure'
+        continue-on-error: true
+        env:
+          NAV_DEPLOY_LANE: stage
+          NAV_WEB_TEST_TYPE: mutation
+          NAV_LANDLORD_URL: ${{ vars.STAGE_NAV_LANDLORD_URL }}
+          NAV_TENANT_URL: ${{ vars.STAGE_NAV_TENANT_URL }}
+          PLAYWRIGHT_IGNORE_HTTPS_ERRORS: ${{ env.PLAYWRIGHT_IGNORE_HTTPS_ERRORS }}
+        run: node tests/guard_web_navigation_policy.cjs && npx playwright test --grep @mutation --retries=1 --reporter=line
         working-directory: web-app
 
       - name: Collect stage deploy diagnostics before rollback
-        if: steps.stage_provenance_check.outcome == 'failure' || (steps.stage_initialize_preflight.outputs.initialized == 'true' && steps.stage_navigation_smoke.outcome == 'failure')
+        if: steps.stage_provenance_check.outcome == 'failure' || (steps.stage_initialize_preflight.outputs.initialized == 'true' && (steps.stage_navigation_smoke.outcome == 'failure' || steps.stage_navigation_mutation_smoke.outcome == 'failure'))
         continue-on-error: true
         env:
           DEPLOY_LANE: stage
@@ -429,7 +444,7 @@ jobs:
         run: bash .github/scripts/collect_remote_deploy_diagnostics.sh
 
       - name: Upload stage navigation smoke artifacts
-        if: steps.stage_provenance_check.outcome == 'failure' || steps.stage_navigation_smoke.outcome == 'failure'
+        if: steps.stage_provenance_check.outcome == 'failure' || steps.stage_navigation_smoke.outcome == 'failure' || steps.stage_navigation_mutation_smoke.outcome == 'failure'
         uses: actions/upload-artifact@v4
         with:
           name: stage-navigation-smoke-${{ github.run_id }}-${{ github.run_attempt }}
@@ -441,7 +456,7 @@ jobs:
           retention-days: 7
 
       - name: Mark stage revision as successful after navigation smoke
-        if: steps.stage_provenance_check.outcome != 'failure' && (steps.stage_initialize_preflight.outputs.initialized != 'true' || steps.stage_navigation_smoke.outcome == 'success')
+        if: steps.stage_provenance_check.outcome != 'failure' && (steps.stage_initialize_preflight.outputs.initialized != 'true' || (steps.stage_navigation_smoke.outcome == 'success' && steps.stage_navigation_mutation_smoke.outcome == 'success'))
         env:
           DEPLOY_SSH_HOST: ${{ vars.STAGE_SSH_HOST }}
           DEPLOY_SSH_PORT: ${{ vars.STAGE_SSH_PORT }}
@@ -451,7 +466,7 @@ jobs:
         run: bash .github/scripts/mark_successful_revision_over_ssh.sh
 
       - name: Roll back stage deploy when provenance or smoke fails
-        if: steps.stage_provenance_check.outcome == 'failure' || (steps.stage_initialize_preflight.outputs.initialized == 'true' && steps.stage_navigation_smoke.outcome == 'failure')
+        if: steps.stage_provenance_check.outcome == 'failure' || (steps.stage_initialize_preflight.outputs.initialized == 'true' && (steps.stage_navigation_smoke.outcome == 'failure' || steps.stage_navigation_mutation_smoke.outcome == 'failure'))
         env:
           DEPLOY_LANE: stage
           DEPLOY_SSH_HOST: ${{ vars.STAGE_SSH_HOST }}
@@ -469,10 +484,12 @@ jobs:
         run: bash .github/scripts/rollback_over_ssh.sh
 
       - name: Fail stage deploy after rollback
-        if: steps.stage_provenance_check.outcome == 'failure' || (steps.stage_initialize_preflight.outputs.initialized == 'true' && steps.stage_navigation_smoke.outcome == 'failure')
+        if: steps.stage_provenance_check.outcome == 'failure' || (steps.stage_initialize_preflight.outputs.initialized == 'true' && (steps.stage_navigation_smoke.outcome == 'failure' || steps.stage_navigation_mutation_smoke.outcome == 'failure'))
         run: |
           if [[ "${{ steps.stage_provenance_check.outcome }}" == "failure" ]]; then
             echo "ERROR: stage deployed build provenance validation failed; rollback executed." >&2
+          elif [[ "${{ steps.stage_navigation_mutation_smoke.outcome }}" == "failure" ]]; then
+            echo "ERROR: stage mutation navigation smoke failed; rollback executed." >&2
           else
             echo "ERROR: stage navigation smoke failed; rollback executed." >&2
           fi
@@ -746,15 +763,36 @@ jobs:
           NAV_ORIGIN_IP: ${{ vars.MAIN_SSH_HOST }}
         run: bash .github/scripts/check_deployed_web_provenance.sh main
 
+      - name: Assert mutation suite is hard-blocked on main
+        if: steps.main_initialize_preflight.outputs.initialized == 'true' && steps.main_provenance_check.outcome != 'failure'
+        env:
+          NAV_DEPLOY_LANE: main
+          NAV_WEB_TEST_TYPE: mutation
+        run: |
+          set +e
+          node tests/guard_web_navigation_policy.cjs
+          guard_status=$?
+          set -e
+
+          if [[ "$guard_status" -eq 0 ]]; then
+            echo "ERROR: mutation suite must be blocked on main lane." >&2
+            exit 1
+          fi
+
+          echo "Main hard block check passed (mutation is blocked)."
+        working-directory: web-app
+
       - name: Run production real navigation smoke
         id: production_navigation_smoke
         if: steps.main_initialize_preflight.outputs.initialized == 'true' && steps.main_provenance_check.outcome != 'failure'
         continue-on-error: true
         env:
+          NAV_DEPLOY_LANE: main
+          NAV_WEB_TEST_TYPE: readonly
           NAV_LANDLORD_URL: ${{ vars.MAIN_NAV_LANDLORD_URL }}
           NAV_TENANT_URL: ${{ vars.MAIN_NAV_TENANT_URL }}
           PLAYWRIGHT_IGNORE_HTTPS_ERRORS: ${{ env.PLAYWRIGHT_IGNORE_HTTPS_ERRORS }}
-        run: npm run test:navigation -- --retries=1 --reporter=line
+        run: node tests/guard_web_navigation_policy.cjs && npx playwright test --grep @readonly --retries=1 --reporter=line
         working-directory: web-app
 
       - name: Collect production deploy diagnostics before rollback
