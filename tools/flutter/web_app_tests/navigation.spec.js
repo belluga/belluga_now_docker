@@ -52,9 +52,12 @@ function installFailureCollectors(page) {
 }
 
 async function assertAppBooted(page) {
-  await expect(page.locator('body')).toBeVisible({ timeout: 50000 });
-  await expect(page.locator('script[src*="main.dart.js"]')).toHaveCount(1);
-  await expect(page.locator('flt-glass-pane')).toHaveCount(1, { timeout: 90000 });
+  await expect(page.locator('script[src*="main.dart.js"]')).toHaveCount(1, {
+    timeout: 50000,
+  });
+  const flutterPane = page.locator('flt-glass-pane');
+  await expect(flutterPane).toHaveCount(1, { timeout: 90000 });
+  await expect(flutterPane).toBeVisible({ timeout: 90000 });
   await expect(page.locator('#splash-screen')).toHaveCount(0, { timeout: 90000 });
 }
 
