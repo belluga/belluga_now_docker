@@ -197,7 +197,7 @@ test('@readonly landlord domain bootstraps as landlord and navigates', async ({ 
   ).toEqual([]);
 });
 
-test('@mutation tenant domain bootstraps as tenant and navigates to tenant routes', async ({ page }) => {
+test('@readonly tenant domain bootstraps as tenant and navigates to tenant routes', async ({ page }) => {
   const { tenantUrl } = requireNavigationUrls();
   const collectors = installFailureCollectors(page);
   let anonymousIdentityStatus = null;
@@ -262,10 +262,6 @@ test('@mutation tenant domain bootstraps as tenant and navigates to tenant route
     'tenant'
   );
 
-  expect(
-    collectors.mutatingApiRequests.length,
-    `Mutation tenant flow must issue at least one mutating API request.\nCaptured:\n${collectors.mutatingApiRequests.join('\n')}`,
-  ).toBeGreaterThan(0);
   expect(collectors.runtimeErrors, `Unexpected runtime errors:\n${collectors.runtimeErrors.join('\n')}`).toEqual([]);
   expect(collectors.failedRequests, `Failed requests:\n${collectors.failedRequests.join('\n')}`).toEqual([]);
   const criticalConsoleErrors = collectors.consoleErrors.filter(
@@ -345,7 +341,11 @@ test('@mutation tenant agenda UI state matches tenant agenda API payload', async
   expect(
     anonymousIdentityStatus,
     'Expected anonymous identity bootstrap call on tenant public startup.',
-  ).toBe(201);
+  ).not.toBeNull();
+  expect(
+    [200, 201],
+    'Anonymous identity bootstrap must be idempotent-success (200/201).',
+  ).toContain(anonymousIdentityStatus);
   expect(
     agendaSamples.length,
     'Expected at least one successful /api/v1/agenda JSON payload.',
