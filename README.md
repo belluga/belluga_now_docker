@@ -349,10 +349,16 @@ O Docker **não** executa o build do Flutter automaticamente. O NGINX serve apen
    ```bash
    ./tools/flutter/build_web_bundle.sh       # saída padrão: ./web-app
    ```
-2. O script grava os artefatos na pasta `web-app/`, removendo `favicon.ico`, `manifest.json` e `icons/` (esses assets são servidos pelo backend) e protegendo arquivos de governança do submódulo (`.github/`, `package*.json`, `playwright.config.js`, `tests/`). Revise o diff do submódulo:
+2. O script grava os artefatos na pasta `web-app/`, removendo `favicon.ico`, `manifest.json` e `icons/` (esses assets são servidos pelo backend) e protegendo apenas a governança básica do submódulo (`.github/`, `.gitignore`). Revise o diff do submódulo:
    ```bash
    git status web-app
    ```
+   Os testes de navegação web **não** são mais autorados dentro de `web-app/`: a fonte da verdade fica em `tools/flutter/web_app_tests/` e a execução deve ocorrer via:
+   ```bash
+   bash tools/flutter/run_web_navigation_smoke.sh readonly
+   bash tools/flutter/run_web_navigation_smoke.sh mutation
+   ```
+   Em ambiente local (`belluga.space` via ingress Docker), o build do Flutter deve usar um `LANDLORD_DOMAIN` com a origem completa local (por exemplo `https://belluga.space:8043`) para que landlord-side requests do smoke usem a mesma porta do NGINX local.
 3. Quando estiver satisfeito, faça commit/push dentro do submódulo e depois atualize o repositório principal:
    ```bash
    cd web-app

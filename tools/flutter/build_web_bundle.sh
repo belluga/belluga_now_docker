@@ -10,7 +10,6 @@ REPO_ROOT="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
 
 FLUTTER_APP_DIR="${REPO_ROOT}/flutter-app"
 OUTPUT_DIR="${1:-${REPO_ROOT}/web-app}"
-WEB_APP_TESTS_SOURCE_DIR="${REPO_ROOT}/tools/flutter/web_app_tests"
 DEFINES_DIR="${FLUTTER_APP_DIR}/config/defines"
 FLUTTER_DART_DEFINE_FILE="${FLUTTER_DART_DEFINE_FILE:-}"
 FLUTTER_WEB_LANE="${FLUTTER_WEB_LANE:-}"
@@ -136,17 +135,18 @@ rsync -a --delete \
   --exclude '.git' --exclude '.git/' --exclude '.gitmodules' --exclude '.last_build_id' \
   --filter='P .github/' \
   --filter='P .gitignore' \
-  --filter='P package.json' \
-  --filter='P package-lock.json' \
-  --filter='P playwright.config.js' \
-  --filter='P tests/' \
   "${TMP_DIR}/" "${OUTPUT_DIR}/"
 
-# Tests in web-app are derived from source files in this repository.
-if [[ -d "${WEB_APP_TESTS_SOURCE_DIR}" ]]; then
-  mkdir -p "${OUTPUT_DIR}/tests"
-  rsync -a --delete "${WEB_APP_TESTS_SOURCE_DIR}/" "${OUTPUT_DIR}/tests/"
-fi
+# Legacy Playwright/runtime artifacts do not belong to the generated web bundle.
+rm -rf \
+  "${OUTPUT_DIR}/node_modules" \
+  "${OUTPUT_DIR}/test-results" \
+  "${OUTPUT_DIR}/playwright-report" \
+  "${OUTPUT_DIR}/tests"
+rm -f \
+  "${OUTPUT_DIR}/package.json" \
+  "${OUTPUT_DIR}/package-lock.json" \
+  "${OUTPUT_DIR}/playwright.config.js"
 
 chmod -R a+rX "${OUTPUT_DIR}"
 
