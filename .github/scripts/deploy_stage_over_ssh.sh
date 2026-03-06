@@ -185,6 +185,53 @@ read_env_value() {
   printf '%s' "\${raw}"
 }
 
+normalize_log_stack_channels() {
+  local raw_value="\$1"
+  local token normalized=()
+  local has_mongodb=0
+  local has_stderr=0
+
+  IFS=',' read -r -a tokens <<< "\${raw_value}"
+  for token in "\${tokens[@]}"; do
+    token="\$(printf '%s' "\${token}" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
+    if [[ -z "\${token}" || "\${token}" == "single" || "\${token}" == "daily" ]]; then
+      continue
+    fi
+    case "\${token}" in
+      mongodb)
+        has_mongodb=1
+        ;;
+      stderr)
+        has_stderr=1
+        ;;
+    esac
+    normalized+=("\${token}")
+  done
+
+  if [[ "\${has_mongodb}" == "0" ]]; then
+    normalized+=("mongodb")
+  fi
+  if [[ "\${has_stderr}" == "0" ]]; then
+    normalized+=("stderr")
+  fi
+
+  (IFS=','; printf '%s' "\${normalized[*]}")
+}
+
+normalize_logging_env() {
+  local normalized_stack retention
+
+  upsert_env LOG_CHANNEL stack
+  normalized_stack="\$(normalize_log_stack_channels "\$(read_env_value LOG_STACK)")"
+  upsert_env LOG_STACK "\${normalized_stack}"
+
+  retention="\$(read_env_value LOG_MONGODB_RETENTION_DAYS)"
+  if ! [[ "\${retention}" =~ ^[0-9]+$ ]] || (( retention < 1 )) || (( retention > 30 )); then
+    upsert_env LOG_MONGODB_RETENTION_DAYS 14
+    echo "WARN: normalized LOG_MONGODB_RETENTION_DAYS to 14."
+  fi
+}
+
 normalize_queue_env_for_mongo() {
   local db_connection queue_connection db_queue_connection
 
@@ -253,6 +300,20 @@ read_laravel_env_value() {
   printf '%s' "\${raw}"
 }
 
+normalize_laravel_logging_env() {
+  local normalized_stack retention
+
+  upsert_laravel_env LOG_CHANNEL stack
+  normalized_stack="\$(normalize_log_stack_channels "\$(read_laravel_env_value LOG_STACK)")"
+  upsert_laravel_env LOG_STACK "\${normalized_stack}"
+
+  retention="\$(read_laravel_env_value LOG_MONGODB_RETENTION_DAYS)"
+  if ! [[ "\${retention}" =~ ^[0-9]+$ ]] || (( retention < 1 )) || (( retention > 30 )); then
+    upsert_laravel_env LOG_MONGODB_RETENTION_DAYS 14
+    echo "WARN: normalized laravel-app LOG_MONGODB_RETENTION_DAYS to 14."
+  fi
+}
+
 normalize_laravel_queue_env_for_mongo() {
   local db_connection queue_connection db_queue_connection
 
@@ -281,11 +342,13 @@ normalize_laravel_queue_env_for_mongo() {
 
 upsert_env NGINX_HOST_PORT_80 "\$DEPLOY_NGINX_HOST_PORT_80"
 upsert_env NGINX_HOST_PORT_443 "\$DEPLOY_NGINX_HOST_PORT_443"
+normalize_logging_env
 normalize_queue_env_for_mongo
 
 if ! ensure_laravel_app_env; then
   exit 1
 fi
+normalize_laravel_logging_env
 normalize_laravel_queue_env_for_mongo
 
 resolve_health_host() {
@@ -337,6 +400,19 @@ wait_for_laravel_artisan() {
   return 1
 }
 
+clear_disk_log_files() {
+  echo "INFO: truncating laravel disk logs to protect stage/main disk space..."
+  if ! "\${DOCKER_COMPOSE[@]}" exec -T app sh -lc 'mkdir -p /var/www/storage/logs && : > /var/www/storage/logs/laravel.log && find /var/www/storage/logs -maxdepth 1 -type f -name "laravel-*.log" -delete'; then
+    echo "ERROR: failed to truncate laravel disk logs." >&2
+    return 1
+  fi
+}
+
+migration_output_has_fail_marker() {
+  local output="\$1"
+  printf '%s\n' "\${output}" | grep -Eq '[[:space:]]FAIL$|^ERROR:'
+}
+
 run_migrations() {
   resolve_tenant_migration_path_args() {
     local tenant_paths_raw tenant_paths
@@ -356,11 +432,14 @@ run_migrations() {
     printf '%s' "\${tenant_paths}"
   }
 
+  local landlord_output landlord_status
   echo "INFO: running landlord migrations..."
-  if ! "\${DOCKER_COMPOSE[@]}" exec -T app php artisan migrate \
-    --database=landlord \
-    --path=database/migrations/landlord \
-    --force; then
+  set +e
+  landlord_output="\$("\${DOCKER_COMPOSE[@]}" exec -T app php artisan migrate --database=landlord --path=database/migrations/landlord --force 2>&1)"
+  landlord_status=\$?
+  set -e
+  printf '%s\n' "\${landlord_output}"
+  if [[ "\${landlord_status}" -ne 0 ]] || migration_output_has_fail_marker "\${landlord_output}"; then
     echo "ERROR: landlord migrations failed." >&2
     return 1
   fi
@@ -383,10 +462,15 @@ run_migrations() {
   local tenant_migration_paths
   tenant_migration_paths="\$(resolve_tenant_migration_path_args)"
 
+  local tenant_output tenant_status
   echo "INFO: running tenant migrations for \${tenant_count} tenants..."
   echo "INFO: tenant migration path args: \${tenant_migration_paths}"
-  if ! "\${DOCKER_COMPOSE[@]}" exec -T app php artisan tenants:artisan \
-    "migrate --database=tenant \${tenant_migration_paths} --force"; then
+  set +e
+  tenant_output="\$("\${DOCKER_COMPOSE[@]}" exec -T app php artisan tenants:artisan "migrate --database=tenant \${tenant_migration_paths} --force" 2>&1)"
+  tenant_status=\$?
+  set -e
+  printf '%s\n' "\${tenant_output}"
+  if [[ "\${tenant_status}" -ne 0 ]] || migration_output_has_fail_marker "\${tenant_output}"; then
     echo "ERROR: tenant migrations failed." >&2
     return 1
   fi
@@ -415,6 +499,9 @@ deploy_and_check_health() {
   "\${DOCKER_COMPOSE[@]}" ps
 
   if ! wait_for_laravel_artisan; then
+    return 1
+  fi
+  if ! clear_disk_log_files; then
     return 1
   fi
   if ! run_migrations; then
