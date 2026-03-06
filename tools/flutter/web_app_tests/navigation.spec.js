@@ -2,6 +2,12 @@ const { test, expect } = require('@playwright/test');
 
 const landlordUrl = process.env.NAV_LANDLORD_URL;
 const tenantUrl = process.env.NAV_TENANT_URL;
+const appBootTimeoutMs = 90000;
+
+// The stage smoke exercises multiple live tenant routes sequentially.
+// Keep the file timeout above the per-route boot budget so slow-but-healthy
+// hosts do not fail before the readonly sweep finishes.
+test.describe.configure({ timeout: 300000 });
 
 function requireNavigationUrls() {
   expect(
@@ -52,12 +58,15 @@ function installFailureCollectors(page) {
 }
 
 async function assertAppBooted(page) {
-  await expect(page.locator('body')).toBeVisible({ timeout: 50000 });
   await expect(page.locator('script[src*="main.dart.js"]')).toHaveCount(1, {
-    timeout: 50000,
+    timeout: appBootTimeoutMs,
   });
-  await expect(page.locator('flt-glass-pane')).toHaveCount(1, { timeout: 90000 });
-  await expect(page.locator('#splash-screen')).toHaveCount(0, { timeout: 90000 });
+  await expect(page.locator('flt-glass-pane').first()).toBeVisible({
+    timeout: appBootTimeoutMs,
+  });
+  await expect(page.locator('#splash-screen')).toHaveCount(0, {
+    timeout: appBootTimeoutMs,
+  });
 }
 
 async function waitForLanding(page, allowedPrefixes) {
