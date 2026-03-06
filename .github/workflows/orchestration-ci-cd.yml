@@ -324,30 +324,17 @@ jobs:
         with:
           node-version: '20'
           cache: npm
-          cache-dependency-path: web-app/package-lock.json
+          cache-dependency-path: tools/flutter/web_app_smoke_runner/package-lock.json
 
       - name: Install web navigation dependencies
         if: steps.stage_initialize_preflight.outputs.initialized == 'true'
         run: npm ci
-        working-directory: web-app
+        working-directory: tools/flutter/web_app_smoke_runner
 
       - name: Install Playwright browser
         if: steps.stage_initialize_preflight.outputs.initialized == 'true'
         run: npx playwright install --with-deps chromium
-        working-directory: web-app
-
-      - name: Sync source-owned navigation tests into web-app
-        if: steps.stage_initialize_preflight.outputs.initialized == 'true'
-        run: |
-          set -euo pipefail
-
-          if [[ ! -d tools/flutter/web_app_tests ]]; then
-            echo "ERROR: source-owned navigation tests not found at tools/flutter/web_app_tests." >&2
-            exit 1
-          fi
-
-          mkdir -p web-app/tests
-          rsync -a --delete tools/flutter/web_app_tests/ web-app/tests/
+        working-directory: tools/flutter/web_app_smoke_runner
 
       - name: Route stage smoke hosts directly to origin
         if: steps.stage_initialize_preflight.outputs.initialized == 'true'
@@ -412,8 +399,7 @@ jobs:
           NAV_LANDLORD_URL: ${{ steps.stage_nav_targets.outputs.landlord_url }}
           NAV_TENANT_URL: ${{ steps.stage_nav_targets.outputs.tenant_url }}
           PLAYWRIGHT_IGNORE_HTTPS_ERRORS: ${{ env.PLAYWRIGHT_IGNORE_HTTPS_ERRORS }}
-        run: node tests/guard_web_navigation_policy.cjs && npx playwright test --grep @readonly --retries=1 --reporter=line
-        working-directory: web-app
+        run: bash tools/flutter/run_web_navigation_smoke.sh readonly
 
       - name: Run stage mutation navigation smoke
         id: stage_navigation_mutation_smoke
@@ -425,8 +411,7 @@ jobs:
           NAV_LANDLORD_URL: ${{ steps.stage_nav_targets.outputs.landlord_url }}
           NAV_TENANT_URL: ${{ steps.stage_nav_targets.outputs.tenant_url }}
           PLAYWRIGHT_IGNORE_HTTPS_ERRORS: ${{ env.PLAYWRIGHT_IGNORE_HTTPS_ERRORS }}
-        run: node tests/guard_web_navigation_policy.cjs && npx playwright test --grep @mutation --retries=1 --reporter=line
-        working-directory: web-app
+        run: bash tools/flutter/run_web_navigation_smoke.sh mutation
 
       - name: Collect stage deploy diagnostics before rollback
         if: ${{ always() && (steps.stage_initialize_preflight.outcome == 'failure' || steps.stage_provenance_check.outcome == 'failure' || (steps.stage_initialize_preflight.outputs.initialized == 'true' && (steps.stage_navigation_smoke.outcome == 'failure' || steps.stage_navigation_mutation_smoke.outcome == 'failure'))) }}
@@ -449,8 +434,8 @@ jobs:
         with:
           name: stage-navigation-smoke-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
-            web-app/test-results
-            web-app/playwright-report
+            tools/flutter/web_app_smoke_runner/test-results
+            tools/flutter/web_app_smoke_runner/playwright-report
             /tmp/stage_deploy_diagnostics.txt
           if-no-files-found: warn
           retention-days: 7
@@ -687,30 +672,17 @@ jobs:
         with:
           node-version: '20'
           cache: npm
-          cache-dependency-path: web-app/package-lock.json
+          cache-dependency-path: tools/flutter/web_app_smoke_runner/package-lock.json
 
       - name: Install web navigation dependencies
         if: steps.main_initialize_preflight.outputs.initialized == 'true'
         run: npm ci
-        working-directory: web-app
+        working-directory: tools/flutter/web_app_smoke_runner
 
       - name: Install Playwright browser
         if: steps.main_initialize_preflight.outputs.initialized == 'true'
         run: npx playwright install --with-deps chromium
-        working-directory: web-app
-
-      - name: Sync source-owned navigation tests into web-app
-        if: steps.main_initialize_preflight.outputs.initialized == 'true'
-        run: |
-          set -euo pipefail
-
-          if [[ ! -d tools/flutter/web_app_tests ]]; then
-            echo "ERROR: source-owned navigation tests not found at tools/flutter/web_app_tests." >&2
-            exit 1
-          fi
-
-          mkdir -p web-app/tests
-          rsync -a --delete tools/flutter/web_app_tests/ web-app/tests/
+        working-directory: tools/flutter/web_app_smoke_runner
 
       - name: Route production smoke hosts directly to origin
         if: steps.main_initialize_preflight.outputs.initialized == 'true'
@@ -772,7 +744,7 @@ jobs:
           NAV_WEB_TEST_TYPE: mutation
         run: |
           set +e
-          node tests/guard_web_navigation_policy.cjs
+          bash tools/flutter/run_web_navigation_smoke.sh mutation
           guard_status=$?
           set -e
 
@@ -782,7 +754,6 @@ jobs:
           fi
 
           echo "Main hard block check passed (mutation is blocked)."
-        working-directory: web-app
 
       - name: Run production real navigation smoke
         id: production_navigation_smoke
@@ -794,8 +765,7 @@ jobs:
           NAV_LANDLORD_URL: ${{ steps.main_nav_targets.outputs.landlord_url }}
           NAV_TENANT_URL: ${{ steps.main_nav_targets.outputs.tenant_url }}
           PLAYWRIGHT_IGNORE_HTTPS_ERRORS: ${{ env.PLAYWRIGHT_IGNORE_HTTPS_ERRORS }}
-        run: node tests/guard_web_navigation_policy.cjs && npx playwright test --grep @readonly --retries=1 --reporter=line
-        working-directory: web-app
+        run: bash tools/flutter/run_web_navigation_smoke.sh readonly
 
       - name: Collect production deploy diagnostics before rollback
         if: ${{ always() && (steps.main_initialize_preflight.outcome == 'failure' || steps.main_provenance_check.outcome == 'failure' || (steps.main_initialize_preflight.outputs.initialized == 'true' && steps.production_navigation_smoke.outcome == 'failure')) }}
@@ -818,8 +788,8 @@ jobs:
         with:
           name: production-navigation-smoke-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
-            web-app/test-results
-            web-app/playwright-report
+            tools/flutter/web_app_smoke_runner/test-results
+            tools/flutter/web_app_smoke_runner/playwright-report
             /tmp/main_deploy_diagnostics.txt
           if-no-files-found: warn
           retention-days: 7
