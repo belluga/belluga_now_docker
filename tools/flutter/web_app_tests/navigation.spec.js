@@ -172,7 +172,7 @@ test('@readonly landlord domain bootstraps as landlord and navigates', async ({ 
     page,
     landlordUrl,
     '/admin',
-    ['/admin', '/auth/login'],
+    ['/', '/admin', '/landlord', '/auth/login'],
     'landlord'
   );
   await probePath(
