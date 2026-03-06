@@ -358,7 +358,7 @@ O Docker **não** executa o build do Flutter automaticamente. O NGINX serve apen
    bash tools/flutter/run_web_navigation_smoke.sh readonly
    bash tools/flutter/run_web_navigation_smoke.sh mutation
    ```
-   Em ambiente local (`belluga.space` via ingress Docker), o build do Flutter deve usar um `LANDLORD_DOMAIN` com a origem completa local (por exemplo `https://belluga.space:8043`) para que landlord-side requests do smoke usem a mesma porta do NGINX local.
+   Em ambiente local, o build do Flutter deve usar a origem browser-facing real do fluxo que será validado. Exemplo: se o navegador abre `https://belluga.space` / `https://guarappari.belluga.space` via Cloudflared, use `LANDLORD_DOMAIN=https://belluga.space` (sem porta interna). Só use `host:porta` quando essa for a origem efetivamente aberta no navegador. Não vaze `:8043` para fluxos públicos baseados em domínio.
 3. Quando estiver satisfeito, faça commit/push dentro do submódulo e depois atualize o repositório principal:
    ```bash
    cd web-app
