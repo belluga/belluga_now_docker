@@ -338,6 +338,24 @@ wait_for_laravel_artisan() {
 }
 
 run_migrations() {
+  resolve_tenant_migration_path_args() {
+    local tenant_paths_raw tenant_paths
+
+    tenant_paths_raw="\$(
+      "\${DOCKER_COMPOSE[@]}" exec -T app php -r \
+        'require "vendor/autoload.php"; \$app=require "bootstrap/app.php"; \$app->make(\Illuminate\Contracts\Console\Kernel::class)->bootstrap(); \$paths=(array) config("multitenancy.tenant_migration_paths", ["database/migrations/tenants"]); \$paths=array_values(array_filter(array_map(static fn(\$path) => trim((string) \$path), \$paths), static fn(\$path) => \$path !== "")); foreach (\$paths as \$path) { echo "--path={\$path}\n"; }' \
+        2>/dev/null | tr -d '\r' || true
+    )"
+
+    tenant_paths="\$(printf '%s\n' "\${tenant_paths_raw}" | awk 'NF {print \$0}' | paste -sd' ' -)"
+    if [[ -z "\${tenant_paths}" ]]; then
+      tenant_paths="--path=database/migrations/tenants"
+      echo "WARN: unable to resolve multitenancy tenant migration paths; using fallback '\${tenant_paths}'."
+    fi
+
+    printf '%s' "\${tenant_paths}"
+  }
+
   echo "INFO: running landlord migrations..."
   if ! "\${DOCKER_COMPOSE[@]}" exec -T app php artisan migrate \
     --database=landlord \
@@ -362,9 +380,13 @@ run_migrations() {
     return 0
   fi
 
+  local tenant_migration_paths
+  tenant_migration_paths="\$(resolve_tenant_migration_path_args)"
+
   echo "INFO: running tenant migrations for \${tenant_count} tenants..."
+  echo "INFO: tenant migration path args: \${tenant_migration_paths}"
   if ! "\${DOCKER_COMPOSE[@]}" exec -T app php artisan tenants:artisan \
-    "migrate --database=tenant --path=database/migrations/tenants --path=packages/belluga/belluga_push_handler/database/migrations --force"; then
+    "migrate --database=tenant \${tenant_migration_paths} --force"; then
     echo "ERROR: tenant migrations failed." >&2
     return 1
   fi
