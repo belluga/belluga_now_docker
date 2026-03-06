@@ -61,7 +61,7 @@ async function assertAppBooted(page) {
   await expect(page.locator('script[src*="main.dart.js"]')).toHaveCount(1, {
     timeout: appBootTimeoutMs,
   });
-  await expect(page.locator('flt-glass-pane').first()).toBeVisible({
+  await expect(page.locator('flt-glass-pane')).toHaveCount(1, {
     timeout: appBootTimeoutMs,
   });
   await expect(page.locator('#splash-screen')).toHaveCount(0, {
