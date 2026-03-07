@@ -340,12 +340,12 @@ collect_disk_budget_paths() {
     if [[ -d /var/lib/containerd ]]; then
       printf '/var/lib/containerd\n'
     fi
-  } | awk 'NF && !seen[$0]++'
+  } | awk 'NF && !seen[\$0]++'
 }
 
 get_free_kib_for_path() {
   local path="\$1"
-  df -Pk "\${path}" 2>/dev/null | awk 'NR==2 {print $4}'
+  df -Pk "\${path}" 2>/dev/null | awk 'NR==2 {print \$4}'
 }
 
 print_disk_snapshot() {
