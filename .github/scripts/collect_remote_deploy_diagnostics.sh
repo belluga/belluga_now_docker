@@ -41,16 +41,66 @@ fi
   echo "local_web_gitlink=$(git -C web-app rev-parse HEAD 2>/dev/null || echo unknown)"
   echo
 
-  echo "=== Remote Repository Snapshot ==="
+  echo "=== Remote Repository and Runtime Snapshot ==="
 } > "${output_file}"
 
 set +e
 ssh -p "${DEPLOY_SSH_PORT}" -i "${DEPLOY_SSH_KEY_PATH}" \
   -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
   "${DEPLOY_SSH_USER}@${DEPLOY_SSH_HOST}" "DEPLOY_PATH='${DEPLOY_PATH}' bash -s" >> "${output_file}" 2>&1 <<'REMOTE'
-set -euo pipefail
+set -uo pipefail
 
 echo "remote_timestamp_utc=$(date -u +%FT%TZ)"
+
+if docker compose version >/dev/null 2>&1; then
+  DOCKER_COMPOSE=(docker compose)
+  DOCKER_CMD=(docker)
+elif sudo docker compose version >/dev/null 2>&1; then
+  DOCKER_COMPOSE=(sudo docker compose)
+  DOCKER_CMD=(sudo docker)
+else
+  DOCKER_COMPOSE=()
+  DOCKER_CMD=()
+fi
+
+collect_disk_budget_paths() {
+  local docker_root_dir=""
+
+  if [[ ${#DOCKER_CMD[@]} -gt 0 ]]; then
+    docker_root_dir="$("${DOCKER_CMD[@]}" info --format '{{.DockerRootDir}}' 2>/dev/null | tr -d '\r' || true)"
+  fi
+
+  {
+    printf '/\n'
+    if [[ -n "${docker_root_dir}" && -e "${docker_root_dir}" ]]; then
+      printf '%s\n' "${docker_root_dir}"
+    fi
+    if [[ -d /var/lib/containerd ]]; then
+      printf '/var/lib/containerd\n'
+    fi
+  } | awk 'NF && !seen[$0]++'
+}
+
+echo "remote_disk_snapshot_start"
+paths=()
+while IFS= read -r path; do
+  [[ -n "${path}" ]] && paths+=("${path}")
+done < <(collect_disk_budget_paths)
+if [[ ${#paths[@]} -gt 0 ]]; then
+  df -h "${paths[@]}" || true
+else
+  echo "remote_disk_paths=unresolved"
+fi
+echo "remote_disk_snapshot_end"
+
+if [[ ${#DOCKER_CMD[@]} -gt 0 ]]; then
+  echo "remote_docker_system_df_start"
+  "${DOCKER_CMD[@]}" system df || true
+  echo "remote_docker_system_df_end"
+else
+  echo "remote_docker_state=unavailable"
+fi
+
 if [[ ! -d "${DEPLOY_PATH}/.git" ]]; then
   echo "remote_repo_state=missing_git_directory"
   exit 0
@@ -67,6 +117,18 @@ if [[ -f web-app/build_metadata.json ]]; then
   cat web-app/build_metadata.json
   echo
   echo "remote_web_build_metadata_json_end"
+fi
+
+if [[ ${#DOCKER_COMPOSE[@]} -gt 0 ]]; then
+  echo "remote_docker_compose_ps_start"
+  "${DOCKER_COMPOSE[@]}" ps || true
+  echo "remote_docker_compose_ps_end"
+
+  echo "remote_service_logs_start"
+  "${DOCKER_COMPOSE[@]}" logs --tail=120 app worker scheduler nginx || true
+  echo "remote_service_logs_end"
+else
+  echo "remote_compose_state=unavailable"
 fi
 REMOTE
 remote_exit=$?
