@@ -349,10 +349,16 @@ O Docker **não** executa o build do Flutter automaticamente. O NGINX serve apen
    ```bash
    ./tools/flutter/build_web_bundle.sh       # saída padrão: ./web-app
    ```
-2. O script grava os artefatos na pasta `web-app/`, removendo `favicon.ico`, `manifest.json` e `icons/` (esses assets são servidos pelo backend) e protegendo arquivos de governança do submódulo (`.github/`, `package*.json`, `playwright.config.js`, `tests/`). Revise o diff do submódulo:
+2. O script grava os artefatos na pasta `web-app/`, removendo `favicon.ico`, `manifest.json` e `icons/` (esses assets são servidos pelo backend) e protegendo apenas a governança básica do submódulo (`.github/`, `.gitignore`). Revise o diff do submódulo:
    ```bash
    git status web-app
    ```
+   Os testes de navegação web **não** são mais autorados dentro de `web-app/`: a fonte da verdade fica em `tools/flutter/web_app_tests/` e a execução deve ocorrer via:
+   ```bash
+   bash tools/flutter/run_web_navigation_smoke.sh readonly
+   bash tools/flutter/run_web_navigation_smoke.sh mutation
+   ```
+   Em ambiente local, o build do Flutter deve usar a origem browser-facing real do fluxo que será validado. Exemplo: se o navegador abre `https://belluga.space` / `https://guarappari.belluga.space` via Cloudflared, use `LANDLORD_DOMAIN=https://belluga.space` (sem porta interna). Só use `host:porta` quando essa for a origem efetivamente aberta no navegador. Não vaze `:8043` para fluxos públicos baseados em domínio.
 3. Quando estiver satisfeito, faça commit/push dentro do submódulo e depois atualize o repositório principal:
    ```bash
    cd web-app

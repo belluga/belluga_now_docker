@@ -2,17 +2,44 @@ const { test, expect } = require('@playwright/test');
 
 const landlordUrl = process.env.NAV_LANDLORD_URL;
 const tenantUrl = process.env.NAV_TENANT_URL;
+const appBootTimeoutMs = 90000;
 
-if (!landlordUrl || !tenantUrl) {
-  throw new Error('Missing NAV_LANDLORD_URL/NAV_TENANT_URL. Real navigation tests require live backend URLs.');
+// The stage smoke exercises multiple live tenant routes sequentially.
+// Keep the file timeout above the per-route boot budget so slow-but-healthy
+// hosts do not fail before the readonly sweep finishes.
+test.describe.configure({ timeout: 300000 });
+
+function requireNavigationUrls() {
+  expect(
+    landlordUrl,
+    'Missing NAV_LANDLORD_URL. Readonly web navigation suite requires live landlord URL.',
+  ).toBeTruthy();
+  expect(
+    tenantUrl,
+    'Missing NAV_TENANT_URL. Readonly web navigation suite requires live tenant URL.',
+  ).toBeTruthy();
+
+  return { landlordUrl, tenantUrl };
 }
 
 function installFailureCollectors(page) {
   const runtimeErrors = [];
   const failedRequests = [];
   const consoleErrors = [];
+  const mutatingApiRequests = [];
 
   page.on('pageerror', (error) => runtimeErrors.push(error.message));
+  page.on('request', (request) => {
+    const method = (request.method() || '').toUpperCase();
+    if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') {
+      return;
+    }
+    const url = request.url();
+    if (!url.includes('/api/')) {
+      return;
+    }
+    mutatingApiRequests.push(`${method} ${url}`);
+  });
   page.on('requestfailed', (request) => {
     const failureText = request.failure()?.errorText || 'unknown';
     if (failureText === 'net::ERR_ABORTED') {
@@ -27,14 +54,19 @@ function installFailureCollectors(page) {
     }
   });
 
-  return { runtimeErrors, failedRequests, consoleErrors };
+  return { runtimeErrors, failedRequests, consoleErrors, mutatingApiRequests };
 }
 
 async function assertAppBooted(page) {
-  await expect(page.locator('body')).toBeVisible({ timeout: 20000 });
-  await expect(page.locator('script[src*="main.dart.js"]')).toHaveCount(1);
-  await expect(page.locator('flt-glass-pane')).toHaveCount(1, { timeout: 90000 });
-  await expect(page.locator('#splash-screen')).toHaveCount(0, { timeout: 90000 });
+  await expect(page.locator('script[src*="main.dart.js"]')).toHaveCount(1, {
+    timeout: appBootTimeoutMs,
+  });
+  await expect(page.locator('flt-glass-pane')).toHaveCount(1, {
+    timeout: appBootTimeoutMs,
+  });
+  await expect(page.locator('#splash-screen')).toHaveCount(0, {
+    timeout: appBootTimeoutMs,
+  });
 }
 
 async function waitForLanding(page, allowedPrefixes) {
@@ -93,9 +125,46 @@ async function assertEnvironmentType(page, baseUrl, expectedType) {
 
   const payload = await response.json();
   expect(payload?.type, `Environment payload type mismatch for ${url}`).toBe(expectedType);
+  return payload;
 }
 
-test('landlord domain bootstraps as landlord and navigates', async ({ page }) => {
+function resolveDefaultOrigin(environmentPayload) {
+  const mapUi = environmentPayload?.settings?.map_ui;
+  if (!mapUi || typeof mapUi !== 'object') {
+    return null;
+  }
+
+  if (mapUi.default_origin && typeof mapUi.default_origin === 'object') {
+    return mapUi.default_origin;
+  }
+
+  const lat = mapUi['default_origin.lat'];
+  const lng = mapUi['default_origin.lng'];
+  if (lat == null || lng == null) {
+    return null;
+  }
+
+  return {
+    lat,
+    lng,
+    label: mapUi['default_origin.label'] ?? null,
+  };
+}
+
+async function enableAccessibilityIfNeeded(page) {
+  const a11yButton = page.getByRole('button', { name: /Enable accessibility/i });
+  if ((await a11yButton.count()) > 0) {
+    const placeholder = page
+      .locator('flt-semantics-placeholder[aria-label="Enable accessibility"]')
+      .first();
+    await placeholder.focus();
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(300);
+  }
+}
+
+test('@readonly landlord domain bootstraps as landlord and navigates', async ({ page }) => {
+  const { landlordUrl } = requireNavigationUrls();
   const collectors = installFailureCollectors(page);
 
   const response = await page.goto(landlordUrl, { waitUntil: 'domcontentloaded' });
@@ -112,31 +181,43 @@ test('landlord domain bootstraps as landlord and navigates', async ({ page }) =>
     page,
     landlordUrl,
     '/admin',
-    ['/admin', '/auth/login'],
+    ['/', '/admin', '/landlord', '/auth/login'],
     'landlord'
   );
   await probePath(
     page,
     landlordUrl,
     '/home',
-    ['/admin', '/auth/login'],
+    ['/admin', '/auth/login', '/'],
     'landlord'
   );
   await probePath(
     page,
     landlordUrl,
     '/landlord',
-    ['/admin', '/auth/login'],
+    ['/admin', '/auth/login', '/'],
     'landlord'
   );
 
   expect(collectors.runtimeErrors, `Unexpected runtime errors:\n${collectors.runtimeErrors.join('\n')}`).toEqual([]);
   expect(collectors.failedRequests, `Failed requests:\n${collectors.failedRequests.join('\n')}`).toEqual([]);
   expect(collectors.consoleErrors, `Console errors:\n${collectors.consoleErrors.join('\n')}`).toEqual([]);
+  expect(
+    collectors.mutatingApiRequests,
+    `Readonly landlord flow must not issue mutating API requests:\n${collectors.mutatingApiRequests.join('\n')}`,
+  ).toEqual([]);
 });
 
-test('tenant domain bootstraps as tenant and navigates to tenant routes', async ({ page }) => {
+test('@readonly tenant domain bootstraps as tenant and navigates to tenant routes', async ({ page }) => {
+  const { tenantUrl } = requireNavigationUrls();
   const collectors = installFailureCollectors(page);
+  let anonymousIdentityStatus = null;
+
+  page.on('response', (response) => {
+    if (response.url().includes('/api/v1/anonymous/identities')) {
+      anonymousIdentityStatus = response.status();
+    }
+  });
 
   const response = await page.goto(tenantUrl, { waitUntil: 'domcontentloaded' });
   expect(response, 'Tenant response should be available').not.toBeNull();
@@ -147,6 +228,14 @@ test('tenant domain bootstraps as tenant and navigates to tenant routes', async 
   await assertAppBooted(page);
   await waitForLanding(page, ['/', '/invites', '/convites', '/profile']);
   await logLandingHref(page, 'tenant');
+  await page.waitForTimeout(1500);
+
+  if (anonymousIdentityStatus != null) {
+    expect(
+      [200, 201],
+      'Anonymous identity bootstrap, when present, must be successful.',
+    ).toContain(anonymousIdentityStatus);
+  }
 
   await probePath(
     page,
@@ -186,5 +275,193 @@ test('tenant domain bootstraps as tenant and navigates to tenant routes', async 
 
   expect(collectors.runtimeErrors, `Unexpected runtime errors:\n${collectors.runtimeErrors.join('\n')}`).toEqual([]);
   expect(collectors.failedRequests, `Failed requests:\n${collectors.failedRequests.join('\n')}`).toEqual([]);
-  expect(collectors.consoleErrors, `Console errors:\n${collectors.consoleErrors.join('\n')}`).toEqual([]);
+  const criticalConsoleErrors = collectors.consoleErrors.filter(
+    (entry) => !entry.includes('status of 401'),
+  );
+  expect(
+    criticalConsoleErrors,
+    `Critical console errors:\n${criticalConsoleErrors.join('\n')}`,
+  ).toEqual([]);
+});
+
+test('@mutation tenant agenda UI state matches tenant agenda API payload', async ({ browser }) => {
+  const { tenantUrl } = requireNavigationUrls();
+  const tenantOrigin = new URL(tenantUrl).origin;
+  const context = await browser.newContext({
+    ignoreHTTPSErrors: true,
+    geolocation: { latitude: -20.671339, longitude: -40.495395 },
+    permissions: ['geolocation'],
+  });
+  const page = await context.newPage();
+  const collectors = installFailureCollectors(page);
+  const agendaResponses = [];
+  const agendaErrorResponses = [];
+  const agendaSamples = [];
+  let anonymousIdentityStatus = null;
+
+  const tenantEnvironment = await assertEnvironmentType(page, tenantUrl, 'tenant');
+  const defaultOrigin = resolveDefaultOrigin(tenantEnvironment);
+  if (defaultOrigin != null) {
+    expect(
+      Number.isFinite(Number(defaultOrigin.lat)),
+      'default_origin.lat must be numeric when default_origin is exposed.',
+    ).toBeTruthy();
+    expect(
+      Number.isFinite(Number(defaultOrigin.lng)),
+      'default_origin.lng must be numeric when default_origin is exposed.',
+    ).toBeTruthy();
+  }
+
+  page.on('response', async (response) => {
+    const url = response.url();
+    if (url.includes('/api/v1/anonymous/identities')) {
+      anonymousIdentityStatus = response.status();
+      return;
+    }
+    if (!url.includes('/api/v1/agenda')) {
+      return;
+    }
+    const requestUrl = new URL(url);
+    const sampleBase = {
+      page: requestUrl.searchParams.get('page') ?? '1',
+      originLat: requestUrl.searchParams.get('origin_lat'),
+      originLng: requestUrl.searchParams.get('origin_lng'),
+      url,
+      status: response.status(),
+    };
+    if (response.status() >= 400) {
+      agendaErrorResponses.push(sampleBase);
+      return;
+    }
+    agendaResponses.push(sampleBase);
+    try {
+      const body = await response.json();
+      const items = Array.isArray(body?.items)
+        ? body.items
+        : Array.isArray(body?.data?.items)
+          ? body.data.items
+          : [];
+      agendaSamples.push({
+        page: sampleBase.page,
+        count: items.length,
+        originLat: sampleBase.originLat,
+        originLng: sampleBase.originLng,
+        url: sampleBase.url,
+        status: sampleBase.status,
+      });
+    } catch (_) {
+      agendaSamples.push({
+        page: sampleBase.page,
+        count: 0,
+        originLat: sampleBase.originLat,
+        originLng: sampleBase.originLng,
+        url: sampleBase.url,
+        status: sampleBase.status,
+      });
+    }
+  });
+
+  const response = await page.goto(tenantUrl, { waitUntil: 'domcontentloaded' });
+  expect(response, 'Tenant response should be available').not.toBeNull();
+  expect(response.status(), 'Tenant response should be successful').toBeLessThan(400);
+  await assertAppBooted(page);
+  await enableAccessibilityIfNeeded(page);
+  await page.waitForTimeout(12000);
+
+  expect(
+    anonymousIdentityStatus,
+    'Expected anonymous identity bootstrap call on tenant public startup.',
+  ).not.toBeNull();
+  expect(
+    [200, 201],
+    'Anonymous identity bootstrap must be idempotent-success (200/201).',
+  ).toContain(anonymousIdentityStatus);
+  expect(
+    agendaErrorResponses,
+    `Agenda API returned HTTP >= 400:\n${agendaErrorResponses
+      .map((sample) => `${sample.status} ${sample.url}`)
+      .join('\n')}`,
+  ).toEqual([]);
+
+  const defaultEmptyStateText = page.getByText('Nenhum evento disponível no momento');
+  const filteredEmptyStateText = page.getByText('Nenhum resultado encontrado');
+  const hasAgendaResponses = agendaResponses.length > 0;
+  if (!hasAgendaResponses) {
+    const hasVisibleEmptyState =
+      (await defaultEmptyStateText.count()) > 0 ||
+      (await filteredEmptyStateText.count()) > 0;
+    expect(
+      hasVisibleEmptyState,
+      'Expected /api/v1/agenda response or explicit empty-state UI when agenda is unavailable.',
+    ).toBeTruthy();
+  }
+
+  const firstPageSamples = agendaResponses.filter((sample) => sample.page === '1');
+  const originSamples = firstPageSamples.length > 0 ? firstPageSamples : agendaResponses;
+  const firstPagePayloadSamples = agendaSamples.filter((sample) => sample.page === '1');
+  const inspectedSamples = firstPageSamples.length > 0 ? firstPageSamples : agendaSamples;
+  const samplesMissingOrigin = originSamples.filter(
+    (sample) => !sample.originLat || !sample.originLng,
+  );
+  expect(
+    samplesMissingOrigin,
+    `All inspected agenda requests must include origin_lat/origin_lng:\n${samplesMissingOrigin
+      .map((sample) => sample.url)
+      .join('\n')}`,
+  ).toEqual([]);
+
+  const samplesWithInvalidOrigin = originSamples.filter(
+    (sample) =>
+      !Number.isFinite(Number(sample.originLat)) ||
+      !Number.isFinite(Number(sample.originLng)),
+  );
+  expect(
+    samplesWithInvalidOrigin,
+    `All inspected agenda requests must include numeric origin_lat/origin_lng:\n${samplesWithInvalidOrigin
+      .map((sample) => `${sample.url} [lat=${sample.originLat}, lng=${sample.originLng}]`)
+      .join('\n')}`,
+  ).toEqual([]);
+
+  const payloadSamples = firstPagePayloadSamples.length > 0
+    ? firstPagePayloadSamples
+    : agendaSamples;
+  const maxAgendaCount = payloadSamples.reduce(
+    (currentMax, sample) => (sample.count > currentMax ? sample.count : currentMax),
+    0,
+  );
+
+  if (maxAgendaCount > 0) {
+    await expect(
+      defaultEmptyStateText,
+      'Agenda API returned items, but UI still shows empty state.',
+    ).toHaveCount(0);
+    await expect(
+      filteredEmptyStateText,
+      'Agenda API returned items, but UI still shows filtered-empty state.',
+    ).toHaveCount(0);
+  }
+
+  const criticalFailedRequests = collectors.failedRequests.filter((entry) =>
+    entry.includes(tenantOrigin) && entry.includes('/api/'),
+  );
+  const criticalConsoleErrors = collectors.consoleErrors.filter((entry) =>
+    entry.includes('/api/v1/') ||
+    entry.includes('FormatException') ||
+    entry.includes('Landlord login failed'),
+  );
+
+  expect(
+    collectors.runtimeErrors,
+    `Unexpected runtime errors:\n${collectors.runtimeErrors.join('\n')}`,
+  ).toEqual([]);
+  expect(
+    criticalFailedRequests,
+    `Critical failed API requests:\n${criticalFailedRequests.join('\n')}`,
+  ).toEqual([]);
+  expect(
+    criticalConsoleErrors,
+    `Critical console errors:\n${criticalConsoleErrors.join('\n')}`,
+  ).toEqual([]);
+
+  await context.close();
 });

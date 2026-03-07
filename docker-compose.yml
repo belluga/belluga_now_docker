@@ -43,6 +43,12 @@ services:
     volumes:
       - ./laravel-app:/var/www
       - app-storage:/var/www/storage
+    environment:
+      LOG_CHANNEL: ${LOG_CHANNEL:-stack}
+      LOG_STACK: ${LOG_STACK:-mongodb,stderr}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      LOG_MONGODB_COLLECTION: ${LOG_MONGODB_COLLECTION:-application_logs}
+      LOG_MONGODB_RETENTION_DAYS: ${LOG_MONGODB_RETENTION_DAYS:-14}
     networks:
       - app-network
     restart: unless-stopped
@@ -58,6 +64,12 @@ services:
     volumes:
       - ./laravel-app:/var/www
       - app-storage:/var/www/storage
+    environment:
+      LOG_CHANNEL: ${LOG_CHANNEL:-stack}
+      LOG_STACK: ${LOG_STACK:-mongodb,stderr}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      LOG_MONGODB_COLLECTION: ${LOG_MONGODB_COLLECTION:-application_logs}
+      LOG_MONGODB_RETENTION_DAYS: ${LOG_MONGODB_RETENTION_DAYS:-14}
     networks:
       - app-network
     command: ["php", "artisan", "queue:work", "--sleep=1", "--tries=3", "--timeout=120"]
@@ -74,6 +86,12 @@ services:
     volumes:
       - ./laravel-app:/var/www
       - app-storage:/var/www/storage
+    environment:
+      LOG_CHANNEL: ${LOG_CHANNEL:-stack}
+      LOG_STACK: ${LOG_STACK:-mongodb,stderr}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      LOG_MONGODB_COLLECTION: ${LOG_MONGODB_COLLECTION:-application_logs}
+      LOG_MONGODB_RETENTION_DAYS: ${LOG_MONGODB_RETENTION_DAYS:-14}
     networks:
       - app-network
     command: ["sh", "-lc", "while true; do php artisan schedule:run; sleep 60; done"]
