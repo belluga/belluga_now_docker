@@ -256,12 +256,9 @@ jobs:
           # remote updates while allowing iterative sync commits.
           git push --force-with-lease -u origin "$BOT_BRANCH"
 
-      - name: Create or update PR into lane base
+      - name: Report candidate branch ready for manual PR
         if: steps.inputs.outputs.skip != 'true' && steps.commit.outputs.no_changes != 'true'
         env:
-          # Use the workflow token for GitHub CLI PR operations to avoid
-          # organization-scope requirements on custom PATs.
-          GH_TOKEN: ${{ github.token }}
           BASE_BRANCH: ${{ steps.inputs.outputs.lane }}
           BOT_BRANCH: ${{ steps.inputs.outputs.bot_branch }}
           SUBMODULE: ${{ steps.inputs.outputs.submodule }}
@@ -273,26 +270,19 @@ jobs:
           set -euo pipefail
 
           short_sha="$(echo "$TARGET_SHA" | cut -c1-7)"
-          title="🔗 chore(submodules): sync ${SUBMODULE} pin (${short_sha}) [${LANE}]"
+          {
+            echo "### Submodule candidate branch updated"
+            echo "- Base branch: ${BASE_BRANCH}"
+            echo "- Candidate branch: ${BOT_BRANCH}"
+            echo "- Submodule: ${SUBMODULE}"
+            echo "- Commit: ${TARGET_SHA}"
+            if [[ -n "${SOURCE_REPO}" ]]; then
+              echo "- Source repo: ${SOURCE_REPO}"
+            fi
+            if [[ -n "${SOURCE_BRANCH}" ]]; then
+              echo "- Source branch: ${SOURCE_BRANCH}"
+            fi
+            echo "- Next action: open/update the PR manually if the diff is valid gitlink-only against ${BASE_BRANCH}."
+          } >> "$GITHUB_STEP_SUMMARY"
 
-          body=$'Automated submodule pin sync.\n\n- Lane: '"${LANE}"$'\n- Submodule: '"${SUBMODULE}"$'\n- Commit: '"${TARGET_SHA}"$'\n'
-          if [[ -n "${SOURCE_REPO}" ]]; then
-            body="${body}"$'\n'"- Source repo: ${SOURCE_REPO}"
-          fi
-          if [[ -n "${SOURCE_BRANCH}" ]]; then
-            body="${body}"$'\n'"- Source branch: ${SOURCE_BRANCH}"
-          fi
-
-          existing="$(gh pr list --repo "$GITHUB_REPOSITORY" --base "$BASE_BRANCH" --head "$BOT_BRANCH" --json number --jq '.[0].number // empty')"
-          if [[ -n "$existing" ]]; then
-            gh pr edit "$existing" --repo "$GITHUB_REPOSITORY" --title "$title" --body "$body"
-            echo "INFO: updated existing PR #$existing"
-            exit 0
-          fi
-
-          gh pr create \
-            --repo "$GITHUB_REPOSITORY" \
-            --base "$BASE_BRANCH" \
-            --head "$BOT_BRANCH" \
-            --title "$title" \
-            --body "$body"
+          echo "INFO: ${BOT_BRANCH} updated with ${SUBMODULE} pin ${short_sha}; manual PR creation is required."
