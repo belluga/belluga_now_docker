@@ -27,6 +27,7 @@ deploy_ssh_key_path="${DEPLOY_SSH_KEY_PATH:-${STAGE_SSH_KEY_PATH:-}}"
 deploy_nginx_port_80="${DEPLOY_NGINX_HOST_PORT_80:-${STAGE_NGINX_HOST_PORT_80:-80}}"
 deploy_nginx_port_443="${DEPLOY_NGINX_HOST_PORT_443:-${STAGE_NGINX_HOST_PORT_443:-443}}"
 deploy_health_host="${DEPLOY_HEALTH_HOST:-}"
+deploy_min_free_gb="${DEPLOY_MIN_FREE_GB:-8}"
 
 if [[ -z "${deploy_ssh_host}" || -z "${deploy_ssh_port}" || -z "${deploy_ssh_user}" || -z "${deploy_path}" || -z "${deploy_ssh_key_path}" ]]; then
   echo "ERROR: missing deploy SSH config. Set DEPLOY_SSH_HOST/PORT/USER/PATH/KEY_PATH (or legacy STAGE_* equivalents)." >&2
@@ -56,6 +57,11 @@ if [[ ! -f "${deploy_ssh_key_path}" ]]; then
   exit 1
 fi
 
+if ! [[ "${deploy_min_free_gb}" =~ ^[0-9]+$ ]] || (( deploy_min_free_gb < 1 )); then
+  echo "ERROR: DEPLOY_MIN_FREE_GB must be a positive integer (received '${deploy_min_free_gb}')." >&2
+  exit 1
+fi
+
 remote="${deploy_ssh_user}@${deploy_ssh_host}"
 ssh_opts=(
   -p "${deploy_ssh_port}"
@@ -78,6 +84,7 @@ SUBMODULES_REPO_TOKEN='${SUBMODULES_REPO_TOKEN}'
 DEPLOY_NGINX_HOST_PORT_80='${deploy_nginx_port_80}'
 DEPLOY_NGINX_HOST_PORT_443='${deploy_nginx_port_443}'
 DEPLOY_HEALTH_HOST_RAW='${deploy_health_host}'
+DEPLOY_MIN_FREE_GB='${deploy_min_free_gb}'
 
 run_git() {
   GIT_CONFIG_COUNT=1 \
@@ -105,6 +112,8 @@ if [[ "\${DOCKER_COMPOSE[0]}" == "sudo" ]]; then
 else
   DOCKER_CMD=(docker)
 fi
+
+DEPLOY_RUNTIME_MUTATED=0
 
 mkdir -p "\$DEPLOY_PATH"
 
@@ -408,6 +417,112 @@ clear_disk_log_files() {
   fi
 }
 
+best_effort_clear_disk_log_files() {
+  echo "INFO: running best-effort Laravel disk log cleanup before rebuild..."
+  if "\${DOCKER_COMPOSE[@]}" exec -T app sh -lc 'mkdir -p /var/www/storage/logs && : > /var/www/storage/logs/laravel.log && find /var/www/storage/logs -maxdepth 1 -type f -name "laravel-*.log" -delete' >/dev/null 2>&1; then
+    echo "INFO: pre-build Laravel log cleanup completed via running app container."
+    return 0
+  fi
+
+  echo "WARN: running app container was unavailable for pre-build log cleanup; continuing with Docker prune only." >&2
+  return 0
+}
+
+collect_disk_budget_paths() {
+  local docker_root_dir
+
+  docker_root_dir="$("\${DOCKER_CMD[@]}" info --format '{{.DockerRootDir}}' 2>/dev/null | tr -d '\r' || true)"
+
+  {
+    printf '/\n'
+    if [[ -n "\${docker_root_dir}" && -e "\${docker_root_dir}" ]]; then
+      printf '%s\n' "\${docker_root_dir}"
+    fi
+    if [[ -d /var/lib/containerd ]]; then
+      printf '/var/lib/containerd\n'
+    fi
+  } | awk 'NF && !seen[\$0]++'
+}
+
+get_free_kib_for_path() {
+  local path="\$1"
+  df -Pk "\${path}" 2>/dev/null | awk 'NR==2 {print \$4}'
+}
+
+print_disk_snapshot() {
+  local label="\$1"
+  local -a paths=()
+  local path
+
+  while IFS= read -r path; do
+    [[ -n "\${path}" ]] && paths+=("\${path}")
+  done < <(collect_disk_budget_paths)
+
+  echo "INFO: disk snapshot (\${label})"
+  if [[ "\${#paths[@]}" -gt 0 ]]; then
+    df -h "\${paths[@]}" || true
+  fi
+  "\${DOCKER_CMD[@]}" system df || true
+}
+
+ensure_disk_budget() {
+  local phase="\$1"
+  local required_kib worst_free_kib=-1 worst_path="" path free_kib
+
+  required_kib=\$(( DEPLOY_MIN_FREE_GB * 1024 * 1024 ))
+
+  while IFS= read -r path; do
+    [[ -n "\${path}" ]] || continue
+    free_kib="\$(get_free_kib_for_path "\${path}")"
+    if ! [[ "\${free_kib}" =~ ^[0-9]+$ ]]; then
+      echo "WARN: unable to resolve free disk for path '\${path}' during \${phase} budget check." >&2
+      continue
+    fi
+
+    if (( worst_free_kib == -1 || free_kib < worst_free_kib )); then
+      worst_free_kib="\${free_kib}"
+      worst_path="\${path}"
+    fi
+  done < <(collect_disk_budget_paths)
+
+  if [[ -z "\${worst_path}" ]]; then
+    echo "ERROR: unable to determine free disk budget for \${phase}." >&2
+    print_disk_snapshot "\${phase}-disk-budget-indeterminate"
+    return 1
+  fi
+
+  echo "INFO: disk budget check for \${phase}: path=\${worst_path} free_kib=\${worst_free_kib} required_kib=\${required_kib}"
+  if (( worst_free_kib < required_kib )); then
+    echo "ERROR: insufficient disk budget for \${phase}; need at least \${DEPLOY_MIN_FREE_GB} GiB free after cleanup." >&2
+    print_disk_snapshot "\${phase}-disk-budget-failed"
+    return 1
+  fi
+
+  return 0
+}
+
+prebuild_cleanup_and_budget_gate() {
+  local phase="\$1"
+
+  print_disk_snapshot "before-\${phase}-cleanup"
+  best_effort_clear_disk_log_files || true
+
+  if ! "\${DOCKER_CMD[@]}" container prune -f; then
+    echo "WARN: docker container prune failed during \${phase} cleanup; continuing." >&2
+  fi
+
+  if ! "\${DOCKER_CMD[@]}" builder prune -af; then
+    echo "WARN: docker builder prune failed during \${phase} cleanup; continuing." >&2
+  fi
+
+  if ! "\${DOCKER_CMD[@]}" image prune -af; then
+    echo "WARN: docker image prune failed during \${phase} cleanup; continuing." >&2
+  fi
+
+  print_disk_snapshot "after-\${phase}-cleanup"
+  ensure_disk_budget "\${phase}"
+}
+
 migration_output_has_fail_marker() {
   local output="\$1"
   printf '%s\n' "\${output}" | grep -Eq '[[:space:]]FAIL$|^ERROR:'
@@ -492,6 +607,12 @@ prune_docker_artifacts() {
 deploy_and_check_health() {
   local health_host health_url status body
 
+  DEPLOY_RUNTIME_MUTATED=0
+  if ! prebuild_cleanup_and_budget_gate "\${DEPLOY_LANE}-deploy"; then
+    return 1
+  fi
+
+  DEPLOY_RUNTIME_MUTATED=1
   if ! "\${DOCKER_COMPOSE[@]}" up -d --build --remove-orphans; then
     echo "ERROR: docker compose up failed." >&2
     return 1
@@ -560,6 +681,11 @@ echo "ERROR: deploy finished but application is not healthy." >&2
 "\${DOCKER_COMPOSE[@]}" logs --tail=200 app worker scheduler nginx || true
 
 if [[ -n "\$previous_revision" ]]; then
+  if [[ "\${DEPLOY_RUNTIME_MUTATED}" != "1" ]]; then
+    echo "WARN: deploy failed before runtime mutation; skipping internal rollback rebuild." >&2
+    exit 1
+  fi
+
   echo "INFO: attempting rollback to previous revision \${previous_revision}..."
   run_git reset --hard "\${previous_revision}"
   run_git submodule sync --recursive
