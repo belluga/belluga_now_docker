@@ -211,13 +211,7 @@ ensure_laravel_app_env() {
     return 0
   fi
 
-  if [[ -f "laravel-app/.env.example" ]]; then
-    cp laravel-app/.env.example laravel-app/.env
-    echo "INFO: rollback bootstrap laravel-app/.env from laravel-app/.env.example."
-    return 0
-  fi
-
-  echo "ERROR: missing both laravel-app/.env and laravel-app/.env.example during rollback." >&2
+  echo "ERROR: missing laravel-app/.env during rollback. ${deploy_lane} rollback must use the environment config already provisioned on the host; do not bootstrap from laravel-app/.env.example." >&2
   return 1
 }
 
@@ -248,6 +242,17 @@ read_laravel_env_value() {
   printf '%s' "\${raw}"
 }
 
+require_laravel_env_value() {
+  local key="\$1"
+  local value
+
+  value="\$(read_laravel_env_value "\${key}")"
+  if [[ -z "\${value}" ]]; then
+    echo "ERROR: laravel-app/.env is missing required key '\${key}' during rollback. ${deploy_lane} lanes must keep the provisioned environment file intact on the host." >&2
+    return 1
+  fi
+}
+
 normalize_laravel_queue_env_for_mongo() {
   local db_connection queue_connection db_queue_connection
 
@@ -274,15 +279,20 @@ normalize_laravel_queue_env_for_mongo() {
   esac
 }
 
-if [[ -f ".env" ]]; then
-  upsert_env NGINX_HOST_PORT_80 "\$DEPLOY_NGINX_HOST_PORT_80"
-  upsert_env NGINX_HOST_PORT_443 "\$DEPLOY_NGINX_HOST_PORT_443"
-  normalize_queue_env_for_mongo
+if [[ ! -f ".env" ]]; then
+  echo "ERROR: missing .env during rollback. ${deploy_lane} rollback must use the environment config already provisioned on the host; do not bootstrap from .env.example." >&2
+  exit 1
 fi
+
+upsert_env NGINX_HOST_PORT_80 "\$DEPLOY_NGINX_HOST_PORT_80"
+upsert_env NGINX_HOST_PORT_443 "\$DEPLOY_NGINX_HOST_PORT_443"
+normalize_queue_env_for_mongo
 
 if ! ensure_laravel_app_env; then
   exit 1
 fi
+require_laravel_env_value APP_URL
+require_laravel_env_value TRUSTED_PROXIES
 normalize_laravel_queue_env_for_mongo
 
 resolve_health_host() {
