@@ -157,13 +157,8 @@ if ! sync_web_runtime_lane; then
 fi
 
 if [[ ! -f ".env" ]]; then
-  if [[ -f ".env.example" ]]; then
-    cp .env.example .env
-    echo "INFO: bootstrap .env from .env.example on first deploy."
-  else
-    echo "ERROR: missing both .env and .env.example in deploy path." >&2
-    exit 1
-  fi
+  echo "ERROR: missing .env in deploy path. ${deploy_lane} deploys must use the pre-provisioned environment config already present on the host; do not bootstrap from .env.example." >&2
+  exit 1
 fi
 
 # Cleanup from prior malformed upsert runs.
@@ -272,13 +267,7 @@ ensure_laravel_app_env() {
     return 0
   fi
 
-  if [[ -f "laravel-app/.env.example" ]]; then
-    cp laravel-app/.env.example laravel-app/.env
-    echo "INFO: bootstrap laravel-app/.env from laravel-app/.env.example on first deploy."
-    return 0
-  fi
-
-  echo "ERROR: missing both laravel-app/.env and laravel-app/.env.example." >&2
+  echo "ERROR: missing laravel-app/.env. ${deploy_lane} deploys must use the pre-provisioned Laravel environment config already present on the host; do not bootstrap from laravel-app/.env.example." >&2
   return 1
 }
 
@@ -307,6 +296,17 @@ read_laravel_env_value() {
   raw="\${raw%\'}"
   raw="\${raw#\'}"
   printf '%s' "\${raw}"
+}
+
+require_laravel_env_value() {
+  local key="\$1"
+  local value
+
+  value="\$(read_laravel_env_value "\${key}")"
+  if [[ -z "\${value}" ]]; then
+    echo "ERROR: laravel-app/.env is missing required key '\${key}'. ${deploy_lane} deploys must use an explicitly provisioned environment file, not implicit defaults." >&2
+    return 1
+  fi
 }
 
 normalize_laravel_logging_env() {
@@ -357,6 +357,8 @@ normalize_queue_env_for_mongo
 if ! ensure_laravel_app_env; then
   exit 1
 fi
+require_laravel_env_value APP_URL
+require_laravel_env_value TRUSTED_PROXIES
 normalize_laravel_logging_env
 normalize_laravel_queue_env_for_mongo
 

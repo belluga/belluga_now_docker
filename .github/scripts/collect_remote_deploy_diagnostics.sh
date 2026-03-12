@@ -106,12 +106,43 @@ if [[ ! -d "${DEPLOY_PATH}/.git" ]]; then
   exit 0
 fi
 
+read_env_file_value() {
+  local env_file="$1"
+  local key="$2"
+  local raw
+
+  if [[ ! -f "${env_file}" ]]; then
+    printf '<missing>'
+    return 0
+  fi
+
+  raw="$(grep -E "^${key}=" "${env_file}" | tail -n 1 || true)"
+  raw="${raw#${key}=}"
+  raw="$(printf '%s' "${raw}" | tr -d '\r' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+  raw="${raw%\"}"
+  raw="${raw#\"}"
+  raw="${raw%\'}"
+  raw="${raw#\'}"
+
+  if [[ -z "${raw}" ]]; then
+    printf '<unset>'
+  else
+    printf '%s' "${raw}"
+  fi
+}
+
 cd "${DEPLOY_PATH}"
 echo "remote_repo_head=$(git rev-parse HEAD 2>/dev/null || true)"
 echo "remote_repo_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
 echo "remote_last_successful_revision=$(cat .last_successful_revision 2>/dev/null || true)"
 echo "remote_flutter_gitlink=$(git submodule status -- flutter-app 2>/dev/null | awk '{print $1}' | tr -d '+-' || true)"
 echo "remote_web_gitlink=$(git submodule status -- web-app 2>/dev/null | awk '{print $1}' | tr -d '+-' || true)"
+echo "remote_root_env_app_env=$(read_env_file_value .env APP_ENV)"
+echo "remote_root_env_domain=$(read_env_file_value .env DOMAIN)"
+echo "remote_laravel_env_app_env=$(read_env_file_value laravel-app/.env APP_ENV)"
+echo "remote_laravel_env_app_url=$(read_env_file_value laravel-app/.env APP_URL)"
+echo "remote_laravel_env_trusted_proxies=$(read_env_file_value laravel-app/.env TRUSTED_PROXIES)"
+echo "remote_laravel_env_require_trusted_proxy_headers=$(read_env_file_value laravel-app/.env API_SECURITY_REQUIRE_TRUSTED_PROXY_FOR_FORWARDED_HEADERS)"
 if [[ -f web-app/build_metadata.json ]]; then
   echo "remote_web_build_metadata_json_start"
   cat web-app/build_metadata.json
