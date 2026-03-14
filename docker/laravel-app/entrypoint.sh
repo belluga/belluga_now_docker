@@ -61,32 +61,85 @@ composer_autoload_can_resolve_class() {
     gosu www-data php -r "require '/var/www/vendor/autoload.php'; exit(class_exists('${class_name}') ? 0 : 1);" >/dev/null 2>&1
 }
 
+composer_lock_hash_file="/var/www/vendor/.composer-lock-sha1"
+
+composer_lock_hash() {
+    if [ ! -f "/var/www/composer.lock" ]; then
+        return 1
+    fi
+
+    sha1sum /var/www/composer.lock | awk '{print $1}'
+}
+
+composer_lock_hash_changed() {
+    local current_hash recorded_hash
+    if ! current_hash="$(composer_lock_hash)"; then
+        return 1
+    fi
+
+    if [ ! -f "$composer_lock_hash_file" ]; then
+        return 0
+    fi
+
+    recorded_hash="$(cat "$composer_lock_hash_file" 2>/dev/null || true)"
+    [ "$current_hash" != "$recorded_hash" ]
+}
+
+record_composer_lock_hash() {
+    local current_hash
+    if ! current_hash="$(composer_lock_hash)"; then
+        return 0
+    fi
+
+    gosu www-data sh -lc "printf '%s' '$current_hash' > '$composer_lock_hash_file'"
+}
+
 refresh_composer_autoload() {
     echo ">>> Refreshing Composer autoload metadata..."
     COMPOSER_MEMORY_LIMIT=-1 gosu www-data composer dump-autoload --no-interaction --optimize --no-progress >/dev/null
 }
 
-if [ ! -f "vendor/autoload.php" ] || ! composer_autoload_is_valid; then
-    composer_install_with_retry
-fi
+ensure_runtime_class_resolvable() {
+    local class_name="$1"
+    if composer_autoload_can_resolve_class "$class_name"; then
+        return 0
+    fi
 
-# Guardrail: ensure critical scheduled-job classes are resolvable before artisan cache
-# operations. This prevents bootstrap crashes caused by stale autoload metadata.
-required_runtime_class="Belluga\\Events\\Jobs\\PublishScheduledEventsJob"
-if ! composer_autoload_can_resolve_class "$required_runtime_class"; then
-    echo "WARN: required runtime class '$required_runtime_class' is not resolvable from current autoload."
+    echo "WARN: required runtime class '$class_name' is not resolvable from current autoload."
     refresh_composer_autoload || true
-fi
 
-if ! composer_autoload_can_resolve_class "$required_runtime_class"; then
-    echo "WARN: class '$required_runtime_class' still unresolved after autoload refresh; reinstalling dependencies."
+    if composer_autoload_can_resolve_class "$class_name"; then
+        return 0
+    fi
+
+    echo "WARN: class '$class_name' still unresolved after autoload refresh; reinstalling dependencies."
     composer_install_with_retry
+    record_composer_lock_hash
+
+    if composer_autoload_can_resolve_class "$class_name"; then
+        return 0
+    fi
+
+    echo "ERROR: class '$class_name' remains unresolved after Composer recovery." >&2
+    return 1
+}
+
+if [ ! -f "vendor/autoload.php" ] || ! composer_autoload_is_valid || composer_lock_hash_changed; then
+    composer_install_with_retry
+    record_composer_lock_hash
 fi
 
-if ! composer_autoload_can_resolve_class "$required_runtime_class"; then
-    echo "ERROR: class '$required_runtime_class' remains unresolved after Composer recovery." >&2
-    exit 1
-fi
+# Guardrail: ensure critical runtime classes are resolvable before artisan cache operations.
+# This prevents bootstrap crashes caused by stale autoload metadata after deploy updates.
+required_runtime_classes=(
+    "Belluga\\Events\\Jobs\\PublishScheduledEventsJob"
+    "Belluga\\Invites\\Http\\Api\\v1\\Controllers\\InviteFeedController"
+    "App\\Providers\\PackageIntegration\\InvitesIntegrationServiceProvider"
+)
+
+for required_runtime_class in "${required_runtime_classes[@]}"; do
+    ensure_runtime_class_resolvable "$required_runtime_class"
+done
 
 if [ ! -f ".env" ]; then
     gosu www-data cp .env.example .env
