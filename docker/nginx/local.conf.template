@@ -19,6 +19,16 @@ server {
     index index.php index.html;
     try_files $uri $uri/ /index.php?$query_string;
 
+    location = /.well-known/assetlinks.json {
+        default_type application/json;
+        try_files $uri =404;
+    }
+
+    location = /.well-known/apple-app-site-association {
+        default_type application/json;
+        try_files $uri =404;
+    }
+
     # --- Named location for Laravel fallback ---
     # This centralizes the logic for passing requests to Laravel's front controller.
     location @laravel {
