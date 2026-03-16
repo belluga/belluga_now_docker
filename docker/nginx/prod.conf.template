@@ -35,12 +35,12 @@ server {
 
     location = /.well-known/assetlinks.json {
         default_type application/json;
-        try_files $uri =404;
+        try_files /index.php?$query_string =404;
     }
 
     location = /.well-known/apple-app-site-association {
         default_type application/json;
-        try_files $uri =404;
+        try_files /index.php?$query_string =404;
     }
 
     location @laravel {
