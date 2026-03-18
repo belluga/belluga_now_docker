@@ -22,6 +22,32 @@ function requireNavigationUrls() {
   return { landlordUrl, tenantUrl };
 }
 
+async function countVisibleMatches(locator) {
+  const count = await locator.count();
+  let visibleCount = 0;
+
+  for (let index = 0; index < count; index += 1) {
+    if (await locator.nth(index).isVisible()) {
+      visibleCount += 1;
+    }
+  }
+
+  return visibleCount;
+}
+
+async function hasAnyVisibleText(page, texts) {
+  for (const text of texts) {
+    if (!text) {
+      continue;
+    }
+    if (await countVisibleMatches(page.getByText(text, { exact: false })) > 0) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 function installFailureCollectors(page) {
   const runtimeErrors = [];
   const failedRequests = [];
@@ -325,6 +351,8 @@ test('@mutation tenant agenda UI state matches tenant agenda API payload', async
     const sampleBase = {
       page: requestUrl.searchParams.get('page') ?? '1',
       pageSize: requestUrl.searchParams.get('page_size'),
+      pastOnly: requestUrl.searchParams.get('past_only'),
+      confirmedOnly: requestUrl.searchParams.get('confirmed_only'),
       originLat: requestUrl.searchParams.get('origin_lat'),
       originLng: requestUrl.searchParams.get('origin_lng'),
       maxDistanceMeters: requestUrl.searchParams.get('max_distance_meters'),
@@ -346,7 +374,14 @@ test('@mutation tenant agenda UI state matches tenant agenda API payload', async
       agendaSamples.push({
         page: sampleBase.page,
         pageSize: sampleBase.pageSize,
+        pastOnly: sampleBase.pastOnly,
+        confirmedOnly: sampleBase.confirmedOnly,
         count: items.length,
+        titles: items
+          .map((item) =>
+            typeof item?.title === 'string' ? item.title.trim() : '',
+          )
+          .filter(Boolean),
         originLat: sampleBase.originLat,
         originLng: sampleBase.originLng,
         maxDistanceMeters: sampleBase.maxDistanceMeters,
@@ -357,7 +392,10 @@ test('@mutation tenant agenda UI state matches tenant agenda API payload', async
       agendaSamples.push({
         page: sampleBase.page,
         pageSize: sampleBase.pageSize,
+        pastOnly: sampleBase.pastOnly,
+        confirmedOnly: sampleBase.confirmedOnly,
         count: 0,
+        titles: [],
         originLat: sampleBase.originLat,
         originLng: sampleBase.originLng,
         maxDistanceMeters: sampleBase.maxDistanceMeters,
@@ -405,8 +443,12 @@ test('@mutation tenant agenda UI state matches tenant agenda API payload', async
   const candidateAgendaRequests = agendaResponses.filter(
     (sample) =>
       sample.page === '1' &&
+      sample.pageSize === '10' &&
+      (sample.pastOnly === '0' || sample.pastOnly == null) &&
+      (sample.confirmedOnly === '0' || sample.confirmedOnly == null) &&
       sample.originLat != null &&
-      sample.originLng != null,
+      sample.originLng != null &&
+      sample.maxDistanceMeters != null,
   );
   if (hasAgendaResponses || !hasVisibleEmptyState) {
     expect(
@@ -424,8 +466,12 @@ test('@mutation tenant agenda UI state matches tenant agenda API payload', async
   const candidateAgendaPayloadSamples = agendaSamples.filter(
     (sample) =>
       sample.page === '1' &&
+      sample.pageSize === '10' &&
+      (sample.pastOnly === '0' || sample.pastOnly == null) &&
+      (sample.confirmedOnly === '0' || sample.confirmedOnly == null) &&
       sample.originLat != null &&
-      sample.originLng != null,
+      sample.originLng != null &&
+      sample.maxDistanceMeters != null,
   );
   const samplesMissingOrigin = originSamples.filter(
     (sample) => !sample.originLat || !sample.originLng,
@@ -456,16 +502,32 @@ test('@mutation tenant agenda UI state matches tenant agenda API payload', async
     (currentMax, sample) => (sample.count > currentMax ? sample.count : currentMax),
     0,
   );
+  const payloadTitles = payloadSamples.flatMap((sample) => sample.titles ?? []);
 
   if (maxAgendaCount > 0) {
-    await expect(
-      defaultEmptyStateText,
-      'Agenda API returned items, but UI still shows empty state.',
-    ).toHaveCount(0);
-    await expect(
-      filteredEmptyStateText,
-      'Agenda API returned items, but UI still shows filtered-empty state.',
-    ).toHaveCount(0);
+    await expect
+      .poll(
+        () => countVisibleMatches(defaultEmptyStateText),
+        {
+          message: 'Agenda API returned items, but UI still shows empty state.',
+          timeout: 5000,
+        },
+      )
+      .toBe(0);
+    await expect
+      .poll(
+        () => countVisibleMatches(filteredEmptyStateText),
+        {
+          message:
+            'Agenda API returned items, but UI still shows filtered-empty state.',
+          timeout: 5000,
+        },
+      )
+      .toBe(0);
+    expect(
+      await hasAnyVisibleText(page, payloadTitles),
+      `Expected at least one agenda title from the canonical home payload to be visible in UI.\nTitles:\n${payloadTitles.join('\n')}`,
+    ).toBeTruthy();
   }
 
   const criticalFailedRequests = collectors.failedRequests.filter((entry) =>

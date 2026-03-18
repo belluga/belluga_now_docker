@@ -45,6 +45,7 @@ node ../web_app_tests/guard_web_navigation_policy.cjs
 npx playwright test \
   --config ./playwright.config.js \
   --grep "${GREP}" \
+  --fail-on-flaky-tests \
   --retries=1 \
   --reporter=line \
   --output "${PLAYWRIGHT_OUTPUT_DIR}"
