@@ -324,8 +324,10 @@ test('@mutation tenant agenda UI state matches tenant agenda API payload', async
     const requestUrl = new URL(url);
     const sampleBase = {
       page: requestUrl.searchParams.get('page') ?? '1',
+      pageSize: requestUrl.searchParams.get('page_size'),
       originLat: requestUrl.searchParams.get('origin_lat'),
       originLng: requestUrl.searchParams.get('origin_lng'),
+      maxDistanceMeters: requestUrl.searchParams.get('max_distance_meters'),
       url,
       status: response.status(),
     };
@@ -343,18 +345,22 @@ test('@mutation tenant agenda UI state matches tenant agenda API payload', async
           : [];
       agendaSamples.push({
         page: sampleBase.page,
+        pageSize: sampleBase.pageSize,
         count: items.length,
         originLat: sampleBase.originLat,
         originLng: sampleBase.originLng,
+        maxDistanceMeters: sampleBase.maxDistanceMeters,
         url: sampleBase.url,
         status: sampleBase.status,
       });
     } catch (_) {
       agendaSamples.push({
         page: sampleBase.page,
+        pageSize: sampleBase.pageSize,
         count: 0,
         originLat: sampleBase.originLat,
         originLng: sampleBase.originLng,
+        maxDistanceMeters: sampleBase.maxDistanceMeters,
         url: sampleBase.url,
         status: sampleBase.status,
       });
@@ -396,10 +402,27 @@ test('@mutation tenant agenda UI state matches tenant agenda API payload', async
     ).toBeTruthy();
   }
 
-  const firstPageSamples = agendaResponses.filter((sample) => sample.page === '1');
-  const originSamples = firstPageSamples.length > 0 ? firstPageSamples : agendaResponses;
-  const firstPagePayloadSamples = agendaSamples.filter((sample) => sample.page === '1');
-  const inspectedSamples = firstPageSamples.length > 0 ? firstPageSamples : agendaSamples;
+  const homeAgendaRequests = agendaResponses.filter(
+    (sample) =>
+      sample.page === '1' &&
+      sample.pageSize === '10' &&
+      sample.maxDistanceMeters != null,
+  );
+  expect(
+    homeAgendaRequests.length > 0,
+    `Expected tenant home agenda request (page=1, page_size=10, max_distance_meters set), but saw:\n${agendaResponses
+      .map((sample) => sample.url)
+      .join('\n')}`,
+  ).toBeTruthy();
+
+  const originSamples =
+    homeAgendaRequests.length > 0 ? homeAgendaRequests : agendaResponses;
+  const homeAgendaPayloadSamples = agendaSamples.filter(
+    (sample) =>
+      sample.page === '1' &&
+      sample.pageSize === '10' &&
+      sample.maxDistanceMeters != null,
+  );
   const samplesMissingOrigin = originSamples.filter(
     (sample) => !sample.originLat || !sample.originLng,
   );
@@ -422,8 +445,8 @@ test('@mutation tenant agenda UI state matches tenant agenda API payload', async
       .join('\n')}`,
   ).toEqual([]);
 
-  const payloadSamples = firstPagePayloadSamples.length > 0
-    ? firstPagePayloadSamples
+  const payloadSamples = homeAgendaPayloadSamples.length > 0
+    ? homeAgendaPayloadSamples
     : agendaSamples;
   const maxAgendaCount = payloadSamples.reduce(
     (currentMax, sample) => (sample.count > currentMax ? sample.count : currentMax),
