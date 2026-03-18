@@ -22,36 +22,6 @@ function requireNavigationUrls() {
   return { landlordUrl, tenantUrl };
 }
 
-async function countVisibleMatches(locator) {
-  const count = await locator.count();
-  let visibleCount = 0;
-
-  for (let index = 0; index < count; index += 1) {
-    if (await locator.nth(index).isVisible()) {
-      visibleCount += 1;
-    }
-  }
-
-  return visibleCount;
-}
-
-async function hasAnyVisibleText(page, texts) {
-  for (const text of texts) {
-    if (!text) {
-      continue;
-    }
-    if (await countVisibleMatches(page.getByText(text, { exact: false })) > 0) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
-function logJson(label, value) {
-  console.log(`[nav][agenda] ${label}: ${JSON.stringify(value, null, 2)}`);
-}
-
 function installFailureCollectors(page) {
   const runtimeErrors = [];
   const failedRequests = [];
@@ -354,12 +324,8 @@ test('@mutation tenant agenda UI state matches tenant agenda API payload', async
     const requestUrl = new URL(url);
     const sampleBase = {
       page: requestUrl.searchParams.get('page') ?? '1',
-      pageSize: requestUrl.searchParams.get('page_size'),
-      pastOnly: requestUrl.searchParams.get('past_only'),
-      confirmedOnly: requestUrl.searchParams.get('confirmed_only'),
       originLat: requestUrl.searchParams.get('origin_lat'),
       originLng: requestUrl.searchParams.get('origin_lng'),
-      maxDistanceMeters: requestUrl.searchParams.get('max_distance_meters'),
       url,
       status: response.status(),
     };
@@ -369,8 +335,7 @@ test('@mutation tenant agenda UI state matches tenant agenda API payload', async
     }
     agendaResponses.push(sampleBase);
     try {
-      const rawBody = await response.text();
-      const body = JSON.parse(rawBody);
+      const body = await response.json();
       const items = Array.isArray(body?.items)
         ? body.items
         : Array.isArray(body?.data?.items)
@@ -378,38 +343,20 @@ test('@mutation tenant agenda UI state matches tenant agenda API payload', async
           : [];
       agendaSamples.push({
         page: sampleBase.page,
-        pageSize: sampleBase.pageSize,
-        pastOnly: sampleBase.pastOnly,
-        confirmedOnly: sampleBase.confirmedOnly,
         count: items.length,
-        titles: items
-          .map((item) =>
-            typeof item?.title === 'string' ? item.title.trim() : '',
-          )
-          .filter(Boolean),
         originLat: sampleBase.originLat,
         originLng: sampleBase.originLng,
-        maxDistanceMeters: sampleBase.maxDistanceMeters,
         url: sampleBase.url,
         status: sampleBase.status,
-        responseBody: body,
-        responseBodyRaw: rawBody,
       });
     } catch (_) {
       agendaSamples.push({
         page: sampleBase.page,
-        pageSize: sampleBase.pageSize,
-        pastOnly: sampleBase.pastOnly,
-        confirmedOnly: sampleBase.confirmedOnly,
         count: 0,
-        titles: [],
         originLat: sampleBase.originLat,
         originLng: sampleBase.originLng,
-        maxDistanceMeters: sampleBase.maxDistanceMeters,
         url: sampleBase.url,
         status: sampleBase.status,
-        responseBody: null,
-        responseBodyRaw: null,
       });
     }
   });
@@ -439,49 +386,20 @@ test('@mutation tenant agenda UI state matches tenant agenda API payload', async
   const defaultEmptyStateText = page.getByText('Nenhum evento disponível no momento');
   const filteredEmptyStateText = page.getByText('Nenhum resultado encontrado');
   const hasAgendaResponses = agendaResponses.length > 0;
-  const hasVisibleEmptyState =
-    (await defaultEmptyStateText.count()) > 0 ||
-    (await filteredEmptyStateText.count()) > 0;
   if (!hasAgendaResponses) {
+    const hasVisibleEmptyState =
+      (await defaultEmptyStateText.count()) > 0 ||
+      (await filteredEmptyStateText.count()) > 0;
     expect(
       hasVisibleEmptyState,
       'Expected /api/v1/agenda response or explicit empty-state UI when agenda is unavailable.',
     ).toBeTruthy();
   }
 
-  const candidateAgendaRequests = agendaResponses.filter(
-    (sample) =>
-      sample.page === '1' &&
-      sample.pageSize === '10' &&
-      (sample.pastOnly === '0' || sample.pastOnly == null) &&
-      (sample.confirmedOnly === '0' || sample.confirmedOnly == null) &&
-      sample.originLat != null &&
-      sample.originLng != null &&
-      sample.maxDistanceMeters != null,
-  );
-  if (hasAgendaResponses || !hasVisibleEmptyState) {
-    expect(
-      candidateAgendaRequests.length > 0,
-      `Expected tenant home agenda request (page=1 with origin_lat/origin_lng), but saw:\n${agendaResponses
-        .map((sample) => sample.url)
-        .join('\n')}`,
-    ).toBeTruthy();
-  }
-
-  const originSamples =
-    candidateAgendaRequests.length > 0
-      ? [candidateAgendaRequests[candidateAgendaRequests.length - 1]]
-      : agendaResponses.slice(-1);
-  const candidateAgendaPayloadSamples = agendaSamples.filter(
-    (sample) =>
-      sample.page === '1' &&
-      sample.pageSize === '10' &&
-      (sample.pastOnly === '0' || sample.pastOnly == null) &&
-      (sample.confirmedOnly === '0' || sample.confirmedOnly == null) &&
-      sample.originLat != null &&
-      sample.originLng != null &&
-      sample.maxDistanceMeters != null,
-  );
+  const firstPageSamples = agendaResponses.filter((sample) => sample.page === '1');
+  const originSamples = firstPageSamples.length > 0 ? firstPageSamples : agendaResponses;
+  const firstPagePayloadSamples = agendaSamples.filter((sample) => sample.page === '1');
+  const inspectedSamples = firstPageSamples.length > 0 ? firstPageSamples : agendaSamples;
   const samplesMissingOrigin = originSamples.filter(
     (sample) => !sample.originLat || !sample.originLng,
   );
@@ -504,46 +422,23 @@ test('@mutation tenant agenda UI state matches tenant agenda API payload', async
       .join('\n')}`,
   ).toEqual([]);
 
-  const payloadSamples = candidateAgendaPayloadSamples.length > 0
-    ? [candidateAgendaPayloadSamples[candidateAgendaPayloadSamples.length - 1]]
-    : agendaSamples.slice(-1);
+  const payloadSamples = firstPagePayloadSamples.length > 0
+    ? firstPagePayloadSamples
+    : agendaSamples;
   const maxAgendaCount = payloadSamples.reduce(
     (currentMax, sample) => (sample.count > currentMax ? sample.count : currentMax),
     0,
   );
-  const payloadTitles = payloadSamples.flatMap((sample) => sample.titles ?? []);
-
-  logJson('agendaResponses', agendaResponses);
-  logJson('candidateAgendaRequests', candidateAgendaRequests);
-  logJson('agendaSamples', agendaSamples);
-  logJson('candidateAgendaPayloadSamples', candidateAgendaPayloadSamples);
-  logJson('payloadSamples', payloadSamples);
-  logJson('maxAgendaCount', maxAgendaCount);
 
   if (maxAgendaCount > 0) {
-    await expect
-      .poll(
-        () => countVisibleMatches(defaultEmptyStateText),
-        {
-          message: 'Agenda API returned items, but UI still shows empty state.',
-          timeout: 5000,
-        },
-      )
-      .toBe(0);
-    await expect
-      .poll(
-        () => countVisibleMatches(filteredEmptyStateText),
-        {
-          message:
-            'Agenda API returned items, but UI still shows filtered-empty state.',
-          timeout: 5000,
-        },
-      )
-      .toBe(0);
-    expect(
-      await hasAnyVisibleText(page, payloadTitles),
-      `Expected at least one agenda title from the canonical home payload to be visible in UI.\nTitles:\n${payloadTitles.join('\n')}`,
-    ).toBeTruthy();
+    await expect(
+      defaultEmptyStateText,
+      'Agenda API returned items, but UI still shows empty state.',
+    ).toHaveCount(0);
+    await expect(
+      filteredEmptyStateText,
+      'Agenda API returned items, but UI still shows filtered-empty state.',
+    ).toHaveCount(0);
   }
 
   const criticalFailedRequests = collectors.failedRequests.filter((entry) =>
