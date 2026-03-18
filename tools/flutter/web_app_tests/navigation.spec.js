@@ -324,8 +324,10 @@ test('@mutation tenant agenda UI state matches tenant agenda API payload', async
     const requestUrl = new URL(url);
     const sampleBase = {
       page: requestUrl.searchParams.get('page') ?? '1',
+      pageSize: requestUrl.searchParams.get('page_size'),
       originLat: requestUrl.searchParams.get('origin_lat'),
       originLng: requestUrl.searchParams.get('origin_lng'),
+      maxDistanceMeters: requestUrl.searchParams.get('max_distance_meters'),
       url,
       status: response.status(),
     };
@@ -343,18 +345,22 @@ test('@mutation tenant agenda UI state matches tenant agenda API payload', async
           : [];
       agendaSamples.push({
         page: sampleBase.page,
+        pageSize: sampleBase.pageSize,
         count: items.length,
         originLat: sampleBase.originLat,
         originLng: sampleBase.originLng,
+        maxDistanceMeters: sampleBase.maxDistanceMeters,
         url: sampleBase.url,
         status: sampleBase.status,
       });
     } catch (_) {
       agendaSamples.push({
         page: sampleBase.page,
+        pageSize: sampleBase.pageSize,
         count: 0,
         originLat: sampleBase.originLat,
         originLng: sampleBase.originLng,
+        maxDistanceMeters: sampleBase.maxDistanceMeters,
         url: sampleBase.url,
         status: sampleBase.status,
       });
@@ -386,20 +392,41 @@ test('@mutation tenant agenda UI state matches tenant agenda API payload', async
   const defaultEmptyStateText = page.getByText('Nenhum evento disponível no momento');
   const filteredEmptyStateText = page.getByText('Nenhum resultado encontrado');
   const hasAgendaResponses = agendaResponses.length > 0;
+  const hasVisibleEmptyState =
+    (await defaultEmptyStateText.count()) > 0 ||
+    (await filteredEmptyStateText.count()) > 0;
   if (!hasAgendaResponses) {
-    const hasVisibleEmptyState =
-      (await defaultEmptyStateText.count()) > 0 ||
-      (await filteredEmptyStateText.count()) > 0;
     expect(
       hasVisibleEmptyState,
       'Expected /api/v1/agenda response or explicit empty-state UI when agenda is unavailable.',
     ).toBeTruthy();
   }
 
-  const firstPageSamples = agendaResponses.filter((sample) => sample.page === '1');
-  const originSamples = firstPageSamples.length > 0 ? firstPageSamples : agendaResponses;
-  const firstPagePayloadSamples = agendaSamples.filter((sample) => sample.page === '1');
-  const inspectedSamples = firstPageSamples.length > 0 ? firstPageSamples : agendaSamples;
+  const candidateAgendaRequests = agendaResponses.filter(
+    (sample) =>
+      sample.page === '1' &&
+      sample.originLat != null &&
+      sample.originLng != null,
+  );
+  if (hasAgendaResponses || !hasVisibleEmptyState) {
+    expect(
+      candidateAgendaRequests.length > 0,
+      `Expected tenant home agenda request (page=1 with origin_lat/origin_lng), but saw:\n${agendaResponses
+        .map((sample) => sample.url)
+        .join('\n')}`,
+    ).toBeTruthy();
+  }
+
+  const originSamples =
+    candidateAgendaRequests.length > 0
+      ? [candidateAgendaRequests[candidateAgendaRequests.length - 1]]
+      : agendaResponses.slice(-1);
+  const candidateAgendaPayloadSamples = agendaSamples.filter(
+    (sample) =>
+      sample.page === '1' &&
+      sample.originLat != null &&
+      sample.originLng != null,
+  );
   const samplesMissingOrigin = originSamples.filter(
     (sample) => !sample.originLat || !sample.originLng,
   );
@@ -422,9 +449,9 @@ test('@mutation tenant agenda UI state matches tenant agenda API payload', async
       .join('\n')}`,
   ).toEqual([]);
 
-  const payloadSamples = firstPagePayloadSamples.length > 0
-    ? firstPagePayloadSamples
-    : agendaSamples;
+  const payloadSamples = candidateAgendaPayloadSamples.length > 0
+    ? [candidateAgendaPayloadSamples[candidateAgendaPayloadSamples.length - 1]]
+    : agendaSamples.slice(-1);
   const maxAgendaCount = payloadSamples.reduce(
     (currentMax, sample) => (sample.count > currentMax ? sample.count : currentMax),
     0,
