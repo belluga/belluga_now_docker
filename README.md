@@ -355,9 +355,16 @@ O Docker **não** executa o build do Flutter automaticamente. O NGINX serve apen
    ```
    Os testes de navegação web **não** são mais autorados dentro de `web-app/`: a fonte da verdade fica em `tools/flutter/web_app_tests/` e a execução deve ocorrer via:
    ```bash
+   # Local (Docker/NGINX): ajuste URLs para suas origens browser-facing.
+   NAV_LANDLORD_URL="http://belluga.space" \
+   NAV_TENANT_URL="http://guarappari.belluga.space" \
+   bash tools/flutter/run_web_navigation_smoke.sh readonly
+
+   # Pipeline/stage/main (URLs injetadas pelo workflow):
    bash tools/flutter/run_web_navigation_smoke.sh readonly
    bash tools/flutter/run_web_navigation_smoke.sh mutation
    ```
+   > Observação: a suíte `mutation` é stage-only por política (`guard_web_navigation_policy.cjs`).
    Em ambiente local, o build do Flutter deve usar a origem browser-facing real do fluxo que será validado. Exemplo: se o navegador abre `https://belluga.space` / `https://guarappari.belluga.space` via Cloudflared, use `LANDLORD_DOMAIN=https://belluga.space` (sem porta interna). Só use `host:porta` quando essa for a origem efetivamente aberta no navegador. Não vaze `:8043` para fluxos públicos baseados em domínio.
 3. Quando estiver satisfeito, faça commit/push dentro do submódulo e depois atualize o repositório principal:
    ```bash
@@ -422,6 +429,7 @@ Pré-requisitos no repositório GitHub (`Settings > Secrets and variables > Acti
 * `SUBMODULES_REPO_TOKEN` (acesso de leitura aos submódulos privados).
 * `STAGE_SSH_PRIVATE_KEY` (chave privada usada pelo GitHub Actions).
 * `STAGE_SSH_KNOWN_HOSTS` (saída do `ssh-keyscan -H <ip-ou-host-stage>`).
+* `STAGE_INVITE_TEST_SUPPORT_SECRET` (segredo do harness stage-only de convites, usado pelos gates reais de compatibilidade Flutter/web após o deploy).
 
 `Variables`:
 * `STAGE_SSH_HOST` (ex.: IP público da VPS).
@@ -456,6 +464,15 @@ Comportamento do deploy:
 * Executa `docker compose up -d --build --remove-orphans`.
 * Executa migrations (landlord + tenants quando existirem) via `php artisan` dentro do container `app`.
 * Executa health check em `http://127.0.0.1:<NGINX_HOST_PORT_80>/api/v1/initialize` (espera HTTP `200` ou `403`).
+* No lane `stage`, após o deploy saudável, executa:
+  * smoke web readonly via Playwright,
+  * smoke web mutation via Playwright,
+  * gate real de compatibilidade de convites Flutter↔Laravel usando fixtures determinísticas de `stage`.
+
+Pré-requisitos adicionais no ambiente Laravel de `stage` para o gate real de convites:
+* `INVITE_STAGE_TEST_SUPPORT_ENABLED=true`
+* `INVITE_STAGE_TEST_SUPPORT_SECRET=<mesmo valor de STAGE_INVITE_TEST_SUPPORT_SECRET>`
+* `INVITE_STAGE_TEST_SUPPORT_ALLOWED_TENANTS=guarappari` (ou lista equivalente controlada)
 
 Rollback automático:
 * Se o health check falhar, o workflow tenta rollback para o commit anterior no servidor e recompõe os containers.
