@@ -7,7 +7,6 @@ FLUTTER_DIR="${ROOT_DIR}/flutter-app"
 define_file="${STAGE_INVITE_DEFINE_FILE:-config/defines/stage.json}"
 output_dir="${STAGE_INVITE_OUTPUT_DIR:-${ROOT_DIR}/foundation_documentation/artifacts/tmp/stage-invite-compatibility}"
 package_name="${STAGE_INVITE_PACKAGE_NAME:-com.guarappari.app}"
-allow_bad_certificates="${STAGE_INVITE_ALLOW_BAD_CERTIFICATES:-false}"
 
 if [[ -z "${STAGE_TENANT_URL:-}" ]]; then
   echo "ERROR: missing STAGE_TENANT_URL for stage invite compatibility." >&2
@@ -37,7 +36,6 @@ flutter_cmd=(
   --dart-define="STAGE_TENANT_URL=${STAGE_TENANT_URL}"
   --dart-define="STAGE_INVITE_TEST_SUPPORT_SECRET=${STAGE_INVITE_TEST_SUPPORT_SECRET}"
   --dart-define="STAGE_INVITE_PACKAGE_NAME=${package_name}"
-  --dart-define="STAGE_INVITE_ALLOW_BAD_CERTIFICATES=${allow_bad_certificates}"
 )
 
 "${flutter_cmd[@]}" 2>&1 | tee "${output_dir}/flutter-stage-invite-compatibility.log"
