@@ -466,6 +466,7 @@ jobs:
         env:
           STAGE_TENANT_URL: ${{ steps.stage_nav_targets.outputs.tenant_url }}
           STAGE_INVITE_TEST_SUPPORT_SECRET: ${{ secrets.STAGE_INVITE_TEST_SUPPORT_SECRET }}
+          STAGE_INVITE_ALLOW_BAD_CERTIFICATES: ${{ env.PLAYWRIGHT_IGNORE_HTTPS_ERRORS }}
         run: |
           dart pub global activate fvm
           export PATH="$HOME/.pub-cache/bin:${PATH}"
