@@ -85,8 +85,6 @@ DEPLOY_NGINX_HOST_PORT_80='${deploy_nginx_port_80}'
 DEPLOY_NGINX_HOST_PORT_443='${deploy_nginx_port_443}'
 DEPLOY_HEALTH_HOST_RAW='${deploy_health_host}'
 DEPLOY_MIN_FREE_GB='${deploy_min_free_gb}'
-STAGE_INVITE_TEST_SUPPORT_SECRET='${STAGE_INVITE_TEST_SUPPORT_SECRET:-}'
-STAGE_INVITE_TEST_SUPPORT_ALLOWED_TENANTS='${STAGE_INVITE_TEST_SUPPORT_ALLOWED_TENANTS:-guarappari}'
 
 run_git() {
   GIT_CONFIG_COUNT=1 \
@@ -351,28 +349,6 @@ normalize_laravel_queue_env_for_mongo() {
   esac
 }
 
-configure_stage_invite_test_support_env() {
-  if [[ "${DEPLOY_LANE}" == "stage" ]]; then
-    if [[ -z "${STAGE_INVITE_TEST_SUPPORT_SECRET}" ]]; then
-      echo "ERROR: missing STAGE_INVITE_TEST_SUPPORT_SECRET for stage deploy." >&2
-      return 1
-    fi
-
-    upsert_laravel_env APP_ENV stage
-    upsert_laravel_env INVITE_STAGE_TEST_SUPPORT_ENABLED true
-    upsert_laravel_env INVITE_STAGE_TEST_SUPPORT_SECRET_HEADER X-Test-Support-Key
-    upsert_laravel_env INVITE_STAGE_TEST_SUPPORT_SECRET "${STAGE_INVITE_TEST_SUPPORT_SECRET}"
-    upsert_laravel_env INVITE_STAGE_TEST_SUPPORT_ALLOWED_TENANTS "${STAGE_INVITE_TEST_SUPPORT_ALLOWED_TENANTS}"
-    return 0
-  fi
-
-  upsert_laravel_env APP_ENV production
-  upsert_laravel_env INVITE_STAGE_TEST_SUPPORT_ENABLED false
-  upsert_laravel_env INVITE_STAGE_TEST_SUPPORT_SECRET_HEADER X-Test-Support-Key
-  upsert_laravel_env INVITE_STAGE_TEST_SUPPORT_SECRET ''
-  upsert_laravel_env INVITE_STAGE_TEST_SUPPORT_ALLOWED_TENANTS "${STAGE_INVITE_TEST_SUPPORT_ALLOWED_TENANTS}"
-}
-
 upsert_env NGINX_HOST_PORT_80 "\$DEPLOY_NGINX_HOST_PORT_80"
 upsert_env NGINX_HOST_PORT_443 "\$DEPLOY_NGINX_HOST_PORT_443"
 normalize_logging_env
@@ -385,9 +361,6 @@ require_laravel_env_value APP_URL
 require_laravel_env_value TRUSTED_PROXIES
 normalize_laravel_logging_env
 normalize_laravel_queue_env_for_mongo
-if ! configure_stage_invite_test_support_env; then
-  exit 1
-fi
 
 resolve_health_host() {
   local app_url_line source host

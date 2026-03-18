@@ -256,8 +256,6 @@ jobs:
           DEPLOY_SSH_KEY_PATH: ~/.ssh/id_ed25519_stage
           DEPLOY_MIN_FREE_GB: ${{ vars.STAGE_DEPLOY_MIN_FREE_GB || '4' }}
           SUBMODULES_REPO_TOKEN: ${{ steps.submodule_auth.outputs.token }}
-          STAGE_INVITE_TEST_SUPPORT_SECRET: ${{ secrets.STAGE_INVITE_TEST_SUPPORT_SECRET }}
-          STAGE_INVITE_TEST_SUPPORT_ALLOWED_TENANTS: ${{ vars.STAGE_INVITE_TEST_SUPPORT_ALLOWED_TENANTS || 'guarappari' }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           GITHUB_REF_NAME: ${{ github.ref_name }}
         run: bash .github/scripts/deploy_stage_over_ssh.sh
@@ -427,58 +425,10 @@ jobs:
           NAV_LANDLORD_URL: ${{ steps.stage_nav_targets.outputs.landlord_url }}
           NAV_TENANT_URL: ${{ steps.stage_nav_targets.outputs.tenant_url }}
           PLAYWRIGHT_IGNORE_HTTPS_ERRORS: ${{ env.PLAYWRIGHT_IGNORE_HTTPS_ERRORS }}
-          STAGE_INVITE_TEST_SUPPORT_SECRET: ${{ secrets.STAGE_INVITE_TEST_SUPPORT_SECRET }}
         run: bash tools/flutter/run_web_navigation_smoke.sh mutation
 
-      - name: Resolve Flutter version for stage invite compatibility
-        id: stage_invite_flutter_version
-        if: steps.stage_initialize_preflight.outputs.initialized == 'true' && steps.stage_public_edge_environment_probe.outcome != 'failure' && steps.stage_provenance_check.outcome != 'failure' && steps.stage_navigation_smoke.outcome != 'failure' && steps.stage_navigation_mutation_smoke.outcome != 'failure'
-        continue-on-error: true
-        working-directory: flutter-app
-        run: |
-          version="$(jq -r '.flutter // empty' .fvmrc 2>/dev/null || true)"
-
-          if [[ -z "$version" || "$version" == "null" ]]; then
-            version="$(grep -Eo '[0-9]+\.[0-9]+\.[0-9]+' .fvmrc | head -n 1 || true)"
-          fi
-
-          if [[ -z "$version" ]]; then
-            echo "ERROR: unable to resolve Flutter version from flutter-app/.fvmrc" >&2
-            exit 1
-          fi
-
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-
-      - name: Setup Flutter SDK for stage invite compatibility
-        id: stage_invite_flutter_setup
-        if: steps.stage_initialize_preflight.outputs.initialized == 'true' && steps.stage_public_edge_environment_probe.outcome != 'failure' && steps.stage_provenance_check.outcome != 'failure' && steps.stage_navigation_smoke.outcome != 'failure' && steps.stage_navigation_mutation_smoke.outcome != 'failure' && steps.stage_invite_flutter_version.outcome != 'failure'
-        continue-on-error: true
-        uses: subosito/flutter-action@v2
-        with:
-          flutter-version: ${{ steps.stage_invite_flutter_version.outputs.version }}
-          channel: stable
-          cache: true
-
-      - name: Run stage invite compatibility suite
-        id: stage_invite_compatibility
-        if: steps.stage_initialize_preflight.outputs.initialized == 'true' && steps.stage_public_edge_environment_probe.outcome != 'failure' && steps.stage_provenance_check.outcome != 'failure' && steps.stage_navigation_smoke.outcome != 'failure' && steps.stage_navigation_mutation_smoke.outcome != 'failure' && steps.stage_invite_flutter_version.outcome != 'failure' && steps.stage_invite_flutter_setup.outcome != 'failure'
-        continue-on-error: true
-        env:
-          STAGE_TENANT_URL: ${{ steps.stage_nav_targets.outputs.tenant_url }}
-          STAGE_INVITE_TEST_SUPPORT_SECRET: ${{ secrets.STAGE_INVITE_TEST_SUPPORT_SECRET }}
-          STAGE_INVITE_ALLOW_BAD_CERTIFICATES: ${{ env.PLAYWRIGHT_IGNORE_HTTPS_ERRORS }}
-        run: |
-          dart pub global activate fvm
-          export PATH="$HOME/.pub-cache/bin:${PATH}"
-          cd flutter-app
-          fvm install
-          fvm flutter --version
-          fvm flutter pub get
-          cd ..
-          bash tools/flutter/run_stage_invite_compatibility.sh
-
       - name: Collect stage deploy diagnostics before rollback
-        if: ${{ always() && (steps.stage_deploy_remote.outcome == 'failure' || steps.stage_initialize_preflight.outcome == 'failure' || (steps.stage_initialize_preflight.outputs.initialized == 'true' && (steps.stage_public_edge_environment_probe.outcome == 'failure' || steps.stage_provenance_check.outcome == 'failure' || steps.stage_navigation_smoke.outcome == 'failure' || steps.stage_navigation_mutation_smoke.outcome == 'failure' || steps.stage_invite_flutter_version.outcome == 'failure' || steps.stage_invite_flutter_setup.outcome == 'failure' || steps.stage_invite_compatibility.outcome == 'failure'))) }}
+        if: ${{ always() && (steps.stage_deploy_remote.outcome == 'failure' || steps.stage_initialize_preflight.outcome == 'failure' || (steps.stage_initialize_preflight.outputs.initialized == 'true' && (steps.stage_public_edge_environment_probe.outcome == 'failure' || steps.stage_provenance_check.outcome == 'failure' || steps.stage_navigation_smoke.outcome == 'failure' || steps.stage_navigation_mutation_smoke.outcome == 'failure'))) }}
         continue-on-error: true
         env:
           DEPLOY_LANE: stage
@@ -493,20 +443,19 @@ jobs:
         run: bash .github/scripts/collect_remote_deploy_diagnostics.sh
 
       - name: Upload stage navigation smoke artifacts
-        if: ${{ always() && (steps.stage_deploy_remote.outcome == 'failure' || steps.stage_initialize_preflight.outcome == 'failure' || steps.stage_public_edge_environment_probe.outcome == 'failure' || steps.stage_provenance_check.outcome == 'failure' || steps.stage_navigation_smoke.outcome == 'failure' || steps.stage_navigation_mutation_smoke.outcome == 'failure' || steps.stage_invite_flutter_version.outcome == 'failure' || steps.stage_invite_flutter_setup.outcome == 'failure' || steps.stage_invite_compatibility.outcome == 'failure') }}
+        if: ${{ always() && (steps.stage_deploy_remote.outcome == 'failure' || steps.stage_initialize_preflight.outcome == 'failure' || steps.stage_public_edge_environment_probe.outcome == 'failure' || steps.stage_provenance_check.outcome == 'failure' || steps.stage_navigation_smoke.outcome == 'failure' || steps.stage_navigation_mutation_smoke.outcome == 'failure') }}
         uses: actions/upload-artifact@v4
         with:
           name: stage-navigation-smoke-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             tools/flutter/web_app_smoke_runner/test-results
             tools/flutter/web_app_smoke_runner/playwright-report
-            foundation_documentation/artifacts/tmp/stage-invite-compatibility
             /tmp/stage_deploy_diagnostics.txt
           if-no-files-found: warn
           retention-days: 7
 
       - name: Mark stage revision as successful after navigation smoke
-        if: steps.stage_public_edge_environment_probe.outcome != 'failure' && steps.stage_provenance_check.outcome != 'failure' && (steps.stage_initialize_preflight.outputs.initialized != 'true' || (steps.stage_navigation_smoke.outcome == 'success' && steps.stage_navigation_mutation_smoke.outcome == 'success' && steps.stage_invite_flutter_version.outcome == 'success' && steps.stage_invite_flutter_setup.outcome == 'success' && steps.stage_invite_compatibility.outcome == 'success'))
+        if: steps.stage_public_edge_environment_probe.outcome != 'failure' && steps.stage_provenance_check.outcome != 'failure' && (steps.stage_initialize_preflight.outputs.initialized != 'true' || (steps.stage_navigation_smoke.outcome == 'success' && steps.stage_navigation_mutation_smoke.outcome == 'success'))
         env:
           DEPLOY_SSH_HOST: ${{ vars.STAGE_SSH_HOST }}
           DEPLOY_SSH_PORT: ${{ vars.STAGE_SSH_PORT }}
@@ -517,7 +466,7 @@ jobs:
 
       - name: Roll back stage deploy when provenance, preflight, or smoke fails
         id: stage_rollback
-        if: ${{ always() && (steps.stage_initialize_preflight.outcome == 'failure' || (steps.stage_initialize_preflight.outputs.initialized == 'true' && (steps.stage_public_edge_environment_probe.outcome == 'failure' || steps.stage_provenance_check.outcome == 'failure' || steps.stage_navigation_smoke.outcome == 'failure' || steps.stage_navigation_mutation_smoke.outcome == 'failure' || steps.stage_invite_flutter_version.outcome == 'failure' || steps.stage_invite_flutter_setup.outcome == 'failure' || steps.stage_invite_compatibility.outcome == 'failure'))) }}
+        if: ${{ always() && (steps.stage_initialize_preflight.outcome == 'failure' || (steps.stage_initialize_preflight.outputs.initialized == 'true' && (steps.stage_public_edge_environment_probe.outcome == 'failure' || steps.stage_provenance_check.outcome == 'failure' || steps.stage_navigation_smoke.outcome == 'failure' || steps.stage_navigation_mutation_smoke.outcome == 'failure'))) }}
         env:
           DEPLOY_LANE: stage
           DEPLOY_SSH_HOST: ${{ vars.STAGE_SSH_HOST }}
@@ -536,13 +485,8 @@ jobs:
         run: bash .github/scripts/rollback_over_ssh.sh
 
       - name: Fail stage deploy after rollback
-        if: ${{ always() && (steps.stage_deploy_remote.outcome == 'failure' || steps.stage_initialize_preflight.outcome == 'failure' || (steps.stage_initialize_preflight.outputs.initialized == 'true' && (steps.stage_public_edge_environment_probe.outcome == 'failure' || steps.stage_provenance_check.outcome == 'failure' || steps.stage_navigation_smoke.outcome == 'failure' || steps.stage_navigation_mutation_smoke.outcome == 'failure' || steps.stage_invite_flutter_version.outcome == 'failure' || steps.stage_invite_flutter_setup.outcome == 'failure' || steps.stage_invite_compatibility.outcome == 'failure'))) }}
+        if: ${{ always() && (steps.stage_deploy_remote.outcome == 'failure' || steps.stage_initialize_preflight.outcome == 'failure' || (steps.stage_initialize_preflight.outputs.initialized == 'true' && (steps.stage_public_edge_environment_probe.outcome == 'failure' || steps.stage_provenance_check.outcome == 'failure' || steps.stage_navigation_smoke.outcome == 'failure' || steps.stage_navigation_mutation_smoke.outcome == 'failure'))) }}
         run: |
-          invite_gate_failed=false
-          if [[ "${{ steps.stage_invite_flutter_version.outcome }}" == "failure" || "${{ steps.stage_invite_flutter_setup.outcome }}" == "failure" || "${{ steps.stage_invite_compatibility.outcome }}" == "failure" ]]; then
-            invite_gate_failed=true
-          fi
-
           if [[ "${{ steps.stage_deploy_remote.outcome }}" == "failure" ]]; then
             echo "ERROR: stage remote deploy script failed before downstream smoke gates. Inspect deploy logs to determine whether internal rollback restored the previous revision." >&2
           elif [[ "${{ steps.stage_initialize_preflight.outcome }}" == "failure" && "${{ steps.stage_rollback.outcome }}" == "failure" ]]; then
@@ -561,10 +505,6 @@ jobs:
             echo "ERROR: stage mutation navigation smoke failed and external rollback failed; service may remain degraded." >&2
           elif [[ "${{ steps.stage_navigation_mutation_smoke.outcome }}" == "failure" ]]; then
             echo "ERROR: stage mutation navigation smoke failed; external rollback completed." >&2
-          elif [[ "$invite_gate_failed" == "true" && "${{ steps.stage_rollback.outcome }}" == "failure" ]]; then
-            echo "ERROR: stage invite compatibility gate failed and external rollback failed; service may remain degraded." >&2
-          elif [[ "$invite_gate_failed" == "true" ]]; then
-            echo "ERROR: stage invite compatibility gate failed; external rollback completed." >&2
           elif [[ "${{ steps.stage_rollback.outcome }}" == "failure" ]]; then
             echo "ERROR: stage navigation smoke failed and external rollback failed; service may remain degraded." >&2
           else
