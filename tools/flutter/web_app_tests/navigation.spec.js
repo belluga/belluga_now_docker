@@ -48,6 +48,10 @@ async function hasAnyVisibleText(page, texts) {
   return false;
 }
 
+function logJson(label, value) {
+  console.log(`[nav][agenda] ${label}: ${JSON.stringify(value, null, 2)}`);
+}
+
 function installFailureCollectors(page) {
   const runtimeErrors = [];
   const failedRequests = [];
@@ -365,7 +369,8 @@ test('@mutation tenant agenda UI state matches tenant agenda API payload', async
     }
     agendaResponses.push(sampleBase);
     try {
-      const body = await response.json();
+      const rawBody = await response.text();
+      const body = JSON.parse(rawBody);
       const items = Array.isArray(body?.items)
         ? body.items
         : Array.isArray(body?.data?.items)
@@ -387,6 +392,8 @@ test('@mutation tenant agenda UI state matches tenant agenda API payload', async
         maxDistanceMeters: sampleBase.maxDistanceMeters,
         url: sampleBase.url,
         status: sampleBase.status,
+        responseBody: body,
+        responseBodyRaw: rawBody,
       });
     } catch (_) {
       agendaSamples.push({
@@ -401,6 +408,8 @@ test('@mutation tenant agenda UI state matches tenant agenda API payload', async
         maxDistanceMeters: sampleBase.maxDistanceMeters,
         url: sampleBase.url,
         status: sampleBase.status,
+        responseBody: null,
+        responseBodyRaw: null,
       });
     }
   });
@@ -503,6 +512,13 @@ test('@mutation tenant agenda UI state matches tenant agenda API payload', async
     0,
   );
   const payloadTitles = payloadSamples.flatMap((sample) => sample.titles ?? []);
+
+  logJson('agendaResponses', agendaResponses);
+  logJson('candidateAgendaRequests', candidateAgendaRequests);
+  logJson('agendaSamples', agendaSamples);
+  logJson('candidateAgendaPayloadSamples', candidateAgendaPayloadSamples);
+  logJson('payloadSamples', payloadSamples);
+  logJson('maxAgendaCount', maxAgendaCount);
 
   if (maxAgendaCount > 0) {
     await expect
