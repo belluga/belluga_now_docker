@@ -337,6 +337,33 @@ best_effort_clear_disk_log_files() {
   return 0
 }
 
+best_effort_clear_laravel_composer_cache() {
+  local cache_dir="laravel-app/.composer/cache"
+  local before_kib after_kib reclaimed_kib
+
+  if [[ ! -d "\${cache_dir}" ]]; then
+    echo "INFO: laravel composer cache directory '\${cache_dir}' is absent; skipping."
+    return 0
+  fi
+
+  before_kib="\$(du -sk "\${cache_dir}" 2>/dev/null | awk '{print \$1}')"
+  before_kib="\${before_kib:-0}"
+
+  if find "\${cache_dir}" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + >/dev/null 2>&1; then
+    after_kib="\$(du -sk "\${cache_dir}" 2>/dev/null | awk '{print \$1}')"
+    after_kib="\${after_kib:-0}"
+    reclaimed_kib=\$(( before_kib - after_kib ))
+    if (( reclaimed_kib < 0 )); then
+      reclaimed_kib=0
+    fi
+    echo "INFO: pre-rollback composer cache cleanup reclaimed \${reclaimed_kib} KiB from \${cache_dir}."
+    return 0
+  fi
+
+  echo "WARN: failed to clear \${cache_dir}; continuing." >&2
+  return 0
+}
+
 collect_disk_budget_paths() {
   local docker_root_dir
 
@@ -415,6 +442,7 @@ prebuild_cleanup_and_budget_gate() {
 
   print_disk_snapshot "before-\${phase}-cleanup"
   best_effort_clear_disk_log_files || true
+  best_effort_clear_laravel_composer_cache || true
 
   if ! "\${DOCKER_CMD[@]}" container prune -f; then
     echo "WARN: docker container prune failed during \${phase} cleanup; continuing." >&2
