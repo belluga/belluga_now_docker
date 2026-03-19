@@ -131,6 +131,16 @@ read_env_file_value() {
   fi
 }
 
+read_path_size_human() {
+  local path="$1"
+  if [[ ! -e "${path}" ]]; then
+    printf '<missing>'
+    return 0
+  fi
+
+  du -sh "${path}" 2>/dev/null | awk '{print $1}' || printf '<unresolved>'
+}
+
 cd "${DEPLOY_PATH}"
 echo "remote_repo_head=$(git rev-parse HEAD 2>/dev/null || true)"
 echo "remote_repo_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
@@ -143,6 +153,7 @@ echo "remote_laravel_env_app_env=$(read_env_file_value laravel-app/.env APP_ENV)
 echo "remote_laravel_env_app_url=$(read_env_file_value laravel-app/.env APP_URL)"
 echo "remote_laravel_env_trusted_proxies=$(read_env_file_value laravel-app/.env TRUSTED_PROXIES)"
 echo "remote_laravel_env_require_trusted_proxy_headers=$(read_env_file_value laravel-app/.env API_SECURITY_REQUIRE_TRUSTED_PROXY_FOR_FORWARDED_HEADERS)"
+echo "remote_laravel_composer_cache_size=$(read_path_size_human laravel-app/.composer/cache)"
 if [[ -f web-app/build_metadata.json ]]; then
   echo "remote_web_build_metadata_json_start"
   cat web-app/build_metadata.json
