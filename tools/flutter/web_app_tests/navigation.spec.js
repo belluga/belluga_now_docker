@@ -305,6 +305,7 @@ test('@mutation tenant agenda UI state matches tenant agenda API payload', async
   const agendaErrorResponses = [];
   const agendaSamples = [];
   const homeAgendaSamples = [];
+  const homeAgendaParseErrors = [];
   let anonymousIdentityStatus = null;
 
   const tenantEnvironment = await assertEnvironmentType(page, tenantUrl, 'tenant');
@@ -352,11 +353,17 @@ test('@mutation tenant agenda UI state matches tenant agenda API payload', async
     }
     try {
       const body = await response.json();
-      const items = Array.isArray(body?.items)
-        ? body.items
-        : Array.isArray(body?.data?.items)
-          ? body.data.items
-          : [];
+      const hasCanonicalItemsArray =
+        Array.isArray(body?.items) || Array.isArray(body?.data?.items);
+      if (!hasCanonicalItemsArray) {
+        if (isHomeRequest) {
+          homeAgendaParseErrors.push(
+            `Canonical home agenda payload missing items array: ${sampleBase.status} ${sampleBase.url}`,
+          );
+        }
+        return;
+      }
+      const items = Array.isArray(body?.items) ? body.items : body.data.items;
       agendaSamples.push({
         page: sampleBase.page,
         count: items.length,
@@ -376,23 +383,10 @@ test('@mutation tenant agenda UI state matches tenant agenda API payload', async
         });
       }
     } catch (_) {
-      agendaSamples.push({
-        page: sampleBase.page,
-        count: 0,
-        originLat: sampleBase.originLat,
-        originLng: sampleBase.originLng,
-        url: sampleBase.url,
-        status: sampleBase.status,
-      });
       if (isHomeRequest) {
-        homeAgendaSamples.push({
-          page: sampleBase.page,
-          count: 0,
-          originLat: sampleBase.originLat,
-          originLng: sampleBase.originLng,
-          url: sampleBase.url,
-          status: sampleBase.status,
-        });
+        homeAgendaParseErrors.push(
+          `Canonical home agenda payload is not valid JSON: ${sampleBase.status} ${sampleBase.url}`,
+        );
       }
     }
   });
@@ -428,15 +422,20 @@ test('@mutation tenant agenda UI state matches tenant agenda API payload', async
   if (!hasHomeAgendaResponses) {
     expect(
       hasVisibleEmptyState,
-      `Expected canonical home /api/v1/agenda request (page_size=10) ` +
-      `or explicit empty-state UI when home agenda is unavailable.\n` +
-      `Observed agenda requests:\n${agendaResponses.map((sample) => sample.url).join('\n')}`,
+      `Expected canonical home /api/v1/agenda request ` +
+        `(page_size=10, past_only=0, confirmed_only=0, no search) ` +
+        `or explicit empty-state UI when home agenda is unavailable.\n` +
+        `Observed agenda requests:\n${agendaResponses.map((sample) => sample.url).join('\n')}`,
     ).toBeTruthy();
   }
 
+  expect(
+    homeAgendaParseErrors,
+    `Canonical home agenda payload parse/contract failures:\n${homeAgendaParseErrors.join('\n')}`,
+  ).toEqual([]);
+
   const firstPageHomeSamples = homeAgendaResponses.filter((sample) => sample.page === '1');
   const originSamples = firstPageHomeSamples.length > 0 ? firstPageHomeSamples : homeAgendaResponses;
-  const firstPageHomePayloadSamples = homeAgendaSamples.filter((sample) => sample.page === '1');
   const samplesMissingOrigin = originSamples.filter(
     (sample) => !sample.originLat || !sample.originLng,
   );
@@ -459,6 +458,7 @@ test('@mutation tenant agenda UI state matches tenant agenda API payload', async
       .join('\n')}`,
   ).toEqual([]);
 
+  const firstPageHomePayloadSamples = homeAgendaSamples.filter((sample) => sample.page === '1');
   const payloadSamples = firstPageHomePayloadSamples.length > 0
     ? firstPageHomePayloadSamples
     : homeAgendaSamples;
