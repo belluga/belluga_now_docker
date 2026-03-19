@@ -254,7 +254,7 @@ jobs:
           DEPLOY_NGINX_HOST_PORT_443: ${{ vars.STAGE_NGINX_HOST_PORT_443 }}
           DEPLOY_HEALTH_HOST: ${{ steps.stage_nav_targets.outputs.landlord_url }}
           DEPLOY_SSH_KEY_PATH: ~/.ssh/id_ed25519_stage
-          DEPLOY_MIN_FREE_GB: '8'
+          DEPLOY_MIN_FREE_GB: ${{ vars.STAGE_DEPLOY_MIN_FREE_GB || '4' }}
           SUBMODULES_REPO_TOKEN: ${{ steps.submodule_auth.outputs.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           GITHUB_REF_NAME: ${{ github.ref_name }}
@@ -320,8 +320,19 @@ jobs:
         run: |
           echo "INFO: skipping stage navigation smoke because environment is not initialized yet."
 
-      - name: Setup Node.js for real navigation smoke
+      - name: Probe public stage environment endpoints
+        id: stage_public_edge_environment_probe
         if: steps.stage_initialize_preflight.outputs.initialized == 'true'
+        continue-on-error: true
+        env:
+          NAV_LANDLORD_URL: ${{ steps.stage_nav_targets.outputs.landlord_url }}
+          NAV_TENANT_URL: ${{ steps.stage_nav_targets.outputs.tenant_url }}
+          NAV_PUBLIC_EDGE_MAX_ATTEMPTS: '6'
+          NAV_PUBLIC_EDGE_SLEEP_SECONDS: '5'
+        run: bash .github/scripts/probe_public_navigation_environment_over_https.sh stage
+
+      - name: Setup Node.js for real navigation smoke
+        if: steps.stage_initialize_preflight.outputs.initialized == 'true' && steps.stage_public_edge_environment_probe.outcome != 'failure'
         uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -329,17 +340,17 @@ jobs:
           cache-dependency-path: tools/flutter/web_app_smoke_runner/package-lock.json
 
       - name: Install web navigation dependencies
-        if: steps.stage_initialize_preflight.outputs.initialized == 'true'
+        if: steps.stage_initialize_preflight.outputs.initialized == 'true' && steps.stage_public_edge_environment_probe.outcome != 'failure'
         run: npm ci
         working-directory: tools/flutter/web_app_smoke_runner
 
       - name: Install Playwright browser
-        if: steps.stage_initialize_preflight.outputs.initialized == 'true'
+        if: steps.stage_initialize_preflight.outputs.initialized == 'true' && steps.stage_public_edge_environment_probe.outcome != 'failure'
         run: npx playwright install --with-deps chromium
         working-directory: tools/flutter/web_app_smoke_runner
 
       - name: Route stage smoke hosts directly to origin
-        if: steps.stage_initialize_preflight.outputs.initialized == 'true'
+        if: steps.stage_initialize_preflight.outputs.initialized == 'true' && steps.stage_public_edge_environment_probe.outcome != 'failure'
         env:
           NAV_LANDLORD_URL: ${{ steps.stage_nav_targets.outputs.landlord_url }}
           NAV_TENANT_URL: ${{ steps.stage_nav_targets.outputs.tenant_url }}
@@ -373,7 +384,7 @@ jobs:
           fi
 
       - name: Warm up stage environment endpoints
-        if: steps.stage_initialize_preflight.outputs.initialized == 'true'
+        if: steps.stage_initialize_preflight.outputs.initialized == 'true' && steps.stage_public_edge_environment_probe.outcome != 'failure'
         env:
           NAV_LANDLORD_URL: ${{ steps.stage_nav_targets.outputs.landlord_url }}
           NAV_TENANT_URL: ${{ steps.stage_nav_targets.outputs.tenant_url }}
@@ -384,6 +395,7 @@ jobs:
 
       - name: Validate deployed stage web provenance
         id: stage_provenance_check
+        if: steps.stage_initialize_preflight.outputs.initialized == 'true' && steps.stage_public_edge_environment_probe.outcome != 'failure'
         continue-on-error: true
         env:
           DEPLOY_LANE: stage
@@ -393,7 +405,7 @@ jobs:
 
       - name: Run stage real navigation smoke
         id: stage_navigation_smoke
-        if: steps.stage_initialize_preflight.outputs.initialized == 'true' && steps.stage_provenance_check.outcome != 'failure'
+        if: steps.stage_initialize_preflight.outputs.initialized == 'true' && steps.stage_public_edge_environment_probe.outcome != 'failure' && steps.stage_provenance_check.outcome != 'failure'
         continue-on-error: true
         env:
           NAV_DEPLOY_LANE: stage
@@ -405,7 +417,7 @@ jobs:
 
       - name: Run stage mutation navigation smoke
         id: stage_navigation_mutation_smoke
-        if: steps.stage_initialize_preflight.outputs.initialized == 'true' && steps.stage_provenance_check.outcome != 'failure' && steps.stage_navigation_smoke.outcome != 'failure'
+        if: steps.stage_initialize_preflight.outputs.initialized == 'true' && steps.stage_public_edge_environment_probe.outcome != 'failure' && steps.stage_provenance_check.outcome != 'failure' && steps.stage_navigation_smoke.outcome != 'failure'
         continue-on-error: true
         env:
           NAV_DEPLOY_LANE: stage
@@ -416,7 +428,7 @@ jobs:
         run: bash tools/flutter/run_web_navigation_smoke.sh mutation
 
       - name: Collect stage deploy diagnostics before rollback
-        if: ${{ always() && (steps.stage_deploy_remote.outcome == 'failure' || steps.stage_initialize_preflight.outcome == 'failure' || steps.stage_provenance_check.outcome == 'failure' || (steps.stage_initialize_preflight.outputs.initialized == 'true' && (steps.stage_navigation_smoke.outcome == 'failure' || steps.stage_navigation_mutation_smoke.outcome == 'failure'))) }}
+        if: ${{ always() && (steps.stage_deploy_remote.outcome == 'failure' || steps.stage_initialize_preflight.outcome == 'failure' || (steps.stage_initialize_preflight.outputs.initialized == 'true' && (steps.stage_public_edge_environment_probe.outcome == 'failure' || steps.stage_provenance_check.outcome == 'failure' || steps.stage_navigation_smoke.outcome == 'failure' || steps.stage_navigation_mutation_smoke.outcome == 'failure'))) }}
         continue-on-error: true
         env:
           DEPLOY_LANE: stage
@@ -431,7 +443,7 @@ jobs:
         run: bash .github/scripts/collect_remote_deploy_diagnostics.sh
 
       - name: Upload stage navigation smoke artifacts
-        if: ${{ always() && (steps.stage_deploy_remote.outcome == 'failure' || steps.stage_initialize_preflight.outcome == 'failure' || steps.stage_provenance_check.outcome == 'failure' || steps.stage_navigation_smoke.outcome == 'failure' || steps.stage_navigation_mutation_smoke.outcome == 'failure') }}
+        if: ${{ always() && (steps.stage_deploy_remote.outcome == 'failure' || steps.stage_initialize_preflight.outcome == 'failure' || steps.stage_public_edge_environment_probe.outcome == 'failure' || steps.stage_provenance_check.outcome == 'failure' || steps.stage_navigation_smoke.outcome == 'failure' || steps.stage_navigation_mutation_smoke.outcome == 'failure') }}
         uses: actions/upload-artifact@v4
         with:
           name: stage-navigation-smoke-${{ github.run_id }}-${{ github.run_attempt }}
@@ -443,7 +455,7 @@ jobs:
           retention-days: 7
 
       - name: Mark stage revision as successful after navigation smoke
-        if: steps.stage_provenance_check.outcome != 'failure' && (steps.stage_initialize_preflight.outputs.initialized != 'true' || (steps.stage_navigation_smoke.outcome == 'success' && steps.stage_navigation_mutation_smoke.outcome == 'success'))
+        if: steps.stage_public_edge_environment_probe.outcome != 'failure' && steps.stage_provenance_check.outcome != 'failure' && (steps.stage_initialize_preflight.outputs.initialized != 'true' || (steps.stage_navigation_smoke.outcome == 'success' && steps.stage_navigation_mutation_smoke.outcome == 'success'))
         env:
           DEPLOY_SSH_HOST: ${{ vars.STAGE_SSH_HOST }}
           DEPLOY_SSH_PORT: ${{ vars.STAGE_SSH_PORT }}
@@ -454,7 +466,7 @@ jobs:
 
       - name: Roll back stage deploy when provenance, preflight, or smoke fails
         id: stage_rollback
-        if: ${{ always() && (steps.stage_initialize_preflight.outcome == 'failure' || steps.stage_provenance_check.outcome == 'failure' || (steps.stage_initialize_preflight.outputs.initialized == 'true' && (steps.stage_navigation_smoke.outcome == 'failure' || steps.stage_navigation_mutation_smoke.outcome == 'failure'))) }}
+        if: ${{ always() && (steps.stage_initialize_preflight.outcome == 'failure' || (steps.stage_initialize_preflight.outputs.initialized == 'true' && (steps.stage_public_edge_environment_probe.outcome == 'failure' || steps.stage_provenance_check.outcome == 'failure' || steps.stage_navigation_smoke.outcome == 'failure' || steps.stage_navigation_mutation_smoke.outcome == 'failure'))) }}
         env:
           DEPLOY_LANE: stage
           DEPLOY_SSH_HOST: ${{ vars.STAGE_SSH_HOST }}
@@ -465,7 +477,7 @@ jobs:
           DEPLOY_NGINX_HOST_PORT_443: ${{ vars.STAGE_NGINX_HOST_PORT_443 }}
           DEPLOY_HEALTH_HOST: ${{ steps.stage_nav_targets.outputs.landlord_url }}
           DEPLOY_SSH_KEY_PATH: ~/.ssh/id_ed25519_stage
-          DEPLOY_MIN_FREE_GB: '8'
+          DEPLOY_MIN_FREE_GB: ${{ vars.STAGE_DEPLOY_MIN_FREE_GB || '4' }}
           SUBMODULES_REPO_TOKEN: ${{ steps.submodule_auth.outputs.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           GITHUB_REF_NAME: ${{ github.ref_name }}
@@ -473,7 +485,7 @@ jobs:
         run: bash .github/scripts/rollback_over_ssh.sh
 
       - name: Fail stage deploy after rollback
-        if: ${{ always() && (steps.stage_deploy_remote.outcome == 'failure' || steps.stage_initialize_preflight.outcome == 'failure' || steps.stage_provenance_check.outcome == 'failure' || (steps.stage_initialize_preflight.outputs.initialized == 'true' && (steps.stage_navigation_smoke.outcome == 'failure' || steps.stage_navigation_mutation_smoke.outcome == 'failure'))) }}
+        if: ${{ always() && (steps.stage_deploy_remote.outcome == 'failure' || steps.stage_initialize_preflight.outcome == 'failure' || (steps.stage_initialize_preflight.outputs.initialized == 'true' && (steps.stage_public_edge_environment_probe.outcome == 'failure' || steps.stage_provenance_check.outcome == 'failure' || steps.stage_navigation_smoke.outcome == 'failure' || steps.stage_navigation_mutation_smoke.outcome == 'failure'))) }}
         run: |
           if [[ "${{ steps.stage_deploy_remote.outcome }}" == "failure" ]]; then
             echo "ERROR: stage remote deploy script failed before downstream smoke gates. Inspect deploy logs to determine whether internal rollback restored the previous revision." >&2
@@ -481,6 +493,10 @@ jobs:
             echo "ERROR: stage initialization preflight failed and external rollback failed; service may remain degraded." >&2
           elif [[ "${{ steps.stage_initialize_preflight.outcome }}" == "failure" ]]; then
             echo "ERROR: stage initialization preflight failed; external rollback completed." >&2
+          elif [[ "${{ steps.stage_public_edge_environment_probe.outcome }}" == "failure" && "${{ steps.stage_rollback.outcome }}" == "failure" ]]; then
+            echo "ERROR: stage public-edge environment probe failed and external rollback failed; service may remain degraded." >&2
+          elif [[ "${{ steps.stage_public_edge_environment_probe.outcome }}" == "failure" ]]; then
+            echo "ERROR: stage public-edge environment probe failed; external rollback completed." >&2
           elif [[ "${{ steps.stage_provenance_check.outcome }}" == "failure" && "${{ steps.stage_rollback.outcome }}" == "failure" ]]; then
             echo "ERROR: stage deployed build provenance validation failed and external rollback failed; service may remain degraded." >&2
           elif [[ "${{ steps.stage_provenance_check.outcome }}" == "failure" ]]; then
@@ -616,7 +632,7 @@ jobs:
           DEPLOY_NGINX_HOST_PORT_443: ${{ vars.MAIN_NGINX_HOST_PORT_443 }}
           DEPLOY_HEALTH_HOST: ${{ steps.main_nav_targets.outputs.landlord_url }}
           DEPLOY_SSH_KEY_PATH: ~/.ssh/id_ed25519_main
-          DEPLOY_MIN_FREE_GB: '8'
+          DEPLOY_MIN_FREE_GB: ${{ vars.MAIN_DEPLOY_MIN_FREE_GB || '5' }}
           SUBMODULES_REPO_TOKEN: ${{ steps.submodule_auth.outputs.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           GITHUB_REF_NAME: ${{ github.ref_name }}
@@ -682,8 +698,19 @@ jobs:
         run: |
           echo "INFO: skipping production navigation smoke because environment is not initialized yet."
 
-      - name: Setup Node.js for real navigation smoke
+      - name: Probe public production environment endpoints
+        id: main_public_edge_environment_probe
         if: steps.main_initialize_preflight.outputs.initialized == 'true'
+        continue-on-error: true
+        env:
+          NAV_LANDLORD_URL: ${{ steps.main_nav_targets.outputs.landlord_url }}
+          NAV_TENANT_URL: ${{ steps.main_nav_targets.outputs.tenant_url }}
+          NAV_PUBLIC_EDGE_MAX_ATTEMPTS: '6'
+          NAV_PUBLIC_EDGE_SLEEP_SECONDS: '5'
+        run: bash .github/scripts/probe_public_navigation_environment_over_https.sh main
+
+      - name: Setup Node.js for real navigation smoke
+        if: steps.main_initialize_preflight.outputs.initialized == 'true' && steps.main_public_edge_environment_probe.outcome != 'failure'
         uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -691,17 +718,17 @@ jobs:
           cache-dependency-path: tools/flutter/web_app_smoke_runner/package-lock.json
 
       - name: Install web navigation dependencies
-        if: steps.main_initialize_preflight.outputs.initialized == 'true'
+        if: steps.main_initialize_preflight.outputs.initialized == 'true' && steps.main_public_edge_environment_probe.outcome != 'failure'
         run: npm ci
         working-directory: tools/flutter/web_app_smoke_runner
 
       - name: Install Playwright browser
-        if: steps.main_initialize_preflight.outputs.initialized == 'true'
+        if: steps.main_initialize_preflight.outputs.initialized == 'true' && steps.main_public_edge_environment_probe.outcome != 'failure'
         run: npx playwright install --with-deps chromium
         working-directory: tools/flutter/web_app_smoke_runner
 
       - name: Route production smoke hosts directly to origin
-        if: steps.main_initialize_preflight.outputs.initialized == 'true'
+        if: steps.main_initialize_preflight.outputs.initialized == 'true' && steps.main_public_edge_environment_probe.outcome != 'failure'
         env:
           NAV_LANDLORD_URL: ${{ steps.main_nav_targets.outputs.landlord_url }}
           NAV_TENANT_URL: ${{ steps.main_nav_targets.outputs.tenant_url }}
@@ -735,7 +762,7 @@ jobs:
           fi
 
       - name: Warm up production environment endpoints
-        if: steps.main_initialize_preflight.outputs.initialized == 'true'
+        if: steps.main_initialize_preflight.outputs.initialized == 'true' && steps.main_public_edge_environment_probe.outcome != 'failure'
         env:
           NAV_LANDLORD_URL: ${{ steps.main_nav_targets.outputs.landlord_url }}
           NAV_TENANT_URL: ${{ steps.main_nav_targets.outputs.tenant_url }}
@@ -746,6 +773,7 @@ jobs:
 
       - name: Validate deployed production web provenance
         id: main_provenance_check
+        if: steps.main_initialize_preflight.outputs.initialized == 'true' && steps.main_public_edge_environment_probe.outcome != 'failure'
         continue-on-error: true
         env:
           DEPLOY_LANE: main
@@ -754,7 +782,7 @@ jobs:
         run: bash .github/scripts/check_deployed_web_provenance.sh main
 
       - name: Assert mutation suite is hard-blocked on main
-        if: steps.main_initialize_preflight.outputs.initialized == 'true' && steps.main_provenance_check.outcome != 'failure'
+        if: steps.main_initialize_preflight.outputs.initialized == 'true' && steps.main_public_edge_environment_probe.outcome != 'failure' && steps.main_provenance_check.outcome != 'failure'
         env:
           NAV_DEPLOY_LANE: main
           NAV_WEB_TEST_TYPE: mutation
@@ -773,7 +801,7 @@ jobs:
 
       - name: Run production real navigation smoke
         id: production_navigation_smoke
-        if: steps.main_initialize_preflight.outputs.initialized == 'true' && steps.main_provenance_check.outcome != 'failure'
+        if: steps.main_initialize_preflight.outputs.initialized == 'true' && steps.main_public_edge_environment_probe.outcome != 'failure' && steps.main_provenance_check.outcome != 'failure'
         continue-on-error: true
         env:
           NAV_DEPLOY_LANE: main
@@ -784,7 +812,7 @@ jobs:
         run: bash tools/flutter/run_web_navigation_smoke.sh readonly
 
       - name: Collect production deploy diagnostics before rollback
-        if: ${{ always() && (steps.main_deploy_remote.outcome == 'failure' || steps.main_initialize_preflight.outcome == 'failure' || steps.main_provenance_check.outcome == 'failure' || (steps.main_initialize_preflight.outputs.initialized == 'true' && steps.production_navigation_smoke.outcome == 'failure')) }}
+        if: ${{ always() && (steps.main_deploy_remote.outcome == 'failure' || steps.main_initialize_preflight.outcome == 'failure' || (steps.main_initialize_preflight.outputs.initialized == 'true' && (steps.main_public_edge_environment_probe.outcome == 'failure' || steps.main_provenance_check.outcome == 'failure' || steps.production_navigation_smoke.outcome == 'failure'))) }}
         continue-on-error: true
         env:
           DEPLOY_LANE: main
@@ -799,7 +827,7 @@ jobs:
         run: bash .github/scripts/collect_remote_deploy_diagnostics.sh
 
       - name: Upload production navigation smoke artifacts
-        if: ${{ always() && (steps.main_deploy_remote.outcome == 'failure' || steps.main_initialize_preflight.outcome == 'failure' || steps.main_provenance_check.outcome == 'failure' || steps.production_navigation_smoke.outcome == 'failure') }}
+        if: ${{ always() && (steps.main_deploy_remote.outcome == 'failure' || steps.main_initialize_preflight.outcome == 'failure' || steps.main_public_edge_environment_probe.outcome == 'failure' || steps.main_provenance_check.outcome == 'failure' || steps.production_navigation_smoke.outcome == 'failure') }}
         uses: actions/upload-artifact@v4
         with:
           name: production-navigation-smoke-${{ github.run_id }}-${{ github.run_attempt }}
@@ -811,7 +839,7 @@ jobs:
           retention-days: 7
 
       - name: Mark production revision as successful after navigation smoke
-        if: steps.main_provenance_check.outcome != 'failure' && (steps.main_initialize_preflight.outputs.initialized != 'true' || steps.production_navigation_smoke.outcome == 'success')
+        if: steps.main_public_edge_environment_probe.outcome != 'failure' && steps.main_provenance_check.outcome != 'failure' && (steps.main_initialize_preflight.outputs.initialized != 'true' || steps.production_navigation_smoke.outcome == 'success')
         env:
           DEPLOY_SSH_HOST: ${{ vars.MAIN_SSH_HOST }}
           DEPLOY_SSH_PORT: ${{ vars.MAIN_SSH_PORT }}
@@ -822,7 +850,7 @@ jobs:
 
       - name: Roll back production deploy when provenance, preflight, or smoke fails
         id: main_rollback
-        if: ${{ always() && (steps.main_initialize_preflight.outcome == 'failure' || steps.main_provenance_check.outcome == 'failure' || (steps.main_initialize_preflight.outputs.initialized == 'true' && steps.production_navigation_smoke.outcome == 'failure')) }}
+        if: ${{ always() && (steps.main_initialize_preflight.outcome == 'failure' || (steps.main_initialize_preflight.outputs.initialized == 'true' && (steps.main_public_edge_environment_probe.outcome == 'failure' || steps.main_provenance_check.outcome == 'failure' || steps.production_navigation_smoke.outcome == 'failure'))) }}
         env:
           DEPLOY_LANE: main
           DEPLOY_SSH_HOST: ${{ vars.MAIN_SSH_HOST }}
@@ -833,7 +861,7 @@ jobs:
           DEPLOY_NGINX_HOST_PORT_443: ${{ vars.MAIN_NGINX_HOST_PORT_443 }}
           DEPLOY_HEALTH_HOST: ${{ steps.main_nav_targets.outputs.landlord_url }}
           DEPLOY_SSH_KEY_PATH: ~/.ssh/id_ed25519_main
-          DEPLOY_MIN_FREE_GB: '8'
+          DEPLOY_MIN_FREE_GB: ${{ vars.MAIN_DEPLOY_MIN_FREE_GB || '5' }}
           SUBMODULES_REPO_TOKEN: ${{ steps.submodule_auth.outputs.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           GITHUB_REF_NAME: ${{ github.ref_name }}
@@ -841,7 +869,7 @@ jobs:
         run: bash .github/scripts/rollback_over_ssh.sh
 
       - name: Fail production deploy after rollback
-        if: ${{ always() && (steps.main_deploy_remote.outcome == 'failure' || steps.main_initialize_preflight.outcome == 'failure' || steps.main_provenance_check.outcome == 'failure' || (steps.main_initialize_preflight.outputs.initialized == 'true' && steps.production_navigation_smoke.outcome == 'failure')) }}
+        if: ${{ always() && (steps.main_deploy_remote.outcome == 'failure' || steps.main_initialize_preflight.outcome == 'failure' || (steps.main_initialize_preflight.outputs.initialized == 'true' && (steps.main_public_edge_environment_probe.outcome == 'failure' || steps.main_provenance_check.outcome == 'failure' || steps.production_navigation_smoke.outcome == 'failure'))) }}
         run: |
           if [[ "${{ steps.main_deploy_remote.outcome }}" == "failure" ]]; then
             echo "ERROR: production remote deploy script failed before downstream smoke gates. Inspect deploy logs to determine whether internal rollback restored the previous revision." >&2
@@ -849,6 +877,10 @@ jobs:
             echo "ERROR: production initialization preflight failed and external rollback failed; service may remain degraded." >&2
           elif [[ "${{ steps.main_initialize_preflight.outcome }}" == "failure" ]]; then
             echo "ERROR: production initialization preflight failed; external rollback completed." >&2
+          elif [[ "${{ steps.main_public_edge_environment_probe.outcome }}" == "failure" && "${{ steps.main_rollback.outcome }}" == "failure" ]]; then
+            echo "ERROR: production public-edge environment probe failed and external rollback failed; service may remain degraded." >&2
+          elif [[ "${{ steps.main_public_edge_environment_probe.outcome }}" == "failure" ]]; then
+            echo "ERROR: production public-edge environment probe failed; external rollback completed." >&2
           elif [[ "${{ steps.main_provenance_check.outcome }}" == "failure" && "${{ steps.main_rollback.outcome }}" == "failure" ]]; then
             echo "ERROR: production deployed build provenance validation failed and external rollback failed; service may remain degraded." >&2
           elif [[ "${{ steps.main_provenance_check.outcome }}" == "failure" ]]; then

@@ -13,6 +13,7 @@ application/*
 # AI Agents
 AGENTS.md
 delphi-ai
+skills
 GEMINI.md
 gemini_memory.md
 .agent/

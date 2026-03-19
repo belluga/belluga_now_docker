@@ -287,6 +287,12 @@ test('@readonly tenant domain bootstraps as tenant and navigates to tenant route
 test('@mutation tenant agenda UI state matches tenant agenda API payload', async ({ browser }) => {
   const { tenantUrl } = requireNavigationUrls();
   const tenantOrigin = new URL(tenantUrl).origin;
+  const isHomeAgendaRequest = (sample) =>
+    sample.pageSize === '10' &&
+    (sample.pastOnly == null || sample.pastOnly === '0') &&
+    (sample.confirmedOnly == null || sample.confirmedOnly === '0') &&
+    (sample.searchQuery == null || sample.searchQuery.trim() === '');
+
   const context = await browser.newContext({
     ignoreHTTPSErrors: true,
     geolocation: { latitude: -20.671339, longitude: -40.495395 },
@@ -295,8 +301,11 @@ test('@mutation tenant agenda UI state matches tenant agenda API payload', async
   const page = await context.newPage();
   const collectors = installFailureCollectors(page);
   const agendaResponses = [];
+  const homeAgendaResponses = [];
   const agendaErrorResponses = [];
   const agendaSamples = [];
+  const homeAgendaSamples = [];
+  const homeAgendaParseErrors = [];
   let anonymousIdentityStatus = null;
 
   const tenantEnvironment = await assertEnvironmentType(page, tenantUrl, 'tenant');
@@ -324,6 +333,10 @@ test('@mutation tenant agenda UI state matches tenant agenda API payload', async
     const requestUrl = new URL(url);
     const sampleBase = {
       page: requestUrl.searchParams.get('page') ?? '1',
+      pageSize: requestUrl.searchParams.get('page_size'),
+      pastOnly: requestUrl.searchParams.get('past_only'),
+      confirmedOnly: requestUrl.searchParams.get('confirmed_only'),
+      searchQuery: requestUrl.searchParams.get('search'),
       originLat: requestUrl.searchParams.get('origin_lat'),
       originLng: requestUrl.searchParams.get('origin_lng'),
       url,
@@ -334,13 +347,23 @@ test('@mutation tenant agenda UI state matches tenant agenda API payload', async
       return;
     }
     agendaResponses.push(sampleBase);
+    const isHomeRequest = isHomeAgendaRequest(sampleBase);
+    if (isHomeRequest) {
+      homeAgendaResponses.push(sampleBase);
+    }
     try {
       const body = await response.json();
-      const items = Array.isArray(body?.items)
-        ? body.items
-        : Array.isArray(body?.data?.items)
-          ? body.data.items
-          : [];
+      const hasCanonicalItemsArray =
+        Array.isArray(body?.items) || Array.isArray(body?.data?.items);
+      if (!hasCanonicalItemsArray) {
+        if (isHomeRequest) {
+          homeAgendaParseErrors.push(
+            `Canonical home agenda payload missing items array: ${sampleBase.status} ${sampleBase.url}`,
+          );
+        }
+        return;
+      }
+      const items = Array.isArray(body?.items) ? body.items : body.data.items;
       agendaSamples.push({
         page: sampleBase.page,
         count: items.length,
@@ -349,15 +372,22 @@ test('@mutation tenant agenda UI state matches tenant agenda API payload', async
         url: sampleBase.url,
         status: sampleBase.status,
       });
+      if (isHomeRequest) {
+        homeAgendaSamples.push({
+          page: sampleBase.page,
+          count: items.length,
+          originLat: sampleBase.originLat,
+          originLng: sampleBase.originLng,
+          url: sampleBase.url,
+          status: sampleBase.status,
+        });
+      }
     } catch (_) {
-      agendaSamples.push({
-        page: sampleBase.page,
-        count: 0,
-        originLat: sampleBase.originLat,
-        originLng: sampleBase.originLng,
-        url: sampleBase.url,
-        status: sampleBase.status,
-      });
+      if (isHomeRequest) {
+        homeAgendaParseErrors.push(
+          `Canonical home agenda payload is not valid JSON: ${sampleBase.status} ${sampleBase.url}`,
+        );
+      }
     }
   });
 
@@ -385,21 +415,27 @@ test('@mutation tenant agenda UI state matches tenant agenda API payload', async
 
   const defaultEmptyStateText = page.getByText('Nenhum evento disponível no momento');
   const filteredEmptyStateText = page.getByText('Nenhum resultado encontrado');
-  const hasAgendaResponses = agendaResponses.length > 0;
-  if (!hasAgendaResponses) {
-    const hasVisibleEmptyState =
-      (await defaultEmptyStateText.count()) > 0 ||
-      (await filteredEmptyStateText.count()) > 0;
+  const hasVisibleEmptyState =
+    (await defaultEmptyStateText.count()) > 0 ||
+    (await filteredEmptyStateText.count()) > 0;
+  const hasHomeAgendaResponses = homeAgendaResponses.length > 0;
+  if (!hasHomeAgendaResponses) {
     expect(
       hasVisibleEmptyState,
-      'Expected /api/v1/agenda response or explicit empty-state UI when agenda is unavailable.',
+      `Expected canonical home /api/v1/agenda request ` +
+        `(page_size=10, past_only=0, confirmed_only=0, no search) ` +
+        `or explicit empty-state UI when home agenda is unavailable.\n` +
+        `Observed agenda requests:\n${agendaResponses.map((sample) => sample.url).join('\n')}`,
     ).toBeTruthy();
   }
 
-  const firstPageSamples = agendaResponses.filter((sample) => sample.page === '1');
-  const originSamples = firstPageSamples.length > 0 ? firstPageSamples : agendaResponses;
-  const firstPagePayloadSamples = agendaSamples.filter((sample) => sample.page === '1');
-  const inspectedSamples = firstPageSamples.length > 0 ? firstPageSamples : agendaSamples;
+  expect(
+    homeAgendaParseErrors,
+    `Canonical home agenda payload parse/contract failures:\n${homeAgendaParseErrors.join('\n')}`,
+  ).toEqual([]);
+
+  const firstPageHomeSamples = homeAgendaResponses.filter((sample) => sample.page === '1');
+  const originSamples = firstPageHomeSamples.length > 0 ? firstPageHomeSamples : homeAgendaResponses;
   const samplesMissingOrigin = originSamples.filter(
     (sample) => !sample.originLat || !sample.originLng,
   );
@@ -422,9 +458,10 @@ test('@mutation tenant agenda UI state matches tenant agenda API payload', async
       .join('\n')}`,
   ).toEqual([]);
 
-  const payloadSamples = firstPagePayloadSamples.length > 0
-    ? firstPagePayloadSamples
-    : agendaSamples;
+  const firstPageHomePayloadSamples = homeAgendaSamples.filter((sample) => sample.page === '1');
+  const payloadSamples = firstPageHomePayloadSamples.length > 0
+    ? firstPageHomePayloadSamples
+    : homeAgendaSamples;
   const maxAgendaCount = payloadSamples.reduce(
     (currentMax, sample) => (sample.count > currentMax ? sample.count : currentMax),
     0,
