@@ -396,7 +396,7 @@ resolve_health_host() {
 wait_for_laravel_artisan() {
   # Entry-point may still be running composer/install/caches on fresh deploys.
   # We wait for artisan to become available before running migrations.
-  for attempt in \$(seq 1 30); do
+  for attempt in \$(seq 1 120); do
     if "\${DOCKER_COMPOSE[@]}" exec -T app php artisan --version >/dev/null 2>&1; then
       return 0
     fi
@@ -442,18 +442,25 @@ best_effort_clear_laravel_composer_cache() {
   before_kib="\$(du -sk "\${cache_dir}" 2>/dev/null | awk '{print \$1}')"
   before_kib="\${before_kib:-0}"
 
-  if find "\${cache_dir}" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + >/dev/null 2>&1; then
-    after_kib="\$(du -sk "\${cache_dir}" 2>/dev/null | awk '{print \$1}')"
-    after_kib="\${after_kib:-0}"
-    reclaimed_kib=\$(( before_kib - after_kib ))
-    if (( reclaimed_kib < 0 )); then
-      reclaimed_kib=0
+  if ! find "\${cache_dir}" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + >/dev/null 2>&1; then
+    if command -v sudo >/dev/null 2>&1; then
+      if ! sudo find "\${cache_dir}" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + >/dev/null 2>&1; then
+        echo "WARN: failed to clear \${cache_dir} even with sudo; continuing." >&2
+        return 0
+      fi
+    else
+      echo "WARN: failed to clear \${cache_dir} and sudo is unavailable; continuing." >&2
+      return 0
     fi
-    echo "INFO: pre-build composer cache cleanup reclaimed \${reclaimed_kib} KiB from \${cache_dir}."
-    return 0
   fi
 
-  echo "WARN: failed to clear \${cache_dir}; continuing." >&2
+  after_kib="\$(du -sk "\${cache_dir}" 2>/dev/null | awk '{print \$1}')"
+  after_kib="\${after_kib:-0}"
+  reclaimed_kib=\$(( before_kib - after_kib ))
+  if (( reclaimed_kib < 0 )); then
+    reclaimed_kib=0
+  fi
+  echo "INFO: pre-build composer cache cleanup reclaimed \${reclaimed_kib} KiB from \${cache_dir}."
   return 0
 }
 
@@ -634,6 +641,44 @@ prune_docker_artifacts() {
   fi
 }
 
+start_core_runtime_services() {
+  echo "INFO: starting core runtime services (app, nginx)..."
+  if ! "\${DOCKER_COMPOSE[@]}" build app worker scheduler nginx; then
+    echo "ERROR: docker compose build failed for runtime services." >&2
+    return 1
+  fi
+
+  if ! "\${DOCKER_COMPOSE[@]}" stop worker scheduler >/dev/null 2>&1; then
+    echo "WARN: failed to stop existing worker/scheduler containers; continuing." >&2
+  fi
+  if ! "\${DOCKER_COMPOSE[@]}" rm -f worker scheduler >/dev/null 2>&1; then
+    echo "WARN: failed to remove existing worker/scheduler containers; continuing." >&2
+  fi
+
+  if ! "\${DOCKER_COMPOSE[@]}" up -d --no-build --remove-orphans app nginx; then
+    echo "ERROR: docker compose up failed for core runtime services." >&2
+    return 1
+  fi
+  if ! "\${DOCKER_COMPOSE[@]}" restart nginx; then
+    echo "ERROR: nginx restart failed after app replacement." >&2
+    return 1
+  fi
+  "\${DOCKER_COMPOSE[@]}" ps
+}
+
+start_async_runtime_services() {
+  echo "INFO: starting async runtime services (worker, scheduler)..."
+  if ! "\${DOCKER_COMPOSE[@]}" up -d --no-build worker; then
+    echo "ERROR: docker compose up failed for worker service." >&2
+    return 1
+  fi
+  if ! "\${DOCKER_COMPOSE[@]}" up -d --no-build scheduler; then
+    echo "ERROR: docker compose up failed for async runtime services." >&2
+    return 1
+  fi
+  "\${DOCKER_COMPOSE[@]}" ps
+}
+
 deploy_and_check_health() {
   local health_host health_url status body
 
@@ -643,11 +688,9 @@ deploy_and_check_health() {
   fi
 
   DEPLOY_RUNTIME_MUTATED=1
-  if ! "\${DOCKER_COMPOSE[@]}" up -d --build --remove-orphans; then
-    echo "ERROR: docker compose up failed." >&2
+  if ! start_core_runtime_services; then
     return 1
   fi
-  "\${DOCKER_COMPOSE[@]}" ps
 
   if ! wait_for_laravel_artisan; then
     return 1
@@ -667,7 +710,7 @@ deploy_and_check_health() {
   health_url="http://127.0.0.1:\${DEPLOY_NGINX_HOST_PORT_80}/api/v1/initialize"
   echo "INFO: waiting for application readiness at \${health_url} (Host: \${health_host})"
 
-  for attempt in \$(seq 1 24); do
+  for attempt in \$(seq 1 60); do
     if [[ "\${attempt}" == "1" ]]; then
       printf 'INFO: readiness probe host=%q url=%q\n' "\${health_host}" "\${health_url}"
     fi
@@ -689,10 +732,13 @@ deploy_and_check_health() {
       if [[ -n "\${body}" ]]; then
         echo "INFO: readiness response: \${body}"
       fi
+      if ! start_async_runtime_services; then
+        return 1
+      fi
       return 0
     fi
 
-    echo "INFO: readiness attempt \${attempt}/24 failed (HTTP \${status:-unknown}); retrying in 5s..."
+    echo "INFO: readiness attempt \${attempt}/60 failed (HTTP \${status:-unknown}); retrying in 5s..."
     sleep 5
   done
 
