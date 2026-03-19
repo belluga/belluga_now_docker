@@ -349,18 +349,25 @@ best_effort_clear_laravel_composer_cache() {
   before_kib="\$(du -sk "\${cache_dir}" 2>/dev/null | awk '{print \$1}')"
   before_kib="\${before_kib:-0}"
 
-  if find "\${cache_dir}" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + >/dev/null 2>&1; then
-    after_kib="\$(du -sk "\${cache_dir}" 2>/dev/null | awk '{print \$1}')"
-    after_kib="\${after_kib:-0}"
-    reclaimed_kib=\$(( before_kib - after_kib ))
-    if (( reclaimed_kib < 0 )); then
-      reclaimed_kib=0
+  if ! find "\${cache_dir}" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + >/dev/null 2>&1; then
+    if command -v sudo >/dev/null 2>&1; then
+      if ! sudo find "\${cache_dir}" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + >/dev/null 2>&1; then
+        echo "WARN: failed to clear \${cache_dir} even with sudo; continuing." >&2
+        return 0
+      fi
+    else
+      echo "WARN: failed to clear \${cache_dir} and sudo is unavailable; continuing." >&2
+      return 0
     fi
-    echo "INFO: pre-rollback composer cache cleanup reclaimed \${reclaimed_kib} KiB from \${cache_dir}."
-    return 0
   fi
 
-  echo "WARN: failed to clear \${cache_dir}; continuing." >&2
+  after_kib="\$(du -sk "\${cache_dir}" 2>/dev/null | awk '{print \$1}')"
+  after_kib="\${after_kib:-0}"
+  reclaimed_kib=\$(( before_kib - after_kib ))
+  if (( reclaimed_kib < 0 )); then
+    reclaimed_kib=0
+  fi
+  echo "INFO: pre-rollback composer cache cleanup reclaimed \${reclaimed_kib} KiB from \${cache_dir}."
   return 0
 }
 
@@ -473,10 +480,42 @@ prune_docker_artifacts() {
   fi
 }
 
+wait_for_laravel_artisan() {
+  for attempt in \$(seq 1 30); do
+    if "\${DOCKER_COMPOSE[@]}" exec -T app php artisan --version >/dev/null 2>&1; then
+      return 0
+    fi
+    if [[ "\$attempt" == "1" ]]; then
+      echo "INFO: waiting for rollback Laravel artisan to become available..."
+    fi
+    sleep 2
+  done
+  echo "ERROR: rollback Laravel artisan did not become available in time." >&2
+  "\${DOCKER_COMPOSE[@]}" ps || true
+  "\${DOCKER_COMPOSE[@]}" logs --tail=200 app || true
+  return 1
+}
+
 start_core_runtime_services() {
   echo "INFO: starting rollback core runtime services (app, nginx)..."
-  if ! "\${DOCKER_COMPOSE[@]}" up -d --build --remove-orphans app nginx; then
+  if ! "\${DOCKER_COMPOSE[@]}" build app worker scheduler nginx; then
+    echo "ERROR: docker compose build failed for rollback runtime services." >&2
+    return 1
+  fi
+
+  if ! "\${DOCKER_COMPOSE[@]}" stop worker scheduler >/dev/null 2>&1; then
+    echo "WARN: failed to stop existing rollback worker/scheduler containers; continuing." >&2
+  fi
+  if ! "\${DOCKER_COMPOSE[@]}" rm -f worker scheduler >/dev/null 2>&1; then
+    echo "WARN: failed to remove existing rollback worker/scheduler containers; continuing." >&2
+  fi
+
+  if ! "\${DOCKER_COMPOSE[@]}" up -d --no-build --remove-orphans app nginx; then
     echo "ERROR: docker compose up failed for rollback core runtime services." >&2
+    return 1
+  fi
+  if ! "\${DOCKER_COMPOSE[@]}" restart nginx; then
+    echo "ERROR: nginx restart failed after rollback app replacement." >&2
     return 1
   fi
   "\${DOCKER_COMPOSE[@]}" ps
@@ -484,8 +523,12 @@ start_core_runtime_services() {
 
 start_async_runtime_services() {
   echo "INFO: starting rollback async runtime services (worker, scheduler)..."
-  if ! "\${DOCKER_COMPOSE[@]}" up -d --build worker scheduler; then
-    echo "ERROR: docker compose up failed for rollback async runtime services." >&2
+  if ! "\${DOCKER_COMPOSE[@]}" up -d --no-build worker; then
+    echo "ERROR: docker compose up failed for rollback worker service." >&2
+    return 1
+  fi
+  if ! "\${DOCKER_COMPOSE[@]}" up -d --no-build scheduler; then
+    echo "ERROR: docker compose up failed for rollback scheduler service." >&2
     return 1
   fi
   "\${DOCKER_COMPOSE[@]}" ps
@@ -496,6 +539,10 @@ if ! prebuild_cleanup_and_budget_gate "\${DEPLOY_LANE}-rollback"; then
 fi
 
 if ! start_core_runtime_services; then
+  exit 1
+fi
+
+if ! wait_for_laravel_artisan; then
   exit 1
 fi
 
