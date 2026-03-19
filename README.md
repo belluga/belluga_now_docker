@@ -460,6 +460,7 @@ sudo chown -R "$USER":"$USER" /srv/belluga_now_docker
 Comportamento do deploy:
 * Faz checkout da branch do lane (`stage` ou `main`) no servidor.
 * Atualiza submódulos para os SHAs pinados no commit do repositório de orquestração.
+* Executa limpeza pré-build de espaço (logs Laravel, Docker prune e cache Composer em `laravel-app/.composer/cache`) antes do gate de orçamento de disco.
 * Executa `docker compose up -d --build --remove-orphans`.
 * Executa migrations (landlord + tenants quando existirem) via `php artisan` dentro do container `app`.
 * Executa health check em `http://127.0.0.1:<NGINX_HOST_PORT_80>/api/v1/initialize` (espera HTTP `200` ou `403`).
