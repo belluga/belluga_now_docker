@@ -473,19 +473,38 @@ prune_docker_artifacts() {
   fi
 }
 
+start_core_runtime_services() {
+  echo "INFO: starting rollback core runtime services (app, nginx)..."
+  if ! "\${DOCKER_COMPOSE[@]}" up -d --build --remove-orphans app nginx; then
+    echo "ERROR: docker compose up failed for rollback core runtime services." >&2
+    return 1
+  fi
+  "\${DOCKER_COMPOSE[@]}" ps
+}
+
+start_async_runtime_services() {
+  echo "INFO: starting rollback async runtime services (worker, scheduler)..."
+  if ! "\${DOCKER_COMPOSE[@]}" up -d --build worker scheduler; then
+    echo "ERROR: docker compose up failed for rollback async runtime services." >&2
+    return 1
+  fi
+  "\${DOCKER_COMPOSE[@]}" ps
+}
+
 if ! prebuild_cleanup_and_budget_gate "\${DEPLOY_LANE}-rollback"; then
   exit 1
 fi
 
-"\${DOCKER_COMPOSE[@]}" up -d --build --remove-orphans
-"\${DOCKER_COMPOSE[@]}" ps
+if ! start_core_runtime_services; then
+  exit 1
+fi
 
 health_host="\$(resolve_health_host)"
 health_url="http://127.0.0.1:\${DEPLOY_NGINX_HOST_PORT_80}/api/v1/initialize"
 root_health_url="http://127.0.0.1:\${DEPLOY_NGINX_HOST_PORT_80}/"
 
 echo "INFO: waiting for rollback health at \${health_url} (Host: \${health_host})"
-for attempt in \$(seq 1 24); do
+for attempt in \$(seq 1 60); do
   if [[ "\${attempt}" == "1" ]]; then
     printf 'INFO: rollback probe host=%q url=%q\n' "\${health_host}" "\${health_url}"
   fi
@@ -507,6 +526,9 @@ for attempt in \$(seq 1 24); do
     if [[ -n "\${response_body}" ]]; then
       echo "INFO: rollback readiness response: \${response_body}"
     fi
+    if ! start_async_runtime_services; then
+      exit 1
+    fi
     prune_docker_artifacts
     exit 0
   fi
@@ -524,12 +546,15 @@ for attempt in \$(seq 1 24); do
 
     if [[ "\${root_status}" == "200" || "\${root_status}" == "301" || "\${root_status}" == "302" ]]; then
       echo "WARN: rollback target returned 404 on /api/v1/initialize; accepting root health HTTP \${root_status} at \${root_health_url}."
+      if ! start_async_runtime_services; then
+        exit 1
+      fi
       prune_docker_artifacts
       exit 0
     fi
   fi
 
-  echo "INFO: rollback readiness attempt \${attempt}/24 failed (HTTP \${status:-unknown}); retrying in 5s..."
+  echo "INFO: rollback readiness attempt \${attempt}/60 failed (HTTP \${status:-unknown}); retrying in 5s..."
   sleep 5
 done
 
