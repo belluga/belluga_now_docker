@@ -58,40 +58,45 @@ composer_autoload_is_valid() {
 
 composer_autoload_can_resolve_class() {
     local class_name="$1"
-    gosu www-data php -r "require '/var/www/vendor/autoload.php'; exit(class_exists('${class_name}') ? 0 : 1);" >/dev/null 2>&1
+    gosu www-data php -r "require '/var/www/vendor/autoload.php'; exit((class_exists('${class_name}') || interface_exists('${class_name}') || trait_exists('${class_name}')) ? 0 : 1);" >/dev/null 2>&1
 }
 
-composer_lock_hash_file="/var/www/vendor/.composer-lock-sha1"
+composer_manifest_hash_file="/var/www/vendor/.composer-manifest-sha1"
 
-composer_lock_hash() {
-    if [ ! -f "/var/www/composer.lock" ]; then
+composer_manifest_hash() {
+    if [ ! -f "/var/www/composer.json" ]; then
         return 1
     fi
 
-    sha1sum /var/www/composer.lock | awk '{print $1}'
-}
-
-composer_lock_hash_changed() {
-    local current_hash recorded_hash
-    if ! current_hash="$(composer_lock_hash)"; then
-        return 1
-    fi
-
-    if [ ! -f "$composer_lock_hash_file" ]; then
+    if [ -f "/var/www/composer.lock" ]; then
+        sha1sum /var/www/composer.json /var/www/composer.lock | sha1sum | awk '{print $1}'
         return 0
     fi
 
-    recorded_hash="$(cat "$composer_lock_hash_file" 2>/dev/null || true)"
+    sha1sum /var/www/composer.json | awk '{print $1}'
+}
+
+composer_manifest_hash_changed() {
+    local current_hash recorded_hash
+    if ! current_hash="$(composer_manifest_hash)"; then
+        return 1
+    fi
+
+    if [ ! -f "$composer_manifest_hash_file" ]; then
+        return 0
+    fi
+
+    recorded_hash="$(cat "$composer_manifest_hash_file" 2>/dev/null || true)"
     [ "$current_hash" != "$recorded_hash" ]
 }
 
-record_composer_lock_hash() {
+record_composer_manifest_hash() {
     local current_hash
-    if ! current_hash="$(composer_lock_hash)"; then
+    if ! current_hash="$(composer_manifest_hash)"; then
         return 0
     fi
 
-    gosu www-data sh -lc "printf '%s' '$current_hash' > '$composer_lock_hash_file'"
+    gosu www-data sh -lc "printf '%s' '$current_hash' > '$composer_manifest_hash_file'"
 }
 
 refresh_composer_autoload() {
@@ -114,7 +119,7 @@ ensure_runtime_class_resolvable() {
 
     echo "WARN: class '$class_name' still unresolved after autoload refresh; reinstalling dependencies."
     composer_install_with_retry
-    record_composer_lock_hash
+    record_composer_manifest_hash
 
     if composer_autoload_can_resolve_class "$class_name"; then
         return 0
@@ -124,9 +129,9 @@ ensure_runtime_class_resolvable() {
     return 1
 }
 
-if [ ! -f "vendor/autoload.php" ] || ! composer_autoload_is_valid || composer_lock_hash_changed; then
+if [ ! -f "vendor/autoload.php" ] || ! composer_autoload_is_valid || composer_manifest_hash_changed; then
     composer_install_with_retry
-    record_composer_lock_hash
+    record_composer_manifest_hash
 fi
 
 # Guardrail: ensure critical runtime classes are resolvable before artisan cache operations.
@@ -135,6 +140,8 @@ required_runtime_classes=(
     "Belluga\\Events\\Jobs\\PublishScheduledEventsJob"
     "Belluga\\Invites\\Http\\Api\\v1\\Controllers\\InviteFeedController"
     "App\\Providers\\PackageIntegration\\InvitesIntegrationServiceProvider"
+    "Belluga\\Favorites\\Contracts\\FavoritesRegistryContract"
+    "App\\Providers\\PackageIntegration\\FavoritesIntegrationServiceProvider"
 )
 
 for required_runtime_class in "${required_runtime_classes[@]}"; do
@@ -150,6 +157,9 @@ if [ ! -L "public/storage" ]; then
     echo ">>> Creating storage symlink..."
     gosu www-data php artisan storage:link
 fi
+
+# Always clear stale bootstrap artifacts before re-caching.
+gosu www-data php artisan optimize:clear
 
 # Only run caches in production.
 app_env="${APP_ENV:-local}"
