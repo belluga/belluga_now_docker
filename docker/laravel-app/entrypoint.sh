@@ -26,6 +26,28 @@ touch /var/www/storage/logs/laravel.log
 chown -R www-data:www-data /var/www/storage
 
 # --- The rest of your setup logic ---
+runtime_command="${1:-}"
+is_primary_runtime=false
+if [ "$runtime_command" = "php-fpm" ]; then
+    is_primary_runtime=true
+fi
+
+wait_for_bootstrap_dependencies() {
+    local timeout_seconds=${BOOTSTRAP_WAIT_SECONDS:-300}
+    local waited=0
+
+    echo ">>> Waiting for Laravel bootstrap artifacts from app service..."
+    while [ "$waited" -lt "$timeout_seconds" ]; do
+        if [ -f "/var/www/vendor/autoload.php" ] && composer_autoload_is_valid; then
+            return 0
+        fi
+        sleep 2
+        waited=$((waited + 2))
+    done
+
+    echo "ERROR: timeout while waiting for bootstrap artifacts (vendor/autoload.php)." >&2
+    return 1
+}
 
 composer_install_with_retry() {
     local max_attempts=5
@@ -129,50 +151,54 @@ ensure_runtime_class_resolvable() {
     return 1
 }
 
-if [ ! -f "vendor/autoload.php" ] || ! composer_autoload_is_valid || composer_manifest_hash_changed; then
-    composer_install_with_retry
-    record_composer_manifest_hash
-fi
+if [ "$is_primary_runtime" = true ]; then
+    if [ ! -f "vendor/autoload.php" ] || ! composer_autoload_is_valid || composer_manifest_hash_changed; then
+        composer_install_with_retry
+        record_composer_manifest_hash
+    fi
 
-# Guardrail: ensure critical runtime classes are resolvable before artisan cache operations.
-# This prevents bootstrap crashes caused by stale autoload metadata after deploy updates.
-required_runtime_classes=(
-    "Belluga\\Events\\Jobs\\PublishScheduledEventsJob"
-    "Belluga\\Invites\\Http\\Api\\v1\\Controllers\\InviteFeedController"
-    "App\\Providers\\PackageIntegration\\InvitesIntegrationServiceProvider"
-    "Belluga\\Favorites\\Contracts\\FavoritesRegistryContract"
-    "App\\Providers\\PackageIntegration\\FavoritesIntegrationServiceProvider"
-)
+    # Guardrail: ensure critical runtime classes are resolvable before artisan cache operations.
+    # This prevents bootstrap crashes caused by stale autoload metadata after deploy updates.
+    required_runtime_classes=(
+        "Belluga\\Events\\Jobs\\PublishScheduledEventsJob"
+        "Belluga\\Invites\\Http\\Api\\v1\\Controllers\\InviteFeedController"
+        "App\\Providers\\PackageIntegration\\InvitesIntegrationServiceProvider"
+        "Belluga\\Favorites\\Contracts\\FavoritesRegistryContract"
+        "App\\Providers\\PackageIntegration\\FavoritesIntegrationServiceProvider"
+    )
 
-for required_runtime_class in "${required_runtime_classes[@]}"; do
-    ensure_runtime_class_resolvable "$required_runtime_class"
-done
+    for required_runtime_class in "${required_runtime_classes[@]}"; do
+        ensure_runtime_class_resolvable "$required_runtime_class"
+    done
 
-if [ ! -f ".env" ]; then
-    gosu www-data cp .env.example .env
-    gosu www-data php artisan key:generate
-fi
+    if [ ! -f ".env" ]; then
+        gosu www-data cp .env.example .env
+        gosu www-data php artisan key:generate
+    fi
 
-if [ ! -L "public/storage" ]; then
-    echo ">>> Creating storage symlink..."
-    gosu www-data php artisan storage:link
-fi
+    if [ ! -L "public/storage" ]; then
+        echo ">>> Creating storage symlink..."
+        gosu www-data php artisan storage:link
+    fi
 
-# Always clear stale bootstrap artifacts before re-caching.
-gosu www-data php artisan optimize:clear
+    # Always clear stale bootstrap artifacts before re-caching.
+    gosu www-data php artisan optimize:clear
 
-# Only run caches in production.
-app_env="${APP_ENV:-local}"
-if [ "$app_env" = "production" ]; then
-    echo ">>> Caching configuration for production..."
-    gosu www-data php artisan config:cache
-    gosu www-data php artisan route:cache
-    gosu www-data php artisan view:cache
+    # Only run caches in production.
+    app_env="${APP_ENV:-local}"
+    if [ "$app_env" = "production" ]; then
+        echo ">>> Caching configuration for production..."
+        gosu www-data php artisan config:cache
+        gosu www-data php artisan route:cache
+        gosu www-data php artisan view:cache
+    else
+        echo ">>> Clearing caches for development/testing..."
+        gosu www-data php artisan config:clear
+        gosu www-data php artisan route:clear
+        gosu www-data php artisan view:clear
+    fi
 else
-    echo ">>> Clearing caches for development/testing..."
-    gosu www-data php artisan config:clear
-    gosu www-data php artisan route:clear
-    gosu www-data php artisan view:clear
+    wait_for_bootstrap_dependencies
 fi
 
 # Execute the main command (php-fpm).
