@@ -51,6 +51,12 @@ services:
       LOG_MONGODB_RETENTION_DAYS: ${LOG_MONGODB_RETENTION_DAYS:-14}
     networks:
       - app-network
+    healthcheck:
+      test: ["CMD-SHELL", "php -r \"exit(@fsockopen('127.0.0.1', 9000) ? 0 : 1);\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
     restart: unless-stopped
 
   worker:
@@ -61,6 +67,8 @@ services:
       mongo-init:
         condition: service_completed_successfully
         required: false
+      app:
+        condition: service_healthy
     volumes:
       - ./laravel-app:/var/www
       - app-storage:/var/www/storage
@@ -83,6 +91,8 @@ services:
       mongo-init:
         condition: service_completed_successfully
         required: false
+      app:
+        condition: service_healthy
     volumes:
       - ./laravel-app:/var/www
       - app-storage:/var/www/storage
