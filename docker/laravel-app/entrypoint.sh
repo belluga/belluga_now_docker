@@ -151,11 +151,15 @@ ensure_runtime_class_resolvable() {
     return 1
 }
 
-if [ "$is_primary_runtime" = true ]; then
+ensure_composer_bootstrap_state() {
     if [ ! -f "vendor/autoload.php" ] || ! composer_autoload_is_valid || composer_manifest_hash_changed; then
         composer_install_with_retry
         record_composer_manifest_hash
     fi
+}
+
+if [ "$is_primary_runtime" = true ]; then
+    ensure_composer_bootstrap_state
 
     # Guardrail: ensure critical runtime classes are resolvable before artisan cache operations.
     # This prevents bootstrap crashes caused by stale autoload metadata after deploy updates.
@@ -199,6 +203,13 @@ if [ "$is_primary_runtime" = true ]; then
     fi
 else
     wait_for_bootstrap_dependencies
+    ensure_composer_bootstrap_state
+
+    # Non-primary runtimes (worker/scheduler) may start independently from an already-running app
+    # after a branch switch or deploy update. Clear stale bootstrap artifacts best-effort.
+    if [ -f ".env" ]; then
+        gosu www-data php artisan optimize:clear >/dev/null 2>&1 || true
+    fi
 fi
 
 # Execute the main command (php-fpm).
