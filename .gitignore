@@ -16,7 +16,8 @@ delphi-ai
 skills
 GEMINI.md
 gemini_memory.md
-.agent/
+.agent
+.agents
 .codex/
 foundation_documentation_tmp/
 
