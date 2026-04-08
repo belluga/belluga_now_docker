@@ -42,6 +42,7 @@ services:
         required: false
     volumes:
       - ./laravel-app:/var/www
+      - ./web-app:/opt/flutter-web-shell:ro
       - app-storage:/var/www/storage
     environment:
       LOG_CHANNEL: ${LOG_CHANNEL:-stack}
@@ -49,6 +50,7 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       LOG_MONGODB_COLLECTION: ${LOG_MONGODB_COLLECTION:-application_logs}
       LOG_MONGODB_RETENTION_DAYS: ${LOG_MONGODB_RETENTION_DAYS:-14}
+      FLUTTER_WEB_SHELL_PATH: /opt/flutter-web-shell/index.html
     networks:
       - app-network
     healthcheck:

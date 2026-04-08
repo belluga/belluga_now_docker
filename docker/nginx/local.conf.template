@@ -95,6 +95,12 @@ server {
     location ^~ /account-profiles/ {
         try_files $uri /index.php?$query_string;
     }
+    location ^~ /parceiro/ {
+        try_files $uri /index.php?$query_string;
+    }
+    location ^~ /agenda/evento/ {
+        try_files $uri /index.php?$query_string;
+    }
 
     # --- Laravel API and other backend routes ---
     # These also have high priority. If the file doesn't exist, they fall back to Laravel.
