@@ -80,6 +80,37 @@ async function fetchManifestContract(request, baseUrl) {
   ).toBeTruthy();
 }
 
+async function fetchFaviconContract(request, baseUrl) {
+  const endpoint = new URL('/favicon.ico', baseUrl).toString();
+  const response = await request.get(endpoint, { failOnStatusCode: false });
+
+  expect(response.status(), `Favicon must succeed: ${endpoint}`).toBeLessThan(
+    400,
+  );
+
+  const contentType = (
+    response.headers()['content-type'] || ''
+  ).toLowerCase();
+  const hasExpectedContentType =
+    contentType.startsWith('image/') ||
+    contentType.includes('application/octet-stream');
+  expect(
+    hasExpectedContentType,
+    `Favicon must be image-compatible: ${endpoint} (content-type=${contentType})`,
+  ).toBeTruthy();
+
+  const bodyBuffer = await response.body();
+  expect(bodyBuffer.length, `Favicon body must not be empty: ${endpoint}`).toBeGreaterThan(0);
+
+  const preview = bodyBuffer.toString('utf8', 0, 256).toLowerCase();
+  expect(preview, `Favicon must not fallback to HTML: ${endpoint}`).not.toContain(
+    '<!doctype html>',
+  );
+  expect(preview, `Favicon must not fallback to HTML shell: ${endpoint}`).not.toContain(
+    '<html',
+  );
+}
+
 test('@readonly landlord and tenant well-known endpoints are JSON and not SPA fallback', async ({
   page,
 }) => {
@@ -129,4 +160,14 @@ test('@readonly landlord and tenant manifest endpoint is JSON and not SPA fallba
 
   await fetchManifestContract(request, landlordUrl);
   await fetchManifestContract(request, tenantUrl);
+});
+
+test('@readonly landlord and tenant favicon endpoint is image and not SPA fallback', async ({
+  page,
+}) => {
+  const { landlordUrl, tenantUrl } = requireNavigationUrls();
+  const request = page.request;
+
+  await fetchFaviconContract(request, landlordUrl);
+  await fetchFaviconContract(request, tenantUrl);
 });
