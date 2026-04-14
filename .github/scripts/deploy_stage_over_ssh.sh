@@ -132,31 +132,8 @@ fi
 
 cd "\$DEPLOY_PATH"
 previous_revision=""
-rollback_protection_ref=""
 if git rev-parse --verify HEAD >/dev/null 2>&1; then
   previous_revision="\$(git rev-parse HEAD)"
-fi
-
-cleanup_rollback_protection_ref() {
-  if [[ -z "\${rollback_protection_ref:-}" ]]; then
-    return 0
-  fi
-
-  if ! git rev-parse --git-dir >/dev/null 2>&1; then
-    return 0
-  fi
-
-  if ! git update-ref -d "\${rollback_protection_ref}" >/dev/null 2>&1; then
-    echo "WARN: failed to clear rollback protection ref \${rollback_protection_ref}; continuing." >&2
-  fi
-}
-
-trap cleanup_rollback_protection_ref EXIT
-
-if [[ -n "\${previous_revision}" ]]; then
-  rollback_protection_ref="refs/delphi/deploy-rollback/\${DEPLOY_BRANCH//\//-}"
-  run_git update-ref "\${rollback_protection_ref}" "\${previous_revision}"
-  echo "INFO: protected rollback target \${previous_revision} via \${rollback_protection_ref}"
 fi
 
 run_git fetch --prune origin "\$DEPLOY_BRANCH"
