@@ -791,8 +791,9 @@ fi
 
 exit 1
 EOF_REMOTE
-ssh_status=${PIPESTATUS[0]}
-tee_status=${PIPESTATUS[1]}
+pipeline_status=("${PIPESTATUS[@]}")
+ssh_status=${pipeline_status[0]:-1}
+tee_status=${pipeline_status[1]:-1}
 set -e
 
 if [[ "${tee_status}" -ne 0 ]]; then
