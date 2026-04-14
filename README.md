@@ -353,6 +353,7 @@ O Docker **não** executa o build do Flutter automaticamente. O NGINX serve apen
    ```bash
    git status web-app
    ```
+   Contrato operacional: `/manifest.json`, `/favicon.ico`, `/icon/*`, `/logo-light.png`, `/logo-dark.png`, `/icon-light.png` e `/icon-dark.png` são rotas tenant-aware backend-owned. O ingress não deve consultar arquivo local antes de encaminhar essas URLs ao Laravel.
    Os testes de navegação web **não** são mais autorados dentro de `web-app/`: a fonte da verdade fica em `tools/flutter/web_app_tests/` e a execução deve ocorrer via:
    ```bash
    # Local (Docker/NGINX): ajuste URLs para suas origens browser-facing.

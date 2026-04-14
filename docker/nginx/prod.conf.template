@@ -47,6 +47,29 @@ server {
         rewrite ^ /index.php$is_args$args last;
     }
 
+    # Tenant-aware branding assets are backend-owned even though they look file-like.
+    location = /manifest.json {
+        try_files /__backend_owned_branding__ /index.php?$query_string;
+    }
+    location = /favicon.ico {
+        try_files /__backend_owned_branding__ /index.php?$query_string;
+    }
+    location ^~ /icon/ {
+        try_files /__backend_owned_branding__ /index.php?$query_string;
+    }
+    location = /logo-dark.png {
+        try_files /__backend_owned_branding__ /index.php?$query_string;
+    }
+    location = /logo-light.png {
+        try_files /__backend_owned_branding__ /index.php?$query_string;
+    }
+    location = /icon-dark.png {
+        try_files /__backend_owned_branding__ /index.php?$query_string;
+    }
+    location = /icon-light.png {
+        try_files /__backend_owned_branding__ /index.php?$query_string;
+    }
+
     # --- Flutter Web (Frontend) ---
     location / {
         root /var/www/flutter;
