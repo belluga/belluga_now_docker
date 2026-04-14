@@ -70,10 +70,19 @@ ssh_opts=(
   -o IdentitiesOnly=yes
   -o StrictHostKeyChecking=yes
 )
+remote_success_marker="__REMOTE_DEPLOY_SUCCESS__"
+remote_deploy_log="$(mktemp)"
+
+cleanup_remote_deploy_log() {
+  rm -f "${remote_deploy_log}"
+}
+
+trap cleanup_remote_deploy_log EXIT
 
 echo "INFO: Starting ${deploy_lane} deploy to ${remote}:${deploy_path}"
 
-ssh "${ssh_opts[@]}" "${remote}" "bash -se" <<EOF_REMOTE
+set +e
+ssh "${ssh_opts[@]}" "${remote}" "bash -se" <<EOF_REMOTE | tee "${remote_deploy_log}"
 set -euo pipefail
 
 DEPLOY_PATH='${deploy_path}'
@@ -749,6 +758,7 @@ if deploy_and_check_health; then
   prune_docker_artifacts
   echo "INFO: \$DEPLOY_LANE deploy completed successfully."
   echo "INFO: last successful revision marker will be updated only after navigation smoke passes."
+  echo "${remote_success_marker}"
   exit 0
 fi
 
@@ -781,3 +791,21 @@ fi
 
 exit 1
 EOF_REMOTE
+ssh_status=${PIPESTATUS[0]}
+tee_status=${PIPESTATUS[1]}
+set -e
+
+if [[ "${tee_status}" -ne 0 ]]; then
+  echo "ERROR: failed to persist remote ${deploy_lane} deploy log locally." >&2
+  exit "${tee_status}"
+fi
+
+if [[ "${ssh_status}" -ne 0 ]]; then
+  echo "ERROR: remote ${deploy_lane} deploy over SSH exited with status ${ssh_status}." >&2
+  exit "${ssh_status}"
+fi
+
+if ! grep -qx "${remote_success_marker}" "${remote_deploy_log}"; then
+  echo "ERROR: remote ${deploy_lane} deploy did not emit the success marker; refusing to continue with stale runtime evidence." >&2
+  exit 1
+fi
