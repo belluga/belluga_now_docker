@@ -473,6 +473,52 @@ best_effort_clear_laravel_composer_cache() {
   return 0
 }
 
+best_effort_compact_git_checkout() {
+  local repo_path git_dir before_kib after_kib reclaimed_kib
+  local -a repo_paths=(
+    "."
+    "flutter-app"
+    "foundation_documentation"
+    "laravel-app"
+    "web-app"
+  )
+
+  echo "INFO: running best-effort git object compaction before rebuild..."
+
+  for repo_path in "\${repo_paths[@]}"; do
+    git_dir="\$(git -C "\${repo_path}" rev-parse --git-dir 2>/dev/null || true)"
+    if [[ -z "\${git_dir}" ]]; then
+      echo "INFO: skipped git compaction for '\${repo_path}' because the checkout is unavailable."
+      continue
+    fi
+    if [[ "\${git_dir}" != /* ]]; then
+      git_dir="\${repo_path}/\${git_dir}"
+    fi
+
+    before_kib="\$(du -sk "\${git_dir}" 2>/dev/null | awk '{print \$1}')"
+    before_kib="\${before_kib:-0}"
+
+    if ! git -C "\${repo_path}" reflog expire --expire=now --all >/dev/null 2>&1; then
+      echo "WARN: git reflog cleanup failed for '\${repo_path}'; continuing." >&2
+      continue
+    fi
+
+    if ! git -C "\${repo_path}" gc --prune=now >/dev/null 2>&1; then
+      echo "WARN: git gc failed for '\${repo_path}'; continuing." >&2
+      continue
+    fi
+
+    after_kib="\$(du -sk "\${git_dir}" 2>/dev/null | awk '{print \$1}')"
+    after_kib="\${after_kib:-0}"
+    reclaimed_kib=\$(( before_kib - after_kib ))
+    if (( reclaimed_kib < 0 )); then
+      reclaimed_kib=0
+    fi
+
+    echo "INFO: git compaction reclaimed \${reclaimed_kib} KiB from '\${git_dir}'."
+  done
+}
+
 collect_disk_budget_paths() {
   local docker_root_dir
 
@@ -552,6 +598,7 @@ prebuild_cleanup_and_budget_gate() {
   print_disk_snapshot "before-\${phase}-cleanup"
   best_effort_clear_disk_log_files || true
   best_effort_clear_laravel_composer_cache || true
+  best_effort_compact_git_checkout || true
 
   if ! "\${DOCKER_CMD[@]}" container prune -f; then
     echo "WARN: docker container prune failed during \${phase} cleanup; continuing." >&2
