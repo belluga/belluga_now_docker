@@ -70,10 +70,19 @@ ssh_opts=(
   -o IdentitiesOnly=yes
   -o StrictHostKeyChecking=yes
 )
+remote_success_marker="__REMOTE_DEPLOY_SUCCESS__"
+remote_deploy_log="$(mktemp)"
+
+cleanup_remote_deploy_log() {
+  rm -f "${remote_deploy_log}"
+}
+
+trap cleanup_remote_deploy_log EXIT
 
 echo "INFO: Starting ${deploy_lane} deploy to ${remote}:${deploy_path}"
 
-ssh "${ssh_opts[@]}" "${remote}" "bash -se" <<EOF_REMOTE
+set +e
+ssh "${ssh_opts[@]}" "${remote}" "bash -se" <<EOF_REMOTE | tee "${remote_deploy_log}"
 set -euo pipefail
 
 DEPLOY_PATH='${deploy_path}'
@@ -123,8 +132,31 @@ fi
 
 cd "\$DEPLOY_PATH"
 previous_revision=""
+rollback_protection_ref=""
 if git rev-parse --verify HEAD >/dev/null 2>&1; then
   previous_revision="\$(git rev-parse HEAD)"
+fi
+
+cleanup_rollback_protection_ref() {
+  if [[ -z "\${rollback_protection_ref:-}" ]]; then
+    return 0
+  fi
+
+  if ! git rev-parse --git-dir >/dev/null 2>&1; then
+    return 0
+  fi
+
+  if ! git update-ref -d "\${rollback_protection_ref}" >/dev/null 2>&1; then
+    echo "WARN: failed to clear rollback protection ref \${rollback_protection_ref}; continuing." >&2
+  fi
+}
+
+trap cleanup_rollback_protection_ref EXIT
+
+if [[ -n "\${previous_revision}" ]]; then
+  rollback_protection_ref="refs/delphi/deploy-rollback/\${DEPLOY_BRANCH//\//-}"
+  run_git update-ref "\${rollback_protection_ref}" "\${previous_revision}"
+  echo "INFO: protected rollback target \${previous_revision} via \${rollback_protection_ref}"
 fi
 
 run_git fetch --prune origin "\$DEPLOY_BRANCH"
@@ -464,6 +496,52 @@ best_effort_clear_laravel_composer_cache() {
   return 0
 }
 
+best_effort_compact_git_checkout() {
+  local repo_path git_dir before_kib after_kib reclaimed_kib
+  local -a repo_paths=(
+    "."
+    "flutter-app"
+    "foundation_documentation"
+    "laravel-app"
+    "web-app"
+  )
+
+  echo "INFO: running best-effort git object compaction before rebuild..."
+
+  for repo_path in "\${repo_paths[@]}"; do
+    git_dir="\$(git -C "\${repo_path}" rev-parse --git-dir 2>/dev/null || true)"
+    if [[ -z "\${git_dir}" ]]; then
+      echo "INFO: skipped git compaction for '\${repo_path}' because the checkout is unavailable."
+      continue
+    fi
+    if [[ "\${git_dir}" != /* ]]; then
+      git_dir="\${repo_path}/\${git_dir}"
+    fi
+
+    before_kib="\$(du -sk "\${git_dir}" 2>/dev/null | awk '{print \$1}')"
+    before_kib="\${before_kib:-0}"
+
+    if ! git -C "\${repo_path}" reflog expire --expire=now --all >/dev/null 2>&1; then
+      echo "WARN: git reflog cleanup failed for '\${repo_path}'; continuing." >&2
+      continue
+    fi
+
+    if ! git -C "\${repo_path}" gc --prune=now >/dev/null 2>&1; then
+      echo "WARN: git gc failed for '\${repo_path}'; continuing." >&2
+      continue
+    fi
+
+    after_kib="\$(du -sk "\${git_dir}" 2>/dev/null | awk '{print \$1}')"
+    after_kib="\${after_kib:-0}"
+    reclaimed_kib=\$(( before_kib - after_kib ))
+    if (( reclaimed_kib < 0 )); then
+      reclaimed_kib=0
+    fi
+
+    echo "INFO: git compaction reclaimed \${reclaimed_kib} KiB from '\${git_dir}'."
+  done
+}
+
 collect_disk_budget_paths() {
   local docker_root_dir
 
@@ -543,6 +621,7 @@ prebuild_cleanup_and_budget_gate() {
   print_disk_snapshot "before-\${phase}-cleanup"
   best_effort_clear_disk_log_files || true
   best_effort_clear_laravel_composer_cache || true
+  best_effort_compact_git_checkout || true
 
   if ! "\${DOCKER_CMD[@]}" container prune -f; then
     echo "WARN: docker container prune failed during \${phase} cleanup; continuing." >&2
@@ -749,6 +828,7 @@ if deploy_and_check_health; then
   prune_docker_artifacts
   echo "INFO: \$DEPLOY_LANE deploy completed successfully."
   echo "INFO: last successful revision marker will be updated only after navigation smoke passes."
+  echo "${remote_success_marker}"
   exit 0
 fi
 
@@ -781,3 +861,22 @@ fi
 
 exit 1
 EOF_REMOTE
+pipeline_status=("${PIPESTATUS[@]}")
+ssh_status=${pipeline_status[0]:-1}
+tee_status=${pipeline_status[1]:-1}
+set -e
+
+if [[ "${tee_status}" -ne 0 ]]; then
+  echo "ERROR: failed to persist remote ${deploy_lane} deploy log locally." >&2
+  exit "${tee_status}"
+fi
+
+if [[ "${ssh_status}" -ne 0 ]]; then
+  echo "ERROR: remote ${deploy_lane} deploy over SSH exited with status ${ssh_status}." >&2
+  exit "${ssh_status}"
+fi
+
+if ! grep -qx "${remote_success_marker}" "${remote_deploy_log}"; then
+  echo "ERROR: remote ${deploy_lane} deploy did not emit the success marker; refusing to continue with stale runtime evidence." >&2
+  exit 1
+fi
