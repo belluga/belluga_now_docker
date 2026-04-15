@@ -47,6 +47,10 @@ server {
         rewrite ^ /index.php$is_args$args last;
     }
 
+    location @tenant_public_shell {
+        rewrite ^ /index.php$is_args$args last;
+    }
+
     # Tenant-aware branding assets are backend-owned even though they look file-like.
     location = /manifest.json {
         try_files /__backend_owned_branding__ /index.php?$query_string;
@@ -70,27 +74,26 @@ server {
         try_files /__backend_owned_branding__ /index.php?$query_string;
     }
 
-    # --- Flutter Web (Frontend) ---
-    location / {
+    location ~* \.(?:js|css|png|jpg|jpeg|gif|svg|webp|json|map|wasm|txt)$ {
         root /var/www/flutter;
-        index index.html;
-        try_files $uri $uri/ /index.html;
+        try_files $uri =404;
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+    }
 
-        location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg)$ {
-            expires 1y;
-            add_header Cache-Control "public, immutable";
-        }
+    # --- Flutter Web (Frontend) ---
+    location = / {
+        try_files /__tenant_public_shell__ /index.php?$query_string;
     }
 
     location ^~ /storage/ {
+        # Serve Laravel public-disk files directly from the mounted storage volume.
         alias /var/www/storage/app/public/;
 
         expires 1y;
         add_header Cache-Control "public";
         add_header X-Content-Type-Options nosniff;
         add_header X-Frame-Options DENY;
-
-        try_files $request_filename =404;
     }
 
     location ^~ /.well-known/acme-challenge/ {
@@ -119,6 +122,66 @@ server {
     }
     location ^~ /static/ {
         try_files $uri /index.php?$query_string;
+    }
+    location = /open-app {
+        try_files $uri /index.php?$query_string;
+    }
+    location ^~ /account-profile-types/ {
+        try_files $uri /index.php?$query_string;
+    }
+    location ^~ /static-assets/ {
+        try_files $uri /index.php?$query_string;
+    }
+    location ^~ /event-types/ {
+        try_files $uri /index.php?$query_string;
+    }
+    location ^~ /static-profile-types/ {
+        try_files $uri /index.php?$query_string;
+    }
+    location ^~ /events/ {
+        try_files $uri /index.php?$query_string;
+    }
+    location ^~ /map-filters/ {
+        try_files $uri /index.php?$query_string;
+    }
+    location = /descobrir {
+        try_files /__tenant_public_shell__ /index.php?$query_string;
+    }
+    location = /privacy-policy {
+        try_files /__tenant_public_shell__ /index.php?$query_string;
+    }
+    location = /mapa {
+        try_files /__tenant_public_shell__ /index.php?$query_string;
+    }
+    location = /mapa/poi {
+        try_files /__tenant_public_shell__ /index.php?$query_string;
+    }
+    location = /invite {
+        try_files /__tenant_public_shell__ /index.php?$query_string;
+    }
+    location = /convites {
+        try_files /__tenant_public_shell__ /index.php?$query_string;
+    }
+    location = /location/permission {
+        try_files /__tenant_public_shell__ /index.php?$query_string;
+    }
+    location = /baixe-o-app {
+        try_files /__tenant_public_shell__ /index.php?$query_string;
+    }
+    location = /admin {
+        root /var/www/flutter;
+        try_files /index.html =404;
+        add_header Cache-Control "no-cache" always;
+    }
+    location ^~ /admin/ {
+        root /var/www/flutter;
+        try_files /index.html =404;
+        add_header Cache-Control "no-cache" always;
+    }
+
+    location / {
+        root /var/www/flutter;
+        try_files $uri $uri/ /index.html;
     }
 
     # --- PHP-FPM Handler ---
