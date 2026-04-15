@@ -35,6 +35,10 @@ server {
         rewrite ^ /index.php$is_args$args last;
     }
 
+    location @tenant_public_shell {
+        rewrite ^ /index.php$is_args$args last;
+    }
+
     # --- Flutter Web (Frontend) ---
     # Cloudflare can serve stale cached JS for Flutter core files (e.g. `main.dart.js`)
     # which can re-introduce removed behavior. Force revalidation for these files.
@@ -95,24 +99,25 @@ server {
         add_header Cache-Control "public, immutable" always;
     }
 
-    # Primary SPA catch-all.
-    location / {
+    location ~* \.(?:js|css|png|jpg|jpeg|gif|svg|webp|json|map|wasm|txt)$ {
         root /var/www/flutter;
-        index index.html;
-        try_files $uri $uri/ /index.html;
+        try_files $uri =404;
+        expires 1y;
+        add_header Cache-Control "public, immutable" always;
+    }
+
+    location = / {
+        try_files /__tenant_public_shell__ /index.php?$query_string;
     }
 
     location ^~ /storage/ {
-        # 'alias' maps the URL directly to the physical storage path from the volume.
+        # Serve Laravel public-disk files directly from the mounted storage volume.
         alias /var/www/storage/app/public/;
 
         expires 1y;
         add_header Cache-Control "public";
         add_header X-Content-Type-Options nosniff;
         add_header X-Frame-Options DENY;
-
-        # If the file doesn't exist, return a 404.
-        try_files $request_filename =404;
     }
 
     location ^~ /account-profiles/ {
@@ -126,6 +131,51 @@ server {
     }
     location ^~ /static/ {
         try_files $uri /index.php?$query_string;
+    }
+    location = /open-app {
+        try_files $uri /index.php?$query_string;
+    }
+    location ^~ /account-profile-types/ {
+        try_files $uri /index.php?$query_string;
+    }
+    location ^~ /static-assets/ {
+        try_files $uri /index.php?$query_string;
+    }
+    location ^~ /event-types/ {
+        try_files $uri /index.php?$query_string;
+    }
+    location ^~ /static-profile-types/ {
+        try_files $uri /index.php?$query_string;
+    }
+    location ^~ /events/ {
+        try_files $uri /index.php?$query_string;
+    }
+    location ^~ /map-filters/ {
+        try_files $uri /index.php?$query_string;
+    }
+    location = /descobrir {
+        try_files /__tenant_public_shell__ /index.php?$query_string;
+    }
+    location = /privacy-policy {
+        try_files /__tenant_public_shell__ /index.php?$query_string;
+    }
+    location = /mapa {
+        try_files /__tenant_public_shell__ /index.php?$query_string;
+    }
+    location = /mapa/poi {
+        try_files /__tenant_public_shell__ /index.php?$query_string;
+    }
+    location = /invite {
+        try_files /__tenant_public_shell__ /index.php?$query_string;
+    }
+    location = /convites {
+        try_files /__tenant_public_shell__ /index.php?$query_string;
+    }
+    location = /location/permission {
+        try_files /__tenant_public_shell__ /index.php?$query_string;
+    }
+    location = /baixe-o-app {
+        try_files /__tenant_public_shell__ /index.php?$query_string;
     }
 
     # --- Laravel API and other backend routes ---
@@ -142,6 +192,22 @@ server {
     location = /environment {
             try_files $uri /index.php?$query_string;
         }
+    location = /admin {
+        root /var/www/flutter;
+        try_files /index.html =404;
+        add_header Cache-Control "no-cache" always;
+    }
+    location ^~ /admin/ {
+        root /var/www/flutter;
+        try_files /index.html =404;
+        add_header Cache-Control "no-cache" always;
+    }
+
+    # Primary SPA catch-all.
+    location / {
+        root /var/www/flutter;
+        try_files $uri $uri/ /index.html;
+    }
 
     # --- PHP-FPM Handler ---
     # This is now a single, top-level block that handles all .php requests.
