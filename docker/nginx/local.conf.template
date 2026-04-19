@@ -212,33 +212,6 @@ server {
     # --- PHP-FPM Handler ---
     # This is now a single, top-level block that handles all .php requests.
     location ~ \.php$ {
-
-        # --- CORS Handling START ---
-        # Temporary normalizer: upstream (Laravel HandleCors) may also emit CORS
-        # headers on /api/* responses. Hide upstream CORS headers so Nginx is the
-        # single source on this lane until the definitive VNext unification.
-        fastcgi_hide_header Access-Control-Allow-Origin;
-        fastcgi_hide_header Access-Control-Allow-Credentials;
-        fastcgi_hide_header Access-Control-Allow-Methods;
-        fastcgi_hide_header Access-Control-Allow-Headers;
-        fastcgi_hide_header Access-Control-Max-Age;
-
-        # Handle CORS preflight requests
-        if ($request_method = 'OPTIONS') {
-            add_header 'Access-Control-Allow-Origin' "$http_origin" always;
-            add_header 'Access-Control-Allow-Methods' 'GET, POST, PUT, PATCH, DELETE, OPTIONS' always;
-            add_header 'Access-Control-Allow-Headers' 'DNT,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Range,Authorization' always;
-            add_header 'Access-Control-Allow-Credentials' 'true' always;
-            add_header 'Access-Control-Max-Age' 1728000;
-            add_header 'Content-Length' 0;
-            return 204;
-        }
-
-        # Add CORS headers to actual requests
-        add_header 'Access-Control-Allow-Origin' "$http_origin" always;
-        add_header 'Access-Control-Allow-Credentials' 'true' always;
-        # --- CORS Handling END ---
-
         try_files $uri =404;
         include fastcgi_params;
         fastcgi_pass app:9000;
