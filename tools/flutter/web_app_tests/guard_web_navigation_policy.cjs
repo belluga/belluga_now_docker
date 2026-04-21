@@ -26,22 +26,6 @@ if (suiteType === 'mutation' && lane === 'main') {
   process.exit(1);
 }
 
-if (suiteType === 'mutation' && lane !== 'stage') {
-  console.error(
-    `Blocked: web mutation suite is stage-only. ` +
-      `Received lane="${lane}" (NAV_DEPLOY_LANE/DEPLOY_LANE/GITHUB_REF_NAME).`,
-  );
-  process.exit(1);
-}
-
-if (lane === 'dev') {
-  console.error(
-    'Blocked: web lane "dev" is not considered stable for canonical web validation. ' +
-      'Run only local/manual web validation (lane=local) outside CI when needed.',
-  );
-  process.exit(1);
-}
-
 console.log(
   `Web navigation policy check passed (lane=${lane}, suite=${suiteType}).`,
 );

@@ -288,7 +288,6 @@ test('@mutation tenant agenda UI state matches tenant agenda API payload', async
   const { tenantUrl } = requireNavigationUrls();
   const tenantOrigin = new URL(tenantUrl).origin;
   const isHomeAgendaRequest = (sample) =>
-    sample.pageSize === '10' &&
     (sample.pastOnly == null || sample.pastOnly === '0') &&
     (sample.confirmedOnly == null || sample.confirmedOnly === '0') &&
     (sample.searchQuery == null || sample.searchQuery.trim() === '');
@@ -413,6 +412,16 @@ test('@mutation tenant agenda UI state matches tenant agenda API payload', async
       .join('\n')}`,
   ).toEqual([]);
 
+  const samplesWithClientPageSize = agendaResponses.filter(
+    (sample) => sample.pageSize != null,
+  );
+  expect(
+    samplesWithClientPageSize,
+    `Agenda requests must rely on the API default page size and omit client-sent page_size:\n${samplesWithClientPageSize
+      .map((sample) => sample.url)
+      .join('\n')}`,
+  ).toEqual([]);
+
   const defaultEmptyStateText = page.getByText('Nenhum evento disponível no momento');
   const filteredEmptyStateText = page.getByText('Nenhum resultado encontrado');
   const hasVisibleEmptyState =
@@ -423,7 +432,7 @@ test('@mutation tenant agenda UI state matches tenant agenda API payload', async
     expect(
       hasVisibleEmptyState,
       `Expected canonical home /api/v1/agenda request ` +
-        `(page_size=10, past_only=0, confirmed_only=0, no search) ` +
+        `(past_only=0, confirmed_only=0, no search, API-default page size) ` +
         `or explicit empty-state UI when home agenda is unavailable.\n` +
         `Observed agenda requests:\n${agendaResponses.map((sample) => sample.url).join('\n')}`,
     ).toBeTruthy();
