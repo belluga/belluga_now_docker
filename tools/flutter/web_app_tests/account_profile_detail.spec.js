@@ -29,6 +29,34 @@ function labelPattern(label) {
   return new RegExp(escapeRegExp(String(label).trim()), 'i');
 }
 
+function semanticLabelLocator(page, label) {
+  const escapedLabel = String(label).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  return page.locator(`[aria-label*="${escapedLabel}"]`).first();
+}
+
+async function assertVisibleTextOrSemanticLabel(page, label, contextLabel) {
+  const displayLabel = textValue(label);
+  expect(displayLabel, `${contextLabel} requires a non-empty label.`).toBeTruthy();
+
+  const visibleText = page.getByText(labelPattern(displayLabel)).first();
+  const semanticLabel = semanticLabelLocator(page, displayLabel);
+
+  await expect
+    .poll(
+      async () => {
+        if ((await visibleText.count()) > 0 && (await visibleText.isVisible())) {
+          return true;
+        }
+        return (await semanticLabel.count()) > 0 && (await semanticLabel.isVisible());
+      },
+      {
+        message: `${contextLabel} must render "${displayLabel}" as visible text or Flutter semantics.`,
+        timeout: appBootTimeoutMs,
+      },
+    )
+    .toBe(true);
+}
+
 function normalizePayload(payload) {
   if (payload?.data && typeof payload.data === 'object') {
     return payload.data;
@@ -443,7 +471,7 @@ function locationPayload(row) {
 
 function isMinimalNoSections(row) {
   const about = textValue(row?.bio, row?.content, row?.description);
-  return !about && agendaOccurrences(row).length === 0;
+  return !about && agendaOccurrences(row).length === 0 && locationPayload(row) == null;
 }
 
 async function loadRuntimeProfiles(api, baseUrl) {
@@ -486,21 +514,27 @@ async function clickLocatorCenter(page, locator, description) {
 }
 
 async function findVisibleDiscoveryProfileAction(page, rows) {
-  for (const row of rows) {
-    const name = textValue(row?.display_name, row?.name, row?.legal_name);
-    if (!name) {
-      continue;
+  const deadline = Date.now() + appBootTimeoutMs;
+
+  while (Date.now() < deadline) {
+    for (const row of rows) {
+      const name = textValue(row?.display_name, row?.name, row?.legal_name);
+      if (!name) {
+        continue;
+      }
+      const prefix = name.slice(0, Math.min(name.length, 18));
+      const namedButton = page
+        .getByRole('button', {
+          name: new RegExp(`Abrir perfil\\s+${escapeRegExp(prefix)}`, 'i'),
+        })
+        .first();
+      if (await namedButton.isVisible().catch(() => false)) {
+        return namedButton;
+      }
     }
-    const prefix = name.slice(0, Math.min(name.length, 18));
-    const namedButton = page
-      .getByRole('button', {
-        name: new RegExp(`Abrir perfil\\s+${escapeRegExp(prefix)}`, 'i'),
-      })
-      .first();
-    if (await namedButton.isVisible().catch(() => false)) {
-      return namedButton;
-    }
+    await page.waitForTimeout(300);
   }
+
   return null;
 }
 
@@ -584,7 +618,7 @@ test('@readonly NAV-APD-01 Discovery profile detail back stack does not reopen s
   expect(page.url()).not.toBe(openedDetailUrl);
 });
 
-test('@readonly NAV-APD-02..06 and NAV-APD-10 hero, taxonomy, tabs, social removal, and favorite empty state are visible', async ({
+test('@readonly NAV-APD-02..06 and NAV-APD-10 hero, taxonomy, tabs, social removal, and optional favorite empty state are visible', async ({
   page,
 }) => {
   const baseUrl = requireTenantUrl();
@@ -596,18 +630,27 @@ test('@readonly NAV-APD-02..06 and NAV-APD-10 hero, taxonomy, tabs, social remov
     .toBeTruthy();
 
   await openTenantPath(page, baseUrl, `/parceiro/${profile.slug}`);
-  await expect(page.getByText(labelPattern(textValue(profile.display_name, profile.name))).first())
-    .toBeVisible({ timeout: appBootTimeoutMs });
+  await assertVisibleTextOrSemanticLabel(
+    page,
+    textValue(profile.display_name, profile.name),
+    'Account Profile detail hero',
+  );
 
   await page.mouse.wheel(0, 900);
-  await expect(page.getByText(labelPattern(textValue(profile.display_name, profile.name))).first())
-    .toBeVisible({ timeout: appBootTimeoutMs });
+  await assertVisibleTextOrSemanticLabel(
+    page,
+    textValue(profile.display_name, profile.name),
+    'Account Profile detail sticky/readable hero after scroll',
+  );
   await expect(page.getByText(/seguidores|curtidas|87/i)).toHaveCount(0);
 
   const snapshot = taxonomySnapshot(profile);
   if (snapshot) {
-    await expect(page.getByText(labelPattern(snapshot.display)).first())
-      .toBeVisible({ timeout: appBootTimeoutMs });
+    await assertVisibleTextOrSemanticLabel(
+      page,
+      snapshot.display,
+      'Account Profile taxonomy display label',
+    );
     await expect(page.getByText(new RegExp(`^${escapeRegExp(snapshot.value)}$`, 'i')))
       .toHaveCount(0);
   }
@@ -624,11 +667,11 @@ test('@readonly NAV-APD-02..06 and NAV-APD-10 hero, taxonomy, tabs, social remov
   if (minimalCandidate) {
     await openTenantPath(page, baseUrl, `/parceiro/${minimalCandidate.slug}`);
     const minimalName = textValue(minimalCandidate.display_name, minimalCandidate.name);
-    await expect(
-      page.getByText(
-        labelPattern(`Favorite para ser avisado das novidades sobre ${minimalName}.`),
-      ).first(),
-    ).toBeVisible({ timeout: appBootTimeoutMs });
+    await assertVisibleTextOrSemanticLabel(
+      page,
+      `Favorite para ser avisado das novidades sobre ${minimalName}.`,
+      'Account Profile favorite empty state',
+    );
     await expect(page.getByText('Mais sobre este perfil')).toHaveCount(0);
   }
 });
@@ -651,16 +694,21 @@ test('@readonly NAV-APD-12 mobile breakpoint keeps title and taxonomy chips read
 
   const profileName = textValue(profile.display_name, profile.name, profile.title);
   await openTenantPath(page, baseUrl, `/parceiro/${profile.slug}`);
-  await expect(page.getByText(labelPattern(profileName)).first())
-    .toBeVisible({ timeout: appBootTimeoutMs });
+  await assertVisibleTextOrSemanticLabel(page, profileName, 'Mobile Account Profile hero');
   await page.mouse.wheel(0, 900);
-  await expect(page.getByText(labelPattern(profileName)).first())
-    .toBeVisible({ timeout: appBootTimeoutMs });
+  await assertVisibleTextOrSemanticLabel(
+    page,
+    profileName,
+    'Mobile Account Profile hero after scroll',
+  );
 
   const snapshot = taxonomySnapshot(profile);
   if (snapshot) {
-    await expect(page.getByText(labelPattern(snapshot.display)).first())
-      .toBeVisible({ timeout: appBootTimeoutMs });
+    await assertVisibleTextOrSemanticLabel(
+      page,
+      snapshot.display,
+      'Mobile Account Profile taxonomy display label',
+    );
     await expect(page.getByText(new RegExp(`^${escapeRegExp(snapshot.value)}$`, 'i')))
       .toHaveCount(0);
   }

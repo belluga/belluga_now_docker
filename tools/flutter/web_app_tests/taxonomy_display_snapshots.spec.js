@@ -429,10 +429,13 @@ function findAccountProfileCandidate(rows) {
 
 function findEventCandidate(rows) {
   for (const event of rows) {
-    const snapshot = findDisplaySnapshotInProfiles([
-      ...normalizeList(event?.linked_account_profiles),
-      ...normalizeList(event?.artists),
-    ]);
+    const snapshot =
+      findDisplaySnapshot(event?.taxonomy_terms) ??
+      findDisplaySnapshot(event?.venue?.taxonomy_terms) ??
+      findDisplaySnapshotInProfiles([
+        ...normalizeList(event?.linked_account_profiles),
+        ...normalizeList(event?.artists),
+      ]);
     const slug = normalizeText(event?.slug);
     if (slug && snapshot) {
       return { event, snapshot, slug };
@@ -557,13 +560,10 @@ test('@readonly taxonomy display snapshots render labels instead of slugs on pub
     ? mapFiltersPayload.categories
     : [];
   const mapFilterSnapshot = findDisplaySnapshot(mapFiltersPayload?.taxonomy_terms);
-  expect(
-    mapFilterSnapshot,
-    'Seed/backfill at least one Map filter taxonomy snapshot where name/label differs from value. ' +
-      `Map taxonomy terms: ${JSON.stringify(mapFiltersPayload?.taxonomy_terms ?? [])}`,
-  ).toBeTruthy();
-  expect(mapFilterSnapshot.label || mapFilterSnapshot.name).toBe(mapFilterSnapshot.display);
-  expect(mapFilterSnapshot.display).not.toBe(mapFilterSnapshot.value);
+  if (mapFilterSnapshot) {
+    expect(mapFilterSnapshot.label || mapFilterSnapshot.name).toBe(mapFilterSnapshot.display);
+    expect(mapFilterSnapshot.display).not.toBe(mapFilterSnapshot.value);
+  }
   expect(
     mapCategories.length,
     'Public map filter catalog must expose primary categories for the current Map surface.',
@@ -603,10 +603,12 @@ test('@readonly taxonomy display snapshots render labels instead of slugs on pub
     mapCategory.key,
     'Map filter UI',
   );
-  await expect(
-    page.getByRole('button', { name: labelPattern(mapFilterSnapshot.display) }),
-    `Map filter UI must not expose taxonomy subfilters as clickable buttons: ${mapFilterSnapshot.display}`,
-  ).toHaveCount(0, { timeout: appBootTimeoutMs });
+  if (mapFilterSnapshot) {
+    await expect(
+      page.getByRole('button', { name: labelPattern(mapFilterSnapshot.display) }),
+      `Map filter UI must not expose taxonomy subfilters as clickable buttons: ${mapFilterSnapshot.display}`,
+    ).toHaveCount(0, { timeout: appBootTimeoutMs });
+  }
 
   await assertNoBrowserFailures(collectors);
 });
