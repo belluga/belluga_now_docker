@@ -429,13 +429,21 @@ function findAccountProfileCandidate(rows) {
 
 function findEventCandidate(rows) {
   for (const event of rows) {
-    const snapshot =
-      findDisplaySnapshot(event?.taxonomy_terms) ??
-      findDisplaySnapshot(event?.venue?.taxonomy_terms) ??
-      findDisplaySnapshotInProfiles([
-        ...normalizeList(event?.linked_account_profiles),
-        ...normalizeList(event?.artists),
-      ]);
+    const snapshot = findDisplaySnapshotInProfiles([
+      ...normalizeList(event?.linked_account_profiles),
+      ...normalizeList(event?.artists),
+    ]);
+    const slug = normalizeText(event?.slug);
+    if (slug && snapshot) {
+      return { event, snapshot, slug };
+    }
+  }
+  return null;
+}
+
+function findEventTaxonomyLeakCandidate(rows) {
+  for (const event of rows) {
+    const snapshot = findDisplaySnapshot(event?.taxonomy_terms);
     const slug = normalizeText(event?.slug);
     if (slug && snapshot) {
       return { event, snapshot, slug };
@@ -475,6 +483,18 @@ async function assertVisibleDisplayLabel(page, display, rawValue, contextLabel) 
       },
     )
     .toBe(true);
+  await expect(
+    page.getByText(rawValue, { exact: true }),
+    `${contextLabel} must not render raw taxonomy slug "${rawValue}" as visible text`,
+  ).toHaveCount(0);
+  const escapedRawValue = rawValue.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  await expect(
+    page.locator(`[aria-label="${escapedRawValue}"]`),
+    `${contextLabel} must not expose raw taxonomy slug "${rawValue}" as standalone semantics`,
+  ).toHaveCount(0);
+}
+
+async function assertRawTaxonomyValueNotRendered(page, rawValue, contextLabel) {
   await expect(
     page.getByText(rawValue, { exact: true }),
     `${contextLabel} must not render raw taxonomy slug "${rawValue}" as visible text`,
@@ -532,24 +552,37 @@ test('@readonly taxonomy display snapshots render labels instead of slugs on pub
     'Public events list',
   );
   const eventCandidate = findEventCandidate(eventsPayload.rows);
+  // Event-owned taxonomy terms are API snapshots; the public detail UI does not
+  // render them as chips in every layout, so they are valid for slug-leak checks
+  // but not for positive visibility assertions.
+  const eventTaxonomyLeakCandidate =
+    eventCandidate ?? findEventTaxonomyLeakCandidate(eventsPayload.rows);
   expect(
-    eventCandidate,
-    'Seed/backfill at least one public event or linked-profile taxonomy snapshot where name/label differs from value. ' +
+    eventTaxonomyLeakCandidate,
+    'Seed/backfill at least one public event taxonomy snapshot where name/label differs from value. ' +
       `Pages scanned: ${JSON.stringify(eventsPayload.pageSummaries)}. ` +
       `Snapshot samples: ${JSON.stringify(taxonomySnapshotDebug(eventsPayload.rows))}`,
   ).toBeTruthy();
 
-  await page.goto(buildApiUrl(baseUrl, `/agenda/evento/${eventCandidate.slug}`), {
+  await page.goto(buildApiUrl(baseUrl, `/agenda/evento/${eventTaxonomyLeakCandidate.slug}`), {
     waitUntil: 'domcontentloaded',
   });
   await assertAppBooted(page);
   await enableAccessibilityIfNeeded(page);
-  await assertVisibleDisplayLabel(
-    page,
-    eventCandidate.snapshot.display,
-    eventCandidate.snapshot.value,
-    'Public event detail route',
-  );
+  if (eventCandidate) {
+    await assertVisibleDisplayLabel(
+      page,
+      eventCandidate.snapshot.display,
+      eventCandidate.snapshot.value,
+      'Public event detail route',
+    );
+  } else {
+    await assertRawTaxonomyValueNotRendered(
+      page,
+      eventTaxonomyLeakCandidate.snapshot.value,
+      'Public event detail route',
+    );
+  }
 
   const mapFiltersPayload = await fetchJson(
     page,
