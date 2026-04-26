@@ -254,6 +254,39 @@ Notes:
 - Keep `.env.local.tunnel` untracked (already gitignored).
 - If token is invalid or missing, only `cloudflared` fails; core local stack remains unchanged.
 
+### Principal-Checkout Reconcile Validation
+
+When Delphi orchestrates parallel work through worker worktrees, the authoritative
+local validation surface is **not** a hidden reconcile worktree. The orchestrator
+must move the principal checkout(s) onto dedicated `reconcile/*` branches and run
+the final validation there so the local environment, Docker bind mounts, and any
+browser/tunnel checks all hit the same integrated code.
+
+Use the root wrapper for authoritative local reconcile validation:
+
+```bash
+./scripts/delphi/run_reconcile_validation.sh \
+  --intent "store-release reconcile validation" \
+  --laravel-test tests/Api/v1/Admin/ApiV1BrandingAdminTest.php \
+  --laravel-test tests/Api/v1/Tenants/Branding/ApiV1EnvironmentApiTest.php \
+  --flutter-test test/infrastructure/dal/dto/app_data_dto_test.dart \
+  --flutter-analyze
+```
+
+Rules:
+- The wrapper only accepts principal checkouts already moved onto `reconcile/*` branches.
+- Worker/subagent worktrees remain isolated implementation lanes and are not authoritative delivery evidence.
+- Laravel targeted files run **sequentially** through `laravel-app/scripts/delphi/run_laravel_tests_safe.sh` to avoid grouped Mongo drop-race noise during reconcile validation.
+- The wrapper normalizes Laravel runtime-writable directories before and after Laravel validation, including `storage/app/public`, so public navigation and browser-side media rendering do not stay broken by permission drift after test execution.
+- Flutter validation runs from the principal Flutter checkout on the reconcile branch (`fvm flutter test ...`, `fvm dart analyze --format machine`).
+- The wrapper emits a deterministic orchestration status report under `foundation_documentation/artifacts/tmp/`.
+
+If real browser validation is required:
+- keep the principal checkout on the reconcile branch,
+- start the local tunnel profile with `make up-dev-tunnel`,
+- point Playwright/browser automation at the tunnel-exposed local domain so navigation evidence reflects the same integrated reconcile state,
+- derive the required browser/device journeys from the touched TODO set instead of guessing a generic smoke target on each run.
+
 O ambiente é controlado pela variável `COMPOSE_PROFILES` no seu arquivo `.env`.
 
 ### Ambiente de Stage (Hospedado)
@@ -361,11 +394,11 @@ O Docker **não** executa o build do Flutter automaticamente. O NGINX serve apen
    NAV_TENANT_URL="http://guarappari.belluga.space" \
    bash tools/flutter/run_web_navigation_smoke.sh readonly
 
-   # Pipeline/stage/main (URLs injetadas pelo workflow):
+   # Local/dev/stage/main (URLs injetadas pelo workflow fora do ambiente local):
    bash tools/flutter/run_web_navigation_smoke.sh readonly
    bash tools/flutter/run_web_navigation_smoke.sh mutation
    ```
-   > Observação: a suíte `mutation` é stage-only por política (`guard_web_navigation_policy.cjs`).
+   > Política canônica: `mutation` pode rodar em `local|dev|stage`, mas é sempre bloqueada em `main`.
    Em ambiente local, o build do Flutter deve usar a origem browser-facing real do fluxo que será validado. Exemplo: se o navegador abre `https://belluga.space` / `https://guarappari.belluga.space` via Cloudflared, use `LANDLORD_DOMAIN=https://belluga.space` (sem porta interna). Só use `host:porta` quando essa for a origem efetivamente aberta no navegador. Não vaze `:8043` para fluxos públicos baseados em domínio.
 3. Quando estiver satisfeito, faça commit/push dentro do submódulo e depois atualize o repositório principal:
    ```bash
