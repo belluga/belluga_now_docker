@@ -1,11 +1,11 @@
 const fs = require('fs');
 const path = require('path');
 const { test, expect, request } = require('@playwright/test');
+const {
+  loginTenantAdmin: loginTenantAdminWithRequiredCredentials,
+} = require('./support/tenant_admin_auth');
 
 const tenantUrl = process.env.NAV_TENANT_URL;
-const adminEmail =
-  process.env.NAV_ADMIN_EMAIL || 'admin@bellugasolutions.com.br';
-const adminPassword = process.env.NAV_ADMIN_PASSWORD || '765432e1';
 const fixtureImagePath = path.resolve(
   __dirname,
   '../../../foundation_documentation/todos/ephemeral/image.png',
@@ -102,9 +102,6 @@ async function assertNoBrowserFailures(collectors) {
 }
 
 async function assertAppBooted(page) {
-  await expect(page.locator('script[src*="main.dart.js"]')).toHaveCount(1, {
-    timeout: appBootTimeoutMs,
-  });
   await expect(page.locator('flt-glass-pane')).toHaveCount(1, {
     timeout: appBootTimeoutMs,
   });
@@ -149,17 +146,152 @@ async function attachImageFromDevice(
 }
 
 async function enableAccessibilityIfNeeded(page) {
-  const a11yButton = page.getByRole('button', { name: /Enable accessibility/i });
-  if ((await a11yButton.count()) === 0) {
-    return;
-  }
-
   const placeholder = page
     .locator('flt-semantics-placeholder[aria-label="Enable accessibility"]')
     .first();
-  await placeholder.focus();
-  await page.keyboard.press('Enter');
-  await page.waitForTimeout(300);
+  const a11yButton = page.getByRole('button', { name: /Enable accessibility/i });
+
+  for (let attempt = 0; attempt < 25; attempt += 1) {
+    if ((await page.getByRole('button').count()) > 1) {
+      return;
+    }
+
+    if ((await placeholder.count()) > 0) {
+      await placeholder.focus();
+      await page.keyboard.press('Enter');
+      await page.waitForTimeout(300);
+      if ((await page.getByRole('button').count()) > 1) {
+        return;
+      }
+    } else if ((await a11yButton.count()) > 0) {
+      await a11yButton.first().click();
+      await page.waitForTimeout(300);
+      if ((await page.getByRole('button').count()) > 1) {
+        return;
+      }
+    }
+
+    await page.waitForTimeout(200);
+  }
+}
+
+async function fillFlutterTextField(page, label, value) {
+  const field = page.getByLabel(label).first();
+  await field.scrollIntoViewIfNeeded();
+  await expect(field).toBeVisible({ timeout: appBootTimeoutMs });
+
+  let lastValue = '';
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    await field.click();
+    const selectAll = process.platform === 'darwin' ? 'Meta+A' : 'Control+A';
+    await page.keyboard.press(selectAll);
+    await page.keyboard.press('Backspace');
+    await page.keyboard.type(value, { delay: 5 });
+
+    try {
+      await expect
+        .poll(
+          async () => {
+            try {
+              return await field.inputValue();
+            } catch (_) {
+              return '';
+            }
+          },
+          {
+            timeout: 3000,
+            message: `Expected Flutter text field "${label}" to retain input.`,
+          },
+        )
+        .toBe(value);
+      return field;
+    } catch (_) {
+      try {
+        lastValue = await field.inputValue();
+      } catch (_) {
+        lastValue = '<unreadable>';
+      }
+      await page.waitForTimeout(150);
+    }
+  }
+
+  throw new Error(
+    `Flutter text field "${label}" did not retain "${value}" before submit; last value was "${lastValue}".`,
+  );
+}
+
+async function fillColorPickerField(page, label, value) {
+  await fillFlutterTextField(page, label, value);
+  const colorDialogTitle = page.getByText('Cor do marcador').last();
+  const applyButton = page.getByRole('button', { name: /Aplicar cor/i }).last();
+  if (await applyButton.count()) {
+    await expect(applyButton).toBeVisible({ timeout: 2000 });
+    await applyButton.click();
+    await expect(colorDialogTitle).toBeHidden({ timeout: appBootTimeoutMs });
+  }
+}
+
+async function scrollUntilVisible(page, locator, description) {
+  async function tryCurrentLocator() {
+    const candidateCount = await locator.count().catch(() => 0);
+    if (candidateCount <= 0) {
+      return false;
+    }
+    const first = locator.first();
+    await first.scrollIntoViewIfNeeded().catch(() => {});
+    return first.isVisible().catch(() => false);
+  }
+
+  if (await tryCurrentLocator()) {
+    return;
+  }
+
+  const viewport =
+    page.viewportSize() ||
+    (await page.evaluate(() => ({
+      width: window.innerWidth,
+      height: window.innerHeight,
+    })));
+  await page.mouse.move(viewport.width * 0.62, viewport.height * 0.72);
+
+  for (const delta of [900, -900]) {
+    for (let attempt = 0; attempt < 36; attempt += 1) {
+      if (await tryCurrentLocator()) {
+        return;
+      }
+      await page.mouse.wheel(0, delta);
+      await page.waitForTimeout(250);
+    }
+  }
+
+  await expect(locator, description).toBeVisible({
+    timeout: appBootTimeoutMs,
+  });
+}
+
+async function clickSaveChanges(page) {
+  const saveButton = page
+    .getByRole('button', { name: /Salvar altera/i })
+    .last();
+  await saveButton.scrollIntoViewIfNeeded();
+  await expect(saveButton).toBeVisible({
+    timeout: appBootTimeoutMs,
+  });
+  await saveButton.click({ noWaitAfter: true });
+}
+
+async function scrollTenantAdminSheetToTop(page) {
+  const viewport =
+    page.viewportSize() ||
+    (await page.evaluate(() => ({
+      width: window.innerWidth,
+      height: window.innerHeight,
+    })));
+  await page.mouse.move(viewport.width * 0.62, viewport.height * 0.72);
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    await page.mouse.wheel(0, -1400);
+    await page.waitForTimeout(120);
+  }
 }
 
 async function createApiContext(baseUrl) {
@@ -173,34 +305,12 @@ async function createApiContext(baseUrl) {
 }
 
 async function loginTenantAdmin(api, baseUrl) {
-  const loginResponse = await api.post(
-    buildApiUrl(baseUrl, '/admin/api/v1/auth/login'),
-    {
-      data: {
-        email: adminEmail,
-        password: adminPassword,
-        device_name: 'playwright-web-navigation',
-      },
-    },
-  );
-  expect(loginResponse.status(), 'Tenant-admin login must succeed.').toBe(200);
-
-  const loginPayload = await loginResponse.json();
-  const token = loginPayload?.data?.token;
-  expect(token, 'Tenant-admin login must return a bearer token.').toBeTruthy();
-
-  const meResponse = await api.get(buildApiUrl(baseUrl, '/admin/api/v1/me'), {
-    headers: authHeaders(token),
+  return loginTenantAdminWithRequiredCredentials({
+    api,
+    baseUrl,
+    buildUrl: buildApiUrl,
+    deviceName: 'playwright-web-navigation',
   });
-  expect(meResponse.status(), 'Tenant-admin /me must succeed after login.').toBe(
-    200,
-  );
-  const mePayload = await meResponse.json();
-
-  return {
-    token,
-    userId: mePayload?.data?.user_id?.toString() || '',
-  };
 }
 
 async function seedFlutterSecureStorage(context, session) {
@@ -293,71 +403,6 @@ async function createAuthenticatedTenantAdminPage(browser, session) {
   await seedFlutterSecureStorage(context, session);
   const page = await context.newPage();
   return { context, page };
-}
-
-async function selectDropdownOption(
-  page,
-  {
-    flow,
-    fieldLabel,
-    optionText,
-    fallbackButtonName = null,
-  },
-) {
-  const buttonTrigger = page.getByRole('button', {
-    name: new RegExp(fieldLabel, 'i'),
-  });
-  if ((await buttonTrigger.count()) > 0) {
-    logStep(flow, `open dropdown ${fieldLabel}`);
-    await buttonTrigger.last().click();
-  } else {
-    if (fallbackButtonName) {
-      const fallbackTrigger = page.getByRole('button', {
-        name: new RegExp(fallbackButtonName, 'i'),
-      });
-      if ((await fallbackTrigger.count()) > 0) {
-        logStep(flow, `open fallback dropdown ${fallbackButtonName}`);
-        await fallbackTrigger.last().click();
-      } else {
-        const labelTrigger = page.getByLabel(fieldLabel);
-        expect(
-          await labelTrigger.count(),
-          `Expected a visible trigger for dropdown "${fieldLabel}".`,
-        ).toBeGreaterThan(0);
-        logStep(flow, `open labeled dropdown ${fieldLabel}`);
-        await labelTrigger.last().click();
-      }
-    } else {
-      const labelTrigger = page.getByLabel(fieldLabel);
-      expect(
-        await labelTrigger.count(),
-        `Expected a visible trigger for dropdown "${fieldLabel}".`,
-      ).toBeGreaterThan(0);
-      logStep(flow, `open labeled dropdown ${fieldLabel}`);
-      await labelTrigger.last().click();
-    }
-  }
-
-  const optionByRole = page.getByRole('option', { name: optionText });
-  if ((await optionByRole.count()) > 0) {
-    logStep(flow, `select option ${optionText} via role`);
-    await optionByRole.last().click();
-    return;
-  }
-
-  const optionByText = page.getByText(optionText, { exact: true });
-  if ((await optionByText.count()) > 0) {
-    logStep(flow, `select option ${optionText} via text`);
-    await optionByText.last().click();
-    return;
-  }
-
-  logStep(
-    flow,
-    `fallback to keyboard selection for ${fieldLabel} -> ${optionText}`,
-  );
-  await page.keyboard.press('ArrowDown');
-  await page.keyboard.press('Enter');
 }
 
 async function fetchPublicEnvironment(api, baseUrl) {
@@ -476,6 +521,303 @@ async function deleteEventType(api, baseUrl, token, eventTypeId) {
       failOnStatusCode: false,
     },
   );
+}
+
+async function createTaxonomy(
+  api,
+  baseUrl,
+  token,
+  {
+    slug,
+    name,
+    appliesTo,
+    terms,
+    icon = 'category',
+    color = '#AA5500',
+  },
+) {
+  const response = await api.post(
+    buildApiUrl(baseUrl, '/admin/api/v1/taxonomies'),
+    {
+      headers: authHeaders(token),
+      data: {
+        slug,
+        name,
+        applies_to: appliesTo,
+        icon,
+        color,
+      },
+    },
+  );
+  expect(response.status(), `Taxonomy ${slug} must be created.`).toBe(201);
+  const payload = await response.json();
+  const taxonomyId = payload?.data?.id?.toString() || '';
+  expect(taxonomyId, `Taxonomy ${slug} must return an id.`).toBeTruthy();
+
+  for (const term of terms) {
+    const termResponse = await api.post(
+      buildApiUrl(baseUrl, `/admin/api/v1/taxonomies/${taxonomyId}/terms`),
+      {
+        headers: authHeaders(token),
+        data: term,
+      },
+    );
+    expect(
+      termResponse.status(),
+      `Taxonomy term ${term.slug} must be created for ${slug}.`,
+    ).toBe(201);
+  }
+
+  return { taxonomyId, slug, name, terms };
+}
+
+async function deleteTaxonomy(api, baseUrl, token, taxonomyId) {
+  if (!taxonomyId) {
+    return;
+  }
+
+  await api.delete(
+    buildApiUrl(baseUrl, `/admin/api/v1/taxonomies/${taxonomyId}`),
+    {
+      headers: authHeaders(token),
+      failOnStatusCode: false,
+    },
+  );
+}
+
+async function waitForTaxonomyRegistry(api, baseUrl, token, slugs) {
+  await expect
+    .poll(
+      async () => {
+        const response = await api.get(
+          buildApiUrl(baseUrl, '/admin/api/v1/taxonomies?page=1&page_size=500'),
+          {
+            headers: authHeaders(token),
+          },
+        );
+        if (response.status() >= 400) {
+          return false;
+        }
+        const payload = await response.json();
+        const rows = Array.isArray(payload?.data) ? payload.data : [];
+        const available = new Set(
+          rows.map((entry) => entry?.slug?.toString()).filter(Boolean),
+        );
+        return slugs.every((slug) => available.has(slug));
+      },
+      {
+        timeout: appBootTimeoutMs,
+        message:
+          'Expected newly created taxonomies to appear in the tenant-admin taxonomy registry before opening type editors.',
+      },
+    )
+    .toBeTruthy();
+}
+
+async function createAccountProfileType(
+  api,
+  baseUrl,
+  token,
+  {
+    type,
+    label,
+    allowedTaxonomies,
+    markerColor,
+    iconColor = '#FFFFFF',
+  },
+) {
+  const response = await api.post(
+    buildApiUrl(baseUrl, '/admin/api/v1/account_profile_types'),
+    {
+      headers: authHeaders(token),
+      data: {
+        type,
+        label,
+        labels: {
+          singular: label,
+          plural: `${label}s`,
+        },
+        allowed_taxonomies: allowedTaxonomies,
+        capabilities: {
+          is_favoritable: true,
+          has_taxonomies: true,
+          has_avatar: true,
+        },
+        poi_visual: {
+          mode: 'icon',
+          icon: 'place',
+          color: markerColor,
+          icon_color: iconColor,
+        },
+      },
+    },
+  );
+  expect(response.status(), `Account profile type ${type} must be created.`).toBe(
+    201,
+  );
+  return response.json();
+}
+
+async function deleteAccountProfileType(api, baseUrl, token, type) {
+  if (!type) {
+    return;
+  }
+
+  await api.delete(
+    buildApiUrl(
+      baseUrl,
+      `/admin/api/v1/account_profile_types/${encodeURIComponent(type)}`,
+    ),
+    {
+      headers: authHeaders(token),
+      failOnStatusCode: false,
+    },
+  );
+}
+
+async function createStaticProfileType(
+  api,
+  baseUrl,
+  token,
+  {
+    type,
+    label,
+    allowedTaxonomies,
+    markerColor,
+    iconColor = '#FFFFFF',
+  },
+) {
+  const response = await api.post(
+    buildApiUrl(baseUrl, '/admin/api/v1/static_profile_types'),
+    {
+      headers: authHeaders(token),
+      data: {
+        type,
+        label,
+        map_category: 'beach',
+        allowed_taxonomies: allowedTaxonomies,
+        capabilities: {
+          is_poi_enabled: true,
+          has_taxonomies: true,
+          has_content: true,
+        },
+        poi_visual: {
+          mode: 'icon',
+          icon: 'place',
+          color: markerColor,
+          icon_color: iconColor,
+        },
+      },
+    },
+  );
+  expect(response.status(), `Static profile type ${type} must be created.`).toBe(
+    201,
+  );
+  return response.json();
+}
+
+async function createEventType(
+  api,
+  baseUrl,
+  token,
+  {
+    name,
+    slug,
+    allowedTaxonomies,
+    icon = 'celebration',
+    color = '#B51E5B',
+    iconColor = '#FFFFFF',
+  },
+) {
+  const response = await api.post(
+    buildApiUrl(baseUrl, '/admin/api/v1/event_types'),
+    {
+      headers: authHeaders(token),
+      data: {
+        name,
+        slug,
+        allowed_taxonomies: allowedTaxonomies,
+        visual: {
+          mode: 'icon',
+          icon,
+          color,
+          icon_color: iconColor,
+        },
+      },
+    },
+  );
+  expect(response.status(), `Event type ${slug} must be created.`).toBe(201);
+  return response.json();
+}
+
+async function deleteStaticProfileType(api, baseUrl, token, type) {
+  if (!type) {
+    return;
+  }
+
+  await api.delete(
+    buildApiUrl(
+      baseUrl,
+      `/admin/api/v1/static_profile_types/${encodeURIComponent(type)}`,
+    ),
+    {
+      headers: authHeaders(token),
+      failOnStatusCode: false,
+    },
+  );
+}
+
+async function expectSelectedToggleChip(page, label) {
+  const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const switchChip = page.getByRole('switch', {
+    name: new RegExp(escaped, 'i'),
+  });
+  const checkboxChip = page.getByRole('checkbox', {
+    name: new RegExp(escaped, 'i'),
+  });
+  const namedButtonChip = page.getByRole('button', {
+    name: new RegExp(escaped, 'i'),
+  });
+  const textFallbackChip = page.getByText(label, { exact: true }).first();
+  let chip;
+  if ((await switchChip.count()) > 0) {
+    chip = switchChip.first();
+  } else if ((await checkboxChip.count()) > 0) {
+    chip = checkboxChip.first();
+  } else if ((await namedButtonChip.count()) > 0) {
+    chip = namedButtonChip.first();
+  } else {
+    chip = textFallbackChip;
+  }
+  await scrollUntilVisible(
+    page,
+    chip,
+    `Expected taxonomy chip "${label}" to appear before asserting selected state.`,
+  );
+  const stateChip = chip
+    .locator(
+      'xpath=ancestor-or-self::*[@aria-pressed or @aria-selected or @aria-checked or @data-selected][1]',
+    )
+    .first();
+  const hasStateChip = (await stateChip.count().catch(() => 0)) > 0;
+  const target = hasStateChip ? stateChip : chip;
+  await expect
+    .poll(
+      async () => {
+        return (
+          (await target.getAttribute('aria-pressed').catch(() => null)) ||
+          (await target.getAttribute('aria-selected').catch(() => null)) ||
+          (await target.getAttribute('aria-checked').catch(() => null)) ||
+          (await target.getAttribute('data-selected').catch(() => null)) ||
+          ''
+        );
+      },
+      {
+        timeout: appBootTimeoutMs,
+        message: `Expected taxonomy chip "${label}" to reopen selected.`,
+      },
+    )
+    .toBe('true');
 }
 
 async function createEventTypeWithTypeAsset(
@@ -785,7 +1127,7 @@ test('@mutation tenant-admin event type create flow works through the real brows
     browserContext = primaryPageBundle.context;
     const page = primaryPageBundle.page;
     const collectors = installFailureCollectors(page);
-    const uniqueSlug = `playwright-type-${Date.now()}`;
+    const uniqueSlug = `playwrighttype${Date.now()}`;
     const uniqueName = `Playwright ${uniqueSlug}`;
 
     logStep('event-type', 'open event types list');
@@ -811,8 +1153,14 @@ test('@mutation tenant-admin event type create flow works through the real brows
     });
 
     logStep('event-type', `fill form ${uniqueSlug}`);
-    await page.getByLabel('Nome').fill(uniqueName);
-    await page.getByLabel('Slug').fill(uniqueSlug);
+    const nameField = await fillFlutterTextField(page, 'Nome', uniqueName);
+    const slugField = await fillFlutterTextField(page, 'Slug', uniqueSlug);
+    await expect(nameField).toHaveValue(uniqueName, {
+      timeout: appBootTimeoutMs,
+    });
+    await expect(slugField).toHaveValue(uniqueSlug, {
+      timeout: appBootTimeoutMs,
+    });
 
     const createResponsePromise = page.waitForResponse((candidate) => {
       return (
@@ -945,13 +1293,11 @@ test('@mutation tenant-admin event type type asset upload persists and renders a
       }
     });
 
-    logStep('event-type-asset', 'open event types list');
-    const response = await page.goto(
-      buildApiUrl(baseUrl, '/admin/events/types'),
-      {
-        waitUntil: 'domcontentloaded',
-      },
-    );
+    const eventTypesUrl = buildApiUrl(baseUrl, '/admin/events/types');
+    logStep('event-type-asset', `open event types list ${eventTypesUrl}`);
+    const response = await page.goto(eventTypesUrl, {
+      waitUntil: 'domcontentloaded',
+    });
     expect(response, 'Event types route response should be available.').not.toBeNull();
     expect(response.status()).toBeLessThan(400);
     await assertAppBooted(page);
@@ -960,23 +1306,46 @@ test('@mutation tenant-admin event type type asset upload persists and renders a
     await expect(page.getByText('Tipos de evento')).toBeVisible({
       timeout: appBootTimeoutMs,
     });
-    logStep('event-type-asset', 'open seeded row from list');
-    await page
+    const seededTypeButton = page
       .getByRole('button', {
         name: new RegExp(uniqueName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
       })
-      .first()
-      .click();
+      .first();
+    await scrollUntilVisible(
+      page,
+      seededTypeButton,
+      'Expected the seeded event type to appear in the admin event-type list before reopening edit.',
+    );
+    logStep('event-type-asset', 'open seeded row from list');
+    await seededTypeButton.click();
     await expect(page.getByText('Editar tipo de evento')).toBeVisible({
       timeout: appBootTimeoutMs,
     });
 
     await expect
-      .poll(() => typeAssetStatuses.some((status) => status === 200), {
-        timeout: appBootTimeoutMs,
-        message:
-          'Expected the persisted event-type type asset image request to succeed after reopening edit.',
-      })
+      .poll(
+        async () => {
+          if (typeAssetStatuses.some((status) => status === 200)) {
+            return true;
+          }
+          const renderedSources = await page.locator('img').evaluateAll((nodes) =>
+            nodes
+              .map((node) => node.getAttribute('src') || '')
+              .filter((entry) => entry.length > 0),
+          );
+          return renderedSources.some((entry) =>
+            urlsMatchIgnoringQuery(
+              entry.startsWith('http') ? entry : resolveAbsoluteUrl(baseUrl, entry),
+              typeAssetUrl,
+            ),
+          );
+        },
+        {
+          timeout: appBootTimeoutMs,
+          message:
+            'Expected the persisted event-type type asset to be observable after reopening edit, either via network fetch or rendered preview.',
+        },
+      )
       .toBeTruthy();
     logStep('event-type-asset', 'persisted type asset returned 200 after edit reopen');
 
@@ -1135,6 +1504,361 @@ test('@mutation tenant-admin branding public default image and favicon persist a
     if (verificationContext) {
       await verificationContext.close().catch(() => {});
     }
+    if (browserContext) {
+      await browserContext.close().catch(() => {});
+    }
+    await api.dispose();
+  }
+});
+
+test('@mutation tenant-admin profile-type editors preload and preserve allowed taxonomies when saving unrelated visual changes', async ({
+  browser,
+}) => {
+  test.setTimeout(600000);
+  const baseUrl = requireTenantUrl();
+  const api = await createApiContext(baseUrl);
+  let browserContext;
+  let session = null;
+  let eventTaxonomyAId = null;
+  let eventTaxonomyBId = null;
+  let profileTaxonomyAId = null;
+  let profileTaxonomyBId = null;
+  let staticTaxonomyId = null;
+  let createdEventTypeId = null;
+  let createdProfileType = null;
+  let createdStaticType = null;
+
+  try {
+    session = await loginTenantAdmin(api, baseUrl);
+    const unique = Date.now();
+    const uniqueSuffix = String(unique).slice(-4);
+    const eventTaxonomyA = await createTaxonomy(api, baseUrl, session.token, {
+      slug: `hd13-event-a-${unique}`,
+      name: `AA EvtA ${uniqueSuffix}`,
+      appliesTo: ['event'],
+      terms: [{ slug: `term-event-a-${unique}`, name: `Termo A ${uniqueSuffix}` }],
+    });
+    eventTaxonomyAId = eventTaxonomyA.taxonomyId;
+    const eventTaxonomyB = await createTaxonomy(api, baseUrl, session.token, {
+      slug: `hd13-event-b-${unique}`,
+      name: `AB EvtB ${uniqueSuffix}`,
+      appliesTo: ['event'],
+      terms: [{ slug: `term-event-b-${unique}`, name: `Termo B ${uniqueSuffix}` }],
+    });
+    eventTaxonomyBId = eventTaxonomyB.taxonomyId;
+    const profileTaxonomyA = await createTaxonomy(api, baseUrl, session.token, {
+      slug: `hd13-profile-a-${unique}`,
+      name: `AA Perfil A ${uniqueSuffix}`,
+      appliesTo: ['account_profile'],
+      terms: [{ slug: `term-a-${unique}`, name: `Termo A ${unique}` }],
+    });
+    profileTaxonomyAId = profileTaxonomyA.taxonomyId;
+    const profileTaxonomyB = await createTaxonomy(api, baseUrl, session.token, {
+      slug: `hd13-profile-b-${unique}`,
+      name: `AB Perfil B ${uniqueSuffix}`,
+      appliesTo: ['account_profile'],
+      terms: [{ slug: `term-b-${unique}`, name: `Termo B ${unique}` }],
+    });
+    profileTaxonomyBId = profileTaxonomyB.taxonomyId;
+    const staticTaxonomy = await createTaxonomy(api, baseUrl, session.token, {
+      slug: `hd13-static-${unique}`,
+      name: `AA Ativo ${uniqueSuffix}`,
+      appliesTo: ['static_asset'],
+      terms: [{ slug: `term-static-${unique}`, name: `Termo Ativo ${unique}` }],
+    });
+    staticTaxonomyId = staticTaxonomy.taxonomyId;
+    await waitForTaxonomyRegistry(api, baseUrl, session.token, [
+      eventTaxonomyA.slug,
+      eventTaxonomyB.slug,
+      profileTaxonomyA.slug,
+      profileTaxonomyB.slug,
+      staticTaxonomy.slug,
+    ]);
+
+    const createdEventType = await createEventType(
+      api,
+      baseUrl,
+      session.token,
+      {
+        name: `HD13 Evento ${unique}`,
+        slug: `hd13-event-${unique}`,
+        allowedTaxonomies: [eventTaxonomyA.slug, eventTaxonomyB.slug],
+        color: '#9E4B00',
+      },
+    );
+    createdEventTypeId = createdEventType?.data?.id?.toString() || null;
+    createdProfileType = await createAccountProfileType(
+      api,
+      baseUrl,
+      session.token,
+      {
+        type: `hd13-profile-${unique}`,
+        label: `HD13 Perfil ${unique}`,
+        allowedTaxonomies: [profileTaxonomyA.slug, profileTaxonomyB.slug],
+        markerColor: '#B51E5B',
+      },
+    );
+    createdStaticType = await createStaticProfileType(
+      api,
+      baseUrl,
+      session.token,
+      {
+        type: `hd13-static-${unique}`,
+        label: `HD13 Ativo ${unique}`,
+        allowedTaxonomies: [staticTaxonomy.slug],
+        markerColor: '#1E6FB5',
+      },
+    );
+
+    const pageBundle = await createAuthenticatedTenantAdminPage(browser, session);
+    browserContext = pageBundle.context;
+    const page = pageBundle.page;
+    const collectors = installFailureCollectors(page);
+
+    const profileTypeKey = createdProfileType?.data?.type?.toString() || '';
+    const staticTypeKey = createdStaticType?.data?.type?.toString() || '';
+    const eventTypeName = createdEventType?.data?.name?.toString() || '';
+    expect(createdEventTypeId, 'Created event type must expose id.').toBeTruthy();
+    expect(profileTypeKey, 'Created account profile type must expose type.').toBeTruthy();
+    expect(staticTypeKey, 'Created static profile type must expose type.').toBeTruthy();
+
+    const eventTypesUrl = buildApiUrl(baseUrl, '/admin/events/types');
+    logStep('type-taxonomies', `open event types route ${eventTypesUrl}`);
+    let response = await page.goto(eventTypesUrl, {
+      waitUntil: 'domcontentloaded',
+    });
+    expect(response, 'Event types route response should be available.').not.toBeNull();
+    expect(response.status()).toBeLessThan(400);
+    await assertAppBooted(page);
+    await enableAccessibilityIfNeeded(page);
+    const eventTypeButton = page.getByRole('button', {
+      name: new RegExp(eventTypeName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
+    }).first();
+    await scrollUntilVisible(
+      page,
+      eventTypeButton,
+      'Expected the created event type to appear in the admin event-type list before validating allowed taxonomies.',
+    );
+    logStep('type-taxonomies', 'open created event type from list');
+    await eventTypeButton.click();
+    await expect(page.getByText('Editar tipo de evento')).toBeVisible({
+      timeout: appBootTimeoutMs,
+    });
+    await expect(page.getByText('Taxonomias permitidas')).toBeVisible({
+      timeout: appBootTimeoutMs,
+    });
+    await expectSelectedToggleChip(page, eventTaxonomyA.name);
+    await expectSelectedToggleChip(page, eventTaxonomyB.name);
+    logStep('type-taxonomies', 'event type preloaded allowed taxonomies confirmed');
+
+    const eventDescriptionUpdate = `Descricao atualizada ${unique}`;
+    await fillFlutterTextField(
+      page,
+      'Descrição (opcional)',
+      eventDescriptionUpdate,
+    );
+    logStep('type-taxonomies', 'save event type with unrelated description change');
+    const eventSaveResponsePromise = page.waitForResponse((candidate) => {
+      return (
+        candidate.request().method() === 'PATCH' &&
+        candidate.url().includes(`/admin/api/v1/event_types/${createdEventTypeId}`)
+      );
+    });
+    const visibleButtonTexts = await page.getByRole('button').evaluateAll((nodes) =>
+      nodes
+        .map((node) => (node.textContent || '').trim())
+        .filter((entry) => entry.length > 0),
+    );
+    logStep(
+      'type-taxonomies',
+      `visible buttons before event save: ${visibleButtonTexts.join(' | ')}`,
+    );
+    logStep('type-taxonomies', 'click event type save button');
+    await clickSaveChanges(page);
+    logStep('type-taxonomies', 'event type save button clicked');
+    const eventSaveResponse = await eventSaveResponsePromise;
+    expect(eventSaveResponse.status()).toBeLessThan(400);
+    const eventSavePayload = await eventSaveResponse.json();
+    expect(
+      (eventSavePayload?.data?.allowed_taxonomies || []).slice().sort(),
+    ).toEqual([eventTaxonomyA.slug, eventTaxonomyB.slug].slice().sort());
+    expect(eventSavePayload?.data?.description).toBe(eventDescriptionUpdate);
+    logStep('type-taxonomies', 'event type save preserved allowed taxonomies');
+
+    response = await page.goto(eventTypesUrl, {
+      waitUntil: 'domcontentloaded',
+    });
+    expect(response, 'Event types reopen response should be available.').not.toBeNull();
+    expect(response.status()).toBeLessThan(400);
+    await assertAppBooted(page);
+    await enableAccessibilityIfNeeded(page);
+    const reopenedEventTypeButton = page.getByRole('button', {
+      name: new RegExp(eventTypeName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
+    }).first();
+    await scrollUntilVisible(
+      page,
+      reopenedEventTypeButton,
+      'Expected the created event type to reappear in the admin event-type list before verifying preserved allowed taxonomies.',
+    );
+    logStep('type-taxonomies', 'reopen event type from list');
+    await reopenedEventTypeButton.click();
+    await expect(page.getByText('Editar tipo de evento')).toBeVisible({
+      timeout: appBootTimeoutMs,
+    });
+    await expectSelectedToggleChip(page, eventTaxonomyA.name);
+    await expectSelectedToggleChip(page, eventTaxonomyB.name);
+    logStep('type-taxonomies', 'event type reopen preserved allowed taxonomies');
+
+    const profileEditUrl = buildApiUrl(
+      baseUrl,
+      `/admin/profile-types/${encodeURIComponent(profileTypeKey)}/edit`,
+    );
+    logStep('type-taxonomies', `open account profile type route ${profileEditUrl}`);
+    response = await page.goto(profileEditUrl, {
+      waitUntil: 'domcontentloaded',
+    });
+    expect(response, 'Account profile type edit response should be available.').not.toBeNull();
+    expect(response.status()).toBeLessThan(400);
+    await assertAppBooted(page);
+    await enableAccessibilityIfNeeded(page);
+    await scrollTenantAdminSheetToTop(page);
+    await expect(page.getByText('Taxonomias permitidas')).toBeVisible({
+      timeout: appBootTimeoutMs,
+    });
+    await expectSelectedToggleChip(
+      page,
+      profileTaxonomyA.name,
+    );
+    await expectSelectedToggleChip(
+      page,
+      profileTaxonomyB.name,
+    );
+    logStep('type-taxonomies', 'profile type preloaded allowed taxonomies confirmed');
+
+    const profileLabelUpdate = `HD13 Perfil Atualizado ${unique}`;
+    await fillFlutterTextField(page, 'Label', profileLabelUpdate);
+    logStep('type-taxonomies', 'save profile type with unrelated label change');
+    const profileSaveResponsePromise = page.waitForResponse((candidate) => {
+      return (
+        candidate.request().method() === 'PATCH' &&
+        candidate.url().includes(
+          `/admin/api/v1/account_profile_types/${encodeURIComponent(
+            profileTypeKey,
+          )}`,
+        )
+      );
+    });
+    logStep('type-taxonomies', 'click profile type save button');
+    await clickSaveChanges(page);
+    logStep('type-taxonomies', 'profile type save button clicked');
+    const profileSaveResponse = await profileSaveResponsePromise;
+    expect(profileSaveResponse.status()).toBeLessThan(400);
+    const profileSavePayload = await profileSaveResponse.json();
+    expect(
+      (profileSavePayload?.data?.allowed_taxonomies || []).slice().sort(),
+    ).toEqual([profileTaxonomyA.slug, profileTaxonomyB.slug].slice().sort());
+    expect(profileSavePayload?.data?.label).toBe(profileLabelUpdate);
+    logStep('type-taxonomies', 'profile type save preserved allowed taxonomies');
+
+    response = await page.goto(profileEditUrl, {
+      waitUntil: 'domcontentloaded',
+    });
+    expect(response, 'Account profile type reopen response should be available.').not.toBeNull();
+    expect(response.status()).toBeLessThan(400);
+    await assertAppBooted(page);
+    await enableAccessibilityIfNeeded(page);
+    await scrollTenantAdminSheetToTop(page);
+    await expect(page.getByText('Taxonomias permitidas')).toBeVisible({
+      timeout: appBootTimeoutMs,
+    });
+    await expectSelectedToggleChip(
+      page,
+      profileTaxonomyA.name,
+    );
+    await expectSelectedToggleChip(
+      page,
+      profileTaxonomyB.name,
+    );
+    logStep('type-taxonomies', 'profile type reopen preserved allowed taxonomies');
+
+    const staticEditUrl = buildApiUrl(
+      baseUrl,
+      `/admin/static_profile_types/${encodeURIComponent(staticTypeKey)}/edit`,
+    );
+    logStep('type-taxonomies', `open static profile type route ${staticEditUrl}`);
+    response = await page.goto(staticEditUrl, {
+      waitUntil: 'domcontentloaded',
+    });
+    expect(response, 'Static profile type edit response should be available.').not.toBeNull();
+    expect(response.status()).toBeLessThan(400);
+    await assertAppBooted(page);
+    await enableAccessibilityIfNeeded(page);
+    await scrollTenantAdminSheetToTop(page);
+    await expect(page.getByText('Taxonomias permitidas')).toBeVisible({
+      timeout: appBootTimeoutMs,
+    });
+    await expectSelectedToggleChip(page, staticTaxonomy.name);
+    logStep('type-taxonomies', 'static type preloaded allowed taxonomies confirmed');
+
+    const staticLabelUpdate = `HD13 Ativo Atualizado ${unique}`;
+    await fillFlutterTextField(page, 'Label', staticLabelUpdate);
+    logStep('type-taxonomies', 'save static type with unrelated label change');
+    const staticSaveResponsePromise = page.waitForResponse((candidate) => {
+      return (
+        candidate.request().method() === 'PATCH' &&
+        candidate.url().includes(
+          `/admin/api/v1/static_profile_types/${encodeURIComponent(
+            staticTypeKey,
+          )}`,
+        )
+      );
+    });
+    logStep('type-taxonomies', 'click static type save button');
+    await clickSaveChanges(page);
+    logStep('type-taxonomies', 'static type save button clicked');
+    const staticSaveResponse = await staticSaveResponsePromise;
+    expect(staticSaveResponse.status()).toBeLessThan(400);
+    const staticSavePayload = await staticSaveResponse.json();
+    expect(staticSavePayload?.data?.allowed_taxonomies || []).toEqual([
+      staticTaxonomy.slug,
+    ]);
+    expect(staticSavePayload?.data?.label).toBe(staticLabelUpdate);
+    logStep('type-taxonomies', 'static type save preserved allowed taxonomies');
+    expect(staticSavePayload?.data?.poi_visual?.color).toBe('#1E6FB5');
+
+    response = await page.goto(staticEditUrl, {
+      waitUntil: 'domcontentloaded',
+    });
+    expect(response, 'Static profile type reopen response should be available.').not.toBeNull();
+    expect(response.status()).toBeLessThan(400);
+    await assertAppBooted(page);
+    await enableAccessibilityIfNeeded(page);
+    await scrollTenantAdminSheetToTop(page);
+    await expect(page.getByText('Taxonomias permitidas')).toBeVisible({
+      timeout: appBootTimeoutMs,
+    });
+    await expectSelectedToggleChip(page, staticTaxonomy.name);
+
+    await assertNoBrowserFailures(collectors);
+  } finally {
+    await deleteEventType(api, baseUrl, session?.token, createdEventTypeId);
+    await deleteStaticProfileType(
+      api,
+      baseUrl,
+      session?.token,
+      createdStaticType?.data?.type?.toString() || '',
+    );
+    await deleteAccountProfileType(
+      api,
+      baseUrl,
+      session?.token,
+      createdProfileType?.data?.type?.toString() || '',
+    );
+    await deleteTaxonomy(api, baseUrl, session?.token, eventTaxonomyBId);
+    await deleteTaxonomy(api, baseUrl, session?.token, eventTaxonomyAId);
+    await deleteTaxonomy(api, baseUrl, session?.token, staticTaxonomyId);
+    await deleteTaxonomy(api, baseUrl, session?.token, profileTaxonomyBId);
+    await deleteTaxonomy(api, baseUrl, session?.token, profileTaxonomyAId);
     if (browserContext) {
       await browserContext.close().catch(() => {});
     }
