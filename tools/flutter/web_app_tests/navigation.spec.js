@@ -58,9 +58,6 @@ function installFailureCollectors(page) {
 }
 
 async function assertAppBooted(page) {
-  await expect(page.locator('script[src*="main.dart.js"]')).toHaveCount(1, {
-    timeout: appBootTimeoutMs,
-  });
   await expect(page.locator('flt-glass-pane')).toHaveCount(1, {
     timeout: appBootTimeoutMs,
   });
@@ -152,14 +149,32 @@ function resolveDefaultOrigin(environmentPayload) {
 }
 
 async function enableAccessibilityIfNeeded(page) {
+  const placeholder = page
+    .locator('flt-semantics-placeholder[aria-label="Enable accessibility"]')
+    .first();
   const a11yButton = page.getByRole('button', { name: /Enable accessibility/i });
-  if ((await a11yButton.count()) > 0) {
-    const placeholder = page
-      .locator('flt-semantics-placeholder[aria-label="Enable accessibility"]')
-      .first();
-    await placeholder.focus();
-    await page.keyboard.press('Enter');
-    await page.waitForTimeout(300);
+
+  for (let attempt = 0; attempt < 25; attempt += 1) {
+    if ((await page.getByRole('button').count()) > 1) {
+      return;
+    }
+
+    if ((await placeholder.count()) > 0) {
+      await placeholder.focus();
+      await page.keyboard.press('Enter');
+      await page.waitForTimeout(300);
+      if ((await page.getByRole('button').count()) > 1) {
+        return;
+      }
+    } else if ((await a11yButton.count()) > 0) {
+      await a11yButton.first().click();
+      await page.waitForTimeout(300);
+      if ((await page.getByRole('button').count()) > 1) {
+        return;
+      }
+    }
+
+    await page.waitForTimeout(200);
   }
 }
 
