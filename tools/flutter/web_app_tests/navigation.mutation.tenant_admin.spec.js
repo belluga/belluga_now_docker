@@ -14,6 +14,8 @@ const fixtureFaviconPath = path.resolve(
   __dirname,
   '../../../laravel-app/tests/Assets/tenant_1.ico',
 );
+const fallbackFixtureImageBase64 =
+  'iVBORw0KGgoAAAANSUhEUgAAAQAAAAEACAYAAABccqhmAAADIElEQVR4nO3UIQEAIBDAwI9AZWKRDmIgduL81GadfYGm+R0A/GMAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEPYAluQiSDn9lCoAAAAASUVORK5CYII=';
 const appBootTimeoutMs = 90000;
 
 test.describe.configure({ timeout: 300000 });
@@ -80,6 +82,17 @@ function logStep(flow, message) {
   console.log(`[tenant-admin][${flow}] ${message}`);
 }
 
+function fixtureImagePayload() {
+  const buffer = fs.existsSync(fixtureImagePath)
+    ? fs.readFileSync(fixtureImagePath)
+    : Buffer.from(fallbackFixtureImageBase64, 'base64');
+  return {
+    name: 'belluga-navigation-fixture.png',
+    mimeType: 'image/png',
+    buffer,
+  };
+}
+
 async function assertNoBrowserFailures(collectors) {
   expect(
     collectors.runtimeErrors,
@@ -133,7 +146,9 @@ async function attachImageFromDevice(
     page.getByText('Do dispositivo').last().click(),
   ]);
   logStep(flow, `attach fixture ${fixturePath}`);
-  await fileChooser.setFiles(fixturePath);
+  await fileChooser.setFiles(
+    fs.existsSync(fixturePath) ? fixturePath : fixtureImagePayload(),
+  );
 
   if (!cropTitle) {
     return;
@@ -845,7 +860,7 @@ async function createEventTypeWithTypeAsset(
         type_asset: {
           name: 'event-type-asset.png',
           mimeType: 'image/png',
-          buffer: fs.readFileSync(fixtureImagePath),
+          buffer: fixtureImagePayload().buffer,
         },
       },
     },
