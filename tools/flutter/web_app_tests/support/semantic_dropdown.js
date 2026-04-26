@@ -73,6 +73,15 @@ async function selectDropdownOption(
     return;
   }
 
+  const optionByContainingSemanticLabel = page.locator(
+    `flt-semantics[aria-label*=${cssAttributeValue(optionText)}]`,
+  );
+  if ((await optionByContainingSemanticLabel.count()) > 0) {
+    record(`select option ${optionText} via containing Flutter semantic label`);
+    await optionByContainingSemanticLabel.last().click();
+    return;
+  }
+
   throw new Error(
     `Dropdown "${fieldLabel}" did not expose semantic option/menuitem/button/label "${optionText}".`,
   );
