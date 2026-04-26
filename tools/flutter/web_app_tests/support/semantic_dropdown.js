@@ -1,5 +1,9 @@
 const { expect } = require('@playwright/test');
 
+function cssAttributeValue(value) {
+  return JSON.stringify(value).replace(/'/g, "\\'");
+}
+
 async function selectDropdownOption(
   page,
   {
@@ -60,8 +64,17 @@ async function selectDropdownOption(
     return;
   }
 
+  const optionBySemanticLabel = page.locator(
+    `flt-semantics[aria-label=${cssAttributeValue(optionText)}]`,
+  );
+  if ((await optionBySemanticLabel.count()) > 0) {
+    record(`select option ${optionText} via Flutter semantic label`);
+    await optionBySemanticLabel.last().click();
+    return;
+  }
+
   throw new Error(
-    `Dropdown "${fieldLabel}" did not expose semantic option/menuitem/button "${optionText}".`,
+    `Dropdown "${fieldLabel}" did not expose semantic option/menuitem/button/label "${optionText}".`,
   );
 }
 
