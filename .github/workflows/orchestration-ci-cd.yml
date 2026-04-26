@@ -425,6 +425,8 @@ jobs:
           NAV_LANDLORD_URL: ${{ steps.stage_nav_targets.outputs.landlord_url }}
           NAV_TENANT_URL: ${{ steps.stage_nav_targets.outputs.tenant_url }}
           PLAYWRIGHT_IGNORE_HTTPS_ERRORS: ${{ env.PLAYWRIGHT_IGNORE_HTTPS_ERRORS }}
+          NAV_ADMIN_EMAIL: ${{ secrets.STAGE_NAV_ADMIN_EMAIL }}
+          NAV_ADMIN_PASSWORD: ${{ secrets.STAGE_NAV_ADMIN_PASSWORD }}
         run: bash tools/flutter/run_web_navigation_smoke.sh mutation
 
       - name: Collect stage deploy diagnostics before rollback

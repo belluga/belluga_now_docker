@@ -1,0 +1,54 @@
+{
+  "mutation": {
+    "shards": {
+      "apd": {
+        "grep_extra": "(?:account-profile rich text|NAV-APD-07|NAV-APD-09)",
+        "expected_titles": [
+          "@mutation tenant-admin account-profile rich text persists and renders on admin and public surfaces",
+          "@mutation NAV-APD-07..08 agenda is occurrence-first and cards navigate to event detail",
+          "@mutation NAV-APD-09 Como Chegar opens focused map and shared route chooser"
+        ]
+      },
+      "filters": {
+        "grep_extra": "(?:public Map keeps|Home filters honor|Profile Discovery excludes|event rich text)",
+        "expected_titles": [
+          "@mutation public Map keeps baseline primary filters without taxonomy subfilters and uses backend filtering",
+          "@mutation Home filters honor Event Type taxonomy compatibility, hide zero-taxonomy rows, and keep selected icon foreground aligned with the label",
+          "@mutation Profile Discovery excludes non-favoritable types and keeps selected icon foreground aligned with the label",
+          "@mutation tenant-admin event rich text persists and renders in public Sobre"
+        ]
+      },
+      "map-admin": {
+        "grep_extra": "tenant-admin keeps public Map filter config",
+        "expected_titles": [
+          "@mutation tenant-admin keeps public Map filter config in the canonical filters editor"
+        ]
+      },
+      "occurrences": {
+        "grep_extra": "(?:NAV-ADM-LOC|repeated public event detail)",
+        "expected_titles": [
+          "@mutation NAV-ADM-LOC-01..06 admin occurrence programming location ownership matrix holds",
+          "@mutation repeated public event detail GET/hydration keeps programming payload stable"
+        ]
+      },
+      "occurrence-fab": {
+        "grep_extra": "tenant-admin event occurrence FAB persists",
+        "expected_titles": [
+          "@mutation tenant-admin event occurrence FAB persists second occurrence and public detail selects it"
+        ]
+      },
+      "admin-final": {
+        "grep_extra": "(?:cover upload|avatar upload|event type create|event type type asset|branding public|profile-type editors|tenant agenda UI)",
+        "expected_titles": [
+          "@mutation tenant-admin account-profile cover upload persists and renders after reload",
+          "@mutation tenant-admin account-profile avatar upload persists and renders after reload",
+          "@mutation tenant-admin event type create flow works through the real browser",
+          "@mutation tenant-admin event type type asset upload persists and renders after edit reopen",
+          "@mutation tenant-admin branding public default image and favicon persist after save and reload",
+          "@mutation tenant-admin profile-type editors preload and preserve allowed taxonomies when saving unrelated visual changes",
+          "@mutation tenant agenda UI state matches tenant agenda API payload"
+        ]
+      }
+    }
+  }
+}
