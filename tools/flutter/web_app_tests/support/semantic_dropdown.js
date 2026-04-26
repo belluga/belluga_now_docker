@@ -53,27 +53,15 @@ async function selectDropdownOption(
     return;
   }
 
-  const optionByVisibleText = page.getByText(optionText, { exact: true });
-  const visibleTextCount = await optionByVisibleText.count();
-  for (let index = visibleTextCount - 1; index >= 0; index -= 1) {
-    const candidate = optionByVisibleText.nth(index);
-    if (await candidate.isVisible().catch(() => false)) {
-      record(`select option ${optionText} via visible text fallback`);
-      await candidate.click().catch(async () => {
-        const box = await candidate.boundingBox();
-        if (!box) {
-          throw new Error(
-            `Dropdown "${fieldLabel}" visible text fallback "${optionText}" has no bounding box.`,
-          );
-        }
-        await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
-      });
-      return;
-    }
+  const optionByButton = page.getByRole('button', { name: optionText });
+  if ((await optionByButton.count()) > 0) {
+    record(`select option ${optionText} via semantic button`);
+    await optionByButton.last().click();
+    return;
   }
 
   throw new Error(
-    `Dropdown "${fieldLabel}" did not expose semantic option/menuitem "${optionText}".`,
+    `Dropdown "${fieldLabel}" did not expose semantic option/menuitem/button "${optionText}".`,
   );
 }
 
