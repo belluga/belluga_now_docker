@@ -48,6 +48,13 @@
           "@mutation tenant-admin profile-type editors preload and preserve allowed taxonomies when saving unrelated visual changes",
           "@mutation tenant agenda UI state matches tenant agenda API payload"
         ]
+      },
+      "otp-auth": {
+        "grep_extra": "OTP Auth",
+        "expected_titles": [
+          "@mutation OTP Auth admin exposes WhatsApp primary and optional SMS fallback without legacy controls",
+          "@mutation OTP Auth public requests WhatsApp by default and SMS fallback with segmented code UI"
+        ]
       }
     }
   }

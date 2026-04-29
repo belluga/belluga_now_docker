@@ -82,7 +82,7 @@ services:
       LOG_MONGODB_RETENTION_DAYS: ${LOG_MONGODB_RETENTION_DAYS:-14}
     networks:
       - app-network
-    command: ["php", "artisan", "queue:work", "--sleep=1", "--tries=3", "--timeout=120"]
+    command: ["sh", "/var/www/scripts/run_queue_worker.sh"]
     restart: unless-stopped
 
   scheduler:
