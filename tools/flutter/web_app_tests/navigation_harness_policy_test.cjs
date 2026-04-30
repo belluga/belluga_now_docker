@@ -10,6 +10,8 @@ const repoRoot = path.resolve(__dirname, '..', '..', '..');
 const guardScript = path.join(__dirname, 'guard_web_navigation_policy.cjs');
 const shardsScript = path.join(__dirname, 'web_navigation_shards.cjs');
 const smokeScript = path.join(repoRoot, 'tools', 'flutter', 'run_web_navigation_smoke.sh');
+const localNavigationEnv = path.join(repoRoot, '.env.local.navigation');
+const localNavigationEnvExample = path.join(repoRoot, '.env.local.navigation.example');
 const orchestrationWorkflow = path.join(repoRoot, '.github', 'workflows', 'orchestration-ci-cd.yml');
 
 function run(command, args, env = {}) {
@@ -97,8 +99,84 @@ function assertStageMutationWorkflowSuppliesRuntimeCredentials() {
   );
 }
 
+function assertLocalNavigationEnvAutomationIsSafe() {
+  const gitignore = fs.readFileSync(path.join(repoRoot, '.gitignore'), 'utf8');
+  assert.match(
+    gitignore,
+    /^\.env\.local\.navigation$/m,
+    'local navigation env file must be gitignored',
+  );
+
+  const example = fs.readFileSync(localNavigationEnvExample, 'utf8');
+  assert.match(example, /^NAV_LANDLORD_URL=https:\/\/belluga\.space$/m);
+  assert.match(example, /^NAV_TENANT_URL=https:\/\/guarappari\.belluga\.space$/m);
+  assert.match(example, /^# NAV_ADMIN_EMAIL=$/m);
+  assert.match(example, /^# NAV_ADMIN_PASSWORD=$/m);
+  assert.doesNotMatch(
+    example,
+    /^NAV_ADMIN_PASSWORD=.+$/m,
+    'example file must not commit a real admin password',
+  );
+}
+
+function assertSmokeRunnerLoadsLocalNavigationEnv() {
+  const previousExists = fs.existsSync(localNavigationEnv);
+  const previousContent = previousExists
+    ? fs.readFileSync(localNavigationEnv, 'utf8')
+    : null;
+  const previousMode = previousExists
+    ? fs.statSync(localNavigationEnv).mode & 0o777
+    : null;
+
+  try {
+    fs.writeFileSync(
+      localNavigationEnv,
+      [
+        'NAV_LANDLORD_URL=https://belluga.space',
+        'NAV_TENANT_URL=https://guarappari.belluga.space',
+        'NAV_DEPLOY_LANE=dev',
+        'PLAYWRIGHT_IGNORE_HTTPS_ERRORS=true',
+        'NAV_ADMIN_EMAIL=policy@example.test',
+        'NAV_ADMIN_PASSWORD=policy-secret',
+        '',
+      ].join('\n'),
+      { mode: 0o600 },
+    );
+
+    const env = {
+      ...process.env,
+      NAV_WEB_TEST_TYPE: 'mutation',
+      NAV_DEPLOY_LANE: 'orchestrator',
+      NAV_WEB_SHARD: 'missing',
+    };
+    delete env.NAV_ADMIN_EMAIL;
+    delete env.NAV_ADMIN_PASSWORD;
+
+    const result = spawnSync('bash', [smokeScript, 'mutation'], {
+      cwd: repoRoot,
+      env,
+      encoding: 'utf8',
+    });
+    assert.notStrictEqual(result.status, 0, 'unknown shard should fail after env loads');
+    assert.match(
+      `${result.stdout}\n${result.stderr}`,
+      /Unknown mutation shard/,
+      'local navigation env should satisfy credential guard before shard validation fails',
+    );
+  } finally {
+    if (previousExists) {
+      fs.writeFileSync(localNavigationEnv, previousContent, { mode: previousMode });
+      fs.chmodSync(localNavigationEnv, previousMode);
+    } else {
+      fs.rmSync(localNavigationEnv, { force: true });
+    }
+  }
+}
+
 assertGuardPassesCleanFixture();
 assertStageMutationWorkflowSuppliesRuntimeCredentials();
+assertLocalNavigationEnvAutomationIsSafe();
+assertSmokeRunnerLoadsLocalNavigationEnv();
 
 assertFailsForSource(
   'coordinate-click',
