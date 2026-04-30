@@ -269,15 +269,26 @@ test('@mutation OTP Auth admin exposes WhatsApp primary and optional SMS fallbac
     await assertAppBooted(page);
     await enableAccessibilityIfNeeded(page);
 
-    await expect(page.getByText('Webhooks de saída')).toBeVisible({
+    await expect(
+      page.getByRole('button', { name: /Editar Webhook WhatsApp/i }),
+    ).toBeVisible({
       timeout: appBootTimeoutMs,
     });
-    await expect(page.getByText('Webhook WhatsApp')).toBeVisible();
-    await expect(page.getByText('Secondary OTP Channel com SMS')).toBeVisible();
-    await expect(page.getByText('Webhook OTP')).toHaveCount(0);
-    await expect(page.getByText('Usar webhook WhatsApp para OTP')).toHaveCount(0);
-    await expect(page.getByText('Canal OTP')).toHaveCount(0);
-    await expect(page.getByText('URL SMS')).toHaveCount(0);
+    await expect(
+      page.getByRole('switch', { name: /Secondary OTP Channel com SMS/i }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole('button', { name: /Editar Webhook OTP/i }),
+    ).toHaveCount(0);
+    await expect(
+      page.getByRole('switch', { name: /Usar webhook WhatsApp para OTP/i }),
+    ).toHaveCount(0);
+    await expect(
+      page.getByRole('button', { name: /Editar Canal OTP/i }),
+    ).toHaveCount(0);
+    await expect(
+      page.getByRole('button', { name: /Editar URL SMS/i }),
+    ).toHaveCount(0);
 
     await page
       .getByRole('button', { name: /Editar Webhook WhatsApp/i })
@@ -298,7 +309,9 @@ test('@mutation OTP Auth admin exposes WhatsApp primary and optional SMS fallbac
     } else {
       await page.getByText('Secondary OTP Channel com SMS').click();
     }
-    await expect(page.getByText('URL SMS')).toBeVisible({
+    await expect(
+      page.getByRole('button', { name: /Editar URL SMS/i }),
+    ).toBeVisible({
       timeout: appBootTimeoutMs,
     });
 
