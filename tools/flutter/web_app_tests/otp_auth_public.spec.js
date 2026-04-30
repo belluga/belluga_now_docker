@@ -145,6 +145,30 @@ async function installOtpChallengeRoute(page, capturedChallenges) {
   });
 }
 
+test('@readonly OTP-WEB-BOUNDARY-01 tenant-public web auth remains app promotion boundary', async ({
+  page,
+}) => {
+  const baseUrl = requireTenantUrl();
+
+  await page.goto(buildApiUrl(baseUrl, '/auth/login'), {
+    waitUntil: 'domcontentloaded',
+  });
+  await assertAppBooted(page);
+  await enableAccessibilityIfNeeded(page);
+
+  await expect(
+    page.getByText(/Baixe para continuar|Escolha sua loja|Bora testar/i),
+  ).toBeVisible({ timeout: appBootTimeoutMs });
+  await expect(page.getByText('Entrar com telefone')).toHaveCount(0);
+  await expect(page.getByLabel('Telefone')).toHaveCount(0);
+  await expect(
+    page.getByRole('button', { name: /Continuar via WhatsApp/i }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole('button', { name: /Confirmar codigo/i }),
+  ).toHaveCount(0);
+});
+
 test('@mutation OTP Auth public requests WhatsApp by default and SMS fallback with segmented code UI', async ({
   page,
 }) => {
@@ -163,9 +187,11 @@ test('@mutation OTP Auth public requests WhatsApp by default and SMS fallback wi
   await expect(page.getByText('Entrar com telefone')).toBeVisible({
     timeout: appBootTimeoutMs,
   });
+  await expect(page.getByLabel(/E-mail/i)).toHaveCount(0);
+  await expect(page.getByLabel(/Senha/i)).toHaveCount(0);
   await fillFlutterTextField(page, 'Telefone', '27999990000');
 
-  await page.getByRole('button', { name: /Receber codigo/i }).click();
+  await page.getByRole('button', { name: /Continuar via WhatsApp/i }).click();
   await expect
     .poll(() => capturedChallenges.length, {
       timeout: appBootTimeoutMs,
@@ -179,9 +205,12 @@ test('@mutation OTP Auth public requests WhatsApp by default and SMS fallback wi
     timeout: appBootTimeoutMs,
   });
   await expect(page.getByRole('button', { name: /Confirmar codigo/i })).toBeVisible();
-  await expect(page.getByRole('button', { name: /Receber por SMS/i })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Outras formas/i })).toBeVisible();
+  await expect(page.getByText('Receber por SMS')).toHaveCount(0);
 
-  await page.getByRole('button', { name: /Receber por SMS/i }).click();
+  await page.getByRole('button', { name: /Outras formas/i }).click();
+  await expect(page.getByText('Receber por SMS')).toBeVisible();
+  await page.getByText('Receber por SMS').click();
   await expect
     .poll(() => capturedChallenges.length, {
       timeout: appBootTimeoutMs,
