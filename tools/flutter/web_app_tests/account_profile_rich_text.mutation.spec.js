@@ -286,7 +286,11 @@ async function resolveRichTextProfileType(api, baseUrl, token) {
     );
 
   if (selected) {
-    return { profileType: selected.type, createdType: null };
+    return {
+      profileType: selected.type,
+      isPoiEnabled: selected?.capabilities?.is_poi_enabled === true,
+      createdType: null,
+    };
   }
 
   const type = `playwright-rich-${Date.now()}`;
@@ -326,18 +330,32 @@ async function resolveRichTextProfileType(api, baseUrl, token) {
   return { profileType: type, createdType: type };
 }
 
-async function createRichTextAccountProfile(api, baseUrl, token, profileType) {
+async function createRichTextAccountProfile(
+  api,
+  baseUrl,
+  token,
+  { profileType, isPoiEnabled = false },
+) {
   const suffix = Date.now();
+  const requestPayload = {
+    name: `Playwright Rich ${suffix}`,
+    ownership_state: 'tenant_owned',
+    profile_type: profileType,
+    bio: '<p>Initial bio</p>',
+    content: '<p>Initial content</p>',
+  };
+
+  if (isPoiEnabled) {
+    requestPayload.location = {
+      lat: -20.671339,
+      lng: -40.495395,
+    };
+  }
+
   const response = await api.post(
     buildUrl(baseUrl, '/admin/api/v1/account_onboardings'),
     {
-      data: {
-        name: `Playwright Rich ${suffix}`,
-        ownership_state: 'tenant_owned',
-        profile_type: profileType,
-        bio: '<p>Initial bio</p>',
-        content: '<p>Initial content</p>',
-      },
+      data: requestPayload,
       headers: authHeaders(token),
     },
   );
@@ -519,7 +537,7 @@ test('@mutation tenant-admin account-profile rich text persists and renders on a
       api,
       baseUrl,
       session.token,
-      resolvedType.profileType,
+      resolvedType,
     );
     profileId = created.profileId;
     expect(created.accountSlug, 'Created account slug must be present.')
