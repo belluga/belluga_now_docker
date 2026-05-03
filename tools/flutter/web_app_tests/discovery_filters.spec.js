@@ -815,6 +815,7 @@ async function createAccountProfileType(
     label,
     allowedTaxonomies,
     isFavoritable,
+    isPubliclyDiscoverable = true,
     icon,
     color,
     iconColor = '#FFFFFF',
@@ -834,6 +835,7 @@ async function createAccountProfileType(
         allowed_taxonomies: allowedTaxonomies,
         capabilities: {
           is_favoritable: isFavoritable,
+          is_publicly_discoverable: isPubliclyDiscoverable,
           has_taxonomies: allowedTaxonomies.length > 0,
         },
         poi_visual: {
@@ -1353,6 +1355,7 @@ test('@mutation Profile Discovery excludes non-favoritable types and keeps selec
       label: hiddenTypeLabel,
       allowedTaxonomies: [taxonomy.slug],
       isFavoritable: false,
+      isPubliclyDiscoverable: true,
       icon: 'lock',
       color: '#555555',
     });
