@@ -657,10 +657,26 @@ test('@readonly NAV-APD-02..06 and NAV-APD-10 hero, taxonomy, tabs, social remov
 
   const tabs = ['Sobre', 'Agenda', 'Como Chegar'];
   for (const tab of tabs) {
-    const locator = page.getByText(new RegExp(`^${tab}$`, 'i'));
-    if ((await locator.count()) > 0) {
-      await locator.first().click();
-      await expect(locator.first()).toBeVisible();
+    const button = page.getByRole('button', {
+      name: new RegExp(`^${tab}$`, 'i'),
+    }).first();
+    if (await button.isVisible().catch(() => false)) {
+      await clickLocatorCenter(
+        page,
+        button,
+        `Account Profile detail must expose the ${tab} tab as a semantic button.`,
+      );
+      continue;
+    }
+
+    const locator = page.getByText(new RegExp(`^${tab}$`, 'i')).first();
+    if (await locator.isVisible().catch(() => false)) {
+      await clickLocatorCenter(
+        page,
+        locator,
+        `Account Profile detail must expose ${tab} as a visible tab label.`,
+      );
+      await expect(locator).toBeVisible();
     }
   }
 
