@@ -82,6 +82,19 @@ async function selectDropdownOption(
     return;
   }
 
+  const optionByVisibleText = page.getByText(optionText, { exact: true });
+  const visibleTextCount = await optionByVisibleText.count();
+  if (visibleTextCount > 0) {
+    for (let index = visibleTextCount - 1; index >= 0; index -= 1) {
+      const candidate = optionByVisibleText.nth(index);
+      if (await candidate.isVisible()) {
+        record(`select option ${optionText} via visible text fallback`);
+        await candidate.click();
+        return;
+      }
+    }
+  }
+
   throw new Error(
     `Dropdown "${fieldLabel}" did not expose semantic option/menuitem/button/label "${optionText}".`,
   );
