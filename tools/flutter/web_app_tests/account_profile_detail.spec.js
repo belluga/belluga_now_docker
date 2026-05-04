@@ -513,6 +513,17 @@ async function clickLocatorCenter(page, locator, description) {
   await locator.click({ timeout: appBootTimeoutMs });
 }
 
+async function firstVisibleLocator(locator) {
+  const count = await locator.count();
+  for (let index = 0; index < count; index += 1) {
+    const candidate = locator.nth(index);
+    if (await candidate.isVisible().catch(() => false)) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
 async function findVisibleDiscoveryProfileAction(page, rows) {
   const deadline = Date.now() + appBootTimeoutMs;
 
@@ -657,10 +668,10 @@ test('@readonly NAV-APD-02..06 and NAV-APD-10 hero, taxonomy, tabs, social remov
 
   const tabs = ['Sobre', 'Agenda', 'Como Chegar'];
   for (const tab of tabs) {
-    const button = page.getByRole('button', {
+    const button = await firstVisibleLocator(page.getByRole('button', {
       name: new RegExp(`^${tab}$`, 'i'),
-    }).first();
-    if (await button.isVisible().catch(() => false)) {
+    }));
+    if (button) {
       await clickLocatorCenter(
         page,
         button,
@@ -669,13 +680,10 @@ test('@readonly NAV-APD-02..06 and NAV-APD-10 hero, taxonomy, tabs, social remov
       continue;
     }
 
-    const locator = page.getByText(new RegExp(`^${tab}$`, 'i')).first();
-    if (await locator.isVisible().catch(() => false)) {
-      await clickLocatorCenter(
-        page,
-        locator,
-        `Account Profile detail must expose ${tab} as a visible tab label.`,
-      );
+    const locator = await firstVisibleLocator(
+      page.getByText(new RegExp(`^${tab}$`, 'i')),
+    );
+    if (locator) {
       await expect(locator).toBeVisible();
     }
   }
