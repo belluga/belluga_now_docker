@@ -37,6 +37,35 @@ function accessibleTextPattern(text) {
   return new RegExp(`(^|\\s)${escapeRegExp(text.trim())}(\\s|$)`, 'i');
 }
 
+async function firstVisibleLocator(locator) {
+  const count = await locator.count();
+  for (let index = 0; index < count; index += 1) {
+    const candidate = locator.nth(index);
+    if (await candidate.isVisible().catch(() => false)) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
+async function waitForFirstVisibleLocator(
+  locator,
+  {
+    timeoutMs = appBootTimeoutMs,
+    pollIntervalMs = 250,
+  } = {},
+) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const candidate = await firstVisibleLocator(locator);
+    if (candidate) {
+      return candidate;
+    }
+    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+  }
+  return null;
+}
+
 function surfaceButtonPattern(title, description) {
   return new RegExp(
     `${escapeRegExp(title)}[\\s\\S]*${escapeRegExp(description)}`,
@@ -1120,7 +1149,14 @@ test('@mutation public Map keeps baseline primary filters without taxonomy subfi
 
   await openTenantPath(page, baseUrl, '/mapa');
   await continueWithoutLocationIfPrompted(page);
-  await expect(page.getByRole('button', { name: labelPattern(selectedCategory.label) }))
+  const selectedCategoryButton = await waitForFirstVisibleLocator(page.getByRole('button', {
+    name: labelPattern(selectedCategory.label),
+  }));
+  expect(
+    selectedCategoryButton,
+    `Map primary filter button "${selectedCategory.label}" must be visible.`,
+  ).toBeTruthy();
+  await expect(selectedCategoryButton)
     .toBeVisible({ timeout: appBootTimeoutMs });
 
   const filteredRequest = page.waitForRequest((request) => {
@@ -1129,9 +1165,7 @@ test('@mutation public Map keeps baseline primary filters without taxonomy subfi
     }
     return requestContainsFilterValue(request.url(), expected);
   }, { timeout: appBootTimeoutMs });
-  await page.getByRole('button', { name: labelPattern(selectedCategory.label) })
-    .first()
-    .click();
+  await selectedCategoryButton.click();
   const requestSample = await filteredRequest;
 
   await expect(page.getByText(selectedCategory.label, { exact: true }))
@@ -1139,7 +1173,14 @@ test('@mutation public Map keeps baseline primary filters without taxonomy subfi
   await expect(page.getByRole('button', { name: /Remover filtro/i }))
     .toBeVisible({ timeout: appBootTimeoutMs });
   if (siblingCategory) {
-    await expect(page.getByRole('button', { name: labelPattern(siblingCategory.label) }))
+    const siblingCategoryButton = await waitForFirstVisibleLocator(page.getByRole('button', {
+      name: labelPattern(siblingCategory.label),
+    }));
+    expect(
+      siblingCategoryButton,
+      `Map sibling filter button "${siblingCategory.label}" must be visible.`,
+    ).toBeTruthy();
+    await expect(siblingCategoryButton)
       .toBeVisible({ timeout: appBootTimeoutMs });
   }
 
