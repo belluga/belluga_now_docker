@@ -43,6 +43,14 @@ async function selectDropdownOption(
     }
   }
 
+  const locationSearchField = page.getByRole('textbox', {
+    name: /Buscar local/i,
+  });
+  if ((await locationSearchField.count()) > 0) {
+    record(`filter dropdown options with search ${optionText}`);
+    await locationSearchField.last().fill(optionText);
+  }
+
   const optionByRole = page.getByRole('option', { name: optionText });
   if ((await optionByRole.count()) > 0) {
     record(`select option ${optionText} via role`);
