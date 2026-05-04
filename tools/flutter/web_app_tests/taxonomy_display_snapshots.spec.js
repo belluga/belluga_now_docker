@@ -381,6 +381,44 @@ function findDisplaySnapshot(terms) {
   return null;
 }
 
+function findNonPrimaryMapTaxonomySnapshot(terms, categories) {
+  const primaryLabels = new Set(
+    normalizeList(categories)
+      .map((category) => normalizeText(category?.label).toLowerCase())
+      .filter(Boolean),
+  );
+
+  if (!Array.isArray(terms)) {
+    return null;
+  }
+
+  for (const term of terms) {
+    if (!term || typeof term !== 'object') {
+      continue;
+    }
+    const value = normalizeText(term.value);
+    const name = normalizeText(term.name);
+    const label = normalizeText(term.label);
+    const display = name || label;
+    if (!value || !display || display === value) {
+      continue;
+    }
+    if (primaryLabels.has(display.toLowerCase())) {
+      continue;
+    }
+    return {
+      type: normalizeText(term.type),
+      value,
+      name,
+      label,
+      display,
+      taxonomyName: normalizeText(term.taxonomy_name),
+    };
+  }
+
+  return null;
+}
+
 function taxonomySnapshotDebug(rows) {
   const samples = [];
   for (const row of rows) {
@@ -592,15 +630,19 @@ test('@readonly taxonomy display snapshots render labels instead of slugs on pub
   const mapCategories = Array.isArray(mapFiltersPayload?.categories)
     ? mapFiltersPayload.categories
     : [];
+  expect(
+    mapCategories.length,
+    'Public map filter catalog must expose primary categories for the current Map surface.',
+  ).toBeGreaterThan(0);
   const mapFilterSnapshot = findDisplaySnapshot(mapFiltersPayload?.taxonomy_terms);
   if (mapFilterSnapshot) {
     expect(mapFilterSnapshot.label || mapFilterSnapshot.name).toBe(mapFilterSnapshot.display);
     expect(mapFilterSnapshot.display).not.toBe(mapFilterSnapshot.value);
   }
-  expect(
-    mapCategories.length,
-    'Public map filter catalog must expose primary categories for the current Map surface.',
-  ).toBeGreaterThan(0);
+  const hiddenMapTaxonomySnapshot = findNonPrimaryMapTaxonomySnapshot(
+    mapFiltersPayload?.taxonomy_terms,
+    mapCategories,
+  );
 
   const mapCategory = chooseMapCategory(mapCategories);
   const expectedMapFilter = mapCategory.query?.source
@@ -636,10 +678,10 @@ test('@readonly taxonomy display snapshots render labels instead of slugs on pub
     mapCategory.key,
     'Map filter UI',
   );
-  if (mapFilterSnapshot) {
+  if (hiddenMapTaxonomySnapshot) {
     await expect(
-      page.getByRole('button', { name: labelPattern(mapFilterSnapshot.display) }),
-      `Map filter UI must not expose taxonomy subfilters as clickable buttons: ${mapFilterSnapshot.display}`,
+      page.getByRole('button', { name: labelPattern(hiddenMapTaxonomySnapshot.display) }),
+      `Map filter UI must not expose taxonomy subfilters as clickable buttons: ${hiddenMapTaxonomySnapshot.display}`,
     ).toHaveCount(0, { timeout: appBootTimeoutMs });
   }
 
