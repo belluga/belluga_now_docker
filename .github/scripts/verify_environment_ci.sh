@@ -16,6 +16,22 @@ for file in "${required_files[@]}"; do
   fi
 done
 
+worker_block="$(awk '
+  /^  worker:/ { in_worker=1; print; next }
+  in_worker && /^  [a-zA-Z0-9_-]+:/ { exit }
+  in_worker { print }
+' docker-compose.yml)"
+
+if [[ -z "$worker_block" ]]; then
+  echo "ERROR: docker-compose.yml missing worker service block" >&2
+  exit 1
+fi
+
+if ! grep -Fq 'command: ["sh", "/var/www/scripts/run_queue_worker.sh"]' <<<"$worker_block"; then
+  echo "ERROR: worker service must use /var/www/scripts/run_queue_worker.sh so OTP jobs on queue 'otp' are consumed." >&2
+  exit 1
+fi
+
 required_submodules=(flutter-app laravel-app web-app)
 
 for submodule in "${required_submodules[@]}"; do
