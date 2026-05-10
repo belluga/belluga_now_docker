@@ -16,6 +16,31 @@ for file in "${required_files[@]}"; do
   fi
 done
 
+required_cache_env_markers=(
+  "normalize_laravel_cache_env_for_mongo"
+  "require_laravel_mongodb_cache_env"
+  "CACHE_STORE"
+  "CACHE_LIMITER"
+  "APP_MAINTENANCE_STORE"
+)
+
+for script in .github/scripts/deploy_stage_over_ssh.sh .github/scripts/rollback_over_ssh.sh; do
+  for marker in "${required_cache_env_markers[@]}"; do
+    if ! grep -Fq "${marker}" "${script}"; then
+      echo "ERROR: ${script} missing MongoDB cache env guard marker '${marker}'." >&2
+      exit 1
+    fi
+  done
+
+  for callable_marker in normalize_laravel_cache_env_for_mongo require_laravel_mongodb_cache_env; do
+    marker_count="$(grep -Fc "${callable_marker}" "${script}")"
+    if (( marker_count < 2 )); then
+      echo "ERROR: ${script} must define and call '${callable_marker}'." >&2
+      exit 1
+    fi
+  done
+done
+
 worker_block="$(awk '
   /^  worker:/ { in_worker=1; print; next }
   in_worker && /^  [a-zA-Z0-9_-]+:/ { exit }
