@@ -381,6 +381,61 @@ normalize_laravel_queue_env_for_mongo() {
   esac
 }
 
+normalize_laravel_cache_env_for_mongo() {
+  local db_connection cache_store cache_limiter maintenance_store
+
+  db_connection="\$(read_laravel_env_value DB_CONNECTION)"
+  db_connection="\$(printf '%s' "\${db_connection}" | tr '[:upper:]' '[:lower:]')"
+  cache_store="\$(read_laravel_env_value CACHE_STORE)"
+  cache_store="\$(printf '%s' "\${cache_store}" | tr '[:upper:]' '[:lower:]')"
+  cache_limiter="\$(read_laravel_env_value CACHE_LIMITER)"
+  cache_limiter="\$(printf '%s' "\${cache_limiter}" | tr '[:upper:]' '[:lower:]')"
+  maintenance_store="\$(read_laravel_env_value APP_MAINTENANCE_STORE)"
+  maintenance_store="\$(printf '%s' "\${maintenance_store}" | tr '[:upper:]' '[:lower:]')"
+
+  case "\${db_connection}" in
+    mongodb*|landlord|tenant)
+      if [[ -z "\${cache_store}" || "\${cache_store}" == "database" ]]; then
+        upsert_laravel_env CACHE_STORE mongodb
+        echo "WARN: normalized laravel-app/.env CACHE_STORE=\${cache_store:-<empty>} to mongodb because DB_CONNECTION=\${db_connection}."
+      fi
+
+      if [[ -z "\${cache_limiter}" || "\${cache_limiter}" == "database" ]]; then
+        upsert_laravel_env CACHE_LIMITER mongodb
+        echo "WARN: normalized laravel-app/.env CACHE_LIMITER=\${cache_limiter:-<empty>} to mongodb because DB_CONNECTION=\${db_connection}."
+      fi
+
+      if [[ -z "\${maintenance_store}" || "\${maintenance_store}" == "database" ]]; then
+        upsert_laravel_env APP_MAINTENANCE_STORE mongodb
+        echo "WARN: normalized laravel-app/.env APP_MAINTENANCE_STORE=\${maintenance_store:-<empty>} to mongodb because DB_CONNECTION=\${db_connection}."
+      fi
+      ;;
+  esac
+}
+
+require_laravel_mongodb_cache_env() {
+  local db_connection key value
+
+  db_connection="\$(read_laravel_env_value DB_CONNECTION)"
+  db_connection="\$(printf '%s' "\${db_connection}" | tr '[:upper:]' '[:lower:]')"
+  case "\${db_connection}" in
+    mongodb*|landlord|tenant)
+      ;;
+    *)
+      return 0
+      ;;
+  esac
+
+  for key in CACHE_STORE CACHE_LIMITER APP_MAINTENANCE_STORE; do
+    value="\$(read_laravel_env_value "\${key}")"
+    value="\$(printf '%s' "\${value}" | tr '[:upper:]' '[:lower:]')"
+    if [[ "\${value}" != "mongodb" ]]; then
+      echo "ERROR: laravel-app/.env must end deploy with \${key}=mongodb for MongoDB lanes (found '\${value:-<empty>}')." >&2
+      return 1
+    fi
+  done
+}
+
 upsert_env NGINX_HOST_PORT_80 "\$DEPLOY_NGINX_HOST_PORT_80"
 upsert_env NGINX_HOST_PORT_443 "\$DEPLOY_NGINX_HOST_PORT_443"
 normalize_logging_env
@@ -393,6 +448,8 @@ require_laravel_env_value APP_URL
 require_laravel_env_value TRUSTED_PROXIES
 normalize_laravel_logging_env
 normalize_laravel_queue_env_for_mongo
+normalize_laravel_cache_env_for_mongo
+require_laravel_mongodb_cache_env
 
 resolve_health_host() {
   local app_url_line source host

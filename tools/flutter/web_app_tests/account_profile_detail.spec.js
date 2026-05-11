@@ -700,7 +700,7 @@ test('@readonly NAV-APD-02..06 and NAV-APD-10 hero, taxonomy, tabs, social remov
   }
 });
 
-test('@readonly NAV-APD-12 mobile breakpoint keeps title and taxonomy chips readable', async ({
+test('@readonly NAV-APD-12 mobile breakpoint keeps hero taxonomy and collapsed title readable', async ({
   page,
 }) => {
   const baseUrl = requireTenantUrl();
@@ -719,23 +719,24 @@ test('@readonly NAV-APD-12 mobile breakpoint keeps title and taxonomy chips read
   const profileName = textValue(profile.display_name, profile.name, profile.title);
   await openTenantPath(page, baseUrl, `/parceiro/${profile.slug}`);
   await assertVisibleTextOrSemanticLabel(page, profileName, 'Mobile Account Profile hero');
-  await page.mouse.wheel(0, 900);
-  await assertVisibleTextOrSemanticLabel(
-    page,
-    profileName,
-    'Mobile Account Profile hero after scroll',
-  );
 
   const snapshot = taxonomySnapshot(profile);
   if (snapshot) {
     await assertVisibleTextOrSemanticLabel(
       page,
       snapshot.display,
-      'Mobile Account Profile taxonomy display label',
+      'Mobile Account Profile hero taxonomy display label',
     );
     await expect(page.getByText(new RegExp(`^${escapeRegExp(snapshot.value)}$`, 'i')))
       .toHaveCount(0);
   }
+
+  await page.mouse.wheel(0, 900);
+  await assertVisibleTextOrSemanticLabel(
+    page,
+    profileName,
+    'Mobile Account Profile collapsed title after scroll',
+  );
 });
 
 test('@mutation NAV-APD-07..08 agenda is occurrence-first and cards navigate to event detail', async ({
