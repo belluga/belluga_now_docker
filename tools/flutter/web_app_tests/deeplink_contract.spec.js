@@ -1,8 +1,8 @@
 const { test, expect } = require('@playwright/test');
 const {
   androidBrowserContextOptions,
-  assertAndroidIntentLocation,
-  expectAndroidOpenAppIntent,
+  assertAndroidOpenAppHandoffLocation,
+  expectAndroidOpenAppHandoff,
   fetchAndroidIntentRedirect,
 } = require('./support/android_intent');
 
@@ -193,7 +193,7 @@ test('@readonly landlord and tenant favicon endpoint is image and not SPA fallba
   await fetchFaviconContract(request, tenantUrl);
 });
 
-test('@readonly tenant open-app generates Android intent redirects for pre-Guard action targets', async ({
+test('@readonly tenant open-app generates Android handoff redirects for pre-Guard action targets', async ({
   page,
 }) => {
   const { tenantUrl } = requireNavigationUrls();
@@ -228,7 +228,7 @@ test('@readonly tenant open-app generates Android intent redirects for pre-Guard
       tenantUrl,
       testCase.params,
     );
-    assertAndroidIntentLocation(
+    assertAndroidOpenAppHandoffLocation(
       location,
       tenantUrl,
       testCase.expectedTargetPath,
@@ -236,7 +236,7 @@ test('@readonly tenant open-app generates Android intent redirects for pre-Guard
   }
 });
 
-test('@readonly tenant Android direct public links request open-app intents', async ({
+test('@readonly tenant Android direct public links request open-app handoff redirects', async ({
   browser,
 }) => {
   const { tenantUrl } = requireNavigationUrls();
@@ -268,7 +268,7 @@ test('@readonly tenant Android direct public links request open-app intents', as
 
   try {
     for (const testCase of cases) {
-      await expectAndroidOpenAppIntent({
+      await expectAndroidOpenAppHandoff({
         page,
         baseUrl: tenantUrl,
         expectedTargetPath: testCase.expectedTargetPath,
