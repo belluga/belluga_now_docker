@@ -39,6 +39,26 @@ function assertAndroidIntentLocation(location, baseUrl, expectedTargetPath) {
   expect(fallback.searchParams.get('redirect')).toBe(expectedTargetPath);
 }
 
+function assertAndroidPromotionFallbackLocation(location, baseUrl, expectedTargetPath) {
+  expect(location, `Expected Android promotion fallback for ${expectedTargetPath}`)
+    .toBeTruthy();
+
+  const base = new URL(baseUrl);
+  const fallback = new URL(location, base.origin);
+  expect(fallback.origin).toBe(base.origin);
+  expect(fallback.pathname).toBe('/baixe-o-app');
+  expect(fallback.searchParams.get('redirect')).toBe(expectedTargetPath);
+}
+
+function assertAndroidOpenAppHandoffLocation(location, baseUrl, expectedTargetPath) {
+  if (location.startsWith('intent://')) {
+    assertAndroidIntentLocation(location, baseUrl, expectedTargetPath);
+    return;
+  }
+
+  assertAndroidPromotionFallbackLocation(location, baseUrl, expectedTargetPath);
+}
+
 async function fetchAndroidIntentRedirect(request, baseUrl, params) {
   const endpoint = new URL('/open-app', baseUrl);
   endpoint.searchParams.set('store_channel', 'web');
@@ -109,9 +129,36 @@ async function expectAndroidOpenAppIntent({
   );
 }
 
+async function expectAndroidOpenAppHandoff({
+  page,
+  baseUrl,
+  expectedTargetPath,
+  action,
+  timeoutMs,
+}) {
+  const responsePromise = waitForOpenAppResponse(
+    page.context(),
+    baseUrl,
+    timeoutMs,
+  );
+
+  await action();
+  const response = await responsePromise;
+  expect(response.status(), '/open-app must return a redirect response.')
+    .toBe(302);
+  assertAndroidOpenAppHandoffLocation(
+    response.headers().location || '',
+    baseUrl,
+    expectedTargetPath,
+  );
+}
+
 module.exports = {
   androidBrowserContextOptions,
+  assertAndroidOpenAppHandoffLocation,
   assertAndroidIntentLocation,
+  assertAndroidPromotionFallbackLocation,
+  expectAndroidOpenAppHandoff,
   expectAndroidOpenAppIntent,
   fetchAndroidIntentRedirect,
 };

@@ -68,7 +68,9 @@ test('@readonly OTP-WEB-BOUNDARY-01 tenant-public web auth remains app promotion
   await enableAccessibilityIfNeeded(page);
 
   await expect(
-    page.getByText(/Baixe para continuar|Escolha sua loja|Bora testar/i),
+    page.getByText(
+      /Baixe para continuar|Escolha sua loja|Bora testar|B[oó]ora .*fica melhor no app|App em prepara[cç][aã]o/i,
+    ).first(),
   ).toBeVisible({ timeout: appBootTimeoutMs });
   await expect(page.getByText('Entrar com telefone')).toHaveCount(0);
   await expect(page.getByLabel('Telefone')).toHaveCount(0);
