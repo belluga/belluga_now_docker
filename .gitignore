@@ -1,6 +1,7 @@
 .env
 .env.testing
 .env.local.tunnel
+.env.local.navigation
 # exclude everything
 application/*
 .idea/*

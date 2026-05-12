@@ -2,7 +2,51 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 RUNNER_DIR="${SCRIPT_DIR}/web_app_smoke_runner"
+
+load_optional_local_navigation_env() {
+  local env_file="${NAV_LOCAL_ENV_FILE:-${REPO_ROOT}/.env.local.navigation}"
+  if [[ ! -f "${env_file}" ]]; then
+    return 0
+  fi
+
+  local preserve_keys=(
+    NAV_LANDLORD_URL
+    NAV_TENANT_URL
+    NAV_DEPLOY_LANE
+    PLAYWRIGHT_IGNORE_HTTPS_ERRORS
+    NAV_WEB_WORKERS
+    NAV_WEB_SHARD
+    NAV_WEB_GREP_EXTRA
+    NAV_WEB_ALLOW_RAW_GREP
+    NAV_ADMIN_EMAIL
+    NAV_ADMIN_PASSWORD
+  )
+  local preserved_names=()
+  local key
+
+  for key in "${preserve_keys[@]}"; do
+    if [[ -v "${key}" ]]; then
+      preserved_names+=("${key}")
+      printf -v "__preserved_${key}" '%s' "${!key}"
+    fi
+  done
+
+  set -a
+  # shellcheck disable=SC1090
+  source "${env_file}"
+  set +a
+
+  local preserved_var
+  for key in "${preserved_names[@]}"; do
+    preserved_var="__preserved_${key}"
+    export "${key}=${!preserved_var}"
+    unset "${preserved_var}"
+  done
+}
+
+load_optional_local_navigation_env
 
 if [[ $# -ne 1 ]]; then
   echo "Usage: $0 <readonly|mutation>" >&2

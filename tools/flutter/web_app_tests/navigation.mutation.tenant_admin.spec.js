@@ -1,6 +1,5 @@
 const fs = require('fs');
 const path = require('path');
-const zlib = require('zlib');
 const { test, expect, request } = require('@playwright/test');
 const {
   loginTenantAdmin: loginTenantAdminWithRequiredCredentials,
@@ -57,61 +56,6 @@ function urlsMatchIgnoringQuery(candidateUrl, expectedUrl) {
   }
 }
 
-function crc32(buffer) {
-  let crc = 0xffffffff;
-  for (const byte of buffer) {
-    crc ^= byte;
-    for (let bit = 0; bit < 8; bit += 1) {
-      crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
-    }
-  }
-  return (crc ^ 0xffffffff) >>> 0;
-}
-
-function pngChunk(type, data) {
-  const typeBuffer = Buffer.from(type, 'ascii');
-  const length = Buffer.alloc(4);
-  length.writeUInt32BE(data.length, 0);
-  const crc = Buffer.alloc(4);
-  crc.writeUInt32BE(crc32(Buffer.concat([typeBuffer, data])), 0);
-  return Buffer.concat([length, typeBuffer, data, crc]);
-}
-
-function generatedNavigationFixtureImage() {
-  const width = 320;
-  const height = 180;
-  const raw = Buffer.alloc((width * 4 + 1) * height);
-  let offset = 0;
-
-  for (let y = 0; y < height; y += 1) {
-    raw[offset] = 0;
-    offset += 1;
-    for (let x = 0; x < width; x += 1) {
-      raw[offset] = Math.floor((x * 255) / (width - 1));
-      raw[offset + 1] = Math.floor((y * 255) / (height - 1));
-      raw[offset + 2] = (x * 7 + y * 13) % 256;
-      raw[offset + 3] = 255;
-      offset += 4;
-    }
-  }
-
-  const header = Buffer.alloc(13);
-  header.writeUInt32BE(width, 0);
-  header.writeUInt32BE(height, 4);
-  header[8] = 8;
-  header[9] = 6;
-  header[10] = 0;
-  header[11] = 0;
-  header[12] = 0;
-
-  return Buffer.concat([
-    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
-    pngChunk('IHDR', header),
-    pngChunk('IDAT', zlib.deflateSync(raw)),
-    pngChunk('IEND', Buffer.alloc(0)),
-  ]);
-}
-
 function installFailureCollectors(page) {
   const runtimeErrors = [];
   const failedRequests = [];
@@ -141,7 +85,7 @@ function logStep(flow, message) {
 function fixtureImagePayload() {
   const buffer = fs.existsSync(fixtureImagePath)
     ? fs.readFileSync(fixtureImagePath)
-    : generatedNavigationFixtureImage();
+    : Buffer.from(fallbackFixtureImageBase64, 'base64');
   return {
     name: 'belluga-navigation-fixture.png',
     mimeType: 'image/png',
@@ -214,15 +158,6 @@ async function attachImageFromDevice(
     timeout: appBootTimeoutMs,
   });
   logStep(flow, `${cropTitle} visible`);
-}
-
-async function confirmCropSelection(page, flow) {
-  const useButton = page.getByRole('button', { name: 'Usar' }).last();
-  await expect(useButton).toBeVisible({ timeout: appBootTimeoutMs });
-  await expect(useButton).toBeEnabled({ timeout: appBootTimeoutMs });
-  logStep(flow, 'confirm crop selection');
-  await useButton.click();
-  await expect(useButton).toBeHidden({ timeout: appBootTimeoutMs });
 }
 
 async function enableAccessibilityIfNeeded(page) {
@@ -997,9 +932,11 @@ test('@mutation tenant-admin account-profile cover upload persists and renders a
       );
     });
 
-    await confirmCropSelection(page, 'cover');
-    logStep('cover', 'save cover change');
-    await Promise.all([saveResponsePromise, clickSaveChanges(page)]);
+    logStep('cover', 'confirm crop and wait for autosave');
+    await Promise.all([
+      saveResponsePromise,
+      page.getByRole('button', { name: 'Usar' }).click(),
+    ]);
 
     const saveResponse = await saveResponsePromise;
     const savePayload = await saveResponse.json();
@@ -1020,7 +957,7 @@ test('@mutation tenant-admin account-profile cover upload persists and renders a
     const coverStatuses = [];
 
     verificationPage.on('response', (response) => {
-      if (urlsMatchIgnoringQuery(response.url(), coverUrl)) {
+      if (response.url() === coverUrl) {
         coverStatuses.push(response.status());
       }
     });
@@ -1037,27 +974,13 @@ test('@mutation tenant-admin account-profile cover upload persists and renders a
     await assertAppBooted(verificationPage);
     await enableAccessibilityIfNeeded(verificationPage);
 
-    await expect(
-      verificationPage.getByRole('button', { name: 'Remover' }).first(),
-      'Reloaded edit screen must render the persisted cover controls.',
-    ).toBeVisible({ timeout: appBootTimeoutMs });
-
-    const reloadedCoverResponse = await api.get(coverUrl, {
-      failOnStatusCode: false,
-    });
-    expect(
-      reloadedCoverResponse.status(),
-      'Persisted cover URL must remain readable after edit-screen reload.',
-    ).toBeLessThan(400);
-
-    const renderedCoverRequestSucceeded = coverStatuses.some(
-      (status) => status >= 200 && status < 400,
-    );
-    if (renderedCoverRequestSucceeded) {
-      logStep('cover', 'persisted cover returned a successful browser response after reload');
-    } else {
-      logStep('cover', 'persisted cover remained readable after reload; browser reused cached media');
-    }
+    await expect
+      .poll(() => coverStatuses.some((status) => status === 200), {
+        timeout: appBootTimeoutMs,
+        message: 'Expected the persisted cover image request to succeed after reload.',
+      })
+      .toBeTruthy();
+    logStep('cover', 'persisted cover returned 200 after reload');
 
     await assertNoBrowserFailures(collectors);
     await assertNoBrowserFailures(verificationCollectors);
@@ -1135,9 +1058,11 @@ test('@mutation tenant-admin account-profile avatar upload persists and renders 
       );
     });
 
-    await confirmCropSelection(page, 'avatar');
-    logStep('avatar', 'save avatar change');
-    await Promise.all([saveResponsePromise, clickSaveChanges(page)]);
+    logStep('avatar', 'confirm crop and wait for autosave');
+    await Promise.all([
+      saveResponsePromise,
+      page.getByRole('button', { name: 'Usar' }).click(),
+    ]);
 
     const saveResponse = await saveResponsePromise;
     const savePayload = await saveResponse.json();
@@ -1487,7 +1412,7 @@ test('@mutation tenant-admin branding public default image and favicon persist a
     });
 
     logStep('branding', 'confirm public default image crop');
-    await confirmCropSelection(page, 'branding');
+    await page.getByRole('button', { name: 'Usar' }).click();
     logStep('branding', 'scroll to favicon field');
     await page.mouse.wheel(0, 1600);
     await page.waitForTimeout(400);
