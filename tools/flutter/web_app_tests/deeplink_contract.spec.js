@@ -1,4 +1,10 @@
 const { test, expect } = require('@playwright/test');
+const {
+  androidBrowserContextOptions,
+  assertAndroidIntentLocation,
+  expectAndroidOpenAppIntent,
+  fetchAndroidIntentRedirect,
+} = require('./support/android_intent');
 
 const landlordUrl = process.env.NAV_LANDLORD_URL;
 const tenantUrl = process.env.NAV_TENANT_URL;
@@ -111,6 +117,21 @@ async function fetchFaviconContract(request, baseUrl) {
   );
 }
 
+async function gotoAllowingAndroidIntent(page, url) {
+  try {
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+  } catch (error) {
+    const message = String(error?.message || error);
+    const isExpectedIntentNavigationFailure =
+      message.includes('ERR_UNKNOWN_URL_SCHEME') ||
+      message.includes('net::ERR_ABORTED') ||
+      message.includes('intent://');
+    if (!isExpectedIntentNavigationFailure) {
+      throw error;
+    }
+  }
+}
+
 test('@readonly landlord and tenant well-known endpoints are JSON and not SPA fallback', async ({
   page,
 }) => {
@@ -170,4 +191,97 @@ test('@readonly landlord and tenant favicon endpoint is image and not SPA fallba
 
   await fetchFaviconContract(request, landlordUrl);
   await fetchFaviconContract(request, tenantUrl);
+});
+
+test('@readonly tenant open-app generates Android intent redirects for pre-Guard action targets', async ({
+  page,
+}) => {
+  const { tenantUrl } = requireNavigationUrls();
+  const request = page.request;
+
+  const cases = [
+    {
+      label: 'invite accept',
+      params: { path: '/invite', code: 'PWINTENT123' },
+      expectedTargetPath: '/invite?code=PWINTENT123',
+    },
+    {
+      label: 'attendance confirmation',
+      params: { path: '/agenda/evento/show-rock?occurrence=occ-1' },
+      expectedTargetPath: '/agenda/evento/show-rock?occurrence=occ-1',
+    },
+    {
+      label: 'account profile favorite',
+      params: { path: '/parceiro/profile-slug' },
+      expectedTargetPath: '/parceiro/profile-slug',
+    },
+    {
+      label: 'invite sharing',
+      params: { path: '/convites/compartilhar' },
+      expectedTargetPath: '/convites/compartilhar',
+    },
+  ];
+
+  for (const testCase of cases) {
+    const location = await fetchAndroidIntentRedirect(
+      request,
+      tenantUrl,
+      testCase.params,
+    );
+    assertAndroidIntentLocation(
+      location,
+      tenantUrl,
+      testCase.expectedTargetPath,
+    );
+  }
+});
+
+test('@readonly tenant Android direct public links request open-app intents', async ({
+  browser,
+}) => {
+  const { tenantUrl } = requireNavigationUrls();
+  const context = await browser.newContext(androidBrowserContextOptions);
+  const page = await context.newPage();
+
+  const cases = [
+    {
+      label: 'home root',
+      path: '/',
+      expectedTargetPath: '/',
+    },
+    {
+      label: 'invite with code',
+      path: '/invite?code=PWINTENT123',
+      expectedTargetPath: '/invite?code=PWINTENT123',
+    },
+    {
+      label: 'account profile detail',
+      path: '/parceiro/profile-slug',
+      expectedTargetPath: '/parceiro/profile-slug',
+    },
+    {
+      label: 'event detail occurrence',
+      path: '/agenda/evento/show-rock?occurrence=occ-1',
+      expectedTargetPath: '/agenda/evento/show-rock?occurrence=occ-1',
+    },
+  ];
+
+  try {
+    for (const testCase of cases) {
+      await expectAndroidOpenAppIntent({
+        page,
+        baseUrl: tenantUrl,
+        expectedTargetPath: testCase.expectedTargetPath,
+        timeoutMs: 30000,
+        action: async () => {
+          await gotoAllowingAndroidIntent(
+            page,
+            new URL(testCase.path, tenantUrl).toString(),
+          );
+        },
+      });
+    }
+  } finally {
+    await context.close();
+  }
 });
