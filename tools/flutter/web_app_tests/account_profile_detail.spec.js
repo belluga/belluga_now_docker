@@ -513,17 +513,6 @@ async function clickLocatorCenter(page, locator, description) {
   await locator.click({ timeout: appBootTimeoutMs });
 }
 
-async function firstVisibleLocator(locator) {
-  const count = await locator.count();
-  for (let index = 0; index < count; index += 1) {
-    const candidate = locator.nth(index);
-    if (await candidate.isVisible().catch(() => false)) {
-      return candidate;
-    }
-  }
-  return null;
-}
-
 async function findVisibleDiscoveryProfileAction(page, rows) {
   const deadline = Date.now() + appBootTimeoutMs;
 
@@ -668,23 +657,10 @@ test('@readonly NAV-APD-02..06 and NAV-APD-10 hero, taxonomy, tabs, social remov
 
   const tabs = ['Sobre', 'Agenda', 'Como Chegar'];
   for (const tab of tabs) {
-    const button = await firstVisibleLocator(page.getByRole('button', {
-      name: new RegExp(`^${tab}$`, 'i'),
-    }));
-    if (button) {
-      await clickLocatorCenter(
-        page,
-        button,
-        `Account Profile detail must expose the ${tab} tab as a semantic button.`,
-      );
-      continue;
-    }
-
-    const locator = await firstVisibleLocator(
-      page.getByText(new RegExp(`^${tab}$`, 'i')),
-    );
-    if (locator) {
-      await expect(locator).toBeVisible();
+    const locator = page.getByText(new RegExp(`^${tab}$`, 'i'));
+    if ((await locator.count()) > 0) {
+      await locator.first().click();
+      await expect(locator.first()).toBeVisible();
     }
   }
 
@@ -700,7 +676,7 @@ test('@readonly NAV-APD-02..06 and NAV-APD-10 hero, taxonomy, tabs, social remov
   }
 });
 
-test('@readonly NAV-APD-12 mobile breakpoint keeps hero taxonomy and collapsed title readable', async ({
+test('@readonly NAV-APD-12 mobile breakpoint keeps title and taxonomy chips readable', async ({
   page,
 }) => {
   const baseUrl = requireTenantUrl();
@@ -719,24 +695,23 @@ test('@readonly NAV-APD-12 mobile breakpoint keeps hero taxonomy and collapsed t
   const profileName = textValue(profile.display_name, profile.name, profile.title);
   await openTenantPath(page, baseUrl, `/parceiro/${profile.slug}`);
   await assertVisibleTextOrSemanticLabel(page, profileName, 'Mobile Account Profile hero');
+  await page.mouse.wheel(0, 900);
+  await assertVisibleTextOrSemanticLabel(
+    page,
+    profileName,
+    'Mobile Account Profile hero after scroll',
+  );
 
   const snapshot = taxonomySnapshot(profile);
   if (snapshot) {
     await assertVisibleTextOrSemanticLabel(
       page,
       snapshot.display,
-      'Mobile Account Profile hero taxonomy display label',
+      'Mobile Account Profile taxonomy display label',
     );
     await expect(page.getByText(new RegExp(`^${escapeRegExp(snapshot.value)}$`, 'i')))
       .toHaveCount(0);
   }
-
-  await page.mouse.wheel(0, 900);
-  await assertVisibleTextOrSemanticLabel(
-    page,
-    profileName,
-    'Mobile Account Profile collapsed title after scroll',
-  );
 });
 
 test('@mutation NAV-APD-07..08 agenda is occurrence-first and cards navigate to event detail', async ({

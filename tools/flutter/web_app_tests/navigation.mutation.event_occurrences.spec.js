@@ -1547,6 +1547,12 @@ async function scrollUntilTextInViewport(page, text, description) {
       height: window.innerHeight,
     })));
   await page.mouse.move(viewport.width * 0.62, viewport.height * 0.72);
+
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    await page.mouse.wheel(0, -900);
+    await page.waitForTimeout(100);
+  }
+
   for (let attempt = 0; attempt < 24; attempt += 1) {
     if ((await countTextInViewport(page, text)) > 0) {
       return;
@@ -1554,6 +1560,15 @@ async function scrollUntilTextInViewport(page, text, description) {
     await page.mouse.wheel(0, 700);
     await page.waitForTimeout(250);
   }
+
+  for (let attempt = 0; attempt < 24; attempt += 1) {
+    if ((await countTextInViewport(page, text)) > 0) {
+      return;
+    }
+    await page.mouse.wheel(0, -700);
+    await page.waitForTimeout(250);
+  }
+
   await waitForTextInViewport(page, text, description);
 }
 
@@ -2230,6 +2245,7 @@ test('@mutation tenant-admin event occurrence FAB persists second occurrence and
 
   try {
     session = await loginTenantAdmin(api, baseUrl);
+    await deleteStaleOccurrenceSeedEvents(api, baseUrl, session.token);
 
     const eventType = await createEventType(
       api,
