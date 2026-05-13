@@ -1,15 +1,14 @@
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
+const zlib = require('zlib');
 const { test, expect, request } = require('@playwright/test');
 const {
   loginTenantAdmin: loginTenantAdminWithRequiredCredentials,
 } = require('./support/tenant_admin_auth');
 
 const tenantUrl = process.env.NAV_TENANT_URL;
-const fixtureImagePath = path.resolve(
-  __dirname,
-  '../../../foundation_documentation/todos/ephemeral/image.png',
-);
+const fixtureImagePath = path.join(os.tmpdir(), 'belluga-navigation-fixture.png');
 const fixtureFaviconPath = path.resolve(
   __dirname,
   '../../../laravel-app/tests/Assets/tenant_1.ico',
@@ -17,6 +16,7 @@ const fixtureFaviconPath = path.resolve(
 const fallbackFixtureImageBase64 =
   'iVBORw0KGgoAAAANSUhEUgAAAQAAAAEACAYAAABccqhmAAADIElEQVR4nO3UIQEAIBDAwI9AZWKRDmIgduL81GadfYGm+R0A/GMAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEPYAluQiSDn9lCoAAAAASUVORK5CYII=';
 const appBootTimeoutMs = 90000;
+let generatedFixtureImageBuffer = null;
 
 test.describe.configure({ timeout: 300000 });
 
@@ -82,15 +82,87 @@ function logStep(flow, message) {
   console.log(`[tenant-admin][${flow}] ${message}`);
 }
 
+function crc32(buffer) {
+  let crc = 0xffffffff;
+  for (const byte of buffer) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit += 1) {
+      crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0);
+    }
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function pngChunk(type, data = Buffer.alloc(0)) {
+  const typeBuffer = Buffer.from(type, 'ascii');
+  const length = Buffer.alloc(4);
+  length.writeUInt32BE(data.length, 0);
+  const crc = Buffer.alloc(4);
+  crc.writeUInt32BE(crc32(Buffer.concat([typeBuffer, data])), 0);
+  return Buffer.concat([length, typeBuffer, data, crc]);
+}
+
+function createFixturePngBuffer() {
+  const width = 1024;
+  const height = 768;
+  const bytesPerPixel = 4;
+  const stride = width * bytesPerPixel + 1;
+  const raw = Buffer.alloc(stride * height);
+
+  for (let y = 0; y < height; y += 1) {
+    const rowOffset = y * stride;
+    raw[rowOffset] = 0;
+    for (let x = 0; x < width; x += 1) {
+      const offset = rowOffset + 1 + x * bytesPerPixel;
+      raw[offset] = 32 + Math.floor((x / width) * 160);
+      raw[offset + 1] = 96 + Math.floor((y / height) * 96);
+      raw[offset + 2] = 180 - Math.floor(((x + y) / (width + height)) * 80);
+      raw[offset + 3] = 255;
+    }
+  }
+
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = 8;
+  ihdr[9] = 6;
+  ihdr[10] = 0;
+  ihdr[11] = 0;
+  ihdr[12] = 0;
+
+  return Buffer.concat([
+    Buffer.from('89504e470d0a1a0a', 'hex'),
+    pngChunk('IHDR', ihdr),
+    pngChunk('IDAT', zlib.deflateSync(raw, { level: 9 })),
+    pngChunk('IEND'),
+  ]);
+}
+
+function generatedFixtureImage() {
+  if (!generatedFixtureImageBuffer) {
+    generatedFixtureImageBuffer = createFixturePngBuffer();
+  }
+  return generatedFixtureImageBuffer;
+}
+
 function fixtureImagePayload() {
-  const buffer = fs.existsSync(fixtureImagePath)
-    ? fs.readFileSync(fixtureImagePath)
-    : Buffer.from(fallbackFixtureImageBase64, 'base64');
   return {
     name: 'belluga-navigation-fixture.png',
     mimeType: 'image/png',
-    buffer,
+    buffer: generatedFixtureImage(),
   };
+}
+
+function ensureFixtureImageFile(fixturePath) {
+  if (fixturePath !== fixtureImagePath) {
+    if (!fs.existsSync(fixturePath)) {
+      throw new Error(`Missing required image fixture: ${fixturePath}`);
+    }
+    return fixturePath;
+  }
+
+  fs.writeFileSync(fixtureImagePath, generatedFixtureImage());
+  return fixtureImagePath;
 }
 
 async function assertNoBrowserFailures(collectors) {
@@ -145,10 +217,9 @@ async function attachImageFromDevice(
     page.waitForEvent('filechooser'),
     page.getByText('Do dispositivo').last().click(),
   ]);
-  logStep(flow, `attach fixture ${fixturePath}`);
-  await fileChooser.setFiles(
-    fs.existsSync(fixturePath) ? fixturePath : fixtureImagePayload(),
-  );
+  const resolvedFixturePath = ensureFixtureImageFile(fixturePath);
+  logStep(flow, `attach fixture ${resolvedFixturePath}`);
+  await fileChooser.setFiles(resolvedFixturePath);
 
   if (!cropTitle) {
     return;
