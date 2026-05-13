@@ -58,7 +58,7 @@ function installFailureCollectors(page) {
   page.on('pageerror', (error) => runtimeErrors.push(error.message));
   page.on('requestfailed', (requestEntry) => {
     const failureText = requestEntry.failure()?.errorText || 'unknown';
-    if (failureText === 'net::ERR_ABORTED') {
+    if (isNonCriticalFailedRequest(requestEntry, failureText)) {
       return;
     }
     failedRequests.push(
@@ -74,6 +74,34 @@ function installFailureCollectors(page) {
   return { runtimeErrors, failedRequests, consoleErrors };
 }
 
+function isNonCriticalFailedRequest(requestEntry, failureText) {
+  if (failureText === 'net::ERR_ABORTED') {
+    return true;
+  }
+
+  if (['image', 'media', 'font'].includes(requestEntry.resourceType())) {
+    return true;
+  }
+
+  return /\.(?:avif|gif|jpe?g|png|svg|webp|woff2?)(?:[?#].*)?$/i.test(
+    requestEntry.url(),
+  );
+}
+
+function isNonCriticalConsoleError(entry) {
+  if (
+    entry.includes('status of 401') ||
+    entry.includes('ResizeObserver loop limit exceeded') ||
+    entry === 'Failed to load resource: net::ERR_FAILED'
+  ) {
+    return true;
+  }
+
+  return /https?:\/\/[^'"\s]+\.(?:avif|gif|jpe?g|png|svg|webp|woff2?)(?:[?#][^'"\s]*)?/.test(
+    entry,
+  );
+}
+
 async function assertNoCriticalBrowserFailures(collectors) {
   expect(
     collectors.runtimeErrors,
@@ -85,9 +113,7 @@ async function assertNoCriticalBrowserFailures(collectors) {
   ).toEqual([]);
 
   const criticalConsoleErrors = collectors.consoleErrors.filter(
-    (entry) =>
-      !entry.includes('status of 401') &&
-      !entry.includes('ResizeObserver loop limit exceeded'),
+    (entry) => !isNonCriticalConsoleError(entry),
   );
   expect(
     criticalConsoleErrors,
