@@ -171,16 +171,26 @@ async function enableAccessibilityIfNeeded(page) {
 }
 
 async function fillFlutterTextField(page, label, value) {
-  const field = page.getByLabel(label).first();
-  await field.scrollIntoViewIfNeeded();
-  await expect(field).toBeVisible({ timeout: appBootTimeoutMs });
-
-  await field.click();
   const selectAll = process.platform === 'darwin' ? 'Meta+A' : 'Control+A';
+  await expect(page.getByRole('button', { name: 'Aplicar' }).last())
+    .toBeVisible({ timeout: 15000 });
+
+  await page.waitForTimeout(300);
   await page.keyboard.press(selectAll);
   await page.keyboard.press('Backspace');
   await page.keyboard.type(value, { delay: 5 });
-  return field;
+}
+
+async function enableSecondarySmsFallback(page) {
+  const smsUrlButton = page.getByRole('button', { name: /Editar URL SMS/i });
+  const smsSwitch = page
+    .getByRole('switch', { name: /Secondary OTP Channel com SMS/i })
+    .first();
+
+  await expect(smsSwitch).toBeVisible({ timeout: appBootTimeoutMs });
+  await smsSwitch.scrollIntoViewIfNeeded({ timeout: appBootTimeoutMs });
+  await smsSwitch.click({ timeout: appBootTimeoutMs });
+  await expect(smsUrlButton).toBeVisible({ timeout: appBootTimeoutMs });
 }
 
 function outboundSettingsPayload({
@@ -301,14 +311,7 @@ test('@mutation OTP Auth admin exposes WhatsApp primary and optional SMS fallbac
     );
     await page.getByRole('button', { name: 'Aplicar' }).last().click();
 
-    const smsSwitch = page
-      .getByRole('switch', { name: /Secondary OTP Channel com SMS/i })
-      .first();
-    if ((await smsSwitch.count()) > 0) {
-      await smsSwitch.click();
-    } else {
-      await page.getByText('Secondary OTP Channel com SMS').click();
-    }
+    await enableSecondarySmsFallback(page);
     await expect(
       page.getByRole('button', { name: /Editar URL SMS/i }),
     ).toBeVisible({

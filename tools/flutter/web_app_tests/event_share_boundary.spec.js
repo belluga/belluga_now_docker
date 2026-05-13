@@ -1,7 +1,7 @@
 const { test, expect, request } = require('@playwright/test');
+const { loginTenantAdmin } = require('./support/tenant_admin_auth');
 
 const tenantUrl = process.env.NAV_TENANT_URL;
-const adminToken = (process.env.NAV_ADMIN_TOKEN || '').trim();
 const appBootTimeoutMs = 90000;
 const seedTitle = 'PW Event Share Boundary Store Release';
 
@@ -13,14 +13,6 @@ function requireTenantUrl() {
     'Missing NAV_TENANT_URL. Event share boundary suite requires a live tenant URL.',
   ).toBeTruthy();
   return tenantUrl;
-}
-
-function requireAdminToken() {
-  expect(
-    adminToken,
-    'Missing NAV_ADMIN_TOKEN. Event share boundary suite requires a valid landlord/admin token.',
-  ).toBeTruthy();
-  return adminToken;
 }
 
 function buildUrl(baseUrl, pathName) {
@@ -292,8 +284,12 @@ test('@mutation T6-EVENT-SHARE anonymous web event detail share preserves promot
   browser,
 }) => {
   const baseUrl = requireTenantUrl();
-  const token = requireAdminToken();
   const api = await createApiContext(baseUrl);
+  const { token } = await loginTenantAdmin({
+    api,
+    baseUrl,
+    deviceName: 'playwright-event-share-boundary',
+  });
   const event = await createSeedEvent(api, baseUrl, token);
   const occurrenceId = firstOccurrenceId(event);
   const routeRef = textValue(event?.slug, event?.event_id);

@@ -1,21 +1,3 @@
-const { expect } = require('@playwright/test');
-
-function requireSeededLandlordSession() {
-  const token = (process.env.NAV_ADMIN_TOKEN || '').trim();
-  const userId = (process.env.NAV_ADMIN_USER_ID || '').trim();
-
-  expect(
-    token,
-    'Missing NAV_ADMIN_TOKEN. Seeded tenant-admin browser mutation tests require a valid landlord/admin token.',
-  ).toBeTruthy();
-  expect(
-    userId,
-    'Missing NAV_ADMIN_USER_ID. Seeded tenant-admin browser mutation tests require a valid landlord/admin user id.',
-  ).toBeTruthy();
-
-  return { token, userId };
-}
-
 async function seedFlutterSecureStorage(context, entries) {
   await context.addInitScript(
     async ({ entries: rawEntries }) => {
@@ -107,7 +89,6 @@ async function createAuthenticatedTenantAdminPage(browser, session) {
 }
 
 module.exports = {
-  requireSeededLandlordSession,
   seedFlutterSecureStorage,
   createAuthenticatedTenantAdminPage,
 };

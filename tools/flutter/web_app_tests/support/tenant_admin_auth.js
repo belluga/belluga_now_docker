@@ -16,6 +16,12 @@ function requireAdminCredentials() {
   return { email, password };
 }
 
+function delay(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
 async function loginTenantAdmin({
   api,
   baseUrl,
@@ -23,20 +29,47 @@ async function loginTenantAdmin({
   buildUrl = defaultBuildUrl,
 }) {
   const { email, password } = requireAdminCredentials();
-  const loginResponse = await api.post(
-    buildUrl(baseUrl, '/admin/api/v1/auth/login'),
-    {
-      data: {
-        email,
-        password,
-        device_name: deviceName,
-      },
-    },
-  );
-  expect(loginResponse.status(), 'Tenant-admin login must succeed.').toBe(200);
+  const loginUrl = buildUrl(baseUrl, '/admin/api/v1/auth/login');
+  const loginPayload = {
+    email,
+    password,
+    device_name: deviceName,
+  };
+  let loginResponse = null;
+  let lastRejectedBody = '';
 
-  const loginPayload = await loginResponse.json();
-  const token = loginPayload?.data?.token;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    loginResponse = await api.post(loginUrl, {
+      data: {
+        ...loginPayload,
+        device_name: attempt === 0
+          ? loginPayload.device_name
+          : `${loginPayload.device_name}-retry-${attempt}`,
+      },
+    });
+
+    if (loginResponse.status() === 200) {
+      break;
+    }
+
+    lastRejectedBody = await loginResponse.text().catch(() => '');
+    if (![403, 408, 429, 500, 502, 503, 504].includes(loginResponse.status())) {
+      break;
+    }
+
+    await delay(1000 * (attempt + 1));
+  }
+
+  expect(
+    loginResponse.status(),
+    `Tenant-admin login must succeed. Last rejected body: ${lastRejectedBody.slice(
+      0,
+      300,
+    )}`,
+  ).toBe(200);
+
+  const loginBody = await loginResponse.json();
+  const token = loginBody?.data?.token;
   expect(token, 'Tenant-admin login must return a bearer token.').toBeTruthy();
 
   const meResponse = await api.get(buildUrl(baseUrl, '/admin/api/v1/me'), {
