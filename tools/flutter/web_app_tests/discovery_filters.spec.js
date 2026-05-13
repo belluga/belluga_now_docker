@@ -815,6 +815,7 @@ async function createAccountProfileType(
     label,
     allowedTaxonomies,
     isFavoritable,
+    isPubliclyDiscoverable = true,
     icon,
     color,
     iconColor = '#FFFFFF',
@@ -834,6 +835,7 @@ async function createAccountProfileType(
         allowed_taxonomies: allowedTaxonomies,
         capabilities: {
           is_favoritable: isFavoritable,
+          is_publicly_discoverable: isPubliclyDiscoverable,
           has_taxonomies: allowedTaxonomies.length > 0,
         },
         poi_visual: {
@@ -1051,51 +1053,58 @@ test('@mutation tenant-admin keeps public Map filter config in the canonical fil
 }) => {
   const baseUrl = requireTenantUrl();
   const api = await createApiContext(baseUrl);
-  const session = await loginTenantAdmin(api, baseUrl);
-  const context = await browser.newContext({ ignoreHTTPSErrors: true });
-  await seedFlutterSecureStorage(context, session);
-  const page = await context.newPage();
-  const collectors = installFailureCollectors(page);
+  let context;
 
-  await openTenantPath(page, baseUrl, '/admin');
-  await expect(
-    page.getByRole('button', {
-      name: /Configure filtros de Mapa, Home e Descoberta/i,
-    }),
-  ).toHaveCount(0, { timeout: appBootTimeoutMs });
+  try {
+    const session = await loginTenantAdmin(api, baseUrl);
+    context = await browser.newContext({ ignoreHTTPSErrors: true });
+    await seedFlutterSecureStorage(context, session);
+    const page = await context.newPage();
+    const collectors = installFailureCollectors(page);
 
-  await openTenantPath(page, baseUrl, '/admin/filters');
-  await expect(page.getByRole('button', { name: /^Mapa/i }))
-    .toBeVisible({ timeout: appBootTimeoutMs });
-  await expect(page.getByRole('button', { name: /Eventos na Tela Principal/i }))
-    .toHaveCount(0, { timeout: appBootTimeoutMs });
-  await expect(page.getByRole('button', { name: /Descoberta de Perfis/i }))
-    .toHaveCount(0, { timeout: appBootTimeoutMs });
+    await openTenantPath(page, baseUrl, '/admin');
+    await expect(
+      page.getByRole('button', {
+        name: /Configure filtros de Mapa, Home e Descoberta/i,
+      }),
+    ).toHaveCount(0, { timeout: appBootTimeoutMs });
 
-  await openTenantPath(
-    page,
-    baseUrl,
-    '/admin/filters/surface?surface=public_map.primary',
-  );
-  const mapEditor = page.getByRole('group', {
-    name: /Mapa[\s\S]*Filtros primários exibidos sobre o mapa público/i,
-  }).first();
-  await expect(mapEditor).toBeVisible({ timeout: appBootTimeoutMs });
-  await expectAccessibleGroupContains(
-    mapEditor,
-    'Filtros primários exibidos sobre o mapa público.',
-  );
-  await expectAccessibleGroupContains(mapEditor, 'Filtros configurados');
-  await expect(mapEditor.getByRole('button', { name: /^Adicionar$/i }))
-    .toBeVisible({ timeout: appBootTimeoutMs });
-  await expect(page.getByText('Filtros públicos', { exact: true }))
-    .toHaveCount(0, { timeout: appBootTimeoutMs });
-  await expect(page.getByText('Eventos na Tela Principal', { exact: true }))
-    .toHaveCount(0, { timeout: appBootTimeoutMs });
-  await expect(page.getByText('Descoberta de Perfis', { exact: true }))
-    .toHaveCount(0, { timeout: appBootTimeoutMs });
+    await openTenantPath(page, baseUrl, '/admin/filters');
+    await expect(page.getByRole('button', { name: /^Mapa/i }))
+      .toBeVisible({ timeout: appBootTimeoutMs });
+    await expect(page.getByRole('button', { name: /Eventos na Tela Principal/i }))
+      .toHaveCount(0, { timeout: appBootTimeoutMs });
+    await expect(page.getByRole('button', { name: /Descoberta de Perfis/i }))
+      .toHaveCount(0, { timeout: appBootTimeoutMs });
 
-  await assertNoCriticalBrowserFailures(collectors);
+    await openTenantPath(
+      page,
+      baseUrl,
+      '/admin/filters/surface?surface=public_map.primary',
+    );
+    const mapEditor = page.getByRole('group', {
+      name: /Mapa[\s\S]*Filtros primários exibidos sobre o mapa público/i,
+    }).first();
+    await expect(mapEditor).toBeVisible({ timeout: appBootTimeoutMs });
+    await expectAccessibleGroupContains(
+      mapEditor,
+      'Filtros primários exibidos sobre o mapa público.',
+    );
+    await expectAccessibleGroupContains(mapEditor, 'Filtros configurados');
+    await expect(mapEditor.getByRole('button', { name: /^Adicionar$/i }))
+      .toBeVisible({ timeout: appBootTimeoutMs });
+    await expect(page.getByText('Filtros públicos', { exact: true }))
+      .toHaveCount(0, { timeout: appBootTimeoutMs });
+    await expect(page.getByText('Eventos na Tela Principal', { exact: true }))
+      .toHaveCount(0, { timeout: appBootTimeoutMs });
+    await expect(page.getByText('Descoberta de Perfis', { exact: true }))
+      .toHaveCount(0, { timeout: appBootTimeoutMs });
+
+    await assertNoCriticalBrowserFailures(collectors);
+  } finally {
+    await context?.close().catch(() => {});
+    await api.dispose();
+  }
 });
 
 test('@mutation public Map keeps baseline primary filters without taxonomy subfilters and uses backend filtering', async ({

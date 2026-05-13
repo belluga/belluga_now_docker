@@ -60,7 +60,7 @@
         "grep_extra": "(?:INVITE-SESSION-CONTEXT|T6-EVENT-SHARE)",
         "expected_titles": [
           "@mutation INVITE-SESSION-CONTEXT invite landing exposes dynamic share metadata",
-          "@mutation INVITE-SESSION-CONTEXT Android web anonymous invite actions generate app intent handoff",
+          "@mutation INVITE-SESSION-CONTEXT Android direct invite and event links generate app intent handoff",
           "@mutation T6-EVENT-SHARE anonymous web event detail share preserves promotion boundary"
         ]
       }

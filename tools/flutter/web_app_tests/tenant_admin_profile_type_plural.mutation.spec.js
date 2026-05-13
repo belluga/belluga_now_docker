@@ -1,6 +1,6 @@
 const { test, expect, request } = require('@playwright/test');
+const { loginTenantAdmin } = require('./support/tenant_admin_auth');
 const {
-  requireSeededLandlordSession,
   createAuthenticatedTenantAdminPage,
 } = require('./support/tenant_admin_seeded_session');
 
@@ -152,8 +152,12 @@ test('@mutation T6-PLURAL tenant-admin account profile type edit persists plural
   browser,
 }, testInfo) => {
   const baseUrl = requireTenantUrl();
-  const session = requireSeededLandlordSession();
   const api = await createApiContext(baseUrl);
+  const session = await loginTenantAdmin({
+    api,
+    baseUrl,
+    deviceName: 'playwright-profile-type-plural',
+  });
   const unique = Date.now().toString();
   const type = `pw-plural-${unique}`;
   const label = `Perfil PW ${unique}`;

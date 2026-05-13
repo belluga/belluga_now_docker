@@ -119,6 +119,36 @@ function assertLocalNavigationEnvAutomationIsSafe() {
   );
 }
 
+function listWebNavigationSources(dir) {
+  const entries = fs.readdirSync(dir, { withFileTypes: true });
+  return entries.flatMap((entry) => {
+    const entryPath = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      return listWebNavigationSources(entryPath);
+    }
+    if (!/\.(?:cjs|js)$/.test(entry.name)) {
+      return [];
+    }
+    return [entryPath];
+  });
+}
+
+function assertAdminSessionSecretsAreDerivedFromLogin() {
+  const forbiddenPattern =
+    /NAV_ADMIN_(?:TOKEN|USER_ID)|requireSeededLandlordSession/;
+  for (const sourcePath of listWebNavigationSources(__dirname)) {
+    if (sourcePath === __filename) {
+      continue;
+    }
+    const source = fs.readFileSync(sourcePath, 'utf8');
+    assert.doesNotMatch(
+      source,
+      forbiddenPattern,
+      `${path.relative(repoRoot, sourcePath)} must derive admin token/user id from runtime login instead of fixed env vars`,
+    );
+  }
+}
+
 function assertSmokeRunnerLoadsLocalNavigationEnv() {
   const previousExists = fs.existsSync(localNavigationEnv);
   const previousContent = previousExists
@@ -176,6 +206,7 @@ function assertSmokeRunnerLoadsLocalNavigationEnv() {
 assertGuardPassesCleanFixture();
 assertStageMutationWorkflowSuppliesRuntimeCredentials();
 assertLocalNavigationEnvAutomationIsSafe();
+assertAdminSessionSecretsAreDerivedFromLogin();
 assertSmokeRunnerLoadsLocalNavigationEnv();
 
 assertFailsForSource(

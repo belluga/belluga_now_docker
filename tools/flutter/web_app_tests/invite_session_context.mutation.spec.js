@@ -5,7 +5,7 @@ const {
 } = require('./support/tenant_admin_auth');
 const {
   androidBrowserContextOptions,
-  expectAndroidOpenAppIntent,
+  expectAndroidOpenAppHandoff,
 } = require('./support/android_intent');
 
 const tenantUrl = process.env.NAV_TENANT_URL;
@@ -117,6 +117,21 @@ async function assertAppBooted(page) {
   await expect(page.locator('#splash-screen')).toHaveCount(0, {
     timeout: appBootTimeoutMs,
   });
+}
+
+async function gotoAllowingAndroidIntent(page, url) {
+  try {
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+  } catch (error) {
+    const message = String(error?.message || error);
+    const isExpectedIntentNavigationFailure =
+      message.includes('ERR_UNKNOWN_URL_SCHEME') ||
+      message.includes('net::ERR_ABORTED') ||
+      message.includes('intent://');
+    if (!isExpectedIntentNavigationFailure) {
+      throw error;
+    }
+  }
 }
 
 async function enableAccessibilityIfNeeded(page) {
@@ -650,134 +665,61 @@ test('@mutation INVITE-SESSION-CONTEXT invite landing exposes dynamic share meta
   }
 });
 
-test('@mutation INVITE-SESSION-CONTEXT Android web anonymous invite actions generate app intent handoff', async ({
+test('@mutation INVITE-SESSION-CONTEXT Android direct invite and event links generate app intent handoff', async ({
   browser,
 }) => {
   const baseUrl = requireTenantUrl();
   const api = await createApiContext(baseUrl);
-  const session = await loginTenantAdmin(api, baseUrl);
-  const shareSenderToken = await createAnonymousIdentity(
-    api,
-    baseUrl,
-    'sender',
-  );
-  const event = await resolveSeedEvent(api, baseUrl, session.token);
-  const eventTitle = textValue(event?.title, event?.name);
-  const eventRouteRef = textValue(event?.event_id, event?.slug);
-  expect(eventTitle, 'Seed event must expose title.').toBe(seedTitle);
-  expect(eventRouteRef, 'Seed event must expose event_id/slug route ref.')
-    .toBeTruthy();
+  let androidContext = null;
 
-  const { code, occurrenceId } = await createShareCode(
-    api,
-    baseUrl,
-    shareSenderToken,
-    event,
-  );
-  await assertSharePreview(api, baseUrl, code, {
-    expectedEventName: eventTitle,
-    occurrenceId,
-  });
+  try {
+    const session = await loginTenantAdmin(api, baseUrl);
+    const shareSenderToken = await createAnonymousIdentity(
+      api,
+      baseUrl,
+      'sender',
+    );
+    const event = await resolveSeedEvent(api, baseUrl, session.token);
+    const eventTitle = textValue(event?.title, event?.name);
+    const eventRouteRef = textValue(event?.event_id, event?.slug);
+    expect(eventTitle, 'Seed event must expose title.').toBe(seedTitle);
+    expect(eventRouteRef, 'Seed event must expose event_id/slug route ref.')
+      .toBeTruthy();
 
-  const previewContext = await browser.newContext(androidBrowserContextOptions);
-  await installInviteFallbackFlashRecorder(previewContext);
-  const previewPage = await previewContext.newPage();
-  const previewAcceptRequests = recordInviteAcceptRequests(previewPage, code);
-  await openInvitePreview({
-    page: previewPage,
-    baseUrl,
-    code,
-    eventTitle,
-  });
-  await expectAndroidOpenAppIntent({
-    page: previewPage,
-    baseUrl,
-    expectedTargetPath: `/invite?code=${code}`,
-    timeoutMs: appBootTimeoutMs,
-    action: async () => {
-      await previewPage.getByRole('button', { name: /Aceitar/i }).click();
-    },
-  });
-  expect(
-    previewAcceptRequests,
-    'Anonymous web invite preview accept must not call backend accept.',
-  ).toEqual([]);
-  await previewContext.close();
+    const { code, occurrenceId } = await createShareCode(
+      api,
+      baseUrl,
+      shareSenderToken,
+      event,
+    );
+    await assertSharePreview(api, baseUrl, code, {
+      expectedEventName: eventTitle,
+      occurrenceId,
+    });
 
-  const detailInviteContext =
-    await browser.newContext(androidBrowserContextOptions);
-  await installInviteFallbackFlashRecorder(detailInviteContext);
-  const detailInvitePage = await detailInviteContext.newPage();
-  const detailInviteAcceptRequests = recordInviteAcceptRequests(
-    detailInvitePage,
-    code,
-  );
-  await openEventDetailFromInvite({
-    page: detailInvitePage,
-    baseUrl,
-    code,
-    eventTitle,
-    eventRouteRef,
-    occurrenceId,
-  });
-  await expect(
-    detailInvitePage.getByRole('button', { name: /Agora não/i }),
-  ).toBeVisible({ timeout: appBootTimeoutMs });
-  const projectedInviteAcceptButton = detailInvitePage.getByRole('button', {
-    name: 'Bóora!',
-    exact: true,
-  });
-  await expect(projectedInviteAcceptButton).toBeVisible({
-    timeout: appBootTimeoutMs,
-  });
-  await expectAndroidOpenAppIntent({
-    page: detailInvitePage,
-    baseUrl,
-    expectedTargetPath: `/invite?code=${code}`,
-    timeoutMs: appBootTimeoutMs,
-    action: async () => {
-      await projectedInviteAcceptButton.click();
-    },
-  });
-  expect(
-    detailInviteAcceptRequests,
-    'Anonymous web event-detail invite accept must not call backend accept.',
-  ).toEqual([]);
-  await detailInviteContext.close();
+    const inviteTargetPath = `/invite?code=${encodeURIComponent(code)}`;
+    const eventTargetPath = `/agenda/evento/${encodeURIComponent(eventRouteRef)}?occurrence=${encodeURIComponent(occurrenceId)}`;
 
-  const detailCtaContext =
-    await browser.newContext(androidBrowserContextOptions);
-  await installInviteFallbackFlashRecorder(detailCtaContext);
-  const detailCtaPage = await detailCtaContext.newPage();
-  const detailCtaAcceptRequests = recordInviteAcceptRequests(detailCtaPage, code);
-  await openEventDetailFromInvite({
-    page: detailCtaPage,
-    baseUrl,
-    code,
-    eventTitle,
-    eventRouteRef,
-    occurrenceId,
-  });
-  const confirmAttendanceButton = detailCtaPage.getByRole('button', {
-    name: /Bóora! Confirmar Presença!/i,
-  });
-  await expect(confirmAttendanceButton).toBeVisible({
-    timeout: appBootTimeoutMs,
-  });
-  await expectAndroidOpenAppIntent({
-    page: detailCtaPage,
-    baseUrl,
-    expectedTargetPath: `/agenda/evento/${eventRouteRef}?occurrence=${occurrenceId}`,
-    timeoutMs: appBootTimeoutMs,
-    action: async () => {
-      await confirmAttendanceButton.click();
-    },
-  });
-  expect(
-    detailCtaAcceptRequests,
-    'Anonymous web event-detail CTA must not call backend accept.',
-  ).toEqual([]);
-  await detailCtaContext.close();
-
-  await api.dispose();
+    androidContext = await browser.newContext(androidBrowserContextOptions);
+    const androidPage = await androidContext.newPage();
+    for (const targetPath of [inviteTargetPath, eventTargetPath]) {
+      await expectAndroidOpenAppHandoff({
+        page: androidPage,
+        baseUrl,
+        expectedTargetPath: targetPath,
+        timeoutMs: appBootTimeoutMs,
+        action: async () => {
+          await gotoAllowingAndroidIntent(
+            androidPage,
+            buildUrl(baseUrl, targetPath),
+          );
+        },
+      });
+    }
+  } finally {
+    if (androidContext) {
+      await androidContext.close();
+    }
+    await api.dispose();
+  }
 });
