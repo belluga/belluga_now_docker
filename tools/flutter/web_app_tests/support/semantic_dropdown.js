@@ -4,6 +4,76 @@ function cssAttributeValue(value) {
   return JSON.stringify(value).replace(/'/g, "\\'");
 }
 
+function optionLocators(page, optionText) {
+  return [
+    {
+      locator: page.getByRole('option', { name: optionText }),
+      strategy: 'role',
+    },
+    {
+      locator: page.getByRole('menuitem', { name: optionText }),
+      strategy: 'menuitem',
+    },
+    {
+      locator: page.getByRole('button', { name: optionText }),
+      strategy: 'semantic button',
+    },
+    {
+      locator: page.locator(
+        `flt-semantics[aria-label=${cssAttributeValue(optionText)}]`,
+      ),
+      strategy: 'Flutter semantic label',
+    },
+    {
+      locator: page.locator(
+        `flt-semantics[aria-label*=${cssAttributeValue(optionText)}]`,
+      ),
+      strategy: 'containing Flutter semantic label',
+    },
+  ];
+}
+
+async function resolveOption(page, optionText) {
+  for (const candidate of optionLocators(page, optionText)) {
+    if ((await candidate.locator.count()) > 0) {
+      return candidate;
+    }
+  }
+
+  return null;
+}
+
+async function searchDropdownOptions(page, optionText, record) {
+  const locationSearchField = page.getByRole('textbox', {
+    name: /Buscar local/i,
+  });
+  const searchVisible = await locationSearchField
+    .last()
+    .waitFor({ state: 'visible', timeout: 5000 })
+    .then(() => true)
+    .catch(() => false);
+  if (!searchVisible) {
+    return;
+  }
+
+  record(`filter dropdown options with search ${optionText}`);
+  const selectAll = process.platform === 'darwin' ? 'Meta+A' : 'Control+A';
+  await locationSearchField.last().click();
+  await page.keyboard.press(selectAll);
+  await page.keyboard.press('Backspace');
+  await page.keyboard.type(optionText, { delay: 5 });
+}
+
+async function waitForOption(page, optionText) {
+  await expect
+    .poll(async () => Boolean(await resolveOption(page, optionText)), {
+      timeout: 30000,
+      message: `Dropdown option "${optionText}" must become semantically visible.`,
+    })
+    .toBe(true);
+  return resolveOption(page, optionText);
+}
+
 async function selectDropdownOption(
   page,
   {
@@ -43,56 +113,10 @@ async function selectDropdownOption(
     }
   }
 
-  const locationSearchField = page.getByRole('textbox', {
-    name: /Buscar local/i,
-  });
-  if ((await locationSearchField.count()) > 0) {
-    record(`filter dropdown options with search ${optionText}`);
-    await locationSearchField.last().fill(optionText);
-  }
-
-  const optionByRole = page.getByRole('option', { name: optionText });
-  if ((await optionByRole.count()) > 0) {
-    record(`select option ${optionText} via role`);
-    await optionByRole.last().click();
-    return;
-  }
-
-  const optionByMenuItem = page.getByRole('menuitem', { name: optionText });
-  if ((await optionByMenuItem.count()) > 0) {
-    record(`select option ${optionText} via menuitem`);
-    await optionByMenuItem.last().click();
-    return;
-  }
-
-  const optionByButton = page.getByRole('button', { name: optionText });
-  if ((await optionByButton.count()) > 0) {
-    record(`select option ${optionText} via semantic button`);
-    await optionByButton.last().click();
-    return;
-  }
-
-  const optionBySemanticLabel = page.locator(
-    `flt-semantics[aria-label=${cssAttributeValue(optionText)}]`,
-  );
-  if ((await optionBySemanticLabel.count()) > 0) {
-    record(`select option ${optionText} via Flutter semantic label`);
-    await optionBySemanticLabel.last().click();
-    return;
-  }
-
-  const optionByContainingSemanticLabel = page.locator(
-    `flt-semantics[aria-label*=${cssAttributeValue(optionText)}]`,
-  );
-  if ((await optionByContainingSemanticLabel.count()) > 0) {
-    record(`select option ${optionText} via containing Flutter semantic label`);
-    await optionByContainingSemanticLabel.last().click();
-    return;
-  }
-
-  throw new Error(
-    `Dropdown "${fieldLabel}" did not expose semantic option/menuitem/button/label "${optionText}".`,
-  );
+  await searchDropdownOptions(page, optionText, record);
+  const option = await waitForOption(page, optionText);
+  record(`select option ${optionText} via ${option.strategy}`);
+  await option.locator.last().click();
 }
 
 module.exports = {

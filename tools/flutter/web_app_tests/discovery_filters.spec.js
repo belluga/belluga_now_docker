@@ -37,35 +37,6 @@ function accessibleTextPattern(text) {
   return new RegExp(`(^|\\s)${escapeRegExp(text.trim())}(\\s|$)`, 'i');
 }
 
-async function firstVisibleLocator(locator) {
-  const count = await locator.count();
-  for (let index = 0; index < count; index += 1) {
-    const candidate = locator.nth(index);
-    if (await candidate.isVisible().catch(() => false)) {
-      return candidate;
-    }
-  }
-  return null;
-}
-
-async function waitForFirstVisibleLocator(
-  locator,
-  {
-    timeoutMs = appBootTimeoutMs,
-    pollIntervalMs = 250,
-  } = {},
-) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const candidate = await firstVisibleLocator(locator);
-    if (candidate) {
-      return candidate;
-    }
-    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
-  }
-  return null;
-}
-
 function surfaceButtonPattern(title, description) {
   return new RegExp(
     `${escapeRegExp(title)}[\\s\\S]*${escapeRegExp(description)}`,
@@ -1082,51 +1053,58 @@ test('@mutation tenant-admin keeps public Map filter config in the canonical fil
 }) => {
   const baseUrl = requireTenantUrl();
   const api = await createApiContext(baseUrl);
-  const session = await loginTenantAdmin(api, baseUrl);
-  const context = await browser.newContext({ ignoreHTTPSErrors: true });
-  await seedFlutterSecureStorage(context, session);
-  const page = await context.newPage();
-  const collectors = installFailureCollectors(page);
+  let context;
 
-  await openTenantPath(page, baseUrl, '/admin');
-  await expect(
-    page.getByRole('button', {
-      name: /Configure filtros de Mapa, Home e Descoberta/i,
-    }),
-  ).toHaveCount(0, { timeout: appBootTimeoutMs });
+  try {
+    const session = await loginTenantAdmin(api, baseUrl);
+    context = await browser.newContext({ ignoreHTTPSErrors: true });
+    await seedFlutterSecureStorage(context, session);
+    const page = await context.newPage();
+    const collectors = installFailureCollectors(page);
 
-  await openTenantPath(page, baseUrl, '/admin/filters');
-  await expect(page.getByRole('button', { name: /^Mapa/i }))
-    .toBeVisible({ timeout: appBootTimeoutMs });
-  await expect(page.getByRole('button', { name: /Eventos na Tela Principal/i }))
-    .toHaveCount(0, { timeout: appBootTimeoutMs });
-  await expect(page.getByRole('button', { name: /Descoberta de Perfis/i }))
-    .toHaveCount(0, { timeout: appBootTimeoutMs });
+    await openTenantPath(page, baseUrl, '/admin');
+    await expect(
+      page.getByRole('button', {
+        name: /Configure filtros de Mapa, Home e Descoberta/i,
+      }),
+    ).toHaveCount(0, { timeout: appBootTimeoutMs });
 
-  await openTenantPath(
-    page,
-    baseUrl,
-    '/admin/filters/surface?surface=public_map.primary',
-  );
-  const mapEditor = page.getByRole('group', {
-    name: /Mapa[\s\S]*Filtros primários exibidos sobre o mapa público/i,
-  }).first();
-  await expect(mapEditor).toBeVisible({ timeout: appBootTimeoutMs });
-  await expectAccessibleGroupContains(
-    mapEditor,
-    'Filtros primários exibidos sobre o mapa público.',
-  );
-  await expectAccessibleGroupContains(mapEditor, 'Filtros configurados');
-  await expect(mapEditor.getByRole('button', { name: /^Adicionar$/i }))
-    .toBeVisible({ timeout: appBootTimeoutMs });
-  await expect(page.getByText('Filtros públicos', { exact: true }))
-    .toHaveCount(0, { timeout: appBootTimeoutMs });
-  await expect(page.getByText('Eventos na Tela Principal', { exact: true }))
-    .toHaveCount(0, { timeout: appBootTimeoutMs });
-  await expect(page.getByText('Descoberta de Perfis', { exact: true }))
-    .toHaveCount(0, { timeout: appBootTimeoutMs });
+    await openTenantPath(page, baseUrl, '/admin/filters');
+    await expect(page.getByRole('button', { name: /^Mapa/i }))
+      .toBeVisible({ timeout: appBootTimeoutMs });
+    await expect(page.getByRole('button', { name: /Eventos na Tela Principal/i }))
+      .toHaveCount(0, { timeout: appBootTimeoutMs });
+    await expect(page.getByRole('button', { name: /Descoberta de Perfis/i }))
+      .toHaveCount(0, { timeout: appBootTimeoutMs });
 
-  await assertNoCriticalBrowserFailures(collectors);
+    await openTenantPath(
+      page,
+      baseUrl,
+      '/admin/filters/surface?surface=public_map.primary',
+    );
+    const mapEditor = page.getByRole('group', {
+      name: /Mapa[\s\S]*Filtros primários exibidos sobre o mapa público/i,
+    }).first();
+    await expect(mapEditor).toBeVisible({ timeout: appBootTimeoutMs });
+    await expectAccessibleGroupContains(
+      mapEditor,
+      'Filtros primários exibidos sobre o mapa público.',
+    );
+    await expectAccessibleGroupContains(mapEditor, 'Filtros configurados');
+    await expect(mapEditor.getByRole('button', { name: /^Adicionar$/i }))
+      .toBeVisible({ timeout: appBootTimeoutMs });
+    await expect(page.getByText('Filtros públicos', { exact: true }))
+      .toHaveCount(0, { timeout: appBootTimeoutMs });
+    await expect(page.getByText('Eventos na Tela Principal', { exact: true }))
+      .toHaveCount(0, { timeout: appBootTimeoutMs });
+    await expect(page.getByText('Descoberta de Perfis', { exact: true }))
+      .toHaveCount(0, { timeout: appBootTimeoutMs });
+
+    await assertNoCriticalBrowserFailures(collectors);
+  } finally {
+    await context?.close().catch(() => {});
+    await api.dispose();
+  }
 });
 
 test('@mutation public Map keeps baseline primary filters without taxonomy subfilters and uses backend filtering', async ({
@@ -1149,14 +1127,7 @@ test('@mutation public Map keeps baseline primary filters without taxonomy subfi
 
   await openTenantPath(page, baseUrl, '/mapa');
   await continueWithoutLocationIfPrompted(page);
-  const selectedCategoryButton = await waitForFirstVisibleLocator(page.getByRole('button', {
-    name: labelPattern(selectedCategory.label),
-  }));
-  expect(
-    selectedCategoryButton,
-    `Map primary filter button "${selectedCategory.label}" must be visible.`,
-  ).toBeTruthy();
-  await expect(selectedCategoryButton)
+  await expect(page.getByRole('button', { name: labelPattern(selectedCategory.label) }))
     .toBeVisible({ timeout: appBootTimeoutMs });
 
   const filteredRequest = page.waitForRequest((request) => {
@@ -1165,7 +1136,9 @@ test('@mutation public Map keeps baseline primary filters without taxonomy subfi
     }
     return requestContainsFilterValue(request.url(), expected);
   }, { timeout: appBootTimeoutMs });
-  await selectedCategoryButton.click();
+  await page.getByRole('button', { name: labelPattern(selectedCategory.label) })
+    .first()
+    .click();
   const requestSample = await filteredRequest;
 
   await expect(page.getByText(selectedCategory.label, { exact: true }))
@@ -1173,14 +1146,7 @@ test('@mutation public Map keeps baseline primary filters without taxonomy subfi
   await expect(page.getByRole('button', { name: /Remover filtro/i }))
     .toBeVisible({ timeout: appBootTimeoutMs });
   if (siblingCategory) {
-    const siblingCategoryButton = await waitForFirstVisibleLocator(page.getByRole('button', {
-      name: labelPattern(siblingCategory.label),
-    }));
-    expect(
-      siblingCategoryButton,
-      `Map sibling filter button "${siblingCategory.label}" must be visible.`,
-    ).toBeTruthy();
-    await expect(siblingCategoryButton)
+    await expect(page.getByRole('button', { name: labelPattern(siblingCategory.label) }))
       .toBeVisible({ timeout: appBootTimeoutMs });
   }
 
@@ -1396,7 +1362,6 @@ test('@mutation Profile Discovery excludes non-favoritable types and keeps selec
       label: hiddenTypeLabel,
       allowedTaxonomies: [taxonomy.slug],
       isFavoritable: false,
-      isPubliclyDiscoverable: true,
       icon: 'lock',
       color: '#555555',
     });

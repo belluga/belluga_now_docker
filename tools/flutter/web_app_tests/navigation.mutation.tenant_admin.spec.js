@@ -1,4 +1,5 @@
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const zlib = require('zlib');
 const { test, expect, request } = require('@playwright/test');
@@ -7,10 +8,7 @@ const {
 } = require('./support/tenant_admin_auth');
 
 const tenantUrl = process.env.NAV_TENANT_URL;
-const fixtureImagePath = path.resolve(
-  __dirname,
-  '../../../foundation_documentation/todos/ephemeral/image.png',
-);
+const fixtureImagePath = path.join(os.tmpdir(), 'belluga-navigation-fixture.png');
 const fixtureFaviconPath = path.resolve(
   __dirname,
   '../../../laravel-app/tests/Assets/tenant_1.ico',
@@ -18,6 +16,7 @@ const fixtureFaviconPath = path.resolve(
 const fallbackFixtureImageBase64 =
   'iVBORw0KGgoAAAANSUhEUgAAAQAAAAEACAYAAABccqhmAAADIElEQVR4nO3UIQEAIBDAwI9AZWKRDmIgduL81GadfYGm+R0A/GMAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEPYAluQiSDn9lCoAAAAASUVORK5CYII=';
 const appBootTimeoutMs = 90000;
+let generatedFixtureImageBuffer = null;
 
 test.describe.configure({ timeout: 300000 });
 
@@ -57,61 +56,6 @@ function urlsMatchIgnoringQuery(candidateUrl, expectedUrl) {
   }
 }
 
-function crc32(buffer) {
-  let crc = 0xffffffff;
-  for (const byte of buffer) {
-    crc ^= byte;
-    for (let bit = 0; bit < 8; bit += 1) {
-      crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
-    }
-  }
-  return (crc ^ 0xffffffff) >>> 0;
-}
-
-function pngChunk(type, data) {
-  const typeBuffer = Buffer.from(type, 'ascii');
-  const length = Buffer.alloc(4);
-  length.writeUInt32BE(data.length, 0);
-  const crc = Buffer.alloc(4);
-  crc.writeUInt32BE(crc32(Buffer.concat([typeBuffer, data])), 0);
-  return Buffer.concat([length, typeBuffer, data, crc]);
-}
-
-function generatedNavigationFixtureImage() {
-  const width = 320;
-  const height = 180;
-  const raw = Buffer.alloc((width * 4 + 1) * height);
-  let offset = 0;
-
-  for (let y = 0; y < height; y += 1) {
-    raw[offset] = 0;
-    offset += 1;
-    for (let x = 0; x < width; x += 1) {
-      raw[offset] = Math.floor((x * 255) / (width - 1));
-      raw[offset + 1] = Math.floor((y * 255) / (height - 1));
-      raw[offset + 2] = (x * 7 + y * 13) % 256;
-      raw[offset + 3] = 255;
-      offset += 4;
-    }
-  }
-
-  const header = Buffer.alloc(13);
-  header.writeUInt32BE(width, 0);
-  header.writeUInt32BE(height, 4);
-  header[8] = 8;
-  header[9] = 6;
-  header[10] = 0;
-  header[11] = 0;
-  header[12] = 0;
-
-  return Buffer.concat([
-    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
-    pngChunk('IHDR', header),
-    pngChunk('IDAT', zlib.deflateSync(raw)),
-    pngChunk('IEND', Buffer.alloc(0)),
-  ]);
-}
-
 function installFailureCollectors(page) {
   const runtimeErrors = [];
   const failedRequests = [];
@@ -138,15 +82,87 @@ function logStep(flow, message) {
   console.log(`[tenant-admin][${flow}] ${message}`);
 }
 
+function crc32(buffer) {
+  let crc = 0xffffffff;
+  for (const byte of buffer) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit += 1) {
+      crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0);
+    }
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function pngChunk(type, data = Buffer.alloc(0)) {
+  const typeBuffer = Buffer.from(type, 'ascii');
+  const length = Buffer.alloc(4);
+  length.writeUInt32BE(data.length, 0);
+  const crc = Buffer.alloc(4);
+  crc.writeUInt32BE(crc32(Buffer.concat([typeBuffer, data])), 0);
+  return Buffer.concat([length, typeBuffer, data, crc]);
+}
+
+function createFixturePngBuffer() {
+  const width = 1024;
+  const height = 768;
+  const bytesPerPixel = 4;
+  const stride = width * bytesPerPixel + 1;
+  const raw = Buffer.alloc(stride * height);
+
+  for (let y = 0; y < height; y += 1) {
+    const rowOffset = y * stride;
+    raw[rowOffset] = 0;
+    for (let x = 0; x < width; x += 1) {
+      const offset = rowOffset + 1 + x * bytesPerPixel;
+      raw[offset] = 32 + Math.floor((x / width) * 160);
+      raw[offset + 1] = 96 + Math.floor((y / height) * 96);
+      raw[offset + 2] = 180 - Math.floor(((x + y) / (width + height)) * 80);
+      raw[offset + 3] = 255;
+    }
+  }
+
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = 8;
+  ihdr[9] = 6;
+  ihdr[10] = 0;
+  ihdr[11] = 0;
+  ihdr[12] = 0;
+
+  return Buffer.concat([
+    Buffer.from('89504e470d0a1a0a', 'hex'),
+    pngChunk('IHDR', ihdr),
+    pngChunk('IDAT', zlib.deflateSync(raw, { level: 9 })),
+    pngChunk('IEND'),
+  ]);
+}
+
+function generatedFixtureImage() {
+  if (!generatedFixtureImageBuffer) {
+    generatedFixtureImageBuffer = createFixturePngBuffer();
+  }
+  return generatedFixtureImageBuffer;
+}
+
 function fixtureImagePayload() {
-  const buffer = fs.existsSync(fixtureImagePath)
-    ? fs.readFileSync(fixtureImagePath)
-    : generatedNavigationFixtureImage();
   return {
     name: 'belluga-navigation-fixture.png',
     mimeType: 'image/png',
-    buffer,
+    buffer: generatedFixtureImage(),
   };
+}
+
+function ensureFixtureImageFile(fixturePath) {
+  if (fixturePath !== fixtureImagePath) {
+    if (!fs.existsSync(fixturePath)) {
+      throw new Error(`Missing required image fixture: ${fixturePath}`);
+    }
+    return fixturePath;
+  }
+
+  fs.writeFileSync(fixtureImagePath, generatedFixtureImage());
+  return fixtureImagePath;
 }
 
 async function assertNoBrowserFailures(collectors) {
@@ -201,10 +217,9 @@ async function attachImageFromDevice(
     page.waitForEvent('filechooser'),
     page.getByText('Do dispositivo').last().click(),
   ]);
-  logStep(flow, `attach fixture ${fixturePath}`);
-  await fileChooser.setFiles(
-    fs.existsSync(fixturePath) ? fixturePath : fixtureImagePayload(),
-  );
+  const resolvedFixturePath = ensureFixtureImageFile(fixturePath);
+  logStep(flow, `attach fixture ${resolvedFixturePath}`);
+  await fileChooser.setFiles(resolvedFixturePath);
 
   if (!cropTitle) {
     return;
@@ -214,15 +229,6 @@ async function attachImageFromDevice(
     timeout: appBootTimeoutMs,
   });
   logStep(flow, `${cropTitle} visible`);
-}
-
-async function confirmCropSelection(page, flow) {
-  const useButton = page.getByRole('button', { name: 'Usar' }).last();
-  await expect(useButton).toBeVisible({ timeout: appBootTimeoutMs });
-  await expect(useButton).toBeEnabled({ timeout: appBootTimeoutMs });
-  logStep(flow, 'confirm crop selection');
-  await useButton.click();
-  await expect(useButton).toBeHidden({ timeout: appBootTimeoutMs });
 }
 
 async function enableAccessibilityIfNeeded(page) {
@@ -997,9 +1003,11 @@ test('@mutation tenant-admin account-profile cover upload persists and renders a
       );
     });
 
-    await confirmCropSelection(page, 'cover');
-    logStep('cover', 'save cover change');
-    await Promise.all([saveResponsePromise, clickSaveChanges(page)]);
+    logStep('cover', 'confirm crop and wait for autosave');
+    await Promise.all([
+      saveResponsePromise,
+      page.getByRole('button', { name: 'Usar' }).click(),
+    ]);
 
     const saveResponse = await saveResponsePromise;
     const savePayload = await saveResponse.json();
@@ -1020,7 +1028,7 @@ test('@mutation tenant-admin account-profile cover upload persists and renders a
     const coverStatuses = [];
 
     verificationPage.on('response', (response) => {
-      if (urlsMatchIgnoringQuery(response.url(), coverUrl)) {
+      if (response.url() === coverUrl) {
         coverStatuses.push(response.status());
       }
     });
@@ -1037,27 +1045,13 @@ test('@mutation tenant-admin account-profile cover upload persists and renders a
     await assertAppBooted(verificationPage);
     await enableAccessibilityIfNeeded(verificationPage);
 
-    await expect(
-      verificationPage.getByRole('button', { name: 'Remover' }).first(),
-      'Reloaded edit screen must render the persisted cover controls.',
-    ).toBeVisible({ timeout: appBootTimeoutMs });
-
-    const reloadedCoverResponse = await api.get(coverUrl, {
-      failOnStatusCode: false,
-    });
-    expect(
-      reloadedCoverResponse.status(),
-      'Persisted cover URL must remain readable after edit-screen reload.',
-    ).toBeLessThan(400);
-
-    const renderedCoverRequestSucceeded = coverStatuses.some(
-      (status) => status >= 200 && status < 400,
-    );
-    if (renderedCoverRequestSucceeded) {
-      logStep('cover', 'persisted cover returned a successful browser response after reload');
-    } else {
-      logStep('cover', 'persisted cover remained readable after reload; browser reused cached media');
-    }
+    await expect
+      .poll(() => coverStatuses.some((status) => status === 200), {
+        timeout: appBootTimeoutMs,
+        message: 'Expected the persisted cover image request to succeed after reload.',
+      })
+      .toBeTruthy();
+    logStep('cover', 'persisted cover returned 200 after reload');
 
     await assertNoBrowserFailures(collectors);
     await assertNoBrowserFailures(verificationCollectors);
@@ -1135,9 +1129,11 @@ test('@mutation tenant-admin account-profile avatar upload persists and renders 
       );
     });
 
-    await confirmCropSelection(page, 'avatar');
-    logStep('avatar', 'save avatar change');
-    await Promise.all([saveResponsePromise, clickSaveChanges(page)]);
+    logStep('avatar', 'confirm crop and wait for autosave');
+    await Promise.all([
+      saveResponsePromise,
+      page.getByRole('button', { name: 'Usar' }).click(),
+    ]);
 
     const saveResponse = await saveResponsePromise;
     const savePayload = await saveResponse.json();
@@ -1487,7 +1483,7 @@ test('@mutation tenant-admin branding public default image and favicon persist a
     });
 
     logStep('branding', 'confirm public default image crop');
-    await confirmCropSelection(page, 'branding');
+    await page.getByRole('button', { name: 'Usar' }).click();
     logStep('branding', 'scroll to favicon field');
     await page.mouse.wheel(0, 1600);
     await page.waitForTimeout(400);

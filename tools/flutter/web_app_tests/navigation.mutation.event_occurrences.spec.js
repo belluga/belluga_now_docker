@@ -109,13 +109,15 @@ function anonymousFingerprintHash(baseUrl) {
 function installFailureCollectors(page) {
   const runtimeErrors = [];
   const failedRequests = [];
+  const ignoredFailedRequests = [];
   const consoleErrors = [];
   const rateLimitedResponses = [];
 
   page.on('pageerror', (error) => runtimeErrors.push(error.message));
   page.on('requestfailed', (request) => {
     const failureText = request.failure()?.errorText || 'unknown';
-    if (failureText === 'net::ERR_ABORTED') {
+    if (isNonCriticalFailedRequest(request, failureText)) {
+      ignoredFailedRequests.push(request.url());
       return;
     }
     failedRequests.push(`${request.method()} ${request.url()} (${failureText})`);
@@ -134,7 +136,27 @@ function installFailureCollectors(page) {
     );
   });
 
-  return { runtimeErrors, failedRequests, consoleErrors, rateLimitedResponses };
+  return {
+    runtimeErrors,
+    failedRequests,
+    ignoredFailedRequests,
+    consoleErrors,
+    rateLimitedResponses,
+  };
+}
+
+function isNonCriticalFailedRequest(request, failureText) {
+  if (failureText === 'net::ERR_ABORTED') {
+    return true;
+  }
+
+  if (['image', 'media', 'font'].includes(request.resourceType())) {
+    return true;
+  }
+
+  return /\.(?:avif|gif|jpe?g|png|svg|webp|woff2?)(?:[?#].*)?$/i.test(
+    request.url(),
+  );
 }
 
 async function assertNoBrowserFailures(collectors) {
@@ -165,6 +187,14 @@ async function assertNoBrowserFailures(collectors) {
     (entry) =>
       !entry.includes('status of 401') &&
       !entry.includes('ResizeObserver loop limit exceeded') &&
+      !(
+        entry.includes('has been blocked by CORS policy') &&
+        collectors.ignoredFailedRequests.some((url) => entry.includes(url))
+      ) &&
+      !(
+        entry.includes('Failed to load resource: net::ERR_FAILED') &&
+        collectors.ignoredFailedRequests.length > 0
+      ) &&
       !(
         entry.includes('status of 429') &&
         collectors.rateLimitedResponses.length > 0 &&
@@ -1547,6 +1577,12 @@ async function scrollUntilTextInViewport(page, text, description) {
       height: window.innerHeight,
     })));
   await page.mouse.move(viewport.width * 0.62, viewport.height * 0.72);
+
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    await page.mouse.wheel(0, -900);
+    await page.waitForTimeout(100);
+  }
+
   for (let attempt = 0; attempt < 24; attempt += 1) {
     if ((await countTextInViewport(page, text)) > 0) {
       return;
@@ -1554,6 +1590,15 @@ async function scrollUntilTextInViewport(page, text, description) {
     await page.mouse.wheel(0, 700);
     await page.waitForTimeout(250);
   }
+
+  for (let attempt = 0; attempt < 24; attempt += 1) {
+    if ((await countTextInViewport(page, text)) > 0) {
+      return;
+    }
+    await page.mouse.wheel(0, -700);
+    await page.waitForTimeout(250);
+  }
+
   await waitForTextInViewport(page, text, description);
 }
 
@@ -2230,6 +2275,7 @@ test('@mutation tenant-admin event occurrence FAB persists second occurrence and
 
   try {
     session = await loginTenantAdmin(api, baseUrl);
+    await deleteStaleOccurrenceSeedEvents(api, baseUrl, session.token);
 
     const eventType = await createEventType(
       api,

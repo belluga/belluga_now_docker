@@ -38,7 +38,7 @@
         ]
       },
       "admin-final": {
-        "grep_extra": "(?:cover upload|avatar upload|event type create|event type type asset|branding public|profile-type editors|tenant agenda UI)",
+        "grep_extra": "(?:cover upload|avatar upload|event type create|event type type asset|branding public|profile-type editors|tenant agenda UI|T6-PLURAL)",
         "expected_titles": [
           "@mutation tenant-admin account-profile cover upload persists and renders after reload",
           "@mutation tenant-admin account-profile avatar upload persists and renders after reload",
@@ -46,7 +46,22 @@
           "@mutation tenant-admin event type type asset upload persists and renders after edit reopen",
           "@mutation tenant-admin branding public default image and favicon persist after save and reload",
           "@mutation tenant-admin profile-type editors preload and preserve allowed taxonomies when saving unrelated visual changes",
-          "@mutation tenant agenda UI state matches tenant agenda API payload"
+          "@mutation tenant agenda UI state matches tenant agenda API payload",
+          "@mutation T6-PLURAL tenant-admin account profile type edit persists plural label"
+        ]
+      },
+      "otp-auth": {
+        "grep_extra": "OTP Auth",
+        "expected_titles": [
+          "@mutation OTP Auth admin exposes WhatsApp primary and optional SMS fallback without legacy controls"
+        ]
+      },
+      "invite-session": {
+        "grep_extra": "(?:INVITE-SESSION-CONTEXT|T6-EVENT-SHARE)",
+        "expected_titles": [
+          "@mutation INVITE-SESSION-CONTEXT invite landing exposes dynamic share metadata",
+          "@mutation INVITE-SESSION-CONTEXT Android direct invite and event links generate app intent handoff",
+          "@mutation T6-EVENT-SHARE anonymous web event detail share preserves promotion boundary"
         ]
       }
     }
