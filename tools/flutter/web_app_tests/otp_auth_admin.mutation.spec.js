@@ -171,12 +171,34 @@ async function enableAccessibilityIfNeeded(page) {
 }
 
 async function fillFlutterTextField(page, label, value) {
-  const field = page.getByLabel(label).first();
-  await field.scrollIntoViewIfNeeded();
-  await expect(field).toBeVisible({ timeout: appBootTimeoutMs });
+  const fieldLocator = () => page.getByLabel(label).first();
+  const visibleTimeoutMs = Math.max(1000, Math.floor(appBootTimeoutMs / 3));
+
+  async function resolveStableField() {
+    let lastError = null;
+
+    for (let attempt = 1; attempt <= 5; attempt += 1) {
+      const field = fieldLocator();
+      try {
+        await field.scrollIntoViewIfNeeded({ timeout: visibleTimeoutMs });
+        await expect(field).toBeVisible({ timeout: visibleTimeoutMs });
+        return field;
+      } catch (error) {
+        const message = String(error?.message ?? error ?? '');
+        if (!message.includes('not attached to the DOM')) {
+          throw error;
+        }
+        lastError = error;
+        await page.waitForTimeout(150);
+      }
+    }
+
+    throw lastError ?? new Error(`Flutter text field "${label}" did not stabilize in the DOM.`);
+  }
 
   let lastValue = '';
   for (let attempt = 1; attempt <= 3; attempt += 1) {
+    const field = await resolveStableField();
     await field.click();
     const selectAll = process.platform === 'darwin' ? 'Meta+A' : 'Control+A';
     await page.keyboard.press(selectAll);
@@ -188,7 +210,7 @@ async function fillFlutterTextField(page, label, value) {
         .poll(
           async () => {
             try {
-              return await field.inputValue();
+              return await fieldLocator().inputValue();
             } catch (_) {
               return '';
             }
@@ -202,7 +224,7 @@ async function fillFlutterTextField(page, label, value) {
       return field;
     } catch (_) {
       try {
-        lastValue = await field.inputValue();
+        lastValue = await fieldLocator().inputValue();
       } catch (_) {
         lastValue = '<unreadable>';
       }
@@ -222,7 +244,7 @@ async function expectFlutterTextFieldValue(page, label, value) {
     .poll(
       async () => {
         try {
-          return await field.inputValue();
+          return await page.getByLabel(label).first().inputValue();
         } catch (_) {
           return '';
         }
