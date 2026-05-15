@@ -171,14 +171,48 @@ async function enableAccessibilityIfNeeded(page) {
 }
 
 async function fillFlutterTextField(page, label, value) {
-  const selectAll = process.platform === 'darwin' ? 'Meta+A' : 'Control+A';
-  await expect(page.getByRole('button', { name: 'Aplicar' }).last())
-    .toBeVisible({ timeout: 15000 });
+  const field = page.getByLabel(label).first();
+  await field.scrollIntoViewIfNeeded();
+  await expect(field).toBeVisible({ timeout: appBootTimeoutMs });
 
-  await page.waitForTimeout(300);
-  await page.keyboard.press(selectAll);
-  await page.keyboard.press('Backspace');
-  await page.keyboard.type(value, { delay: 5 });
+  let lastValue = '';
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    await field.click();
+    const selectAll = process.platform === 'darwin' ? 'Meta+A' : 'Control+A';
+    await page.keyboard.press(selectAll);
+    await page.keyboard.press('Backspace');
+    await page.keyboard.type(value, { delay: 5 });
+
+    try {
+      await expect
+        .poll(
+          async () => {
+            try {
+              return await field.inputValue();
+            } catch (_) {
+              return '';
+            }
+          },
+          {
+            timeout: 3000,
+            message: `Expected Flutter text field "${label}" to retain input.`,
+          },
+        )
+        .toBe(value);
+      return field;
+    } catch (_) {
+      try {
+        lastValue = await field.inputValue();
+      } catch (_) {
+        lastValue = '<unreadable>';
+      }
+      await page.waitForTimeout(150);
+    }
+  }
+
+  throw new Error(
+    `Flutter text field "${label}" did not retain "${value}" before submit; last value was "${lastValue}".`,
+  );
 }
 
 async function enableSecondarySmsFallback(page) {

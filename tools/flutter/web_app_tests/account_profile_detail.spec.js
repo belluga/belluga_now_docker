@@ -657,7 +657,9 @@ test('@readonly NAV-APD-02..06 and NAV-APD-10 hero, taxonomy, tabs, social remov
 
   const tabs = ['Sobre', 'Agenda', 'Como Chegar'];
   for (const tab of tabs) {
-    const locator = page.getByText(new RegExp(`^${tab}$`, 'i'));
+    const locator = page.getByRole('button', {
+      name: new RegExp(`^${tab}$`, 'i'),
+    });
     if ((await locator.count()) > 0) {
       await locator.first().click();
       await expect(locator.first()).toBeVisible();

@@ -7,6 +7,10 @@ const {
 
 const tenantUrl = process.env.NAV_TENANT_URL;
 const appBootTimeoutMs = 90000;
+const navigationGeolocation = {
+  latitude: -20.671339,
+  longitude: -40.495395,
+};
 const navigationRunId =
   process.env.NAV_TEST_RUN_ID || crypto.randomUUID();
 let anonymousIdentityToken = null;
@@ -275,6 +279,11 @@ async function openTenantPath(page, baseUrl, pathName) {
     .toBeLessThan(400);
   await assertAppBooted(page);
   await enableAccessibilityIfNeeded(page);
+}
+
+async function grantNavigationGeolocation(page, baseUrl) {
+  await page.context().grantPermissions(['geolocation'], { origin: baseUrl });
+  await page.context().setGeolocation(navigationGeolocation);
 }
 
 async function continueWithoutLocationIfPrompted(page) {
@@ -1237,6 +1246,7 @@ test('@mutation Home filters honor Event Type taxonomy compatibility, hide zero-
       `hd10-empty-${unique}`,
     ]));
 
+    await grantNavigationGeolocation(page, baseUrl);
     await openTenantPath(page, baseUrl, '/');
     const filterAction = page.getByRole('button', {
       name: filterActionPattern('Filtrar eventos'),
