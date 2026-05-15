@@ -171,14 +171,90 @@ async function enableAccessibilityIfNeeded(page) {
 }
 
 async function fillFlutterTextField(page, label, value) {
-  const selectAll = process.platform === 'darwin' ? 'Meta+A' : 'Control+A';
-  await expect(page.getByRole('button', { name: 'Aplicar' }).last())
-    .toBeVisible({ timeout: 15000 });
+  const fieldLocator = () => page.getByLabel(label).first();
+  const visibleTimeoutMs = Math.max(1000, Math.floor(appBootTimeoutMs / 3));
 
-  await page.waitForTimeout(300);
-  await page.keyboard.press(selectAll);
-  await page.keyboard.press('Backspace');
-  await page.keyboard.type(value, { delay: 5 });
+  async function resolveStableField() {
+    let lastError = null;
+
+    for (let attempt = 1; attempt <= 5; attempt += 1) {
+      const field = fieldLocator();
+      try {
+        await field.scrollIntoViewIfNeeded({ timeout: visibleTimeoutMs });
+        await expect(field).toBeVisible({ timeout: visibleTimeoutMs });
+        return field;
+      } catch (error) {
+        const message = String(error?.message ?? error ?? '');
+        if (!message.includes('not attached to the DOM')) {
+          throw error;
+        }
+        lastError = error;
+        await page.waitForTimeout(150);
+      }
+    }
+
+    throw lastError ?? new Error(`Flutter text field "${label}" did not stabilize in the DOM.`);
+  }
+
+  let lastValue = '';
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    const field = await resolveStableField();
+    await field.click();
+    const selectAll = process.platform === 'darwin' ? 'Meta+A' : 'Control+A';
+    await page.keyboard.press(selectAll);
+    await page.keyboard.press('Backspace');
+    await page.keyboard.type(value, { delay: 5 });
+
+    try {
+      await expect
+        .poll(
+          async () => {
+            try {
+              return await fieldLocator().inputValue();
+            } catch (_) {
+              return '';
+            }
+          },
+          {
+            timeout: 3000,
+            message: `Expected Flutter text field "${label}" to retain input.`,
+          },
+        )
+        .toBe(value);
+      return field;
+    } catch (_) {
+      try {
+        lastValue = await fieldLocator().inputValue();
+      } catch (_) {
+        lastValue = '<unreadable>';
+      }
+      await page.waitForTimeout(150);
+    }
+  }
+
+  throw new Error(
+    `Flutter text field "${label}" did not retain "${value}" before submit; last value was "${lastValue}".`,
+  );
+}
+
+async function expectFlutterTextFieldValue(page, label, value) {
+  const field = page.getByLabel(label).first();
+  await expect(field).toBeVisible({ timeout: appBootTimeoutMs });
+  await expect
+    .poll(
+      async () => {
+        try {
+          return await page.getByLabel(label).first().inputValue();
+        } catch (_) {
+          return '';
+        }
+      },
+      {
+        timeout: appBootTimeoutMs,
+        message: `Expected Flutter text field "${label}" to reflect persisted modal state.`,
+      },
+    )
+    .toBe(value);
 }
 
 async function enableSecondarySmsFallback(page) {
@@ -258,6 +334,10 @@ test('@mutation OTP Auth admin exposes WhatsApp primary and optional SMS fallbac
   browser,
 }) => {
   const baseUrl = requireTenantUrl();
+  const whatsappWebhookUrl =
+    'https://n8ntech.unifast.com.br/webhook/otp?channel=whatsapp';
+  const smsWebhookUrl =
+    'https://n8ntech.unifast.com.br/webhook/otp?channel=sms';
   const api = await createApiContext(baseUrl);
   let browserContext;
 
@@ -304,11 +384,13 @@ test('@mutation OTP Auth admin exposes WhatsApp primary and optional SMS fallbac
       .getByRole('button', { name: /Editar Webhook WhatsApp/i })
       .first()
       .click();
-    await fillFlutterTextField(
-      page,
-      'Webhook WhatsApp',
-      'https://n8ntech.unifast.com.br/webhook/otp?channel=whatsapp',
-    );
+    await fillFlutterTextField(page, 'Webhook WhatsApp', whatsappWebhookUrl);
+    await page.getByRole('button', { name: 'Aplicar' }).last().click();
+    await page
+      .getByRole('button', { name: /Editar Webhook WhatsApp/i })
+      .first()
+      .click();
+    await expectFlutterTextFieldValue(page, 'Webhook WhatsApp', whatsappWebhookUrl);
     await page.getByRole('button', { name: 'Aplicar' }).last().click();
 
     await enableSecondarySmsFallback(page);
@@ -322,11 +404,13 @@ test('@mutation OTP Auth admin exposes WhatsApp primary and optional SMS fallbac
       .getByRole('button', { name: /Editar URL SMS/i })
       .first()
       .click();
-    await fillFlutterTextField(
-      page,
-      'URL SMS',
-      'https://n8ntech.unifast.com.br/webhook/otp?channel=sms',
-    );
+    await fillFlutterTextField(page, 'URL SMS', smsWebhookUrl);
+    await page.getByRole('button', { name: 'Aplicar' }).last().click();
+    await page
+      .getByRole('button', { name: /Editar URL SMS/i })
+      .first()
+      .click();
+    await expectFlutterTextFieldValue(page, 'URL SMS', smsWebhookUrl);
     await page.getByRole('button', { name: 'Aplicar' }).last().click();
 
     await page.getByRole('button', { name: /Salvar Webhooks/i }).click();
@@ -338,12 +422,8 @@ test('@mutation OTP Auth admin exposes WhatsApp primary and optional SMS fallbac
       })
       .toBe(1);
 
-    expect(capturedPatches[0]['whatsapp.webhook_url']).toBe(
-      'https://n8ntech.unifast.com.br/webhook/otp?channel=whatsapp',
-    );
-    expect(capturedPatches[0]['otp.webhook_url']).toBe(
-      'https://n8ntech.unifast.com.br/webhook/otp?channel=sms',
-    );
+    expect(capturedPatches[0]['whatsapp.webhook_url']).toBe(whatsappWebhookUrl);
+    expect(capturedPatches[0]['otp.webhook_url']).toBe(smsWebhookUrl);
     expect(capturedPatches[0]['otp.use_whatsapp_webhook']).toBe(true);
     expect(capturedPatches[0]['otp.delivery_channel']).toBe('whatsapp');
     expect(capturedPatches[0]['otp.ttl_minutes']).toBe(10);
