@@ -529,14 +529,55 @@ async function resolveImageCapableProfileType(
         (!requireCover || row?.capabilities?.has_cover === true),
     );
 
+  return selected || null;
+}
+
+async function ensureImageCapableProfileType(
+  api,
+  baseUrl,
+  token,
+  { requireAvatar = false, requireCover = false } = {},
+) {
+  const existingProfileType = await resolveImageCapableProfileType(
+    api,
+    baseUrl,
+    token,
+    {
+      requireAvatar,
+      requireCover,
+    },
+  );
+  if (existingProfileType) {
+    return {
+      profileType: existingProfileType,
+      temporaryProfileType: null,
+    };
+  }
+
+  const uniqueSuffix = Date.now();
+  const createdPayload = await createAccountProfileType(api, baseUrl, token, {
+    type: `playwright-image-${uniqueSuffix}`,
+    label: `Playwright Image ${uniqueSuffix}`,
+    allowedTaxonomies: [],
+    markerColor: '#0E7A6A',
+    capabilities: {
+      is_favoritable: true,
+      has_taxonomies: false,
+      has_avatar: requireAvatar,
+      has_cover: requireCover,
+    },
+  });
+  const createdType = createdPayload?.data || {};
+  const createdTypeKey = createdType?.type?.toString() || '';
   expect(
-    selected,
-    `Expected at least one account profile type with ` +
-      `${requireAvatar ? 'has_avatar=true ' : ''}` +
-      `${requireCover ? 'has_cover=true' : ''}`.trim(),
+    createdTypeKey,
+    'Autocreated image-capable account profile type must expose its type key.',
   ).toBeTruthy();
 
-  return selected;
+  return {
+    profileType: createdType,
+    temporaryProfileType: createdTypeKey,
+  };
 }
 
 async function createImageTestProfile(
@@ -545,10 +586,11 @@ async function createImageTestProfile(
   token,
   { requireAvatar = false, requireCover = false } = {},
 ) {
-  const profileType = await resolveImageCapableProfileType(api, baseUrl, token, {
-    requireAvatar,
-    requireCover,
-  });
+  const { profileType, temporaryProfileType } =
+    await ensureImageCapableProfileType(api, baseUrl, token, {
+      requireAvatar,
+      requireCover,
+    });
   const uniqueSuffix = Date.now();
   const payload = {
     name: `Playwright Cover ${uniqueSuffix}`,
@@ -578,6 +620,7 @@ async function createImageTestProfile(
   return {
     accountSlug: created?.data?.account?.slug,
     profileId: created?.data?.account_profile?.id,
+    temporaryProfileType,
   };
 }
 
@@ -710,8 +753,16 @@ async function createAccountProfileType(
     allowedTaxonomies,
     markerColor,
     iconColor = '#FFFFFF',
+    capabilities = {},
   },
 ) {
+  const resolvedCapabilities = {
+    is_favoritable: true,
+    has_taxonomies: (allowedTaxonomies || []).length > 0,
+    has_avatar: true,
+    has_cover: false,
+    ...capabilities,
+  };
   const response = await api.post(
     buildApiUrl(baseUrl, '/admin/api/v1/account_profile_types'),
     {
@@ -724,11 +775,7 @@ async function createAccountProfileType(
           plural: `${label}s`,
         },
         allowed_taxonomies: allowedTaxonomies,
-        capabilities: {
-          is_favoritable: true,
-          has_taxonomies: true,
-          has_avatar: true,
-        },
+        capabilities: resolvedCapabilities,
         poi_visual: {
           mode: 'icon',
           icon: 'place',
@@ -951,6 +998,7 @@ test('@mutation tenant-admin account-profile cover upload persists and renders a
   let browserContext;
   let verificationContext;
   let profileId = null;
+  let temporaryProfileType = null;
   let session = null;
 
   try {
@@ -959,6 +1007,7 @@ test('@mutation tenant-admin account-profile cover upload persists and renders a
       requireCover: true,
     });
     profileId = created.profileId;
+    temporaryProfileType = created.temporaryProfileType;
 
     expect(created.accountSlug, 'Created onboarding must return an account slug.').toBeTruthy();
     expect(profileId, 'Created onboarding must return an account profile id.').toBeTruthy();
@@ -1058,6 +1107,12 @@ test('@mutation tenant-admin account-profile cover upload persists and renders a
   } finally {
     if (session?.token) {
       await deleteAccountProfile(api, baseUrl, session.token, profileId);
+      await deleteAccountProfileType(
+        api,
+        baseUrl,
+        session.token,
+        temporaryProfileType,
+      );
     }
     if (verificationContext) {
       await verificationContext.close();
@@ -1077,6 +1132,7 @@ test('@mutation tenant-admin account-profile avatar upload persists and renders 
   let browserContext;
   let verificationContext;
   let profileId = null;
+  let temporaryProfileType = null;
   let session = null;
 
   try {
@@ -1085,6 +1141,7 @@ test('@mutation tenant-admin account-profile avatar upload persists and renders 
       requireAvatar: true,
     });
     profileId = created.profileId;
+    temporaryProfileType = created.temporaryProfileType;
 
     expect(created.accountSlug, 'Created onboarding must return an account slug.').toBeTruthy();
     expect(profileId, 'Created onboarding must return an account profile id.').toBeTruthy();
@@ -1184,6 +1241,12 @@ test('@mutation tenant-admin account-profile avatar upload persists and renders 
   } finally {
     if (session?.token) {
       await deleteAccountProfile(api, baseUrl, session.token, profileId);
+      await deleteAccountProfileType(
+        api,
+        baseUrl,
+        session.token,
+        temporaryProfileType,
+      );
     }
     if (verificationContext) {
       await verificationContext.close();
