@@ -215,6 +215,26 @@ async function fillFlutterTextField(page, label, value) {
   );
 }
 
+async function expectFlutterTextFieldValue(page, label, value) {
+  const field = page.getByLabel(label).first();
+  await expect(field).toBeVisible({ timeout: appBootTimeoutMs });
+  await expect
+    .poll(
+      async () => {
+        try {
+          return await field.inputValue();
+        } catch (_) {
+          return '';
+        }
+      },
+      {
+        timeout: appBootTimeoutMs,
+        message: `Expected Flutter text field "${label}" to reflect persisted modal state.`,
+      },
+    )
+    .toBe(value);
+}
+
 async function enableSecondarySmsFallback(page) {
   const smsUrlButton = page.getByRole('button', { name: /Editar URL SMS/i });
   const smsSwitch = page
@@ -292,6 +312,10 @@ test('@mutation OTP Auth admin exposes WhatsApp primary and optional SMS fallbac
   browser,
 }) => {
   const baseUrl = requireTenantUrl();
+  const whatsappWebhookUrl =
+    'https://n8ntech.unifast.com.br/webhook/otp?channel=whatsapp';
+  const smsWebhookUrl =
+    'https://n8ntech.unifast.com.br/webhook/otp?channel=sms';
   const api = await createApiContext(baseUrl);
   let browserContext;
 
@@ -338,11 +362,13 @@ test('@mutation OTP Auth admin exposes WhatsApp primary and optional SMS fallbac
       .getByRole('button', { name: /Editar Webhook WhatsApp/i })
       .first()
       .click();
-    await fillFlutterTextField(
-      page,
-      'Webhook WhatsApp',
-      'https://n8ntech.unifast.com.br/webhook/otp?channel=whatsapp',
-    );
+    await fillFlutterTextField(page, 'Webhook WhatsApp', whatsappWebhookUrl);
+    await page.getByRole('button', { name: 'Aplicar' }).last().click();
+    await page
+      .getByRole('button', { name: /Editar Webhook WhatsApp/i })
+      .first()
+      .click();
+    await expectFlutterTextFieldValue(page, 'Webhook WhatsApp', whatsappWebhookUrl);
     await page.getByRole('button', { name: 'Aplicar' }).last().click();
 
     await enableSecondarySmsFallback(page);
@@ -356,11 +382,13 @@ test('@mutation OTP Auth admin exposes WhatsApp primary and optional SMS fallbac
       .getByRole('button', { name: /Editar URL SMS/i })
       .first()
       .click();
-    await fillFlutterTextField(
-      page,
-      'URL SMS',
-      'https://n8ntech.unifast.com.br/webhook/otp?channel=sms',
-    );
+    await fillFlutterTextField(page, 'URL SMS', smsWebhookUrl);
+    await page.getByRole('button', { name: 'Aplicar' }).last().click();
+    await page
+      .getByRole('button', { name: /Editar URL SMS/i })
+      .first()
+      .click();
+    await expectFlutterTextFieldValue(page, 'URL SMS', smsWebhookUrl);
     await page.getByRole('button', { name: 'Aplicar' }).last().click();
 
     await page.getByRole('button', { name: /Salvar Webhooks/i }).click();
@@ -372,12 +400,8 @@ test('@mutation OTP Auth admin exposes WhatsApp primary and optional SMS fallbac
       })
       .toBe(1);
 
-    expect(capturedPatches[0]['whatsapp.webhook_url']).toBe(
-      'https://n8ntech.unifast.com.br/webhook/otp?channel=whatsapp',
-    );
-    expect(capturedPatches[0]['otp.webhook_url']).toBe(
-      'https://n8ntech.unifast.com.br/webhook/otp?channel=sms',
-    );
+    expect(capturedPatches[0]['whatsapp.webhook_url']).toBe(whatsappWebhookUrl);
+    expect(capturedPatches[0]['otp.webhook_url']).toBe(smsWebhookUrl);
     expect(capturedPatches[0]['otp.use_whatsapp_webhook']).toBe(true);
     expect(capturedPatches[0]['otp.delivery_channel']).toBe('whatsapp');
     expect(capturedPatches[0]['otp.ttl_minutes']).toBe(10);
