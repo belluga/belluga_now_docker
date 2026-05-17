@@ -219,7 +219,10 @@ jobs:
           git -C "$SUBMODULE" fetch origin --prune --quiet
           git -C "$SUBMODULE" checkout --detach "$TARGET_SHA"
 
-          git add "$SUBMODULE"
+          # Git 2.54+ requires explicit force when a submodule uses
+          # submodule.<name>.ignore=all and we intentionally want to update
+          # the gitlink for that specific path.
+          git add --force -- "$SUBMODULE"
 
       - name: Commit changes (if any)
         if: steps.inputs.outputs.skip != 'true'
