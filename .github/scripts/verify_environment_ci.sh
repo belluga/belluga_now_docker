@@ -79,6 +79,7 @@ required_workflow_markers=(
   "id: stage_rollback_provenance_check"
   "id: main_rollback_proof_plan"
   "id: main_rollback_provenance_check"
+  "id: stage_public_taxonomy_validation_fixture"
   "id: stage_origin_host_overrides"
   "id: stage_rollback_origin_host_overrides"
   "id: main_origin_host_overrides"
@@ -91,6 +92,12 @@ for marker in "${required_workflow_markers[@]}"; do
     exit 1
   fi
 done
+
+fixture_gate_usage_count="$(grep -Fc 'steps.stage_public_taxonomy_validation_fixture.outcome' .github/workflows/orchestration-ci-cd.yml)"
+if (( fixture_gate_usage_count < 5 )); then
+  echo "ERROR: orchestration-ci-cd.yml must wire stage_public_taxonomy_validation_fixture into stage gating/rollback conditions." >&2
+  exit 1
+fi
 
 if grep -Fq 'tee -a /etc/hosts' .github/workflows/orchestration-ci-cd.yml; then
   echo "ERROR: orchestration-ci-cd.yml must not mutate /etc/hosts inline; use manage_navigation_host_overrides.sh." >&2
