@@ -7,6 +7,7 @@ required_files=(
   ".github/scripts/check_promotion_lane.sh"
   ".github/scripts/check_submodule_branch_alignment.sh"
   ".github/scripts/check_web_flutter_metadata.sh"
+  ".github/scripts/manage_navigation_host_overrides.sh"
 )
 
 for file in "${required_files[@]}"; do
@@ -78,6 +79,10 @@ required_workflow_markers=(
   "id: stage_rollback_provenance_check"
   "id: main_rollback_proof_plan"
   "id: main_rollback_provenance_check"
+  "id: stage_origin_host_overrides"
+  "id: stage_rollback_origin_host_overrides"
+  "id: main_origin_host_overrides"
+  "id: main_rollback_origin_host_overrides"
 )
 
 for marker in "${required_workflow_markers[@]}"; do
@@ -86,6 +91,11 @@ for marker in "${required_workflow_markers[@]}"; do
     exit 1
   fi
 done
+
+if grep -Fq 'tee -a /etc/hosts' .github/workflows/orchestration-ci-cd.yml; then
+  echo "ERROR: orchestration-ci-cd.yml must not mutate /etc/hosts inline; use manage_navigation_host_overrides.sh." >&2
+  exit 1
+fi
 
 if grep -R -Fq "service may remain degraded" .github/workflows/orchestration-ci-cd.yml .github/scripts/deploy_stage_over_ssh.sh .github/scripts/rollback_over_ssh.sh; then
   echo "ERROR: degraded-state wording still uses 'service may remain degraded'; require explicit incident/degraded contract wording." >&2
