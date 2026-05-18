@@ -133,7 +133,9 @@ async function listAdminEvents(api, baseUrl, token) {
     const url = new URL(buildUrl(baseUrl, '/admin/api/v1/events'));
     url.searchParams.set('page', page.toString());
     url.searchParams.set('page_size', '50');
-    url.searchParams.set('temporal', 'now,future');
+    // Cleanup must see all buckets, otherwise stale past fixtures can keep
+    // event types referenced and block idempotent re-seeding.
+    url.searchParams.set('temporal', 'past,now,future');
     const response = await api.get(url.toString(), {
       headers: authHeaders(token),
     });
