@@ -159,13 +159,13 @@ cleanup_rollback_protection_ref() {
 }
 
 emit_remote_deploy_state_markers() {
-  echo "DEPLOY_RUNTIME_MUTATED=${DEPLOY_RUNTIME_MUTATED}"
-  echo "INTERNAL_ROLLBACK_STATUS=${internal_rollback_status}"
-  if [[ -n "${internal_rollback_target_revision}" ]]; then
-    echo "INTERNAL_ROLLBACK_TARGET_REVISION=${internal_rollback_target_revision}"
+  echo "DEPLOY_RUNTIME_MUTATED=\${DEPLOY_RUNTIME_MUTATED}"
+  echo "INTERNAL_ROLLBACK_STATUS=\${internal_rollback_status}"
+  if [[ -n "\${internal_rollback_target_revision}" ]]; then
+    echo "INTERNAL_ROLLBACK_TARGET_REVISION=\${internal_rollback_target_revision}"
   fi
-  if [[ -n "${internal_rollback_target_web_runtime_sha}" ]]; then
-    echo "INTERNAL_ROLLBACK_TARGET_WEB_APP_RUNTIME_SHA=${internal_rollback_target_web_runtime_sha}"
+  if [[ -n "\${internal_rollback_target_web_runtime_sha}" ]]; then
+    echo "INTERNAL_ROLLBACK_TARGET_WEB_APP_RUNTIME_SHA=\${internal_rollback_target_web_runtime_sha}"
   fi
 }
 
@@ -173,7 +173,7 @@ remote_exit_trap() {
   local exit_code=$?
   cleanup_rollback_protection_ref
   emit_remote_deploy_state_markers
-  return "${exit_code}"
+  return "\${exit_code}"
 }
 
 trap remote_exit_trap EXIT
