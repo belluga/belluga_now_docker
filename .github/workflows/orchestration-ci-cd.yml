@@ -331,6 +331,11 @@ jobs:
           echo "ERROR: stage initialize returned 403 even though a trusted successful-release tuple already exists; failing closed." >&2
           exit 1
 
+      - name: Reset managed stage navigation host overrides before public-edge probe
+        id: stage_public_edge_host_overrides_reset
+        if: steps.stage_initialize_preflight.outputs.initialized == 'true'
+        run: bash .github/scripts/manage_navigation_host_overrides.sh reset
+
       - name: Probe public stage environment endpoints
         id: stage_public_edge_environment_probe
         if: steps.stage_initialize_preflight.outputs.initialized == 'true'
@@ -360,40 +365,6 @@ jobs:
         run: npx playwright install --with-deps chromium
         working-directory: tools/flutter/web_app_smoke_runner
 
-      - name: Route stage smoke hosts directly to origin
-        if: steps.stage_initialize_preflight.outputs.initialized == 'true' && steps.stage_public_edge_environment_probe.outcome != 'failure'
-        env:
-          NAV_LANDLORD_URL: ${{ steps.stage_nav_targets.outputs.landlord_url }}
-          NAV_TENANT_URL: ${{ steps.stage_nav_targets.outputs.tenant_url }}
-          NAV_ORIGIN_IP: ${{ vars.STAGE_SSH_HOST }}
-        run: |
-          set -euo pipefail
-
-          parse_host() {
-            local input_url="$1"
-            python3 -c 'import sys, urllib.parse; print((urllib.parse.urlparse(sys.argv[1]).hostname or "").strip())' "$input_url"
-          }
-
-          landlord_host="$(parse_host "$NAV_LANDLORD_URL")"
-          tenant_host="$(parse_host "$NAV_TENANT_URL")"
-
-          if [[ -z "$landlord_host" || -z "$tenant_host" ]]; then
-            echo "ERROR: could not parse stage landlord/tenant hosts from navigation URLs." >&2
-            exit 1
-          fi
-
-          if [[ -n "${NAV_ORIGIN_IP:-}" ]]; then
-            {
-              echo "${NAV_ORIGIN_IP} ${landlord_host}"
-              echo "${NAV_ORIGIN_IP} ${tenant_host}"
-            } | sudo tee -a /etc/hosts >/dev/null
-            echo "PLAYWRIGHT_IGNORE_HTTPS_ERRORS=true" >> "$GITHUB_ENV"
-            echo "INFO: stage smoke mapped ${landlord_host}/${tenant_host} to ${NAV_ORIGIN_IP}."
-          else
-            echo "PLAYWRIGHT_IGNORE_HTTPS_ERRORS=false" >> "$GITHUB_ENV"
-            echo "INFO: stage smoke using public DNS resolution."
-          fi
-
       - name: Warm up stage environment endpoints
         if: steps.stage_initialize_preflight.outputs.initialized == 'true' && steps.stage_public_edge_environment_probe.outcome != 'failure'
         env:
@@ -414,6 +385,25 @@ jobs:
           NAV_ORIGIN_IP: ${{ vars.STAGE_SSH_HOST }}
         run: bash .github/scripts/check_deployed_web_provenance.sh stage
 
+      - name: Ensure stage public account-profile validation fixture
+        if: steps.stage_initialize_preflight.outputs.initialized == 'true' && steps.stage_public_edge_environment_probe.outcome != 'failure' && steps.stage_provenance_check.outcome != 'failure'
+        env:
+          NAV_TENANT_URL: ${{ steps.stage_nav_targets.outputs.tenant_url }}
+          NAV_ADMIN_EMAIL: ${{ secrets.STAGE_NAV_ADMIN_EMAIL }}
+          NAV_ADMIN_PASSWORD: ${{ secrets.STAGE_NAV_ADMIN_PASSWORD }}
+          NODE_PATH: ${{ github.workspace }}/tools/flutter/web_app_smoke_runner/node_modules
+        working-directory: tools/flutter/web_app_smoke_runner
+        run: node ../web_app_tests/ensure_public_account_profile_validation_fixture.cjs
+
+      - name: Apply managed stage navigation host overrides to origin
+        id: stage_origin_host_overrides
+        if: steps.stage_initialize_preflight.outputs.initialized == 'true' && steps.stage_public_edge_environment_probe.outcome != 'failure' && steps.stage_provenance_check.outcome != 'failure'
+        env:
+          NAV_LANDLORD_URL: ${{ steps.stage_nav_targets.outputs.landlord_url }}
+          NAV_TENANT_URL: ${{ steps.stage_nav_targets.outputs.tenant_url }}
+          NAV_ORIGIN_IP: ${{ vars.STAGE_SSH_HOST }}
+        run: bash .github/scripts/manage_navigation_host_overrides.sh apply
+
       - name: Run stage real navigation smoke
         id: stage_navigation_smoke
         if: steps.stage_initialize_preflight.outputs.initialized == 'true' && steps.stage_public_edge_environment_probe.outcome != 'failure' && steps.stage_provenance_check.outcome != 'failure'
@@ -423,7 +413,7 @@ jobs:
           NAV_WEB_TEST_TYPE: readonly
           NAV_LANDLORD_URL: ${{ steps.stage_nav_targets.outputs.landlord_url }}
           NAV_TENANT_URL: ${{ steps.stage_nav_targets.outputs.tenant_url }}
-          PLAYWRIGHT_IGNORE_HTTPS_ERRORS: ${{ env.PLAYWRIGHT_IGNORE_HTTPS_ERRORS }}
+          PLAYWRIGHT_IGNORE_HTTPS_ERRORS: ${{ steps.stage_origin_host_overrides.outputs.playwright_ignore_https_errors }}
         run: bash tools/flutter/run_web_navigation_smoke.sh readonly
 
       - name: Run stage mutation navigation smoke
@@ -435,7 +425,7 @@ jobs:
           NAV_WEB_TEST_TYPE: mutation
           NAV_LANDLORD_URL: ${{ steps.stage_nav_targets.outputs.landlord_url }}
           NAV_TENANT_URL: ${{ steps.stage_nav_targets.outputs.tenant_url }}
-          PLAYWRIGHT_IGNORE_HTTPS_ERRORS: ${{ env.PLAYWRIGHT_IGNORE_HTTPS_ERRORS }}
+          PLAYWRIGHT_IGNORE_HTTPS_ERRORS: ${{ steps.stage_origin_host_overrides.outputs.playwright_ignore_https_errors }}
           NAV_ADMIN_EMAIL: ${{ secrets.STAGE_NAV_ADMIN_EMAIL }}
           NAV_ADMIN_PASSWORD: ${{ secrets.STAGE_NAV_ADMIN_PASSWORD }}
         run: bash tools/flutter/run_web_navigation_smoke.sh mutation
@@ -610,6 +600,11 @@ jobs:
 
           echo "initialized=true" >> "$GITHUB_OUTPUT"
 
+      - name: Reset managed stage navigation host overrides before rollback public-edge probe
+        id: stage_rollback_public_edge_host_overrides_reset
+        if: ${{ always() && steps.stage_rollback_proof_plan.outputs.run == 'true' && steps.stage_rollback_initialize_preflight.outcome != 'failure' }}
+        run: bash .github/scripts/manage_navigation_host_overrides.sh reset
+
       - name: Probe public stage environment endpoints after rollback
         id: stage_rollback_public_edge_environment_probe
         if: ${{ always() && steps.stage_rollback_proof_plan.outputs.run == 'true' && steps.stage_rollback_initialize_preflight.outcome != 'failure' }}
@@ -639,40 +634,6 @@ jobs:
         run: npx playwright install --with-deps chromium
         working-directory: tools/flutter/web_app_smoke_runner
 
-      - name: Route stage rollback proof hosts directly to origin
-        if: ${{ always() && steps.stage_rollback_proof_plan.outputs.run == 'true' && steps.stage_rollback_initialize_preflight.outcome != 'failure' && steps.stage_rollback_public_edge_environment_probe.outcome != 'failure' }}
-        env:
-          NAV_LANDLORD_URL: ${{ steps.stage_nav_targets.outputs.landlord_url }}
-          NAV_TENANT_URL: ${{ steps.stage_nav_targets.outputs.tenant_url }}
-          NAV_ORIGIN_IP: ${{ vars.STAGE_SSH_HOST }}
-        run: |
-          set -euo pipefail
-
-          parse_host() {
-            local input_url="$1"
-            python3 -c 'import sys, urllib.parse; print((urllib.parse.urlparse(sys.argv[1]).hostname or "").strip())' "$input_url"
-          }
-
-          landlord_host="$(parse_host "$NAV_LANDLORD_URL")"
-          tenant_host="$(parse_host "$NAV_TENANT_URL")"
-
-          if [[ -z "$landlord_host" || -z "$tenant_host" ]]; then
-            echo "ERROR: could not parse stage landlord/tenant hosts from navigation URLs." >&2
-            exit 1
-          fi
-
-          if [[ -n "${NAV_ORIGIN_IP:-}" ]]; then
-            {
-              echo "${NAV_ORIGIN_IP} ${landlord_host}"
-              echo "${NAV_ORIGIN_IP} ${tenant_host}"
-            } | sudo tee -a /etc/hosts >/dev/null
-            echo "PLAYWRIGHT_IGNORE_HTTPS_ERRORS=true" >> "$GITHUB_ENV"
-            echo "INFO: stage rollback proof mapped ${landlord_host}/${tenant_host} to ${NAV_ORIGIN_IP}."
-          else
-            echo "PLAYWRIGHT_IGNORE_HTTPS_ERRORS=false" >> "$GITHUB_ENV"
-            echo "INFO: stage rollback proof using public DNS resolution."
-          fi
-
       - name: Warm up stage environment endpoints after rollback
         if: ${{ always() && steps.stage_rollback_proof_plan.outputs.run == 'true' && steps.stage_rollback_initialize_preflight.outcome != 'failure' && steps.stage_rollback_public_edge_environment_probe.outcome != 'failure' }}
         env:
@@ -694,6 +655,15 @@ jobs:
           EXPECTED_FLUTTER_SHA: ${{ steps.stage_rollback_proof_plan.outputs.expected_flutter_sha }}
         run: bash .github/scripts/check_deployed_web_provenance.sh stage
 
+      - name: Apply managed stage rollback-proof navigation host overrides to origin
+        id: stage_rollback_origin_host_overrides
+        if: ${{ always() && steps.stage_rollback_proof_plan.outputs.run == 'true' && steps.stage_rollback_initialize_preflight.outcome != 'failure' && steps.stage_rollback_public_edge_environment_probe.outcome != 'failure' && steps.stage_rollback_provenance_check.outcome != 'failure' }}
+        env:
+          NAV_LANDLORD_URL: ${{ steps.stage_nav_targets.outputs.landlord_url }}
+          NAV_TENANT_URL: ${{ steps.stage_nav_targets.outputs.tenant_url }}
+          NAV_ORIGIN_IP: ${{ vars.STAGE_SSH_HOST }}
+        run: bash .github/scripts/manage_navigation_host_overrides.sh apply
+
       - name: Run restored stage readonly navigation smoke
         id: stage_rollback_navigation_smoke
         if: ${{ always() && steps.stage_rollback_proof_plan.outputs.run == 'true' && steps.stage_rollback_initialize_preflight.outcome != 'failure' && steps.stage_rollback_public_edge_environment_probe.outcome != 'failure' && steps.stage_rollback_provenance_check.outcome != 'failure' }}
@@ -703,7 +673,7 @@ jobs:
           NAV_WEB_TEST_TYPE: readonly
           NAV_LANDLORD_URL: ${{ steps.stage_nav_targets.outputs.landlord_url }}
           NAV_TENANT_URL: ${{ steps.stage_nav_targets.outputs.tenant_url }}
-          PLAYWRIGHT_IGNORE_HTTPS_ERRORS: ${{ env.PLAYWRIGHT_IGNORE_HTTPS_ERRORS }}
+          PLAYWRIGHT_IGNORE_HTTPS_ERRORS: ${{ steps.stage_rollback_origin_host_overrides.outputs.playwright_ignore_https_errors }}
         run: bash tools/flutter/run_web_navigation_smoke.sh readonly
 
       - name: Run restored stage mutation navigation smoke
@@ -715,7 +685,7 @@ jobs:
           NAV_WEB_TEST_TYPE: mutation
           NAV_LANDLORD_URL: ${{ steps.stage_nav_targets.outputs.landlord_url }}
           NAV_TENANT_URL: ${{ steps.stage_nav_targets.outputs.tenant_url }}
-          PLAYWRIGHT_IGNORE_HTTPS_ERRORS: ${{ env.PLAYWRIGHT_IGNORE_HTTPS_ERRORS }}
+          PLAYWRIGHT_IGNORE_HTTPS_ERRORS: ${{ steps.stage_rollback_origin_host_overrides.outputs.playwright_ignore_https_errors }}
           NAV_ADMIN_EMAIL: ${{ secrets.STAGE_NAV_ADMIN_EMAIL }}
           NAV_ADMIN_PASSWORD: ${{ secrets.STAGE_NAV_ADMIN_PASSWORD }}
         run: bash tools/flutter/run_web_navigation_smoke.sh mutation
@@ -994,6 +964,11 @@ jobs:
           echo "ERROR: production initialize returned 403 even though a trusted successful-release tuple already exists; failing closed." >&2
           exit 1
 
+      - name: Reset managed production navigation host overrides before public-edge probe
+        id: main_public_edge_host_overrides_reset
+        if: steps.main_initialize_preflight.outputs.initialized == 'true'
+        run: bash .github/scripts/manage_navigation_host_overrides.sh reset
+
       - name: Probe public production environment endpoints
         id: main_public_edge_environment_probe
         if: steps.main_initialize_preflight.outputs.initialized == 'true'
@@ -1022,40 +997,6 @@ jobs:
         if: steps.main_initialize_preflight.outputs.initialized == 'true' && steps.main_public_edge_environment_probe.outcome != 'failure'
         run: npx playwright install --with-deps chromium
         working-directory: tools/flutter/web_app_smoke_runner
-
-      - name: Route production smoke hosts directly to origin
-        if: steps.main_initialize_preflight.outputs.initialized == 'true' && steps.main_public_edge_environment_probe.outcome != 'failure'
-        env:
-          NAV_LANDLORD_URL: ${{ steps.main_nav_targets.outputs.landlord_url }}
-          NAV_TENANT_URL: ${{ steps.main_nav_targets.outputs.tenant_url }}
-          NAV_ORIGIN_IP: ${{ vars.MAIN_SSH_HOST }}
-        run: |
-          set -euo pipefail
-
-          parse_host() {
-            local input_url="$1"
-            python3 -c 'import sys, urllib.parse; print((urllib.parse.urlparse(sys.argv[1]).hostname or "").strip())' "$input_url"
-          }
-
-          landlord_host="$(parse_host "$NAV_LANDLORD_URL")"
-          tenant_host="$(parse_host "$NAV_TENANT_URL")"
-
-          if [[ -z "$landlord_host" || -z "$tenant_host" ]]; then
-            echo "ERROR: could not parse production landlord/tenant hosts from navigation URLs." >&2
-            exit 1
-          fi
-
-          if [[ -n "${NAV_ORIGIN_IP:-}" ]]; then
-            {
-              echo "${NAV_ORIGIN_IP} ${landlord_host}"
-              echo "${NAV_ORIGIN_IP} ${tenant_host}"
-            } | sudo tee -a /etc/hosts >/dev/null
-            echo "PLAYWRIGHT_IGNORE_HTTPS_ERRORS=true" >> "$GITHUB_ENV"
-            echo "INFO: production smoke mapped ${landlord_host}/${tenant_host} to ${NAV_ORIGIN_IP}."
-          else
-            echo "PLAYWRIGHT_IGNORE_HTTPS_ERRORS=false" >> "$GITHUB_ENV"
-            echo "INFO: production smoke using public DNS resolution."
-          fi
 
       - name: Warm up production environment endpoints
         if: steps.main_initialize_preflight.outputs.initialized == 'true' && steps.main_public_edge_environment_probe.outcome != 'failure'
@@ -1095,6 +1036,15 @@ jobs:
 
           echo "Main hard block check passed (mutation is blocked)."
 
+      - name: Apply managed production navigation host overrides to origin
+        id: main_origin_host_overrides
+        if: steps.main_initialize_preflight.outputs.initialized == 'true' && steps.main_public_edge_environment_probe.outcome != 'failure' && steps.main_provenance_check.outcome != 'failure'
+        env:
+          NAV_LANDLORD_URL: ${{ steps.main_nav_targets.outputs.landlord_url }}
+          NAV_TENANT_URL: ${{ steps.main_nav_targets.outputs.tenant_url }}
+          NAV_ORIGIN_IP: ${{ vars.MAIN_SSH_HOST }}
+        run: bash .github/scripts/manage_navigation_host_overrides.sh apply
+
       - name: Run production real navigation smoke
         id: production_navigation_smoke
         if: steps.main_initialize_preflight.outputs.initialized == 'true' && steps.main_public_edge_environment_probe.outcome != 'failure' && steps.main_provenance_check.outcome != 'failure'
@@ -1104,7 +1054,7 @@ jobs:
           NAV_WEB_TEST_TYPE: readonly
           NAV_LANDLORD_URL: ${{ steps.main_nav_targets.outputs.landlord_url }}
           NAV_TENANT_URL: ${{ steps.main_nav_targets.outputs.tenant_url }}
-          PLAYWRIGHT_IGNORE_HTTPS_ERRORS: ${{ env.PLAYWRIGHT_IGNORE_HTTPS_ERRORS }}
+          PLAYWRIGHT_IGNORE_HTTPS_ERRORS: ${{ steps.main_origin_host_overrides.outputs.playwright_ignore_https_errors }}
         run: bash tools/flutter/run_web_navigation_smoke.sh readonly
 
       - name: Collect production deploy diagnostics before rollback
@@ -1277,6 +1227,11 @@ jobs:
 
           echo "initialized=true" >> "$GITHUB_OUTPUT"
 
+      - name: Reset managed production navigation host overrides before rollback public-edge probe
+        id: main_rollback_public_edge_host_overrides_reset
+        if: ${{ always() && steps.main_rollback_proof_plan.outputs.run == 'true' && steps.main_rollback_initialize_preflight.outcome != 'failure' }}
+        run: bash .github/scripts/manage_navigation_host_overrides.sh reset
+
       - name: Probe public production environment endpoints after rollback
         id: main_rollback_public_edge_environment_probe
         if: ${{ always() && steps.main_rollback_proof_plan.outputs.run == 'true' && steps.main_rollback_initialize_preflight.outcome != 'failure' }}
@@ -1305,40 +1260,6 @@ jobs:
         if: ${{ always() && steps.main_rollback_proof_plan.outputs.run == 'true' && steps.main_rollback_initialize_preflight.outcome != 'failure' && steps.main_rollback_public_edge_environment_probe.outcome != 'failure' }}
         run: npx playwright install --with-deps chromium
         working-directory: tools/flutter/web_app_smoke_runner
-
-      - name: Route production rollback proof hosts directly to origin
-        if: ${{ always() && steps.main_rollback_proof_plan.outputs.run == 'true' && steps.main_rollback_initialize_preflight.outcome != 'failure' && steps.main_rollback_public_edge_environment_probe.outcome != 'failure' }}
-        env:
-          NAV_LANDLORD_URL: ${{ steps.main_nav_targets.outputs.landlord_url }}
-          NAV_TENANT_URL: ${{ steps.main_nav_targets.outputs.tenant_url }}
-          NAV_ORIGIN_IP: ${{ vars.MAIN_SSH_HOST }}
-        run: |
-          set -euo pipefail
-
-          parse_host() {
-            local input_url="$1"
-            python3 -c 'import sys, urllib.parse; print((urllib.parse.urlparse(sys.argv[1]).hostname or "").strip())' "$input_url"
-          }
-
-          landlord_host="$(parse_host "$NAV_LANDLORD_URL")"
-          tenant_host="$(parse_host "$NAV_TENANT_URL")"
-
-          if [[ -z "$landlord_host" || -z "$tenant_host" ]]; then
-            echo "ERROR: could not parse production landlord/tenant hosts from navigation URLs." >&2
-            exit 1
-          fi
-
-          if [[ -n "${NAV_ORIGIN_IP:-}" ]]; then
-            {
-              echo "${NAV_ORIGIN_IP} ${landlord_host}"
-              echo "${NAV_ORIGIN_IP} ${tenant_host}"
-            } | sudo tee -a /etc/hosts >/dev/null
-            echo "PLAYWRIGHT_IGNORE_HTTPS_ERRORS=true" >> "$GITHUB_ENV"
-            echo "INFO: production rollback proof mapped ${landlord_host}/${tenant_host} to ${NAV_ORIGIN_IP}."
-          else
-            echo "PLAYWRIGHT_IGNORE_HTTPS_ERRORS=false" >> "$GITHUB_ENV"
-            echo "INFO: production rollback proof using public DNS resolution."
-          fi
 
       - name: Warm up production environment endpoints after rollback
         if: ${{ always() && steps.main_rollback_proof_plan.outputs.run == 'true' && steps.main_rollback_initialize_preflight.outcome != 'failure' && steps.main_rollback_public_edge_environment_probe.outcome != 'failure' }}
@@ -1381,6 +1302,15 @@ jobs:
 
           echo "Production rollback hard block check passed (mutation is blocked)."
 
+      - name: Apply managed production rollback-proof navigation host overrides to origin
+        id: main_rollback_origin_host_overrides
+        if: ${{ always() && steps.main_rollback_proof_plan.outputs.run == 'true' && steps.main_rollback_initialize_preflight.outcome != 'failure' && steps.main_rollback_public_edge_environment_probe.outcome != 'failure' && steps.main_rollback_provenance_check.outcome != 'failure' && steps.main_rollback_mutation_guard.outcome != 'failure' }}
+        env:
+          NAV_LANDLORD_URL: ${{ steps.main_nav_targets.outputs.landlord_url }}
+          NAV_TENANT_URL: ${{ steps.main_nav_targets.outputs.tenant_url }}
+          NAV_ORIGIN_IP: ${{ vars.MAIN_SSH_HOST }}
+        run: bash .github/scripts/manage_navigation_host_overrides.sh apply
+
       - name: Run restored production readonly navigation smoke
         id: main_rollback_navigation_smoke
         if: ${{ always() && steps.main_rollback_proof_plan.outputs.run == 'true' && steps.main_rollback_initialize_preflight.outcome != 'failure' && steps.main_rollback_public_edge_environment_probe.outcome != 'failure' && steps.main_rollback_provenance_check.outcome != 'failure' && steps.main_rollback_mutation_guard.outcome != 'failure' }}
@@ -1390,7 +1320,7 @@ jobs:
           NAV_WEB_TEST_TYPE: readonly
           NAV_LANDLORD_URL: ${{ steps.main_nav_targets.outputs.landlord_url }}
           NAV_TENANT_URL: ${{ steps.main_nav_targets.outputs.tenant_url }}
-          PLAYWRIGHT_IGNORE_HTTPS_ERRORS: ${{ env.PLAYWRIGHT_IGNORE_HTTPS_ERRORS }}
+          PLAYWRIGHT_IGNORE_HTTPS_ERRORS: ${{ steps.main_rollback_origin_host_overrides.outputs.playwright_ignore_https_errors }}
         run: bash tools/flutter/run_web_navigation_smoke.sh readonly
 
       - name: Collect production rollback proof diagnostics
