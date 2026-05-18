@@ -17,6 +17,8 @@ const fixture = {
   eventTypeSlug: 'stage_validation_public_event_type',
   eventTypeName: 'Stage Validation Public Event Type',
   eventTitle: 'Stage Validation Public Event',
+  mapFilterKey: 'stage_validation_profiles',
+  mapFilterLabel: 'Stage Validation Profiles',
   location: {
     lat: -20.671339,
     lng: -40.495395,
@@ -479,6 +481,30 @@ async function fetchPublicEventDetail(api, baseUrl, routeRef) {
   return payload?.data || payload;
 }
 
+async function fetchTenantSettingsValues(api, baseUrl, token) {
+  const response = await api.get(
+    buildUrl(baseUrl, '/admin/api/v1/settings/values'),
+    {
+      headers: authHeaders(token),
+    },
+  );
+  return fetchJson(response, 'Tenant-admin settings values');
+}
+
+async function patchDiscoveryFilters(api, baseUrl, token, surfaces) {
+  const response = await api.patch(
+    buildUrl(baseUrl, '/admin/api/v1/settings/values/discovery_filters'),
+    {
+      headers: authHeaders(token),
+      data: { surfaces },
+    },
+  );
+  await fetchJson(
+    response,
+    'Persist tenant-admin discovery filters through Settings Kernel',
+  );
+}
+
 async function resolveAnonymousIdentityToken(api, baseUrl) {
   const response = await api.post(
     buildUrl(baseUrl, '/api/v1/anonymous/identities'),
@@ -518,6 +544,68 @@ function findDisplaySnapshot(terms) {
     const display = label || name;
     return value && display && value !== display;
   }) || null;
+}
+
+function normalizePayload(payload) {
+  if (payload && typeof payload === 'object' && payload.data && typeof payload.data === 'object') {
+    return payload.data;
+  }
+  return payload;
+}
+
+function normalizeList(value) {
+  if (Array.isArray(value)) {
+    return value;
+  }
+  if (value && typeof value === 'object') {
+    return Object.values(value);
+  }
+  return [];
+}
+
+function buildStageValidationMapFilter() {
+  return {
+    key: fixture.mapFilterKey,
+    target: 'map_poi',
+    label: fixture.mapFilterLabel,
+    query: {
+      entities: ['account_profile'],
+      types_by_entity: {
+        account_profile: [fixture.profileType],
+      },
+    },
+  };
+}
+
+async function ensureRuntimeMapFilterSurface(api, baseUrl, token) {
+  const valuesPayload = normalizePayload(await fetchTenantSettingsValues(api, baseUrl, token));
+  const discoveryFilters =
+    valuesPayload?.discovery_filters && typeof valuesPayload.discovery_filters === 'object'
+      ? valuesPayload.discovery_filters
+      : {};
+  const surfaces =
+    discoveryFilters.surfaces && typeof discoveryFilters.surfaces === 'object'
+      ? { ...discoveryFilters.surfaces }
+      : {};
+  const existingSurface =
+    surfaces['public_map.primary'] && typeof surfaces['public_map.primary'] === 'object'
+      ? { ...surfaces['public_map.primary'] }
+      : {};
+  const existingFilters = normalizeList(existingSurface.filters);
+
+  const hasFixtureFilter = existingFilters.some((filter) => filter?.key === fixture.mapFilterKey);
+  if (hasFixtureFilter) {
+    return;
+  }
+
+  surfaces['public_map.primary'] = {
+    ...existingSurface,
+    target: existingSurface.target || 'map_poi',
+    primary_selection_mode: existingSurface.primary_selection_mode || 'single',
+    filters: [...existingFilters, buildStageValidationMapFilter()],
+  };
+
+  await patchDiscoveryFilters(api, baseUrl, token, surfaces);
 }
 
 async function resetOwnedFixtureArtifacts(api, baseUrl, token) {
@@ -649,6 +737,47 @@ async function verifyEventFixture(api, baseUrl, { eventId, eventSlug }) {
   ).toBe(listSnapshot.label || listSnapshot.name);
 }
 
+async function verifyMapFilterCatalog(api, baseUrl) {
+  const anonymousToken = await resolveAnonymousIdentityToken(api, baseUrl);
+  const url = new URL(buildUrl(baseUrl, '/api/v1/map/filters'));
+  url.searchParams.set('ne_lat', '-19.0');
+  url.searchParams.set('ne_lng', '-39.0');
+  url.searchParams.set('sw_lat', '-21.0');
+  url.searchParams.set('sw_lng', '-41.0');
+
+  const response = await api.get(url.toString(), {
+    headers: {
+      Accept: 'application/json',
+      Authorization: `Bearer ${anonymousToken}`,
+    },
+  });
+  const payload = await fetchJson(response, 'Public map filter catalog');
+  const categories = Array.isArray(payload?.categories) ? payload.categories : [];
+
+  expect(
+    categories.length,
+    'Public map filter catalog must expose at least one primary category.',
+  ).toBeGreaterThan(0);
+
+  const category = categories.find((row) => row?.key === fixture.mapFilterKey);
+  expect(
+    category,
+    `Public map filter catalog must expose the fixture category ${fixture.mapFilterKey}.`,
+  ).toBeTruthy();
+  expect(
+    category?.label,
+    `Public map filter category ${fixture.mapFilterKey} must preserve the configured display label.`,
+  ).toBe(fixture.mapFilterLabel);
+  expect(
+    category?.query?.source,
+    `Public map filter category ${fixture.mapFilterKey} must target account-profile source filtering.`,
+  ).toBe('account_profile');
+  expect(
+    Array.isArray(category?.query?.types) ? category.query.types : [],
+    `Public map filter category ${fixture.mapFilterKey} must carry the seeded profile type in the public query contract.`,
+  ).toContain(fixture.profileType);
+}
+
 async function main() {
   const baseUrl = requireTenantUrl();
   const api = await createApiContext(baseUrl);
@@ -664,8 +793,10 @@ async function main() {
       eventType,
       physicalHostId: profileId,
     });
+    await ensureRuntimeMapFilterSurface(api, baseUrl, token);
     await verifyAccountProfileFixture(api, baseUrl, profileSlug);
     await verifyEventFixture(api, baseUrl, event);
+    await verifyMapFilterCatalog(api, baseUrl);
     console.log(
       `INFO: ensured public taxonomy validation fixtures ${profileSlug} and ${fixture.eventTitle} on ${baseUrl}.`,
     );
