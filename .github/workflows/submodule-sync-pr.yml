@@ -180,18 +180,35 @@ jobs:
 
       - name: Create/update fixed candidate branch from lane base
         if: steps.inputs.outputs.skip != 'true'
+        id: branch_base
         env:
           BASE_BRANCH: ${{ steps.inputs.outputs.lane }}
           BOT_BRANCH: ${{ steps.inputs.outputs.bot_branch }}
         run: |
           set -euo pipefail
+
+          remote_bot_exists="false"
+          remote_bot_sha=""
+
           git fetch origin "$BASE_BRANCH" --quiet
           if git ls-remote --exit-code --heads origin "$BOT_BRANCH" >/dev/null 2>&1; then
             git fetch origin "$BOT_BRANCH" --quiet
-            git checkout -B "$BOT_BRANCH" "origin/$BOT_BRANCH"
-          else
-            git checkout -B "$BOT_BRANCH" "origin/$BASE_BRANCH"
+            remote_bot_exists="true"
+            remote_bot_sha="$(git rev-parse "origin/$BOT_BRANCH")"
           fi
+
+          base_sha="$(git rev-parse "origin/$BASE_BRANCH")"
+          git checkout -B "$BOT_BRANCH" "origin/$BASE_BRANCH"
+
+          branch_needs_reset="false"
+          if [[ "$remote_bot_exists" == "true" && "$remote_bot_sha" != "$base_sha" ]]; then
+            branch_needs_reset="true"
+          fi
+
+          echo "remote_bot_exists=$remote_bot_exists" >> "$GITHUB_OUTPUT"
+          echo "remote_bot_sha=$remote_bot_sha" >> "$GITHUB_OUTPUT"
+          echo "base_sha=$base_sha" >> "$GITHUB_OUTPUT"
+          echo "branch_needs_reset=$branch_needs_reset" >> "$GITHUB_OUTPUT"
 
       - name: Update submodule pin
         if: steps.inputs.outputs.skip != 'true'
@@ -250,13 +267,19 @@ jobs:
           echo "no_changes=false" >> "$GITHUB_OUTPUT"
 
       - name: Push bot branch
-        if: steps.inputs.outputs.skip != 'true' && steps.commit.outputs.no_changes != 'true'
+        if: >-
+          steps.inputs.outputs.skip != 'true' &&
+          (
+            steps.commit.outputs.no_changes != 'true' ||
+            steps.branch_base.outputs.branch_needs_reset == 'true'
+          )
         env:
           BOT_BRANCH: ${{ steps.inputs.outputs.bot_branch }}
         run: |
           set -euo pipefail
-          # Keep a single fixed candidate branch and protect against unexpected
-          # remote updates while allowing iterative sync commits.
+          # Keep a single fixed candidate branch rooted on the current lane base.
+          # If the remote bot branch drifted onto an older lane base, force-push the
+          # reset branch even when the target gitlink already matches the base lane.
           git push --force-with-lease -u origin "$BOT_BRANCH"
 
       - name: Report candidate branch ready for manual PR
