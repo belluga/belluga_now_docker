@@ -846,11 +846,13 @@ deploy_and_check_health() {
   local health_host health_url status body
 
   DEPLOY_RUNTIME_MUTATED=0
+  emit_remote_deploy_state_markers
   if ! prebuild_cleanup_and_budget_gate "\${DEPLOY_LANE}-deploy"; then
     return 1
   fi
 
   DEPLOY_RUNTIME_MUTATED=1
+  emit_remote_deploy_state_markers
   if ! start_core_runtime_services; then
     return 1
   fi
@@ -923,11 +925,14 @@ echo "ERROR: deploy finished but application is not healthy." >&2
 if [[ -n "\$previous_revision" ]]; then
   if [[ "\${DEPLOY_RUNTIME_MUTATED}" != "1" ]]; then
     internal_rollback_status="skipped_pre_mutation"
+    emit_remote_deploy_state_markers
     echo "WARN: deploy failed before runtime mutation; skipping internal rollback rebuild." >&2
     exit 1
   fi
 
   echo "INFO: attempting rollback to previous revision \${previous_revision}..."
+  internal_rollback_status="attempting"
+  emit_remote_deploy_state_markers
   run_git reset --hard "\${previous_revision}"
   run_git submodule sync --recursive
   run_git submodule update --init --recursive
@@ -937,29 +942,37 @@ if [[ -n "\$previous_revision" ]]; then
     rollback_web_runtime_sha="\$(git ls-tree "\${previous_revision}" web-app 2>/dev/null | awk '{print \$3}' | tr -d '[:space:]' || true)"
   fi
   if [[ -z "\${rollback_web_runtime_sha}" ]]; then
+    internal_rollback_status="failure"
+    emit_remote_deploy_state_markers
     echo "ERROR: could not resolve rollback web-app runtime SHA for previous revision \${previous_revision}." >&2
     exit 1
   fi
   if ! checkout_web_runtime_ref "\${rollback_web_runtime_sha}" "rollback target '\${rollback_web_runtime_sha}'"; then
+    internal_rollback_status="failure"
+    emit_remote_deploy_state_markers
     echo "ERROR: failed to restore rollback web-app runtime content." >&2
     exit 1
   fi
 
   internal_rollback_target_revision="\${previous_revision}"
   internal_rollback_target_web_runtime_sha="\${rollback_web_runtime_sha}"
+  emit_remote_deploy_state_markers
 
   if deploy_and_check_health; then
     prune_docker_artifacts
     internal_rollback_status="success"
+    emit_remote_deploy_state_markers
     echo "INFO: rollback succeeded; previous version restored."
   else
     internal_rollback_status="failure"
+    emit_remote_deploy_state_markers
     echo "ERROR: rollback failed; service is in explicit degraded/incident state." >&2
     "\${DOCKER_COMPOSE[@]}" ps || true
     "\${DOCKER_COMPOSE[@]}" logs --tail=200 app worker scheduler nginx || true
   fi
 else
   internal_rollback_status="skipped_no_previous_revision"
+  emit_remote_deploy_state_markers
   echo "WARN: previous revision not found; rollback skipped." >&2
 fi
 

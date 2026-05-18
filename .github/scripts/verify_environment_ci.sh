@@ -75,6 +75,19 @@ if ! grep -Fq 'echo "runtime_mutated=${runtime_mutated_output}"' .github/scripts
   exit 1
 fi
 
+required_live_marker_emissions=(
+  'DEPLOY_RUNTIME_MUTATED=1'
+  'internal_rollback_status="attempting"'
+  'emit_remote_deploy_state_markers'
+)
+
+for marker in "${required_live_marker_emissions[@]}"; do
+  if ! grep -Fq "${marker}" .github/scripts/deploy_stage_over_ssh.sh; then
+    echo "ERROR: deploy_stage_over_ssh.sh must persist live deploy-state evidence for marker '${marker}'." >&2
+    exit 1
+  fi
+done
+
 if ! grep -Fq 'EXPECTED_FLUTTER_SHA' .github/scripts/check_deployed_web_provenance.sh; then
   echo "ERROR: check_deployed_web_provenance.sh must support EXPECTED_FLUTTER_SHA override for rollback proof." >&2
   exit 1
