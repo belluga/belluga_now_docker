@@ -224,6 +224,7 @@ jobs:
           remote_output="$(
             ssh -p "${DEPLOY_SSH_PORT}" -i "${DEPLOY_SSH_KEY_PATH}" \
               -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+              -o ConnectTimeout=5 -o ConnectionAttempts=1 \
               "${DEPLOY_SSH_USER}@${DEPLOY_SSH_HOST}" "set -euo pipefail; if [[ -d '${DEPLOY_PATH}/.git' ]]; then cd '${DEPLOY_PATH}'; trusted_tuple_present=false; target=''; if [[ -f '.last_successful_revision' ]]; then trusted_tuple_present=true; marker=\$(cat '.last_successful_revision' | tr -d '\r'); if printf '%s\n' \"\$marker\" | grep -Eq '^[0-9a-fA-F]{40}$'; then target=\"\$marker\"; else target=\$(printf '%s\n' \"\$marker\" | sed -n 's/^ROOT_SHA=//p' | head -n 1); fi; elif git rev-parse --verify HEAD >/dev/null 2>&1; then target=\$(git rev-parse HEAD); fi; printf 'target=%s\ntrusted_tuple_present=%s\n' \"\$target\" \"\$trusted_tuple_present\"; fi"
           )"
 
@@ -864,6 +865,7 @@ jobs:
           remote_output="$(
             ssh -p "${DEPLOY_SSH_PORT}" -i "${DEPLOY_SSH_KEY_PATH}" \
               -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+              -o ConnectTimeout=5 -o ConnectionAttempts=1 \
               "${DEPLOY_SSH_USER}@${DEPLOY_SSH_HOST}" "set -euo pipefail; if [[ -d '${DEPLOY_PATH}/.git' ]]; then cd '${DEPLOY_PATH}'; trusted_tuple_present=false; target=''; if [[ -f '.last_successful_revision' ]]; then trusted_tuple_present=true; marker=\$(cat '.last_successful_revision' | tr -d '\r'); if printf '%s\n' \"\$marker\" | grep -Eq '^[0-9a-fA-F]{40}$'; then target=\"\$marker\"; else target=\$(printf '%s\n' \"\$marker\" | sed -n 's/^ROOT_SHA=//p' | head -n 1); fi; elif git rev-parse --verify HEAD >/dev/null 2>&1; then target=\$(git rev-parse HEAD); fi; printf 'target=%s\ntrusted_tuple_present=%s\n' \"\$target\" \"\$trusted_tuple_present\"; fi"
           )"
 
