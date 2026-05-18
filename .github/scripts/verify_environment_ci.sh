@@ -88,6 +88,16 @@ for marker in "${required_live_marker_emissions[@]}"; do
   fi
 done
 
+if ! grep -Fq 'ConnectTimeout=5 -o ConnectionAttempts=1' .github/workflows/orchestration-ci-cd.yml; then
+  echo "ERROR: orchestration-ci-cd.yml must bound direct SSH capture steps with connect timeouts." >&2
+  exit 1
+fi
+
+if ! grep -Fq 'ConnectTimeout=5 -o ConnectionAttempts=1' .github/scripts/collect_remote_deploy_diagnostics.sh; then
+  echo "ERROR: collect_remote_deploy_diagnostics.sh must bound SSH diagnostics with connect timeouts." >&2
+  exit 1
+fi
+
 if ! grep -Fq 'EXPECTED_FLUTTER_SHA' .github/scripts/check_deployed_web_provenance.sh; then
   echo "ERROR: check_deployed_web_provenance.sh must support EXPECTED_FLUTTER_SHA override for rollback proof." >&2
   exit 1
