@@ -132,9 +132,13 @@ fi
 
 cd "\$DEPLOY_PATH"
 previous_revision=""
+previous_web_runtime_sha=""
 rollback_protection_ref=""
 if git rev-parse --verify HEAD >/dev/null 2>&1; then
   previous_revision="\$(git rev-parse HEAD)"
+fi
+if [[ -d "web-app" ]] && git -C web-app rev-parse HEAD >/dev/null 2>&1; then
+  previous_web_runtime_sha="\$(git -C web-app rev-parse HEAD | tr -d '[:space:]')"
 fi
 
 cleanup_rollback_protection_ref() {
@@ -165,25 +169,27 @@ run_git reset --hard "origin/\$DEPLOY_BRANCH"
 run_git submodule sync --recursive
 run_git submodule update --init --recursive
 
-sync_web_runtime_lane() {
-  local lane_ref runtime_web_sha
-
-  lane_ref="origin/\${DEPLOY_LANE}"
+checkout_web_runtime_ref() {
+  local target_ref="\$1"
+  local target_label="\$2"
+  local runtime_web_sha
   if [[ ! -d "web-app" ]]; then
     echo "ERROR: missing web-app directory after submodule checkout." >&2
     return 1
   fi
 
-  # Web is a lane-derived runtime artifact. Always deploy from lane branch
-  # instead of relying on promotable web gitlink contracts.
-  run_git -C web-app fetch --prune origin "\${DEPLOY_LANE}"
-  run_git -C web-app checkout --detach "\${lane_ref}"
+  if [[ "\${target_ref}" == origin/* ]]; then
+    run_git -C web-app fetch --prune origin "\${target_ref#origin/}"
+  else
+    run_git -C web-app fetch --prune origin "\${target_ref}" || true
+  fi
+  run_git -C web-app checkout --detach "\${target_ref}"
 
   runtime_web_sha="\$(git -C web-app rev-parse HEAD | tr -d '[:space:]')"
-  echo "INFO: runtime web-app lane '\${DEPLOY_LANE}' resolved to \${runtime_web_sha}"
+  echo "INFO: runtime web-app \${target_label} resolved to \${runtime_web_sha}"
 }
 
-if ! sync_web_runtime_lane; then
+if ! checkout_web_runtime_ref "origin/\${DEPLOY_LANE}" "lane '\${DEPLOY_LANE}'"; then
   echo "ERROR: failed to resolve runtime web-app lane content." >&2
   exit 1
 fi
@@ -895,6 +901,7 @@ echo "ERROR: deploy finished but application is not healthy." >&2
 
 if [[ -n "\$previous_revision" ]]; then
   if [[ "\${DEPLOY_RUNTIME_MUTATED}" != "1" ]]; then
+    echo "INTERNAL_ROLLBACK_STATUS=skipped_pre_mutation"
     echo "WARN: deploy failed before runtime mutation; skipping internal rollback rebuild." >&2
     exit 1
   fi
@@ -904,15 +911,34 @@ if [[ -n "\$previous_revision" ]]; then
   run_git submodule sync --recursive
   run_git submodule update --init --recursive
 
+  rollback_web_runtime_sha="\${previous_web_runtime_sha}"
+  if [[ -z "\${rollback_web_runtime_sha}" ]]; then
+    rollback_web_runtime_sha="\$(git ls-tree "\${previous_revision}" web-app 2>/dev/null | awk '{print \$3}' | tr -d '[:space:]' || true)"
+  fi
+  if [[ -z "\${rollback_web_runtime_sha}" ]]; then
+    echo "ERROR: could not resolve rollback web-app runtime SHA for previous revision \${previous_revision}." >&2
+    exit 1
+  fi
+  if ! checkout_web_runtime_ref "\${rollback_web_runtime_sha}" "rollback target '\${rollback_web_runtime_sha}'"; then
+    echo "ERROR: failed to restore rollback web-app runtime content." >&2
+    exit 1
+  fi
+
+  echo "INTERNAL_ROLLBACK_TARGET_REVISION=\${previous_revision}"
+  echo "INTERNAL_ROLLBACK_TARGET_WEB_APP_RUNTIME_SHA=\${rollback_web_runtime_sha}"
+
   if deploy_and_check_health; then
     prune_docker_artifacts
+    echo "INTERNAL_ROLLBACK_STATUS=success"
     echo "INFO: rollback succeeded; previous version restored."
   else
+    echo "INTERNAL_ROLLBACK_STATUS=failure"
     echo "ERROR: rollback failed; service may be degraded." >&2
     "\${DOCKER_COMPOSE[@]}" ps || true
     "\${DOCKER_COMPOSE[@]}" logs --tail=200 app worker scheduler nginx || true
   fi
 else
+  echo "INTERNAL_ROLLBACK_STATUS=skipped_no_previous_revision"
   echo "WARN: previous revision not found; rollback skipped." >&2
 fi
 
@@ -922,6 +948,28 @@ pipeline_status=("${PIPESTATUS[@]}")
 ssh_status=${pipeline_status[0]:-1}
 tee_status=${pipeline_status[1]:-1}
 set -e
+
+internal_rollback_status="$(
+  sed -n 's/^INTERNAL_ROLLBACK_STATUS=//p' "${remote_deploy_log}" | tail -n 1 | tr -d '\r[:space:]'
+)"
+internal_rollback_target_revision="$(
+  sed -n 's/^INTERNAL_ROLLBACK_TARGET_REVISION=//p' "${remote_deploy_log}" | tail -n 1 | tr -d '\r[:space:]'
+)"
+internal_rollback_target_web_runtime_sha="$(
+  sed -n 's/^INTERNAL_ROLLBACK_TARGET_WEB_APP_RUNTIME_SHA=//p' "${remote_deploy_log}" | tail -n 1 | tr -d '\r[:space:]'
+)"
+
+if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
+  {
+    echo "internal_rollback_status=${internal_rollback_status:-not_attempted}"
+    if [[ -n "${internal_rollback_target_revision}" ]]; then
+      echo "internal_rollback_target_revision=${internal_rollback_target_revision}"
+    fi
+    if [[ -n "${internal_rollback_target_web_runtime_sha}" ]]; then
+      echo "internal_rollback_target_web_runtime_sha=${internal_rollback_target_web_runtime_sha}"
+    fi
+  } >> "${GITHUB_OUTPUT}"
+fi
 
 if [[ "${tee_status}" -ne 0 ]]; then
   echo "ERROR: failed to persist remote ${deploy_lane} deploy log locally." >&2

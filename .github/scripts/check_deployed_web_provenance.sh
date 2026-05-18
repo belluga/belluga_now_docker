@@ -14,11 +14,23 @@ if [[ -z "${nav_landlord_url}" ]]; then
 fi
 
 repo_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
-expected_flutter_sha="$(git -C "${repo_root}/flutter-app" rev-parse HEAD 2>/dev/null | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]' || true)"
-expected_web_sha="$(git -C "${repo_root}/web-app" rev-parse HEAD 2>/dev/null | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]' || true)"
+expected_flutter_sha_override="$(printf '%s' "${EXPECTED_FLUTTER_SHA:-}" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')"
+expected_flutter_sha_source="local-checkout"
+if [[ -n "${expected_flutter_sha_override}" ]]; then
+  expected_flutter_sha="${expected_flutter_sha_override}"
+  expected_web_sha=""
+  expected_flutter_sha_source="override"
+else
+  expected_flutter_sha="$(git -C "${repo_root}/flutter-app" rev-parse HEAD 2>/dev/null | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]' || true)"
+  expected_web_sha="$(git -C "${repo_root}/web-app" rev-parse HEAD 2>/dev/null | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]' || true)"
+fi
 
 if [[ -z "${expected_flutter_sha}" ]]; then
-  echo "ERROR: could not resolve expected flutter-app SHA from checked out submodules." >&2
+  if [[ "${expected_flutter_sha_source}" == "override" ]]; then
+    echo "ERROR: EXPECTED_FLUTTER_SHA override was provided but empty after normalization." >&2
+  else
+    echo "ERROR: could not resolve expected flutter-app SHA from checked out submodules." >&2
+  fi
   exit 1
 fi
 
@@ -145,7 +157,7 @@ fi
 
 if [[ -z "${metadata_match_mode}" ]]; then
   echo "ERROR: deployed flutter sha mismatch for lane '${lane}'." >&2
-  echo "Expected flutter-app gitlink: ${expected_flutter_sha}" >&2
+  echo "Expected flutter-app SHA (${expected_flutter_sha_source}): ${expected_flutter_sha}" >&2
   echo "Actual deployed build_metadata.flutter_git_sha: ${actual_flutter_sha}" >&2
   if [[ -n "${expected_web_sha}" ]]; then
     echo "Expected web-app gitlink (diagnostic): ${expected_web_sha}" >&2
@@ -222,7 +234,7 @@ if [[ "${actual_landlord_host}" != "${expected_landlord_host}" ]]; then
 fi
 
 echo "OK: deployed flutter sha matches expected lane gitlink for '${lane}' via ${metadata_match_mode}."
-echo "Expected flutter-app gitlink: ${expected_flutter_sha}"
+echo "Expected flutter-app SHA (${expected_flutter_sha_source}): ${expected_flutter_sha}"
 echo "Deployed build_metadata.flutter_git_sha: ${actual_flutter_sha}"
 echo "Deployed build_metadata.source_branch: ${source_branch}"
 echo "Expected lane landlord host: ${expected_landlord_host}"

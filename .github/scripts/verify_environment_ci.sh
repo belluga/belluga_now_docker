@@ -41,6 +41,57 @@ for script in .github/scripts/deploy_stage_over_ssh.sh .github/scripts/rollback_
   done
 done
 
+required_release_tuple_markers=(
+  "ROOT_SHA="
+  "WEB_APP_RUNTIME_SHA="
+  "DEPLOY_LANE="
+  "RECORDED_AT="
+)
+
+for marker in "${required_release_tuple_markers[@]}"; do
+  if ! grep -Fq "${marker}" .github/scripts/mark_successful_revision_over_ssh.sh; then
+    echo "ERROR: mark_successful_revision_over_ssh.sh missing release tuple marker '${marker}'." >&2
+    exit 1
+  fi
+done
+
+required_internal_rollback_markers=(
+  "INTERNAL_ROLLBACK_STATUS="
+  "INTERNAL_ROLLBACK_TARGET_REVISION="
+  "INTERNAL_ROLLBACK_TARGET_WEB_APP_RUNTIME_SHA="
+)
+
+for marker in "${required_internal_rollback_markers[@]}"; do
+  if ! grep -Fq "${marker}" .github/scripts/deploy_stage_over_ssh.sh; then
+    echo "ERROR: deploy_stage_over_ssh.sh missing internal rollback marker '${marker}'." >&2
+    exit 1
+  fi
+done
+
+if ! grep -Fq 'EXPECTED_FLUTTER_SHA' .github/scripts/check_deployed_web_provenance.sh; then
+  echo "ERROR: check_deployed_web_provenance.sh must support EXPECTED_FLUTTER_SHA override for rollback proof." >&2
+  exit 1
+fi
+
+required_workflow_markers=(
+  "id: stage_rollback_proof_plan"
+  "id: stage_rollback_provenance_check"
+  "id: main_rollback_proof_plan"
+  "id: main_rollback_provenance_check"
+)
+
+for marker in "${required_workflow_markers[@]}"; do
+  if ! grep -Fq "${marker}" .github/workflows/orchestration-ci-cd.yml; then
+    echo "ERROR: orchestration-ci-cd.yml missing rollback-proof workflow marker '${marker}'." >&2
+    exit 1
+  fi
+done
+
+if grep -R -Fq "service may remain degraded" .github/workflows/orchestration-ci-cd.yml .github/scripts/deploy_stage_over_ssh.sh .github/scripts/rollback_over_ssh.sh; then
+  echo "ERROR: degraded-state wording still uses 'service may remain degraded'; require explicit incident/degraded contract wording." >&2
+  exit 1
+fi
+
 worker_block="$(awk '
   /^  worker:/ { in_worker=1; print; next }
   in_worker && /^  [a-zA-Z0-9_-]+:/ { exit }
