@@ -106,26 +106,46 @@ fi
 cd "\$DEPLOY_PATH"
 
 target_revision=""
+target_web_runtime_sha=""
+marker_root_sha=""
+marker_web_runtime_sha=""
 explicit_target="\${ROLLBACK_TARGET_REVISION:-}"
 if [[ -n "\$explicit_target" ]]; then
   target_revision="\$(echo "\$explicit_target" | tr -d '[:space:]')"
 fi
 
-if [[ -z "\$target_revision" && -f ".last_successful_revision" ]]; then
-  target_revision="\$(cat .last_successful_revision | tr -d '[:space:]')"
+if [[ -f ".last_successful_revision" ]]; then
+  marker_content="\$(cat .last_successful_revision | tr -d '\r')"
+  if printf '%s\n' "\${marker_content}" | grep -Eq '^[0-9a-fA-F]{40}$'; then
+    marker_root_sha="\$(printf '%s' "\${marker_content}" | tr -d '[:space:]')"
+  else
+    marker_root_sha="\$(printf '%s\n' "\${marker_content}" | sed -n 's/^ROOT_SHA=//p' | head -n 1 | tr -d '[:space:]')"
+    marker_web_runtime_sha="\$(printf '%s\n' "\${marker_content}" | sed -n 's/^WEB_APP_RUNTIME_SHA=//p' | head -n 1 | tr -d '[:space:]')"
+  fi
 fi
 
 if [[ -z "\$target_revision" ]]; then
-  echo "WARN: rollback target marker missing; falling back to HEAD~1." >&2
-  target_revision="\$(git rev-parse HEAD~1)"
+  target_revision="\${marker_root_sha}"
 fi
 
 if [[ -z "\$target_revision" ]]; then
-  echo "ERROR: unable to resolve rollback target revision." >&2
+  echo "ERROR: unable to resolve rollback target revision from explicit input or successful-release marker." >&2
+  exit 1
+fi
+
+if [[ -n "\${marker_root_sha}" && "\${marker_root_sha}" == "\${target_revision}" && -n "\${marker_web_runtime_sha}" ]]; then
+  target_web_runtime_sha="\${marker_web_runtime_sha}"
+fi
+if [[ -z "\${target_web_runtime_sha}" ]]; then
+  target_web_runtime_sha="\$(git ls-tree "\${target_revision}" web-app 2>/dev/null | awk '{print \$3}' | tr -d '[:space:]' || true)"
+fi
+if [[ -z "\${target_web_runtime_sha}" ]]; then
+  echo "ERROR: unable to resolve rollback web-app runtime SHA for target revision \${target_revision}." >&2
   exit 1
 fi
 
 echo "INFO: rollback target revision: \${target_revision}"
+echo "INFO: rollback target web-app runtime SHA: \${target_web_runtime_sha}"
 
 run_git fetch --prune origin "\$DEPLOY_BRANCH"
 run_git checkout "\$DEPLOY_BRANCH"
@@ -133,25 +153,28 @@ run_git reset --hard "\$target_revision"
 run_git submodule sync --recursive
 run_git submodule update --init --recursive
 
-sync_web_runtime_lane() {
-  local lane_ref runtime_web_sha
-
-  lane_ref="origin/\${DEPLOY_LANE}"
+checkout_web_runtime_ref() {
+  local target_ref="\$1"
+  local target_label="\$2"
+  local runtime_web_sha
   if [[ ! -d "web-app" ]]; then
     echo "ERROR: missing web-app directory after submodule checkout." >&2
     return 1
   fi
 
-  # Keep rollback aligned with lane runtime web source policy.
-  run_git -C web-app fetch --prune origin "\${DEPLOY_LANE}"
-  run_git -C web-app checkout --detach "\${lane_ref}"
+  if [[ "\${target_ref}" == origin/* ]]; then
+    run_git -C web-app fetch --prune origin "\${target_ref#origin/}"
+  else
+    run_git -C web-app fetch --prune origin "\${target_ref}" || true
+  fi
+  run_git -C web-app checkout --detach "\${target_ref}"
 
   runtime_web_sha="\$(git -C web-app rev-parse HEAD | tr -d '[:space:]')"
-  echo "INFO: rollback runtime web-app lane '\${DEPLOY_LANE}' resolved to \${runtime_web_sha}"
+  echo "INFO: rollback runtime web-app \${target_label} resolved to \${runtime_web_sha}"
 }
 
-if ! sync_web_runtime_lane; then
-  echo "ERROR: failed to resolve runtime web-app lane content during rollback." >&2
+if ! checkout_web_runtime_ref "\${target_web_runtime_sha}" "target '\${target_web_runtime_sha}'"; then
+  echo "ERROR: failed to resolve runtime web-app content during rollback." >&2
   exit 1
 fi
 
