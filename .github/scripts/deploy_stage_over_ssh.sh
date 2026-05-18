@@ -123,6 +123,9 @@ else
 fi
 
 DEPLOY_RUNTIME_MUTATED=0
+internal_rollback_status="not_attempted"
+internal_rollback_target_revision=""
+internal_rollback_target_web_runtime_sha=""
 
 mkdir -p "\$DEPLOY_PATH"
 
@@ -155,7 +158,25 @@ cleanup_rollback_protection_ref() {
   fi
 }
 
-trap cleanup_rollback_protection_ref EXIT
+emit_remote_deploy_state_markers() {
+  echo "DEPLOY_RUNTIME_MUTATED=${DEPLOY_RUNTIME_MUTATED}"
+  echo "INTERNAL_ROLLBACK_STATUS=${internal_rollback_status}"
+  if [[ -n "${internal_rollback_target_revision}" ]]; then
+    echo "INTERNAL_ROLLBACK_TARGET_REVISION=${internal_rollback_target_revision}"
+  fi
+  if [[ -n "${internal_rollback_target_web_runtime_sha}" ]]; then
+    echo "INTERNAL_ROLLBACK_TARGET_WEB_APP_RUNTIME_SHA=${internal_rollback_target_web_runtime_sha}"
+  fi
+}
+
+remote_exit_trap() {
+  local exit_code=$?
+  cleanup_rollback_protection_ref
+  emit_remote_deploy_state_markers
+  return "${exit_code}"
+}
+
+trap remote_exit_trap EXIT
 
 if [[ -n "\${previous_revision}" ]]; then
   rollback_protection_ref="refs/delphi/deploy-rollback/\${DEPLOY_BRANCH//\//-}"
@@ -901,7 +922,7 @@ echo "ERROR: deploy finished but application is not healthy." >&2
 
 if [[ -n "\$previous_revision" ]]; then
   if [[ "\${DEPLOY_RUNTIME_MUTATED}" != "1" ]]; then
-    echo "INTERNAL_ROLLBACK_STATUS=skipped_pre_mutation"
+    internal_rollback_status="skipped_pre_mutation"
     echo "WARN: deploy failed before runtime mutation; skipping internal rollback rebuild." >&2
     exit 1
   fi
@@ -924,21 +945,21 @@ if [[ -n "\$previous_revision" ]]; then
     exit 1
   fi
 
-  echo "INTERNAL_ROLLBACK_TARGET_REVISION=\${previous_revision}"
-  echo "INTERNAL_ROLLBACK_TARGET_WEB_APP_RUNTIME_SHA=\${rollback_web_runtime_sha}"
+  internal_rollback_target_revision="\${previous_revision}"
+  internal_rollback_target_web_runtime_sha="\${rollback_web_runtime_sha}"
 
   if deploy_and_check_health; then
     prune_docker_artifacts
-    echo "INTERNAL_ROLLBACK_STATUS=success"
+    internal_rollback_status="success"
     echo "INFO: rollback succeeded; previous version restored."
   else
-    echo "INTERNAL_ROLLBACK_STATUS=failure"
-    echo "ERROR: rollback failed; service may be degraded." >&2
+    internal_rollback_status="failure"
+    echo "ERROR: rollback failed; service is in explicit degraded/incident state." >&2
     "\${DOCKER_COMPOSE[@]}" ps || true
     "\${DOCKER_COMPOSE[@]}" logs --tail=200 app worker scheduler nginx || true
   fi
 else
-  echo "INTERNAL_ROLLBACK_STATUS=skipped_no_previous_revision"
+  internal_rollback_status="skipped_no_previous_revision"
   echo "WARN: previous revision not found; rollback skipped." >&2
 fi
 
@@ -958,9 +979,17 @@ internal_rollback_target_revision="$(
 internal_rollback_target_web_runtime_sha="$(
   sed -n 's/^INTERNAL_ROLLBACK_TARGET_WEB_APP_RUNTIME_SHA=//p' "${remote_deploy_log}" | tail -n 1 | tr -d '\r[:space:]'
 )"
+runtime_mutated_marker="$(
+  sed -n 's/^DEPLOY_RUNTIME_MUTATED=//p' "${remote_deploy_log}" | tail -n 1 | tr -d '\r[:space:]'
+)"
+runtime_mutated_output=false
+if [[ "${runtime_mutated_marker}" == "1" ]]; then
+  runtime_mutated_output=true
+fi
 
 if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
   {
+    echo "runtime_mutated=${runtime_mutated_output}"
     echo "internal_rollback_status=${internal_rollback_status:-not_attempted}"
     if [[ -n "${internal_rollback_target_revision}" ]]; then
       echo "internal_rollback_target_revision=${internal_rollback_target_revision}"

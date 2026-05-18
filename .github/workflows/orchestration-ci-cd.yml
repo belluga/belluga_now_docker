@@ -469,9 +469,9 @@ jobs:
           DEPLOY_SSH_KEY_PATH: ~/.ssh/id_ed25519_stage
         run: bash .github/scripts/mark_successful_revision_over_ssh.sh
 
-      - name: Roll back stage deploy when provenance, preflight, or smoke fails
+      - name: Roll back stage deploy when provenance, preflight, smoke, or post-mutation deploy failure requires recovery
         id: stage_rollback
-        if: ${{ always() && (steps.stage_initialize_preflight.outcome == 'failure' || steps.stage_unexpected_initialize_403.outcome == 'failure' || (steps.stage_initialize_preflight.outputs.initialized == 'true' && (steps.stage_public_edge_environment_probe.outcome == 'failure' || steps.stage_provenance_check.outcome == 'failure' || steps.stage_public_taxonomy_validation_fixture.outcome == 'failure' || steps.stage_navigation_smoke.outcome == 'failure' || steps.stage_navigation_mutation_smoke.outcome == 'failure'))) }}
+        if: ${{ always() && ((steps.stage_deploy_remote.outcome == 'failure' && steps.stage_deploy_remote.outputs.runtime_mutated == 'true' && steps.stage_deploy_remote.outputs.internal_rollback_status != 'success') || steps.stage_initialize_preflight.outcome == 'failure' || steps.stage_unexpected_initialize_403.outcome == 'failure' || (steps.stage_initialize_preflight.outputs.initialized == 'true' && (steps.stage_public_edge_environment_probe.outcome == 'failure' || steps.stage_provenance_check.outcome == 'failure' || steps.stage_public_taxonomy_validation_fixture.outcome == 'failure' || steps.stage_navigation_smoke.outcome == 'failure' || steps.stage_navigation_mutation_smoke.outcome == 'failure'))) }}
         env:
           DEPLOY_LANE: stage
           DEPLOY_SSH_HOST: ${{ vars.STAGE_SSH_HOST }}
@@ -739,6 +739,12 @@ jobs:
             echo "ERROR: stage remote deploy script failed after runtime mutation and internal rollback failed; terminal state is explicit degraded/incident." >&2
           elif [[ "${{ steps.stage_deploy_remote.outcome }}" == "failure" && "${{ steps.stage_deploy_remote.outputs.internal_rollback_status }}" == "skipped_no_previous_revision" ]]; then
             echo "ERROR: stage remote deploy script failed after runtime mutation but no previous revision existed for internal rollback; terminal state is explicit degraded/incident." >&2
+          elif [[ "${{ steps.stage_deploy_remote.outcome }}" == "failure" && "${{ steps.stage_deploy_remote.outputs.runtime_mutated }}" == "true" && "${{ steps.stage_rollback.outcome }}" == "success" ]]; then
+            echo "ERROR: stage remote deploy script failed after runtime mutation; external rollback restored the previous healthy tuple and post-rollback proof passed." >&2
+          elif [[ "${{ steps.stage_deploy_remote.outcome }}" == "failure" && "${{ steps.stage_deploy_remote.outputs.runtime_mutated }}" == "true" && "${{ steps.stage_rollback.outcome }}" == "failure" ]]; then
+            echo "ERROR: stage remote deploy script failed after runtime mutation and external rollback failed; terminal state is explicit degraded/incident." >&2
+          elif [[ "${{ steps.stage_deploy_remote.outcome }}" == "failure" && "${{ steps.stage_deploy_remote.outputs.runtime_mutated }}" == "true" ]]; then
+            echo "ERROR: stage remote deploy script failed after runtime mutation, but no rollback executor produced a proved healthy terminal state; terminal state is explicit degraded/incident." >&2
           elif [[ "${{ steps.stage_deploy_remote.outcome }}" == "failure" ]]; then
             echo "ERROR: stage remote deploy script failed before runtime mutation; no rollback proof path was required." >&2
           elif [[ "${{ steps.stage_initialize_preflight.outcome }}" == "failure" && "${{ steps.stage_rollback.outcome }}" == "failure" ]]; then
@@ -1096,9 +1102,9 @@ jobs:
           DEPLOY_SSH_KEY_PATH: ~/.ssh/id_ed25519_main
         run: bash .github/scripts/mark_successful_revision_over_ssh.sh
 
-      - name: Roll back production deploy when provenance, preflight, or smoke fails
+      - name: Roll back production deploy when provenance, preflight, smoke, or post-mutation deploy failure requires recovery
         id: main_rollback
-        if: ${{ always() && (steps.main_initialize_preflight.outcome == 'failure' || steps.main_unexpected_initialize_403.outcome == 'failure' || (steps.main_initialize_preflight.outputs.initialized == 'true' && (steps.main_public_edge_environment_probe.outcome == 'failure' || steps.main_provenance_check.outcome == 'failure' || steps.production_navigation_smoke.outcome == 'failure'))) }}
+        if: ${{ always() && ((steps.main_deploy_remote.outcome == 'failure' && steps.main_deploy_remote.outputs.runtime_mutated == 'true' && steps.main_deploy_remote.outputs.internal_rollback_status != 'success') || steps.main_initialize_preflight.outcome == 'failure' || steps.main_unexpected_initialize_403.outcome == 'failure' || (steps.main_initialize_preflight.outputs.initialized == 'true' && (steps.main_public_edge_environment_probe.outcome == 'failure' || steps.main_provenance_check.outcome == 'failure' || steps.production_navigation_smoke.outcome == 'failure'))) }}
         env:
           DEPLOY_LANE: main
           DEPLOY_SSH_HOST: ${{ vars.MAIN_SSH_HOST }}
@@ -1372,6 +1378,12 @@ jobs:
             echo "ERROR: production remote deploy script failed after runtime mutation and internal rollback failed; terminal state is explicit degraded/incident." >&2
           elif [[ "${{ steps.main_deploy_remote.outcome }}" == "failure" && "${{ steps.main_deploy_remote.outputs.internal_rollback_status }}" == "skipped_no_previous_revision" ]]; then
             echo "ERROR: production remote deploy script failed after runtime mutation but no previous revision existed for internal rollback; terminal state is explicit degraded/incident." >&2
+          elif [[ "${{ steps.main_deploy_remote.outcome }}" == "failure" && "${{ steps.main_deploy_remote.outputs.runtime_mutated }}" == "true" && "${{ steps.main_rollback.outcome }}" == "success" ]]; then
+            echo "ERROR: production remote deploy script failed after runtime mutation; external rollback restored the previous healthy tuple and post-rollback proof passed." >&2
+          elif [[ "${{ steps.main_deploy_remote.outcome }}" == "failure" && "${{ steps.main_deploy_remote.outputs.runtime_mutated }}" == "true" && "${{ steps.main_rollback.outcome }}" == "failure" ]]; then
+            echo "ERROR: production remote deploy script failed after runtime mutation and external rollback failed; terminal state is explicit degraded/incident." >&2
+          elif [[ "${{ steps.main_deploy_remote.outcome }}" == "failure" && "${{ steps.main_deploy_remote.outputs.runtime_mutated }}" == "true" ]]; then
+            echo "ERROR: production remote deploy script failed after runtime mutation, but no rollback executor produced a proved healthy terminal state; terminal state is explicit degraded/incident." >&2
           elif [[ "${{ steps.main_deploy_remote.outcome }}" == "failure" ]]; then
             echo "ERROR: production remote deploy script failed before runtime mutation; no rollback proof path was required." >&2
           elif [[ "${{ steps.main_initialize_preflight.outcome }}" == "failure" && "${{ steps.main_rollback.outcome }}" == "failure" ]]; then
