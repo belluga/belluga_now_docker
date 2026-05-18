@@ -278,9 +278,14 @@ async function deleteEventType(api, baseUrl, token, eventTypeId) {
 }
 
 function matchesPoiCapableProfileType(row, { requireEvents = false } = {}) {
-  return row?.capabilities?.is_poi_enabled === true
-    && row?.capabilities?.is_reference_location_enabled === true
-    && (!requireEvents || row?.capabilities?.has_events === true);
+  const capabilities = row?.capabilities || {};
+  const isPubliclyDiscoverable =
+    capabilities.is_publicly_discoverable !== false;
+  return capabilities.is_poi_enabled === true
+    && capabilities.is_reference_location_enabled === true
+    && capabilities.is_favoritable === true
+    && isPubliclyDiscoverable
+    && (!requireEvents || capabilities.has_events === true);
 }
 
 async function resolvePoiCapableProfileType(
@@ -322,6 +327,7 @@ async function resolvePoiCapableProfileType(
         },
         capabilities: {
           is_favoritable: true,
+          is_publicly_discoverable: true,
           is_poi_enabled: true,
           is_reference_location_enabled: true,
           has_bio: false,
