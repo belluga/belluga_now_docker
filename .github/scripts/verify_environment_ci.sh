@@ -57,6 +57,7 @@ for marker in "${required_release_tuple_markers[@]}"; do
 done
 
 required_internal_rollback_markers=(
+  "DEPLOY_RUNTIME_MUTATED="
   "INTERNAL_ROLLBACK_STATUS="
   "INTERNAL_ROLLBACK_TARGET_REVISION="
   "INTERNAL_ROLLBACK_TARGET_WEB_APP_RUNTIME_SHA="
@@ -68,6 +69,11 @@ for marker in "${required_internal_rollback_markers[@]}"; do
     exit 1
   fi
 done
+
+if ! grep -Fq 'echo "runtime_mutated=${runtime_mutated_output}"' .github/scripts/deploy_stage_over_ssh.sh; then
+  echo "ERROR: deploy_stage_over_ssh.sh must export runtime_mutated to GITHUB_OUTPUT for workflow rollback classification." >&2
+  exit 1
+fi
 
 if ! grep -Fq 'EXPECTED_FLUTTER_SHA' .github/scripts/check_deployed_web_provenance.sh; then
   echo "ERROR: check_deployed_web_provenance.sh must support EXPECTED_FLUTTER_SHA override for rollback proof." >&2
@@ -89,6 +95,18 @@ required_workflow_markers=(
 for marker in "${required_workflow_markers[@]}"; do
   if ! grep -Fq "${marker}" .github/workflows/orchestration-ci-cd.yml; then
     echo "ERROR: orchestration-ci-cd.yml missing rollback-proof workflow marker '${marker}'." >&2
+    exit 1
+  fi
+done
+
+required_runtime_mutation_workflow_markers=(
+  "steps.stage_deploy_remote.outputs.runtime_mutated"
+  "steps.main_deploy_remote.outputs.runtime_mutated"
+)
+
+for marker in "${required_runtime_mutation_workflow_markers[@]}"; do
+  if ! grep -Fq "${marker}" .github/workflows/orchestration-ci-cd.yml; then
+    echo "ERROR: orchestration-ci-cd.yml missing runtime mutation recovery marker '${marker}'." >&2
     exit 1
   fi
 done
