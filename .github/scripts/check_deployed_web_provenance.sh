@@ -62,6 +62,9 @@ curl_args=(
   -H "Pragma: no-cache"
 )
 
+provenance_max_attempts="${NAV_PROVENANCE_MAX_ATTEMPTS:-3}"
+provenance_sleep_seconds="${NAV_PROVENANCE_SLEEP_SECONDS:-5}"
+
 if [[ -n "${NAV_ORIGIN_IP:-}" ]]; then
   probe_base_url="http://${NAV_ORIGIN_IP}"
   curl_args+=(-H "Host: ${landlord_host}")
@@ -71,7 +74,30 @@ else
 fi
 
 metadata_url="${probe_base_url}/build_metadata.json?_ci_probe=${cache_key}"
-status="$(curl "${curl_args[@]}" -o "${metadata_file}" -w '%{http_code}' "${metadata_url}")"
+fetch_with_retries() {
+  local url="$1"
+  local output_file="$2"
+  local label="$3"
+  local status=""
+  local attempt
+
+  for attempt in $(seq 1 "${provenance_max_attempts}"); do
+    if status="$(curl "${curl_args[@]}" -o "${output_file}" -w '%{http_code}' "${url}")"; then
+      printf '%s' "${status}"
+      return 0
+    fi
+
+    if [[ "${attempt}" -lt "${provenance_max_attempts}" ]]; then
+      echo "WARN: ${label} fetch attempt ${attempt}/${provenance_max_attempts} failed; retrying in ${provenance_sleep_seconds}s..." >&2
+      sleep "${provenance_sleep_seconds}"
+    fi
+  done
+
+  echo "ERROR: ${label} fetch failed after ${provenance_max_attempts} attempt(s)." >&2
+  return 1
+}
+
+status="$(fetch_with_retries "${metadata_url}" "${metadata_file}" "deployed build metadata")"
 if [[ ! "${status}" =~ ^[0-9]+$ ]]; then
   echo "ERROR: invalid HTTP status while reading deployed build metadata: '${status}'." >&2
   exit 1
@@ -198,7 +224,7 @@ fi
 
 index_file="/tmp/${lane}_deployed_index.html"
 index_url="${probe_base_url}/index.html?_ci_probe=${cache_key}"
-index_status="$(curl "${curl_args[@]}" -o "${index_file}" -w '%{http_code}' "${index_url}")"
+index_status="$(fetch_with_retries "${index_url}" "${index_file}" "deployed index")"
 if [[ ! "${index_status}" =~ ^[0-9]+$ ]]; then
   echo "ERROR: invalid HTTP status while reading deployed index: '${index_status}'." >&2
   exit 1
