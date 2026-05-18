@@ -23,6 +23,7 @@ const fixture = {
     lat: -20.671339,
     lng: -40.495395,
   },
+  defaultOriginLabel: 'Stage Validation Default Origin',
 };
 
 function requireTenantUrl() {
@@ -505,6 +506,24 @@ async function patchDiscoveryFilters(api, baseUrl, token, surfaces) {
   );
 }
 
+async function patchMapUiDefaultOrigin(api, baseUrl, token) {
+  const response = await api.patch(
+    buildUrl(baseUrl, '/admin/api/v1/settings/values/map_ui'),
+    {
+      headers: authHeaders(token),
+      data: {
+        'default_origin.lat': fixture.location.lat,
+        'default_origin.lng': fixture.location.lng,
+        'default_origin.label': fixture.defaultOriginLabel,
+      },
+    },
+  );
+  await fetchJson(
+    response,
+    'Persist tenant-admin map_ui default_origin through Settings Kernel',
+  );
+}
+
 async function resolveAnonymousIdentityToken(api, baseUrl) {
   const response = await api.post(
     buildUrl(baseUrl, '/api/v1/anonymous/identities'),
@@ -606,6 +625,32 @@ async function ensureRuntimeMapFilterSurface(api, baseUrl, token) {
   };
 
   await patchDiscoveryFilters(api, baseUrl, token, surfaces);
+}
+
+async function ensureRuntimeDefaultOrigin(api, baseUrl, token) {
+  const valuesPayload = normalizePayload(await fetchTenantSettingsValues(api, baseUrl, token));
+  const mapUi =
+    valuesPayload?.map_ui && typeof valuesPayload.map_ui === 'object'
+      ? valuesPayload.map_ui
+      : {};
+  const defaultOrigin =
+    mapUi.default_origin && typeof mapUi.default_origin === 'object'
+      ? mapUi.default_origin
+      : {};
+  const currentLat = Number(defaultOrigin.lat);
+  const currentLng = Number(defaultOrigin.lng);
+  const currentLabel = defaultOrigin.label?.toString().trim() || '';
+  const hasExpectedOrigin =
+    Number.isFinite(currentLat) &&
+    Number.isFinite(currentLng) &&
+    currentLat === fixture.location.lat &&
+    currentLng === fixture.location.lng &&
+    currentLabel === fixture.defaultOriginLabel;
+  if (hasExpectedOrigin) {
+    return;
+  }
+
+  await patchMapUiDefaultOrigin(api, baseUrl, token);
 }
 
 async function resetOwnedFixtureArtifacts(api, baseUrl, token) {
@@ -778,6 +823,36 @@ async function verifyMapFilterCatalog(api, baseUrl) {
   ).toContain(fixture.profileType);
 }
 
+async function verifyEnvironmentDefaultOrigin(api, baseUrl) {
+  const response = await api.get(buildUrl(baseUrl, '/api/v1/environment'), {
+    headers: {
+      Accept: 'application/json',
+    },
+  });
+  const payload = normalizePayload(await fetchJson(response, 'Tenant environment payload'));
+  const defaultOrigin =
+    payload?.settings?.map_ui?.default_origin &&
+    typeof payload.settings.map_ui.default_origin === 'object'
+      ? payload.settings.map_ui.default_origin
+      : null;
+  expect(
+    defaultOrigin,
+    'Tenant environment payload must expose map_ui.default_origin after fixture bootstrap.',
+  ).toBeTruthy();
+  expect(
+    Number(defaultOrigin?.lat),
+    'Tenant environment payload must expose the seeded map_ui.default_origin.lat.',
+  ).toBe(fixture.location.lat);
+  expect(
+    Number(defaultOrigin?.lng),
+    'Tenant environment payload must expose the seeded map_ui.default_origin.lng.',
+  ).toBe(fixture.location.lng);
+  expect(
+    defaultOrigin?.label,
+    'Tenant environment payload must expose the seeded map_ui.default_origin.label.',
+  ).toBe(fixture.defaultOriginLabel);
+}
+
 async function main() {
   const baseUrl = requireTenantUrl();
   const api = await createApiContext(baseUrl);
@@ -793,9 +868,11 @@ async function main() {
       eventType,
       physicalHostId: profileId,
     });
+    await ensureRuntimeDefaultOrigin(api, baseUrl, token);
     await ensureRuntimeMapFilterSurface(api, baseUrl, token);
     await verifyAccountProfileFixture(api, baseUrl, profileSlug);
     await verifyEventFixture(api, baseUrl, event);
+    await verifyEnvironmentDefaultOrigin(api, baseUrl);
     await verifyMapFilterCatalog(api, baseUrl);
     console.log(
       `INFO: ensured public taxonomy validation fixtures ${profileSlug} and ${fixture.eventTitle} on ${baseUrl}.`,
