@@ -117,10 +117,15 @@ fi
 run_with_timeout() {
   local label="$1"
   local timeout_seconds="$2"
+  local status=0
   shift 2
 
-  if ! timeout --foreground "${timeout_seconds}s" "$@"; then
-    local status=$?
+  set +e
+  timeout --foreground "${timeout_seconds}s" "$@"
+  status=$?
+  set -e
+
+  if (( status != 0 )); then
     if (( status == 124 )); then
       echo "ERROR: ${label} exceeded deterministic deadline (${timeout_seconds}s)." >&2
     fi

@@ -203,11 +203,48 @@ function assertSmokeRunnerLoadsLocalNavigationEnv() {
   }
 }
 
+function assertRunWithTimeoutPropagatesWrappedExitStatus() {
+  const source = fs.readFileSync(smokeScript, 'utf8');
+  const match = source.match(/run_with_timeout\(\) \{[\s\S]*?\n\}/);
+  assert.ok(match, 'run_with_timeout helper should exist in smoke runner');
+
+  const result = spawnSync(
+    'bash',
+    [
+      '-lc',
+      [
+        'set -euo pipefail',
+        match[0],
+        'set +e',
+        "( run_with_timeout 'timeout-case' 1 bash -lc 'sleep 2' )",
+        'timeout_status=$?',
+        "( run_with_timeout 'failing-case' 1 bash -lc 'exit 42' )",
+        'failing_status=$?',
+        'set -e',
+        'printf "timeout=%s\\nfailing=%s\\n" "$timeout_status" "$failing_status"',
+        '[[ "$timeout_status" -eq 124 ]]',
+        '[[ "$failing_status" -eq 42 ]]',
+      ].join('\n'),
+    ],
+    {
+      cwd: repoRoot,
+      encoding: 'utf8',
+    },
+  );
+
+  assert.strictEqual(
+    result.status,
+    0,
+    `run_with_timeout should preserve wrapped failure statuses.\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
+  );
+}
+
 assertGuardPassesCleanFixture();
 assertStageMutationWorkflowSuppliesRuntimeCredentials();
 assertLocalNavigationEnvAutomationIsSafe();
 assertAdminSessionSecretsAreDerivedFromLogin();
 assertSmokeRunnerLoadsLocalNavigationEnv();
+assertRunWithTimeoutPropagatesWrappedExitStatus();
 
 assertFailsForSource(
   'coordinate-click',
