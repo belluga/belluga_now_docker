@@ -104,8 +104,30 @@ if ! grep -Fq 'ConnectTimeout=5 -o ConnectionAttempts=1' .github/workflows/orche
   exit 1
 fi
 
+if ! grep -Fq 'ServerAliveInterval=15 -o ServerAliveCountMax=4 -o TCPKeepAlive=yes' .github/workflows/orchestration-ci-cd.yml; then
+  echo "ERROR: orchestration-ci-cd.yml must add SSH keepalive options to direct remote capture steps." >&2
+  exit 1
+fi
+
 if ! grep -Fq 'ConnectTimeout=5 -o ConnectionAttempts=1' .github/scripts/collect_remote_deploy_diagnostics.sh; then
   echo "ERROR: collect_remote_deploy_diagnostics.sh must bound SSH diagnostics with connect timeouts." >&2
+  exit 1
+fi
+
+if ! grep -Fq 'ServerAliveInterval=15 -o ServerAliveCountMax=4 -o TCPKeepAlive=yes' .github/scripts/collect_remote_deploy_diagnostics.sh; then
+  echo "ERROR: collect_remote_deploy_diagnostics.sh must add SSH keepalive options for long remote diagnostics." >&2
+  exit 1
+fi
+
+for script in .github/scripts/deploy_stage_over_ssh.sh .github/scripts/rollback_over_ssh.sh; do
+  if ! grep -Fq 'ServerAliveInterval=15' "${script}"; then
+    echo "ERROR: ${script} must add SSH keepalive options for long-running remote operations." >&2
+    exit 1
+  fi
+done
+
+if ! grep -Fq 'copy_remote_script()' .github/scripts/rollback_over_ssh.sh; then
+  echo "ERROR: rollback_over_ssh.sh must wrap remote script transfer in a retry helper before remote execution." >&2
   exit 1
 fi
 

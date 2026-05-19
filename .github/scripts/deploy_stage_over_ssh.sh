@@ -69,6 +69,11 @@ ssh_opts=(
   -o BatchMode=yes
   -o IdentitiesOnly=yes
   -o StrictHostKeyChecking=yes
+  -o ConnectTimeout=5
+  -o ConnectionAttempts=3
+  -o ServerAliveInterval=15
+  -o ServerAliveCountMax=8
+  -o TCPKeepAlive=yes
 )
 remote_success_marker="__REMOTE_DEPLOY_SUCCESS__"
 remote_deploy_log="$(mktemp)"
