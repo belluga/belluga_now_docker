@@ -109,7 +109,7 @@ jobs:
           gh repo view "$SOURCE_REPO" >/dev/null
 
       - name: Checkout orchestrator repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 

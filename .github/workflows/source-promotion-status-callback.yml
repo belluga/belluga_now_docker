@@ -28,7 +28,7 @@ jobs:
       CALLBACK_RESULT: ${{ github.event.client_payload.result }}
     steps:
       - name: Checkout orchestrator repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
