@@ -8,6 +8,7 @@ required_files=(
   ".github/scripts/check_submodule_branch_alignment.sh"
   ".github/scripts/check_web_flutter_metadata.sh"
   ".github/scripts/manage_navigation_host_overrides.sh"
+  ".github/scripts/rollback_remote.sh"
 )
 
 for file in "${required_files[@]}"; do
@@ -25,7 +26,7 @@ required_cache_env_markers=(
   "APP_MAINTENANCE_STORE"
 )
 
-for script in .github/scripts/deploy_stage_over_ssh.sh .github/scripts/rollback_over_ssh.sh; do
+for script in .github/scripts/deploy_stage_over_ssh.sh .github/scripts/rollback_remote.sh; do
   for marker in "${required_cache_env_markers[@]}"; do
     if ! grep -Fq "${marker}" "${script}"; then
       echo "ERROR: ${script} missing MongoDB cache env guard marker '${marker}'." >&2
@@ -41,6 +42,16 @@ for script in .github/scripts/deploy_stage_over_ssh.sh .github/scripts/rollback_
     fi
   done
 done
+
+if ! grep -Fq '.github/scripts/rollback_remote.sh' .github/scripts/rollback_over_ssh.sh; then
+  echo "ERROR: rollback_over_ssh.sh must ship and execute .github/scripts/rollback_remote.sh instead of embedding the remote body inline." >&2
+  exit 1
+fi
+
+if grep -Fq '<<EOF_REMOTE' .github/scripts/rollback_over_ssh.sh; then
+  echo "ERROR: rollback_over_ssh.sh must not embed the remote rollback body via inline EOF_REMOTE heredoc." >&2
+  exit 1
+fi
 
 required_release_tuple_markers=(
   "ROOT_SHA="
@@ -145,7 +156,7 @@ if grep -Fq 'tee -a /etc/hosts' .github/workflows/orchestration-ci-cd.yml; then
   exit 1
 fi
 
-if grep -R -Fq "service may remain degraded" .github/workflows/orchestration-ci-cd.yml .github/scripts/deploy_stage_over_ssh.sh .github/scripts/rollback_over_ssh.sh; then
+if grep -R -Fq "service may remain degraded" .github/workflows/orchestration-ci-cd.yml .github/scripts/deploy_stage_over_ssh.sh .github/scripts/rollback_over_ssh.sh .github/scripts/rollback_remote.sh; then
   echo "ERROR: degraded-state wording still uses 'service may remain degraded'; require explicit incident/degraded contract wording." >&2
   exit 1
 fi
