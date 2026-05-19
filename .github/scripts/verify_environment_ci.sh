@@ -154,6 +154,14 @@ for marker in "${required_compose_build_markers[@]}"; do
   fi
 done
 
+if tail -n +90 .github/scripts/deploy_stage_over_ssh.sh | rg -nP '(?<!\\)\$(1|2|@|\*)' >/tmp/deploy_stage_unescaped_positional_refs.txt; then
+  echo "ERROR: deploy_stage_over_ssh.sh remote heredoc must not contain unescaped positional parameter references; local shell expansion will break stage deploys under set -u." >&2
+  cat /tmp/deploy_stage_unescaped_positional_refs.txt >&2
+  rm -f /tmp/deploy_stage_unescaped_positional_refs.txt
+  exit 1
+fi
+rm -f /tmp/deploy_stage_unescaped_positional_refs.txt
+
 if ! grep -Fq 'copy_remote_script()' .github/scripts/rollback_over_ssh.sh; then
   echo "ERROR: rollback_over_ssh.sh must wrap remote script transfer in a retry helper before remote execution." >&2
   exit 1
