@@ -810,7 +810,7 @@ prune_docker_artifacts() {
 }
 
 run_compose_build() {
-  local phase="$1"
+  local phase="\$1"
   shift
 
   echo "INFO: docker compose build (\${phase}) services: \$*"
