@@ -1713,7 +1713,9 @@ async function countTextInViewport(page, text) {
       width: window.innerWidth,
       height: window.innerHeight,
     })));
-  const locator = page.getByText(text);
+  // Use exact text matching so semantic assertions do not overcount ancestor
+  // containers that happen to include the same visible label.
+  const locator = page.getByText(text, { exact: true });
   const count = await locator.count();
   let visibleInViewport = 0;
   for (let index = 0; index < count; index += 1) {
@@ -1738,7 +1740,7 @@ async function countTextInViewport(page, text) {
 }
 
 async function countTextInVerticalBand(page, text, top, bottom) {
-  const locator = page.getByText(text);
+  const locator = page.getByText(text, { exact: true });
   const count = await locator.count();
   let visibleInBand = 0;
   for (let index = 0; index < count; index += 1) {
