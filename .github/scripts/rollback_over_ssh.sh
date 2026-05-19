@@ -72,7 +72,7 @@ ssh_opts=(
   -o ConnectTimeout=5
   -o ConnectionAttempts=3
   -o ServerAliveInterval=15
-  -o ServerAliveCountMax=8
+  -o ServerAliveCountMax=40
   -o TCPKeepAlive=yes
 )
 scp_opts=(
@@ -84,7 +84,7 @@ scp_opts=(
   -o ConnectTimeout=5
   -o ConnectionAttempts=3
   -o ServerAliveInterval=15
-  -o ServerAliveCountMax=8
+  -o ServerAliveCountMax=40
   -o TCPKeepAlive=yes
 )
 

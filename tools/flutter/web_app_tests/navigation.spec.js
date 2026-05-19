@@ -277,14 +277,14 @@ test('@readonly tenant domain bootstraps as tenant and navigates to tenant route
     page,
     tenantUrl,
     '/workspace',
-    ['/workspace', '/auth/login', '/'],
+    ['/workspace', '/baixe-o-app', '/auth/login', '/'],
     'tenant'
   );
   await probePath(
     page,
     tenantUrl,
     '/workspace/account-demo',
-    ['/workspace/account-demo', '/workspace', '/auth/login'],
+    ['/workspace/account-demo', '/workspace', '/baixe-o-app', '/auth/login'],
     'tenant'
   );
 
