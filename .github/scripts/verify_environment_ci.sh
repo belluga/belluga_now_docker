@@ -1,6 +1,46 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+temp_artifact_dirs=()
+
+cleanup_temp_artifact_dirs() {
+  if ((${#temp_artifact_dirs[@]} == 0)); then
+    return
+  fi
+
+  rm -rf "${temp_artifact_dirs[@]}"
+}
+
+trap cleanup_temp_artifact_dirs EXIT
+
+materialize_submodule_path_from_gitlink() {
+  local submodule_path="$1"
+  local relative_path="$2"
+  local gitlink_sha=""
+  local scratch_dir=""
+
+  gitlink_sha="$(git rev-parse "HEAD:${submodule_path}" 2>/dev/null | tr -d '[:space:]' || true)"
+  if [[ -z "$gitlink_sha" ]]; then
+    echo "ERROR: could not resolve gitlink SHA for submodule '${submodule_path}' from HEAD." >&2
+    exit 1
+  fi
+
+  if ! git -C "${submodule_path}" cat-file -e "${gitlink_sha}^{commit}" 2>/dev/null; then
+    echo "ERROR: submodule '${submodule_path}' is missing gitlink commit ${gitlink_sha} locally; fetch the candidate commit before running verify_environment_ci.sh." >&2
+    exit 1
+  fi
+
+  scratch_dir="$(mktemp -d)"
+  temp_artifact_dirs+=("${scratch_dir}")
+
+  if ! git -C "${submodule_path}" archive "${gitlink_sha}" "${relative_path}" | tar -x -C "${scratch_dir}"; then
+    echo "ERROR: failed to materialize '${relative_path}' from submodule '${submodule_path}' at ${gitlink_sha}." >&2
+    exit 1
+  fi
+
+  printf '%s\n' "${scratch_dir}/${relative_path}"
+}
+
 required_files=(
   ".gitmodules"
   "docker-compose.yml"
@@ -167,22 +207,55 @@ if ! grep -Fq 'copy_remote_script()' .github/scripts/rollback_over_ssh.sh; then
   exit 1
 fi
 
-if rg -n 'uses:\\s+actions/checkout@v4\\b' .github/workflows >/dev/null 2>&1; then
-  echo "ERROR: workflows still reference deprecated actions/checkout@v4 runtime." >&2
+if rg -n 'uses:\s+actions/checkout@v(4|5)\b' .github/workflows >/dev/null 2>&1; then
+  echo "ERROR: workflows still reference a pre-v6 actions/checkout runtime." >&2
   exit 1
 fi
 
-if rg -n 'uses:\\s+actions/setup-node@v4\\b' .github/workflows >/dev/null 2>&1; then
-  echo "ERROR: workflows still reference deprecated actions/setup-node@v4 runtime." >&2
+if rg -n 'uses:\s+actions/setup-node@v(4|5)\b' .github/workflows >/dev/null 2>&1; then
+  echo "ERROR: workflows still reference a pre-v6 actions/setup-node runtime." >&2
   exit 1
 fi
 
-if rg -n 'uses:\\s+actions/upload-artifact@v4\\b' .github/workflows >/dev/null 2>&1; then
-  echo "ERROR: workflows still reference deprecated actions/upload-artifact@v4 runtime." >&2
+if rg -n 'uses:\s+actions/upload-artifact@v(4|5|6)\b' .github/workflows >/dev/null 2>&1; then
+  echo "ERROR: workflows still reference a pre-v7 actions/upload-artifact runtime." >&2
   exit 1
 fi
 
-if rg -n "node-version:\\s*'20'\\b" .github/workflows >/dev/null 2>&1; then
+flutter_workflows_dir="$(materialize_submodule_path_from_gitlink "flutter-app" ".github/workflows")"
+laravel_workflows_dir="$(materialize_submodule_path_from_gitlink "laravel-app" ".github/workflows")"
+
+if rg -n 'uses:\s+actions/checkout@v(4|5)\b' "${flutter_workflows_dir}" "${laravel_workflows_dir}" >/dev/null 2>&1; then
+  echo "ERROR: submodule workflows still reference a pre-v6 actions/checkout runtime in the HEAD candidate gitlinks." >&2
+  exit 1
+fi
+
+if rg -n 'uses:\s+actions/setup-node@v(4|5)\b' "${flutter_workflows_dir}" "${laravel_workflows_dir}" >/dev/null 2>&1; then
+  echo "ERROR: submodule workflows still reference a pre-v6 actions/setup-node runtime in the HEAD candidate gitlinks." >&2
+  exit 1
+fi
+
+if rg -n 'uses:\s+actions/upload-artifact@v(4|5|6)\b' "${flutter_workflows_dir}" "${laravel_workflows_dir}" >/dev/null 2>&1; then
+  echo "ERROR: submodule workflows still reference a pre-v7 actions/upload-artifact runtime in the HEAD candidate gitlinks." >&2
+  exit 1
+fi
+
+if rg -n 'uses:\s+actions/download-artifact@v(4|5|6|7)\b' "${flutter_workflows_dir}" "${laravel_workflows_dir}" >/dev/null 2>&1; then
+  echo "ERROR: submodule workflows still reference a pre-v8 actions/download-artifact runtime in the HEAD candidate gitlinks." >&2
+  exit 1
+fi
+
+if rg -n 'uses:\s+actions/cache@v(1|2|3|4)\b' "${laravel_workflows_dir}" >/dev/null 2>&1; then
+  echo "ERROR: Laravel submodule workflows still reference a pre-v5 actions/cache runtime in the HEAD candidate gitlinks." >&2
+  exit 1
+fi
+
+if rg -n 'uses:\s+peter-evans/repository-dispatch@v3\b' "${flutter_workflows_dir}" "${laravel_workflows_dir}" >/dev/null 2>&1; then
+  echo "ERROR: submodule workflows still reference peter-evans/repository-dispatch@v3, which emits Node 20 deprecation warnings on GitHub-hosted runners." >&2
+  exit 1
+fi
+
+if rg -n "node-version:\s*'20'\b" .github/workflows >/dev/null 2>&1; then
   echo "ERROR: workflows still pin Node 20 for CI browser/navigation execution." >&2
   exit 1
 fi
