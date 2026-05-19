@@ -439,6 +439,16 @@ prune_docker_artifacts() {
   fi
 }
 
+run_compose_build() {
+  local phase="$1"
+  shift
+
+  echo "INFO: docker compose build (${phase}) services: $*"
+  if ! COMPOSE_BAKE=false DOCKER_BUILDKIT=1 BUILDKIT_PROGRESS=plain "${DOCKER_COMPOSE[@]}" build "$@"; then
+    return 1
+  fi
+}
+
 wait_for_laravel_artisan() {
   for attempt in $(seq 1 30); do
     if "${DOCKER_COMPOSE[@]}" exec -T app php artisan --version >/dev/null 2>&1; then
@@ -457,7 +467,7 @@ wait_for_laravel_artisan() {
 
 start_core_runtime_services() {
   echo "INFO: starting rollback core runtime services (app, nginx)..."
-  if ! "${DOCKER_COMPOSE[@]}" build app worker scheduler nginx; then
+  if ! run_compose_build "rollback-core-runtime" app worker scheduler nginx; then
     echo "ERROR: docker compose build failed for rollback runtime services." >&2
     return 1
   fi

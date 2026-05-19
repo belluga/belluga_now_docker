@@ -1641,7 +1641,7 @@ async function clickOccurrenceDateChip(page, occurrence, description) {
 async function clickImmersiveTab(
   page,
   title,
-  { confirmationTextInViewport = null } = {},
+  { confirmationTextInViewport = null, confirmationLocator = null } = {},
 ) {
   const target = page
     .getByRole('button', { name: new RegExp(`^${escapeRegExp(title)}$`) })
@@ -1651,7 +1651,12 @@ async function clickImmersiveTab(
     `Immersive tab "${title}" must expose a semantic button target.`,
   ).toBeVisible({ timeout: appBootTimeoutMs });
   await target.click({ timeout: appBootTimeoutMs });
-  if (confirmationTextInViewport) {
+  if (confirmationLocator) {
+    await expect(
+      confirmationLocator,
+      `Immersive tab "${title}" must activate visibly.`,
+    ).toBeVisible({ timeout: appBootTimeoutMs });
+  } else if (confirmationTextInViewport) {
     await waitForTextInViewport(
       page,
       confirmationTextInViewport,
@@ -2907,7 +2912,7 @@ test('@mutation tenant-admin event occurrence FAB persists second occurrence and
     });
     await navStep('NAV-08', async () => {
       await clickImmersiveTab(publicPage, 'Como Chegar', {
-        confirmationTextInViewport: 'Ver no mapa',
+        confirmationLocator: publicPage.getByText(/Ver no mapa/i).first(),
       });
       await expect(publicPage.getByText(physicalHost.display_name).first())
         .toBeVisible({ timeout: appBootTimeoutMs });
@@ -3377,14 +3382,14 @@ test('@mutation tenant-admin event occurrence FAB persists second occurrence and
       },
     );
     await navStep('NAV-09', async () => {
+      const mapCard = publicPage.getByText(/Ver no mapa/i).first();
       await clickImmersiveTab(publicPage, 'Como Chegar', {
-        confirmationTextInViewport: 'Ver no mapa',
+        confirmationLocator: mapCard,
       });
-      await waitForTextInViewport(
-        publicPage,
-        'Ver no mapa',
+      await expect(
+        mapCard,
         'Como Chegar must be the active visible section before destination assertions.',
-      );
+      ).toBeVisible({ timeout: appBootTimeoutMs });
       await expect(publicPage.getByText(physicalHost.display_name).first())
         .toBeVisible({ timeout: appBootTimeoutMs });
       await expect(

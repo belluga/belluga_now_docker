@@ -123,7 +123,7 @@ required_remote_transport_markers=(
   'ConnectTimeout=5'
   'ConnectionAttempts=3'
   'ServerAliveInterval=15'
-  'ServerAliveCountMax=8'
+  'ServerAliveCountMax=40'
   'TCPKeepAlive=yes'
 )
 
@@ -134,6 +134,24 @@ for script in .github/scripts/deploy_stage_over_ssh.sh .github/scripts/rollback_
       exit 1
     fi
   done
+done
+
+required_compose_build_markers=(
+  'run_compose_build()'
+  'COMPOSE_BAKE=false'
+  'DOCKER_BUILDKIT=1'
+  'BUILDKIT_PROGRESS=plain'
+)
+
+for marker in "${required_compose_build_markers[@]}"; do
+  if ! grep -Fq "${marker}" .github/scripts/deploy_stage_over_ssh.sh; then
+    echo "ERROR: deploy_stage_over_ssh.sh must preserve long-build progress marker '${marker}'." >&2
+    exit 1
+  fi
+  if ! grep -Fq "${marker}" .github/scripts/rollback_remote.sh; then
+    echo "ERROR: rollback_remote.sh must preserve long-build progress marker '${marker}'." >&2
+    exit 1
+  fi
 done
 
 if ! grep -Fq 'copy_remote_script()' .github/scripts/rollback_over_ssh.sh; then
