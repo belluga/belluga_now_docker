@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       submodule:
-        description: "Submodule path in this repo (flutter-app or laravel-app)"
+        description: "Submodule path in this repo (flutter-app, laravel-app, or web-app)"
         required: true
         type: string
       sha:
@@ -120,10 +120,10 @@ jobs:
           esac
 
           case "$submodule" in
-            flutter-app|laravel-app) ;;
+            flutter-app|laravel-app|web-app) ;;
             *)
               skip="true"
-              skip_reason="unsupported submodule '$submodule' (automatic sync supports only flutter-app and laravel-app)"
+              skip_reason="unsupported submodule '$submodule' (automatic sync supports only flutter-app, laravel-app, and web-app)"
               ;;
           esac
 
@@ -219,10 +219,10 @@ jobs:
           set -euo pipefail
 
           case "$SUBMODULE" in
-            flutter-app|laravel-app) ;;
+            flutter-app|laravel-app|web-app) ;;
             *)
               echo "ERROR: unsupported submodule '$SUBMODULE'." >&2
-              echo "Allowed: flutter-app, laravel-app" >&2
+              echo "Allowed: flutter-app, laravel-app, web-app" >&2
               exit 1
               ;;
           esac
