@@ -119,15 +119,45 @@ if ! grep -Fq 'ServerAliveInterval=15 -o ServerAliveCountMax=4 -o TCPKeepAlive=y
   exit 1
 fi
 
+required_remote_transport_markers=(
+  'ConnectTimeout=5'
+  'ConnectionAttempts=3'
+  'ServerAliveInterval=15'
+  'ServerAliveCountMax=8'
+  'TCPKeepAlive=yes'
+)
+
 for script in .github/scripts/deploy_stage_over_ssh.sh .github/scripts/rollback_over_ssh.sh; do
-  if ! grep -Fq 'ServerAliveInterval=15' "${script}"; then
-    echo "ERROR: ${script} must add SSH keepalive options for long-running remote operations." >&2
-    exit 1
-  fi
+  for marker in "${required_remote_transport_markers[@]}"; do
+    if ! grep -Fq "${marker}" "${script}"; then
+      echo "ERROR: ${script} must carry the full remote SSH transport hardening marker '${marker}'." >&2
+      exit 1
+    fi
+  done
 done
 
 if ! grep -Fq 'copy_remote_script()' .github/scripts/rollback_over_ssh.sh; then
   echo "ERROR: rollback_over_ssh.sh must wrap remote script transfer in a retry helper before remote execution." >&2
+  exit 1
+fi
+
+if rg -n 'uses:\\s+actions/checkout@v4\\b' .github/workflows >/dev/null 2>&1; then
+  echo "ERROR: workflows still reference deprecated actions/checkout@v4 runtime." >&2
+  exit 1
+fi
+
+if rg -n 'uses:\\s+actions/setup-node@v4\\b' .github/workflows >/dev/null 2>&1; then
+  echo "ERROR: workflows still reference deprecated actions/setup-node@v4 runtime." >&2
+  exit 1
+fi
+
+if rg -n 'uses:\\s+actions/upload-artifact@v4\\b' .github/workflows >/dev/null 2>&1; then
+  echo "ERROR: workflows still reference deprecated actions/upload-artifact@v4 runtime." >&2
+  exit 1
+fi
+
+if rg -n "node-version:\\s*'20'\\b" .github/workflows >/dev/null 2>&1; then
+  echo "ERROR: workflows still pin Node 20 for CI browser/navigation execution." >&2
   exit 1
 fi
 
@@ -248,5 +278,12 @@ for submodule in "${required_submodules[@]}"; do
     exit 1
   fi
 done
+
+if ! command -v node >/dev/null 2>&1; then
+  echo "ERROR: node is required to run lightweight navigation harness policy regressions." >&2
+  exit 1
+fi
+
+node --test tools/flutter/web_app_tests/navigation_harness_policy_test.cjs >/dev/null
 
 echo "OK: CI environment invariants validated."

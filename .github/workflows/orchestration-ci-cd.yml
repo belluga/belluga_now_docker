@@ -30,7 +30,7 @@ jobs:
     steps:
       - name: Checkout repository
         if: github.event_name == 'pull_request'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Enforce branch promotion lanes
         if: github.event_name == 'pull_request'
@@ -50,7 +50,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -144,7 +144,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -351,9 +351,9 @@ jobs:
 
       - name: Setup Node.js for real navigation smoke
         if: steps.stage_initialize_preflight.outputs.initialized == 'true' && steps.stage_public_edge_environment_probe.outcome != 'failure'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
-          node-version: '20'
+          node-version: '24'
           cache: npm
           cache-dependency-path: tools/flutter/web_app_smoke_runner/package-lock.json
 
@@ -452,7 +452,7 @@ jobs:
 
       - name: Upload stage navigation smoke artifacts
         if: ${{ always() && (steps.stage_deploy_remote.outcome == 'failure' || steps.stage_initialize_preflight.outcome == 'failure' || steps.stage_unexpected_initialize_403.outcome == 'failure' || steps.stage_public_edge_environment_probe.outcome == 'failure' || steps.stage_provenance_check.outcome == 'failure' || steps.stage_public_taxonomy_validation_fixture.outcome == 'failure' || steps.stage_navigation_smoke.outcome == 'failure' || steps.stage_navigation_mutation_smoke.outcome == 'failure') }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: stage-navigation-smoke-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
@@ -623,9 +623,9 @@ jobs:
 
       - name: Setup Node.js for stage rollback proof
         if: ${{ always() && steps.stage_rollback_proof_plan.outputs.run == 'true' && steps.stage_rollback_initialize_preflight.outcome != 'failure' && steps.stage_rollback_public_edge_environment_probe.outcome != 'failure' }}
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
-          node-version: '20'
+          node-version: '24'
           cache: npm
           cache-dependency-path: tools/flutter/web_app_smoke_runner/package-lock.json
 
@@ -714,7 +714,7 @@ jobs:
 
       - name: Upload stage rollback proof artifacts
         if: ${{ always() && steps.stage_rollback_proof_plan.outputs.run == 'true' && (steps.stage_rollback_proof_guard.outcome == 'failure' || steps.stage_rollback_initialize_preflight.outcome == 'failure' || steps.stage_rollback_public_edge_environment_probe.outcome == 'failure' || steps.stage_rollback_provenance_check.outcome == 'failure' || steps.stage_rollback_navigation_smoke.outcome == 'failure' || steps.stage_rollback_navigation_mutation_smoke.outcome == 'failure') }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: stage-rollback-proof-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
@@ -790,7 +790,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -997,9 +997,9 @@ jobs:
 
       - name: Setup Node.js for real navigation smoke
         if: steps.main_initialize_preflight.outputs.initialized == 'true' && steps.main_public_edge_environment_probe.outcome != 'failure'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
-          node-version: '20'
+          node-version: '24'
           cache: npm
           cache-dependency-path: tools/flutter/web_app_smoke_runner/package-lock.json
 
@@ -1090,7 +1090,7 @@ jobs:
 
       - name: Upload production navigation smoke artifacts
         if: ${{ always() && (steps.main_deploy_remote.outcome == 'failure' || steps.main_initialize_preflight.outcome == 'failure' || steps.main_unexpected_initialize_403.outcome == 'failure' || steps.main_public_edge_environment_probe.outcome == 'failure' || steps.main_provenance_check.outcome == 'failure' || steps.production_navigation_smoke.outcome == 'failure') }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: production-navigation-smoke-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
@@ -1261,9 +1261,9 @@ jobs:
 
       - name: Setup Node.js for production rollback proof
         if: ${{ always() && steps.main_rollback_proof_plan.outputs.run == 'true' && steps.main_rollback_initialize_preflight.outcome != 'failure' && steps.main_rollback_public_edge_environment_probe.outcome != 'failure' }}
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
-          node-version: '20'
+          node-version: '24'
           cache: npm
           cache-dependency-path: tools/flutter/web_app_smoke_runner/package-lock.json
 
@@ -1357,7 +1357,7 @@ jobs:
 
       - name: Upload production rollback proof artifacts
         if: ${{ always() && steps.main_rollback_proof_plan.outputs.run == 'true' && (steps.main_rollback_proof_guard.outcome == 'failure' || steps.main_rollback_initialize_preflight.outcome == 'failure' || steps.main_rollback_public_edge_environment_probe.outcome == 'failure' || steps.main_rollback_provenance_check.outcome == 'failure' || steps.main_rollback_mutation_guard.outcome == 'failure' || steps.main_rollback_navigation_smoke.outcome == 'failure') }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: production-rollback-proof-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
