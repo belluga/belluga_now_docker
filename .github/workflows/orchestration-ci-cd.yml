@@ -410,6 +410,7 @@ jobs:
         id: stage_navigation_smoke
         if: steps.stage_initialize_preflight.outputs.initialized == 'true' && steps.stage_public_edge_environment_probe.outcome != 'failure' && steps.stage_provenance_check.outcome != 'failure' && steps.stage_public_taxonomy_validation_fixture.outcome != 'failure'
         continue-on-error: true
+        timeout-minutes: 15
         env:
           NAV_DEPLOY_LANE: stage
           NAV_WEB_TEST_TYPE: readonly
@@ -422,6 +423,7 @@ jobs:
         id: stage_navigation_mutation_smoke
         if: steps.stage_initialize_preflight.outputs.initialized == 'true' && steps.stage_public_edge_environment_probe.outcome != 'failure' && steps.stage_provenance_check.outcome != 'failure' && steps.stage_public_taxonomy_validation_fixture.outcome != 'failure' && steps.stage_navigation_smoke.outcome != 'failure'
         continue-on-error: true
+        timeout-minutes: 25
         env:
           NAV_DEPLOY_LANE: stage
           NAV_WEB_TEST_TYPE: mutation
@@ -670,6 +672,7 @@ jobs:
         id: stage_rollback_navigation_smoke
         if: ${{ always() && steps.stage_rollback_proof_plan.outputs.run == 'true' && steps.stage_rollback_initialize_preflight.outcome != 'failure' && steps.stage_rollback_public_edge_environment_probe.outcome != 'failure' && steps.stage_rollback_provenance_check.outcome != 'failure' }}
         continue-on-error: true
+        timeout-minutes: 15
         env:
           NAV_DEPLOY_LANE: stage
           NAV_WEB_TEST_TYPE: readonly
@@ -682,6 +685,7 @@ jobs:
         id: stage_rollback_navigation_mutation_smoke
         if: ${{ always() && steps.stage_rollback_proof_plan.outputs.run == 'true' && steps.stage_rollback_initialize_preflight.outcome != 'failure' && steps.stage_rollback_public_edge_environment_probe.outcome != 'failure' && steps.stage_rollback_provenance_check.outcome != 'failure' && steps.stage_rollback_navigation_smoke.outcome != 'failure' }}
         continue-on-error: true
+        timeout-minutes: 25
         env:
           NAV_DEPLOY_LANE: stage
           NAV_WEB_TEST_TYPE: mutation
@@ -1058,6 +1062,7 @@ jobs:
         id: production_navigation_smoke
         if: steps.main_initialize_preflight.outputs.initialized == 'true' && steps.main_public_edge_environment_probe.outcome != 'failure' && steps.main_provenance_check.outcome != 'failure'
         continue-on-error: true
+        timeout-minutes: 15
         env:
           NAV_DEPLOY_LANE: main
           NAV_WEB_TEST_TYPE: readonly
@@ -1324,6 +1329,7 @@ jobs:
         id: main_rollback_navigation_smoke
         if: ${{ always() && steps.main_rollback_proof_plan.outputs.run == 'true' && steps.main_rollback_initialize_preflight.outcome != 'failure' && steps.main_rollback_public_edge_environment_probe.outcome != 'failure' && steps.main_rollback_provenance_check.outcome != 'failure' && steps.main_rollback_mutation_guard.outcome != 'failure' }}
         continue-on-error: true
+        timeout-minutes: 15
         env:
           NAV_DEPLOY_LANE: main
           NAV_WEB_TEST_TYPE: readonly

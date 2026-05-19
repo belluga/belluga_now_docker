@@ -114,6 +114,42 @@ if ! grep -Fq 'EXPECTED_FLUTTER_SHA' .github/scripts/check_deployed_web_provenan
   exit 1
 fi
 
+required_navigation_timeout_markers=(
+  'run_with_timeout'
+  'timeout --foreground'
+  'NAV_WEB_LIST_TIMEOUT_SECONDS'
+  'NAV_WEB_SUITE_TIMEOUT_SECONDS'
+  'web navigation smoke (${SUITE})'
+)
+
+for marker in "${required_navigation_timeout_markers[@]}"; do
+  if ! grep -Fq "${marker}" tools/flutter/run_web_navigation_smoke.sh; then
+    echo "ERROR: run_web_navigation_smoke.sh missing deterministic timeout marker '${marker}'." >&2
+    exit 1
+  fi
+done
+
+required_navigation_timeout_steps=(
+  'id: stage_navigation_smoke'
+  'id: stage_navigation_mutation_smoke'
+  'id: stage_rollback_navigation_smoke'
+  'id: stage_rollback_navigation_mutation_smoke'
+  'id: production_navigation_smoke'
+  'id: main_rollback_navigation_smoke'
+)
+
+for marker in "${required_navigation_timeout_steps[@]}"; do
+  if ! awk -v marker="${marker}" '
+    index($0, marker) { in_block=1; next }
+    in_block && /^      - name:/ { exit found ? 0 : 1 }
+    in_block && /timeout-minutes:/ { found=1 }
+    END { exit found ? 0 : 1 }
+  ' .github/workflows/orchestration-ci-cd.yml; then
+    echo "ERROR: orchestration-ci-cd.yml block '${marker}' must declare timeout-minutes as a smoke-suite backstop." >&2
+    exit 1
+  fi
+done
+
 required_workflow_markers=(
   "id: stage_rollback_proof_plan"
   "id: stage_rollback_provenance_check"

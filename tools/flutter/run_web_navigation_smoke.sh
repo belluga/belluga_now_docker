@@ -81,6 +81,11 @@ export NAV_WEB_TEST_TYPE="${NAV_WEB_TEST_TYPE:-${SUITE}}"
 export NAV_DEPLOY_LANE="${NAV_DEPLOY_LANE:-local}"
 export NODE_PATH="${RUNNER_DIR}/node_modules${NODE_PATH:+:${NODE_PATH}}"
 
+if ! command -v timeout >/dev/null 2>&1; then
+  echo "ERROR: GNU timeout is required to enforce deterministic smoke-suite deadlines." >&2
+  exit 1
+fi
+
 DEFAULT_OUTPUT_DIR="${RUNNER_DIR}/test-results"
 WEB_WORKERS="${NAV_WEB_WORKERS:-}"
 if [[ -z "${WEB_WORKERS}" && "${SUITE}" == "mutation" ]]; then
@@ -99,6 +104,30 @@ if [[ -n "${WEB_WORKERS}" ]]; then
   WORKER_ARGS=(--workers "${WEB_WORKERS}")
 fi
 
+LIST_TIMEOUT_SECONDS="${NAV_WEB_LIST_TIMEOUT_SECONDS:-120}"
+SUITE_TIMEOUT_SECONDS="${NAV_WEB_SUITE_TIMEOUT_SECONDS:-}"
+if [[ -z "${SUITE_TIMEOUT_SECONDS}" ]]; then
+  if [[ "${SUITE}" == "mutation" ]]; then
+    SUITE_TIMEOUT_SECONDS=1200
+  else
+    SUITE_TIMEOUT_SECONDS=900
+  fi
+fi
+
+run_with_timeout() {
+  local label="$1"
+  local timeout_seconds="$2"
+  shift 2
+
+  if ! timeout --foreground "${timeout_seconds}s" "$@"; then
+    local status=$?
+    if (( status == 124 )); then
+      echo "ERROR: ${label} exceeded deterministic deadline (${timeout_seconds}s)." >&2
+    fi
+    return "${status}"
+  fi
+}
+
 node ../web_app_tests/guard_web_navigation_policy.cjs
 if [[ -n "${NAV_WEB_SHARD:-}" ]]; then
   if [[ "${SUITE}" != "mutation" ]]; then
@@ -110,7 +139,8 @@ if [[ -n "${NAV_WEB_SHARD:-}" ]]; then
 fi
 
 LIST_OUTPUT="${DEFAULT_OUTPUT_DIR}/selected-tests.txt"
-npx playwright test \
+run_with_timeout "web navigation test selection (${SUITE})" "${LIST_TIMEOUT_SECONDS}" \
+  npx playwright test \
   --config ./playwright.config.js \
   --grep "${GREP}" \
   --list \
@@ -120,7 +150,8 @@ if [[ "${SUITE}" == "mutation" && "${NAV_WEB_ALLOW_RAW_GREP:-0}" != "1" ]]; then
   node ../web_app_tests/web_navigation_shards.cjs validate "${SUITE}" "${NAV_WEB_SHARD:-all}" "${LIST_OUTPUT}"
 fi
 
-npx playwright test \
+run_with_timeout "web navigation smoke (${SUITE})" "${SUITE_TIMEOUT_SECONDS}" \
+  npx playwright test \
   --config ./playwright.config.js \
   --grep "${GREP}" \
   --retries=0 \
