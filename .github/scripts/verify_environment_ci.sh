@@ -224,23 +224,24 @@ fi
 
 flutter_workflows_dir="$(materialize_submodule_path_from_gitlink "flutter-app" ".github/workflows")"
 laravel_workflows_dir="$(materialize_submodule_path_from_gitlink "laravel-app" ".github/workflows")"
+web_workflows_dir="$(materialize_submodule_path_from_gitlink "web-app" ".github/workflows")"
 
-if rg -n 'uses:\s+actions/checkout@v(4|5)\b' "${flutter_workflows_dir}" "${laravel_workflows_dir}" >/dev/null 2>&1; then
+if rg -n 'uses:\s+actions/checkout@v(4|5)\b' "${flutter_workflows_dir}" "${laravel_workflows_dir}" "${web_workflows_dir}" >/dev/null 2>&1; then
   echo "ERROR: submodule workflows still reference a pre-v6 actions/checkout runtime in the HEAD candidate gitlinks." >&2
   exit 1
 fi
 
-if rg -n 'uses:\s+actions/setup-node@v(4|5)\b' "${flutter_workflows_dir}" "${laravel_workflows_dir}" >/dev/null 2>&1; then
+if rg -n 'uses:\s+actions/setup-node@v(4|5)\b' "${flutter_workflows_dir}" "${laravel_workflows_dir}" "${web_workflows_dir}" >/dev/null 2>&1; then
   echo "ERROR: submodule workflows still reference a pre-v6 actions/setup-node runtime in the HEAD candidate gitlinks." >&2
   exit 1
 fi
 
-if rg -n 'uses:\s+actions/upload-artifact@v(4|5|6)\b' "${flutter_workflows_dir}" "${laravel_workflows_dir}" >/dev/null 2>&1; then
+if rg -n 'uses:\s+actions/upload-artifact@v(4|5|6)\b' "${flutter_workflows_dir}" "${laravel_workflows_dir}" "${web_workflows_dir}" >/dev/null 2>&1; then
   echo "ERROR: submodule workflows still reference a pre-v7 actions/upload-artifact runtime in the HEAD candidate gitlinks." >&2
   exit 1
 fi
 
-if rg -n 'uses:\s+actions/download-artifact@v(4|5|6|7)\b' "${flutter_workflows_dir}" "${laravel_workflows_dir}" >/dev/null 2>&1; then
+if rg -n 'uses:\s+actions/download-artifact@v(4|5|6|7)\b' "${flutter_workflows_dir}" "${laravel_workflows_dir}" "${web_workflows_dir}" >/dev/null 2>&1; then
   echo "ERROR: submodule workflows still reference a pre-v8 actions/download-artifact runtime in the HEAD candidate gitlinks." >&2
   exit 1
 fi
@@ -250,13 +251,18 @@ if rg -n 'uses:\s+actions/cache@v(1|2|3|4)\b' "${laravel_workflows_dir}" >/dev/n
   exit 1
 fi
 
-if rg -n 'uses:\s+peter-evans/repository-dispatch@v3\b' "${flutter_workflows_dir}" "${laravel_workflows_dir}" >/dev/null 2>&1; then
+if rg -n 'uses:\s+peter-evans/repository-dispatch@v3\b' "${flutter_workflows_dir}" "${laravel_workflows_dir}" "${web_workflows_dir}" >/dev/null 2>&1; then
   echo "ERROR: submodule workflows still reference peter-evans/repository-dispatch@v3, which emits Node 20 deprecation warnings on GitHub-hosted runners." >&2
   exit 1
 fi
 
 if rg -n "node-version:\s*'20'\b" .github/workflows >/dev/null 2>&1; then
   echo "ERROR: workflows still pin Node 20 for CI browser/navigation execution." >&2
+  exit 1
+fi
+
+if rg -n "node-version:\s*'20'\b" "${flutter_workflows_dir}" "${laravel_workflows_dir}" "${web_workflows_dir}" >/dev/null 2>&1; then
+  echo "ERROR: submodule workflows still pin Node 20 for CI browser/navigation execution in the HEAD candidate gitlinks." >&2
   exit 1
 fi
 
