@@ -77,8 +77,27 @@ async function enableAccessibilityIfNeeded(page) {
   }
 }
 
+async function resolveVisibleFlutterTextField(page, label) {
+  const fields = page.getByLabel(label);
+  const deadline = Date.now() + appBootTimeoutMs;
+
+  while (Date.now() < deadline) {
+    const count = await fields.count();
+    for (let index = 0; index < count; index += 1) {
+      const field = fields.nth(index);
+      if (await field.isVisible().catch(() => false)) {
+        return field;
+      }
+    }
+
+    await page.waitForTimeout(250);
+  }
+
+  throw new Error(`No visible Flutter text field found for label "${label}".`);
+}
+
 async function fillFlutterTextField(page, label, value) {
-  const field = page.getByLabel(label).first();
+  const field = await resolveVisibleFlutterTextField(page, label);
   await field.scrollIntoViewIfNeeded();
   await expect(field).toBeVisible({ timeout: appBootTimeoutMs });
 
@@ -148,6 +167,52 @@ async function deleteAccountProfileType(api, baseUrl, token, type) {
   );
 }
 
+async function fetchAccountProfileType(api, baseUrl, token, type) {
+  const response = await api.get(
+    buildUrl(
+      baseUrl,
+      `/admin/api/v1/account_profile_types/${encodeURIComponent(type)}`,
+    ),
+    {
+      headers: authHeaders(token),
+      failOnStatusCode: false,
+    },
+  );
+  return response;
+}
+
+async function waitForPersistedAccountProfileType(
+  api,
+  baseUrl,
+  token,
+  type,
+  { expectedPlural, expectedSingular, expectedLabel },
+) {
+  for (let attempt = 1; attempt <= 24; attempt += 1) {
+    const response = await fetchAccountProfileType(api, baseUrl, token, type);
+    if (response.status() < 400) {
+      const payload = await response.json();
+      const data = payload?.data || {};
+      if (
+        data?.labels?.plural === expectedPlural &&
+        data?.labels?.singular === expectedSingular &&
+        data?.label === expectedLabel
+      ) {
+        return data;
+      }
+    }
+    await pageWait(500);
+  }
+
+  throw new Error(
+    `Account profile type ${type} did not persist plural="${expectedPlural}" within the expected polling window.`,
+  );
+}
+
+function pageWait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 test('@mutation T6-PLURAL tenant-admin account profile type edit persists plural label', async ({
   browser,
 }, testInfo) => {
@@ -205,14 +270,6 @@ test('@mutation T6-PLURAL tenant-admin account profile type edit persists plural
         )
       );
     });
-    const patchResponsePromise = page.waitForResponse((candidate) => {
-      return (
-        candidate.request().method() === 'PATCH' &&
-        candidate.url().includes(
-          `/admin/api/v1/account_profile_types/${encodeURIComponent(type)}`,
-        )
-      );
-    });
 
     await clickSaveChanges(page);
 
@@ -220,12 +277,20 @@ test('@mutation T6-PLURAL tenant-admin account profile type edit persists plural
     const patchPayload = patchRequest.postDataJSON();
     expect(patchPayload?.labels?.plural).toBe(updatedPlural);
 
-    const patchResponse = await patchResponsePromise;
-    expect(patchResponse.status()).toBeLessThan(400);
-    const patchResult = await patchResponse.json();
-    expect(patchResult?.data?.labels?.plural).toBe(updatedPlural);
-    expect(patchResult?.data?.labels?.singular).toBe(label);
-    expect(patchResult?.data?.label).toBe(label);
+    const patchResult = await waitForPersistedAccountProfileType(
+      api,
+      baseUrl,
+      session.token,
+      type,
+      {
+        expectedPlural: updatedPlural,
+        expectedSingular: label,
+        expectedLabel: label,
+      },
+    );
+    expect(patchResult?.labels?.plural).toBe(updatedPlural);
+    expect(patchResult?.labels?.singular).toBe(label);
+    expect(patchResult?.label).toBe(label);
     await testInfo.attach('plural-after-save', {
       body: await page.screenshot(),
       contentType: 'image/png',
@@ -236,15 +301,6 @@ test('@mutation T6-PLURAL tenant-admin account profile type edit persists plural
     browserContext = pageBundle.context;
     page = pageBundle.page;
 
-    const reopenHydratePromise = page.waitForResponse((candidate) => {
-      return (
-        candidate.request().method() === 'GET' &&
-        candidate.url().includes(
-          `/admin/api/v1/account_profile_types/${encodeURIComponent(type)}`,
-        )
-      );
-    });
-
     const reopenResponse = await page.goto(editUrl, {
       waitUntil: 'domcontentloaded',
     });
@@ -252,13 +308,24 @@ test('@mutation T6-PLURAL tenant-admin account profile type edit persists plural
     expect(reopenResponse.status()).toBeLessThan(400);
     await assertAppBooted(page);
     await enableAccessibilityIfNeeded(page);
-
-    const reopenHydrateResponse = await reopenHydratePromise;
-    expect(reopenHydrateResponse.status()).toBeLessThan(400);
-    const reopenHydratePayload = await reopenHydrateResponse.json();
-    expect(reopenHydratePayload?.data?.labels?.plural).toBe(updatedPlural);
-    expect(reopenHydratePayload?.data?.labels?.singular).toBe(label);
-    expect(reopenHydratePayload?.data?.label).toBe(label);
+    await expect(
+      await resolveVisibleFlutterTextField(page, 'Tipo (slug)'),
+      'Reopened edit screen must expose the profile type form again before persisted readback is asserted.',
+    ).toBeVisible({ timeout: appBootTimeoutMs });
+    const reopenHydratePayload = await waitForPersistedAccountProfileType(
+      api,
+      baseUrl,
+      session.token,
+      type,
+      {
+        expectedPlural: updatedPlural,
+        expectedSingular: label,
+        expectedLabel: label,
+      },
+    );
+    expect(reopenHydratePayload?.labels?.plural).toBe(updatedPlural);
+    expect(reopenHydratePayload?.labels?.singular).toBe(label);
+    expect(reopenHydratePayload?.label).toBe(label);
 
     await testInfo.attach('plural-after-reopen', {
       body: await page.screenshot(),

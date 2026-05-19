@@ -468,13 +468,20 @@ async function locateAdminEventListPlacement(api, baseUrl, token, eventId) {
 }
 
 async function scrollToSeededEventCard(page, uniqueTitle, expectedApiPage) {
+  const titlePattern = new RegExp(escapeRegExp(uniqueTitle));
   const semanticCard = page
     .getByRole('button', {
       name: new RegExp(`Editar evento\\s+${escapeRegExp(uniqueTitle)}`, 'i'),
     })
     .first();
-  const title = page.getByText(new RegExp(escapeRegExp(uniqueTitle))).first();
-  const maxAttempts = Math.max(48, expectedApiPage * 32);
+  const candidates = [
+    semanticCard,
+    page.getByRole('group', { name: titlePattern }).first(),
+    page.getByLabel(titlePattern).first(),
+    page.getByText(titlePattern).first(),
+  ];
+  const listAnchors = page.getByRole('button', { name: /^Editar evento / });
+  const maxAttempts = Math.max(24, expectedApiPage * 18);
   const viewport =
     page.viewportSize() ||
     (await page.evaluate(() => ({
@@ -484,20 +491,24 @@ async function scrollToSeededEventCard(page, uniqueTitle, expectedApiPage) {
   await page.mouse.move(viewport.width * 0.55, viewport.height * 0.78);
 
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-    if (await semanticCard.isVisible().catch(() => false)) {
-      return { locator: semanticCard, source: 'semantic button' };
-    }
-    if (await title.isVisible().catch(() => false)) {
-      return { locator: title, source: 'visible title text' };
+    for (const [index, candidate] of candidates.entries()) {
+      if (await candidate.isVisible().catch(() => false)) {
+        return {
+          locator: candidate,
+          source: index === 0 ? 'semantic button' : 'visible title/card surface',
+          isAccessibleEditButton: index === 0,
+        };
+      }
     }
 
-    if (attempt === 0) {
-      await page.waitForTimeout(1200);
-      continue;
+    const anchorCount = await listAnchors.count().catch(() => 0);
+    if (anchorCount > 0) {
+      const anchor = listAnchors.nth(Math.max(anchorCount - 1, 0));
+      await anchor.hover().catch(() => {});
     }
 
     await page.mouse.wheel(0, 280);
-    await page.waitForTimeout(220);
+    await page.waitForTimeout(450);
   }
 
   return null;
@@ -529,7 +540,8 @@ async function openSeededEventFromAdminList(
     placement.page,
   );
   if (card) {
-    await card.locator.click();
+    await card.locator.scrollIntoViewIfNeeded({ timeout: appBootTimeoutMs }).catch(() => {});
+    await card.locator.click({ timeout: appBootTimeoutMs });
     await expect(page).toHaveURL(/\/admin\/events\/edit/, {
       timeout: appBootTimeoutMs,
     });

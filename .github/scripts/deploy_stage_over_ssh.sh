@@ -72,7 +72,7 @@ ssh_opts=(
   -o ConnectTimeout=5
   -o ConnectionAttempts=3
   -o ServerAliveInterval=15
-  -o ServerAliveCountMax=8
+  -o ServerAliveCountMax=40
   -o TCPKeepAlive=yes
 )
 remote_success_marker="__REMOTE_DEPLOY_SUCCESS__"
@@ -809,9 +809,19 @@ prune_docker_artifacts() {
   fi
 }
 
+run_compose_build() {
+  local phase="$1"
+  shift
+
+  echo "INFO: docker compose build (\${phase}) services: \$*"
+  if ! COMPOSE_BAKE=false DOCKER_BUILDKIT=1 BUILDKIT_PROGRESS=plain "\${DOCKER_COMPOSE[@]}" build "\$@"; then
+    return 1
+  fi
+}
+
 start_core_runtime_services() {
   echo "INFO: starting core runtime services (app, nginx)..."
-  if ! "\${DOCKER_COMPOSE[@]}" build app worker scheduler nginx; then
+  if ! run_compose_build "deploy-core-runtime" app worker scheduler nginx; then
     echo "ERROR: docker compose build failed for runtime services." >&2
     return 1
   fi
