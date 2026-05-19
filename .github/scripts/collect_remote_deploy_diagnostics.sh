@@ -48,6 +48,7 @@ set +e
 ssh -p "${DEPLOY_SSH_PORT}" -i "${DEPLOY_SSH_KEY_PATH}" \
   -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
   -o ConnectTimeout=5 -o ConnectionAttempts=1 \
+  -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o TCPKeepAlive=yes \
   "${DEPLOY_SSH_USER}@${DEPLOY_SSH_HOST}" "DEPLOY_PATH='${DEPLOY_PATH}' bash -s" >> "${output_file}" 2>&1 <<'REMOTE'
 set -uo pipefail
 
