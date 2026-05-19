@@ -69,6 +69,11 @@ ssh_opts=(
   -o BatchMode=yes
   -o IdentitiesOnly=yes
   -o StrictHostKeyChecking=yes
+  -o ConnectTimeout=5
+  -o ConnectionAttempts=3
+  -o ServerAliveInterval=15
+  -o ServerAliveCountMax=8
+  -o TCPKeepAlive=yes
 )
 scp_opts=(
   -P "${deploy_ssh_port}"
@@ -76,6 +81,11 @@ scp_opts=(
   -o BatchMode=yes
   -o IdentitiesOnly=yes
   -o StrictHostKeyChecking=yes
+  -o ConnectTimeout=5
+  -o ConnectionAttempts=3
+  -o ServerAliveInterval=15
+  -o ServerAliveCountMax=8
+  -o TCPKeepAlive=yes
 )
 
 remote_temp_script="/tmp/belluga-rollback-remote-${deploy_lane}-$$.sh"
@@ -93,7 +103,26 @@ printf -v rollback_target_revision_q '%q' "${ROLLBACK_TARGET_REVISION:-}"
 
 echo "INFO: starting rollback on ${remote}:${deploy_path}"
 
-scp "${scp_opts[@]}" "${remote_script_local}" "${remote}:${remote_temp_script}"
+copy_remote_script() {
+  local attempt=1
+  local max_attempts=3
+  local status=0
+
+  while true; do
+    if scp "${scp_opts[@]}" "${remote_script_local}" "${remote}:${remote_temp_script}"; then
+      return 0
+    fi
+    status=$?
+    if (( attempt >= max_attempts )); then
+      return "${status}"
+    fi
+    echo "WARN: rollback remote script transfer failed with status ${status}; retrying (${attempt}/${max_attempts})." >&2
+    attempt=$((attempt + 1))
+    sleep 5
+  done
+}
+
+copy_remote_script
 
 remote_command="$(cat <<EOF
 set -uo pipefail
