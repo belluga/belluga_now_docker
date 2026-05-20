@@ -142,6 +142,71 @@ if ! grep -Fq 'get_remote_file_content "$flutter_repo_slug" "$FLUTTER_LANE_DEFIN
   exit 1
 fi
 
+if ! grep -Fq 'FROM php:8.4.10-fpm AS runtime-deps' docker/laravel-app/Dockerfile; then
+  echo "ERROR: docker/laravel-app/Dockerfile must expose a runtime-deps stage for deterministic promotion preflight builds." >&2
+  exit 1
+fi
+
+if ! grep -Fq 'FROM runtime-deps AS builder' docker/laravel-app/Dockerfile; then
+  echo "ERROR: docker/laravel-app/Dockerfile must build the runtime image from the pinned runtime-deps stage." >&2
+  exit 1
+fi
+
+if ! grep -Fq 'libzstd-dev' docker/laravel-app/Dockerfile; then
+  echo "ERROR: docker/laravel-app/Dockerfile must install libzstd-dev for pinned mongodb PECL builds." >&2
+  exit 1
+fi
+
+if ! grep -Fq 'ARG MONGODB_PECL_SHA256=' docker/laravel-app/Dockerfile; then
+  echo "ERROR: docker/laravel-app/Dockerfile must pin the mongodb PECL tarball SHA256 for deterministic promotion builds." >&2
+  exit 1
+fi
+
+if ! grep -Fq 'https://pecl.php.net/get/mongodb-${MONGODB_PECL_VERSION}.tgz' docker/laravel-app/Dockerfile; then
+  echo "ERROR: docker/laravel-app/Dockerfile must fetch the pinned mongodb PECL tarball explicitly." >&2
+  exit 1
+fi
+
+if ! grep -Fq 'sha256sum -c -' docker/laravel-app/Dockerfile; then
+  echo "ERROR: docker/laravel-app/Dockerfile must verify the pinned mongodb PECL tarball hash." >&2
+  exit 1
+fi
+
+if ! grep -Fq "sed -i 's/^#define BSON_HAVE_STRLCPY 1\$/#define BSON_HAVE_STRLCPY 0/'" docker/laravel-app/Dockerfile; then
+  echo "ERROR: docker/laravel-app/Dockerfile must patch the bundled libbson strlcpy macro before compiling mongodb." >&2
+  exit 1
+fi
+
+if ! grep -Fq 'php --ri mongodb >/dev/null' docker/laravel-app/Dockerfile; then
+  echo "ERROR: docker/laravel-app/Dockerfile must verify that the compiled mongodb extension loads successfully." >&2
+  exit 1
+fi
+
+if ! grep -Fq -- '--target runtime-deps' .github/scripts/preflight_promotion_runtime_builds.sh; then
+  echo "ERROR: preflight_promotion_runtime_builds.sh must build the pinned runtime-deps Docker stage before promotion." >&2
+  exit 1
+fi
+
+if ! grep -Fq 'docker/nginx/Dockerfile' .github/scripts/preflight_promotion_runtime_builds.sh; then
+  echo "ERROR: preflight_promotion_runtime_builds.sh must build the nginx runtime image before promotion." >&2
+  exit 1
+fi
+
+if ! grep -Fq -- '--pull' .github/scripts/preflight_promotion_runtime_builds.sh; then
+  echo "ERROR: preflight_promotion_runtime_builds.sh must refresh base-image drift via docker build --pull." >&2
+  exit 1
+fi
+
+if ! grep -Fq 'preflight_docker_config="$(mktemp -d)"' .github/scripts/preflight_promotion_runtime_builds.sh; then
+  echo "ERROR: preflight_promotion_runtime_builds.sh must isolate Docker credentials via an ephemeral DOCKER_CONFIG." >&2
+  exit 1
+fi
+
+if ! grep -Fq 'export DOCKER_CONFIG="${preflight_docker_config}"' .github/scripts/preflight_promotion_runtime_builds.sh; then
+  echo "ERROR: preflight_promotion_runtime_builds.sh must export the ephemeral DOCKER_CONFIG before public base-image pulls." >&2
+  exit 1
+fi
+
 if grep -Fq 'get_remote_file_content "$web_repo_slug" "build_metadata.json" "$TARGET_BRANCH"' .github/scripts/check_web_flutter_metadata.sh; then
   echo "ERROR: check_web_flutter_metadata.sh must not validate web build metadata against the lane branch tip; use the pinned web-app gitlink SHA." >&2
   exit 1
@@ -442,6 +507,32 @@ for marker in "${required_workflow_markers[@]}"; do
     exit 1
   fi
 done
+
+promotion_runtime_preflight_block="$(awk '
+  /- name: Validate promotion runtime builds/ { in_block=1 }
+  in_block && /^      - name:/ && $0 !~ /Validate promotion runtime builds/ { exit }
+  in_block { print }
+' .github/workflows/orchestration-ci-cd.yml)"
+
+if [[ -z "${promotion_runtime_preflight_block}" ]]; then
+  echo "ERROR: could not locate the promotion runtime preflight build block in orchestration-ci-cd.yml." >&2
+  exit 1
+fi
+
+if ! grep -Fq ".github/scripts/preflight_promotion_runtime_builds.sh" <<<"${promotion_runtime_preflight_block}"; then
+  echo "ERROR: promotion runtime preflight block must execute preflight_promotion_runtime_builds.sh." >&2
+  exit 1
+fi
+
+if ! grep -Fq "github.base_ref == 'stage' || github.base_ref == 'main'" <<<"${promotion_runtime_preflight_block}"; then
+  echo "ERROR: promotion runtime preflight block must run for promotion PRs targeting stage/main." >&2
+  exit 1
+fi
+
+if ! grep -Fq "github.ref_name == 'stage' || github.ref_name == 'main'" <<<"${promotion_runtime_preflight_block}"; then
+  echo "ERROR: promotion runtime preflight block must run for pushes on stage/main." >&2
+  exit 1
+fi
 
 stage_mark_success_block="$(awk '
   /- name: Mark stage revision as successful after navigation smoke/ { in_block=1 }

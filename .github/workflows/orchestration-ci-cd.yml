@@ -116,6 +116,10 @@ jobs:
           GH_TOKEN: ${{ steps.submodule_auth.outputs.token }}
         run: bash .github/scripts/check_web_flutter_metadata.sh "${{ steps.lane.outputs.branch }}"
 
+      - name: Validate promotion runtime builds
+        if: ${{ (github.event_name == 'pull_request' && (github.base_ref == 'stage' || github.base_ref == 'main')) || (github.event_name == 'push' && (github.ref_name == 'stage' || github.ref_name == 'main')) }}
+        run: bash .github/scripts/preflight_promotion_runtime_builds.sh "${{ steps.lane.outputs.branch }}"
+
       - name: Validate pinned submodule SHA CI status (promotion PRs)
         if: ${{ github.event_name == 'pull_request' && (github.base_ref == 'stage' || github.base_ref == 'main') }}
         env:
