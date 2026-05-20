@@ -351,6 +351,8 @@ required_workflow_markers=(
   "id: stage_rollback_provenance_check"
   "id: main_rollback_proof_plan"
   "id: main_rollback_provenance_check"
+  "id: stage_untrusted_bootstrap_block"
+  "id: main_untrusted_bootstrap_block"
   "id: stage_public_taxonomy_validation_fixture"
   "id: stage_origin_host_overrides"
   "id: stage_rollback_origin_host_overrides"
@@ -364,6 +366,48 @@ for marker in "${required_workflow_markers[@]}"; do
     exit 1
   fi
 done
+
+stage_mark_success_block="$(awk '
+  /- name: Mark stage revision as successful after navigation smoke/ { in_block=1 }
+  in_block && /^      - name:/ && $0 !~ /Mark stage revision as successful after navigation smoke/ { exit }
+  in_block { print }
+' .github/workflows/orchestration-ci-cd.yml)"
+
+if [[ -z "${stage_mark_success_block}" ]]; then
+  echo "ERROR: could not locate stage success-marking block in orchestration-ci-cd.yml." >&2
+  exit 1
+fi
+
+if ! grep -Fq "steps.stage_initialize_preflight.outputs.initialized == 'true'" <<<"${stage_mark_success_block}"; then
+  echo "ERROR: stage success-marking block must require initialized == true." >&2
+  exit 1
+fi
+
+if grep -Fq "steps.stage_rollback_target.outputs.trusted_tuple_present != 'true'" <<<"${stage_mark_success_block}"; then
+  echo "ERROR: stage success-marking block must not allow bootstrap success without a trusted tuple." >&2
+  exit 1
+fi
+
+main_mark_success_block="$(awk '
+  /- name: Mark production revision as successful after navigation smoke/ { in_block=1 }
+  in_block && /^      - name:/ && $0 !~ /Mark production revision as successful after navigation smoke/ { exit }
+  in_block { print }
+' .github/workflows/orchestration-ci-cd.yml)"
+
+if [[ -z "${main_mark_success_block}" ]]; then
+  echo "ERROR: could not locate production success-marking block in orchestration-ci-cd.yml." >&2
+  exit 1
+fi
+
+if ! grep -Fq "steps.main_initialize_preflight.outputs.initialized == 'true'" <<<"${main_mark_success_block}"; then
+  echo "ERROR: production success-marking block must require initialized == true." >&2
+  exit 1
+fi
+
+if grep -Fq "steps.main_rollback_target.outputs.trusted_tuple_present != 'true'" <<<"${main_mark_success_block}"; then
+  echo "ERROR: production success-marking block must not allow bootstrap success without a trusted tuple." >&2
+  exit 1
+fi
 
 required_runtime_mutation_workflow_markers=(
   "steps.stage_deploy_remote.outputs.runtime_mutated"
