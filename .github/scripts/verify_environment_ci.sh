@@ -383,6 +383,11 @@ if ! grep -Fq "steps.stage_initialize_preflight.outputs.initialized == 'true'" <
   exit 1
 fi
 
+if ! grep -Fq "steps.stage_public_taxonomy_validation_fixture.outcome == 'success'" <<<"${stage_mark_success_block}"; then
+  echo "ERROR: stage success-marking block must require a successful public taxonomy validation fixture." >&2
+  exit 1
+fi
+
 if grep -Fq "steps.stage_rollback_target.outputs.trusted_tuple_present != 'true'" <<<"${stage_mark_success_block}"; then
   echo "ERROR: stage success-marking block must not allow bootstrap success without a trusted tuple." >&2
   exit 1
@@ -409,6 +414,90 @@ if grep -Fq "steps.main_rollback_target.outputs.trusted_tuple_present != 'true'"
   exit 1
 fi
 
+stage_rollback_block="$(awk '
+  /- name: Roll back stage deploy when provenance, preflight, smoke, or post-mutation deploy failure requires recovery/ { in_block=1 }
+  in_block && /^      - name:/ && $0 !~ /Roll back stage deploy when provenance, preflight, smoke, or post-mutation deploy failure requires recovery/ { exit }
+  in_block { print }
+' .github/workflows/orchestration-ci-cd.yml)"
+
+if [[ -z "${stage_rollback_block}" ]]; then
+  echo "ERROR: could not locate stage rollback block in orchestration-ci-cd.yml." >&2
+  exit 1
+fi
+
+if ! grep -Fq "steps.stage_public_taxonomy_validation_fixture.outcome == 'failure'" <<<"${stage_rollback_block}"; then
+  echo "ERROR: stage rollback block must trigger on public taxonomy validation fixture failure." >&2
+  exit 1
+fi
+
+if ! grep -Fq "steps.stage_rollback_target.outputs.trusted_tuple_present == 'true'" <<<"${stage_rollback_block}"; then
+  echo "ERROR: stage rollback block must require an explicit trusted rollback tuple before attempting remote rollback." >&2
+  exit 1
+fi
+
+if grep -Fq "steps.stage_untrusted_bootstrap_block.outcome == 'failure'" <<<"${stage_rollback_block}"; then
+  echo "ERROR: stage rollback block must not attempt rollback on an untrusted bootstrap path with no trusted tuple." >&2
+  exit 1
+fi
+
+main_rollback_block="$(awk '
+  /- name: Roll back production deploy when provenance, preflight, smoke, or post-mutation deploy failure requires recovery/ { in_block=1 }
+  in_block && /^      - name:/ && $0 !~ /Roll back production deploy when provenance, preflight, smoke, or post-mutation deploy failure requires recovery/ { exit }
+  in_block { print }
+' .github/workflows/orchestration-ci-cd.yml)"
+
+if [[ -z "${main_rollback_block}" ]]; then
+  echo "ERROR: could not locate production rollback block in orchestration-ci-cd.yml." >&2
+  exit 1
+fi
+
+if ! grep -Fq "steps.main_rollback_target.outputs.trusted_tuple_present == 'true'" <<<"${main_rollback_block}"; then
+  echo "ERROR: production rollback block must require an explicit trusted rollback tuple before attempting remote rollback." >&2
+  exit 1
+fi
+
+if grep -Fq "steps.main_untrusted_bootstrap_block.outcome == 'failure'" <<<"${main_rollback_block}"; then
+  echo "ERROR: production rollback block must not attempt rollback on an untrusted bootstrap path with no trusted tuple." >&2
+  exit 1
+fi
+
+stage_final_fail_block="$(awk '
+  /- name: Fail stage deploy after rollback/ { in_block=1 }
+  in_block && /^  [a-zA-Z0-9_-]+:/ { exit }
+  in_block { print }
+' .github/workflows/orchestration-ci-cd.yml)"
+
+if [[ -z "${stage_final_fail_block}" ]]; then
+  echo "ERROR: could not locate stage terminal fail-closed block in orchestration-ci-cd.yml." >&2
+  exit 1
+fi
+
+if ! grep -Fq "steps.stage_untrusted_bootstrap_block.outcome == 'failure'" <<<"${stage_final_fail_block}"; then
+  echo "ERROR: stage terminal fail-closed block must trigger on the untrusted bootstrap guard." >&2
+  exit 1
+fi
+
+if ! grep -Fq "steps.stage_public_taxonomy_validation_fixture.outcome == 'failure'" <<<"${stage_final_fail_block}"; then
+  echo "ERROR: stage terminal fail-closed block must trigger on public taxonomy validation fixture failure." >&2
+  exit 1
+fi
+
+main_final_fail_block="$(awk '
+  /- name: Fail production deploy after rollback/ { in_block=1 }
+  in_block && /^      - name:/ && $0 !~ /Fail production deploy after rollback/ { exit }
+  in_block { print }
+' .github/workflows/orchestration-ci-cd.yml)"
+
+if [[ -z "${main_final_fail_block}" ]]; then
+  echo "ERROR: could not locate production terminal fail-closed block in orchestration-ci-cd.yml." >&2
+  exit 1
+fi
+
+if ! grep -Fq "steps.main_untrusted_bootstrap_block.outcome == 'failure'" <<<"${main_final_fail_block}"; then
+  echo "ERROR: production terminal fail-closed block must trigger on the untrusted bootstrap guard." >&2
+  exit 1
+fi
+
 required_runtime_mutation_workflow_markers=(
   "steps.stage_deploy_remote.outputs.runtime_mutated"
   "steps.main_deploy_remote.outputs.runtime_mutated"
@@ -420,12 +509,6 @@ for marker in "${required_runtime_mutation_workflow_markers[@]}"; do
     exit 1
   fi
 done
-
-fixture_gate_usage_count="$(grep -Fc 'steps.stage_public_taxonomy_validation_fixture.outcome' .github/workflows/orchestration-ci-cd.yml)"
-if (( fixture_gate_usage_count < 5 )); then
-  echo "ERROR: orchestration-ci-cd.yml must wire stage_public_taxonomy_validation_fixture into stage gating/rollback conditions." >&2
-  exit 1
-fi
 
 if grep -Fq 'tee -a /etc/hosts' .github/workflows/orchestration-ci-cd.yml; then
   echo "ERROR: orchestration-ci-cd.yml must not mutate /etc/hosts inline; use manage_navigation_host_overrides.sh." >&2
