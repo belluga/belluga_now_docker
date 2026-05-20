@@ -117,6 +117,11 @@ if ! grep -Fq 'get_pinned_local_file_content "build_metadata.json"' .github/scri
   exit 1
 fi
 
+if ! grep -Fq 'get_pinned_local_file_content "index.html"' .github/scripts/check_web_flutter_metadata.sh; then
+  echo "ERROR: check_web_flutter_metadata.sh must validate index.html from the pinned web-app gitlink content before consulting any remote fallback." >&2
+  exit 1
+fi
+
 if ! grep -Fq 'get_pinned_submodule_file_content "$FLUTTER_SUBMODULE_GIT_DIR" "$FLUTTER_SHA" "$FLUTTER_LANE_DEFINES_PATH"' .github/scripts/check_web_flutter_metadata.sh; then
   echo "ERROR: check_web_flutter_metadata.sh must validate lane defines from the pinned flutter-app gitlink content before consulting any remote fallback." >&2
   exit 1
@@ -127,6 +132,11 @@ if ! grep -Fq 'get_remote_file_content "$web_repo_slug" "build_metadata.json" "$
   exit 1
 fi
 
+if ! grep -Fq 'get_remote_file_content "$web_repo_slug" "index.html" "$WEB_SHA"' .github/scripts/check_web_flutter_metadata.sh; then
+  echo "ERROR: check_web_flutter_metadata.sh must fall back to the pinned web-app gitlink SHA when loading remote index.html." >&2
+  exit 1
+fi
+
 if ! grep -Fq 'get_remote_file_content "$flutter_repo_slug" "$FLUTTER_LANE_DEFINES_PATH" "$FLUTTER_SHA"' .github/scripts/check_web_flutter_metadata.sh; then
   echo "ERROR: check_web_flutter_metadata.sh must fall back to the pinned flutter-app gitlink SHA when loading remote lane defines." >&2
   exit 1
@@ -134,6 +144,11 @@ fi
 
 if grep -Fq 'get_remote_file_content "$web_repo_slug" "build_metadata.json" "$TARGET_BRANCH"' .github/scripts/check_web_flutter_metadata.sh; then
   echo "ERROR: check_web_flutter_metadata.sh must not validate web build metadata against the lane branch tip; use the pinned web-app gitlink SHA." >&2
+  exit 1
+fi
+
+if grep -Fq 'get_remote_file_content "$web_repo_slug" "index.html" "$TARGET_BRANCH"' .github/scripts/check_web_flutter_metadata.sh; then
+  echo "ERROR: check_web_flutter_metadata.sh must not validate web index.html against the lane branch tip; use the pinned web-app gitlink SHA." >&2
   exit 1
 fi
 
