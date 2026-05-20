@@ -310,6 +310,21 @@ if ! grep -Fq 'EXPECTED_FLUTTER_SHA' .github/scripts/check_deployed_web_provenan
   exit 1
 fi
 
+if [[ ! -f .github/scripts/check_remote_web_runtime_sha_over_ssh.sh ]]; then
+  echo "ERROR: check_remote_web_runtime_sha_over_ssh.sh is required for exact remote web-app runtime validation." >&2
+  exit 1
+fi
+
+if grep -Fq 'checkout_web_runtime_ref "origin/\${DEPLOY_LANE}"' .github/scripts/deploy_stage_over_ssh.sh; then
+  echo "ERROR: deploy_stage_over_ssh.sh must not float web-app runtime content to origin/\${DEPLOY_LANE}." >&2
+  exit 1
+fi
+
+if ! grep -Fq 'git ls-tree HEAD web-app' .github/scripts/deploy_stage_over_ssh.sh; then
+  echo "ERROR: deploy_stage_over_ssh.sh must resolve the pinned web-app runtime SHA from the promoted root revision." >&2
+  exit 1
+fi
+
 required_navigation_timeout_markers=(
   'run_with_timeout'
   'timeout --foreground'
@@ -356,8 +371,12 @@ required_workflow_markers=(
   "id: stage_untrusted_bootstrap_block"
   "id: main_untrusted_bootstrap_block"
   "id: stage_public_taxonomy_validation_fixture"
+  "id: stage_runtime_web_sha_check"
+  "id: stage_rollback_runtime_web_sha_check"
   "id: stage_origin_host_overrides"
   "id: stage_rollback_origin_host_overrides"
+  "id: main_runtime_web_sha_check"
+  "id: main_rollback_runtime_web_sha_check"
   "id: main_origin_host_overrides"
   "id: main_rollback_origin_host_overrides"
 )
@@ -387,6 +406,11 @@ fi
 
 if ! grep -Fq "steps.stage_rollback_target.outputs.trusted_tuple_present == 'true'" <<<"${stage_mark_success_block}"; then
   echo "ERROR: stage success-marking block must require an explicit trusted tuple before stamping success." >&2
+  exit 1
+fi
+
+if ! grep -Fq "steps.stage_runtime_web_sha_check.outcome != 'failure'" <<<"${stage_mark_success_block}"; then
+  echo "ERROR: stage success-marking block must require an exact remote web-app runtime SHA match." >&2
   exit 1
 fi
 
@@ -452,6 +476,11 @@ if ! grep -Fq "steps.stage_untrusted_initialized_bootstrap_block.outcome != 'fai
   exit 1
 fi
 
+if ! grep -Fq "steps.stage_runtime_web_sha_check.outcome != 'failure'" <<<"${stage_public_edge_probe_block}"; then
+  echo "ERROR: stage public-edge probe block must be gated on an exact remote web-app runtime SHA match." >&2
+  exit 1
+fi
+
 main_mark_success_block="$(awk '
   /- name: Mark production revision as successful after navigation smoke/ { in_block=1 }
   in_block && /^      - name:/ && $0 !~ /Mark production revision as successful after navigation smoke/ { exit }
@@ -470,6 +499,11 @@ fi
 
 if ! grep -Fq "steps.main_rollback_target.outputs.trusted_tuple_present == 'true'" <<<"${main_mark_success_block}"; then
   echo "ERROR: production success-marking block must require an explicit trusted tuple before stamping success." >&2
+  exit 1
+fi
+
+if ! grep -Fq "steps.main_runtime_web_sha_check.outcome != 'failure'" <<<"${main_mark_success_block}"; then
+  echo "ERROR: production success-marking block must require an exact remote web-app runtime SHA match." >&2
   exit 1
 fi
 
@@ -530,6 +564,11 @@ if ! grep -Fq "steps.main_untrusted_initialized_bootstrap_block.outcome != 'fail
   exit 1
 fi
 
+if ! grep -Fq "steps.main_runtime_web_sha_check.outcome != 'failure'" <<<"${main_public_edge_probe_block}"; then
+  echo "ERROR: production public-edge probe block must be gated on an exact remote web-app runtime SHA match." >&2
+  exit 1
+fi
+
 main_initial_mutation_guard_block="$(awk '
   /- name: Assert mutation suite is hard-blocked on main/ { in_block=1 }
   in_block && /^      - name:/ && $0 !~ /Assert mutation suite is hard-blocked on main/ { exit }
@@ -587,6 +626,11 @@ if ! grep -Fq "steps.stage_rollback_proof_plan.outputs.expected_flutter_sha" <<<
   exit 1
 fi
 
+if ! grep -Fq "steps.stage_rollback_proof_plan.outputs.expected_web_app_runtime_sha" <<<"${stage_rollback_proof_guard_block}"; then
+  echo "ERROR: the stage rollback proof guard must validate the restored web-app runtime SHA." >&2
+  exit 1
+fi
+
 if ! grep -Fq "steps.stage_rollback_target.outputs.revision" <<<"${stage_rollback_proof_guard_block}"; then
   echo "ERROR: the stage rollback proof guard must compare internal rollback restores against the trusted successful-release target revision." >&2
   exit 1
@@ -623,6 +667,11 @@ if ! grep -Fq "steps.main_rollback_proof_plan.outputs.expected_flutter_sha" <<<"
   exit 1
 fi
 
+if ! grep -Fq "steps.main_rollback_proof_plan.outputs.expected_web_app_runtime_sha" <<<"${main_rollback_proof_guard_block}"; then
+  echo "ERROR: the production rollback proof guard must validate the restored web-app runtime SHA." >&2
+  exit 1
+fi
+
 if ! grep -Fq "steps.main_rollback_target.outputs.revision" <<<"${main_rollback_proof_guard_block}"; then
   echo "ERROR: the production rollback proof guard must compare internal rollback restores against the trusted successful-release target revision." >&2
   exit 1
@@ -641,6 +690,11 @@ fi
 
 if ! grep -Fq "steps.stage_public_taxonomy_validation_fixture.outcome == 'failure'" <<<"${stage_rollback_block}"; then
   echo "ERROR: stage rollback block must trigger on public taxonomy validation fixture failure." >&2
+  exit 1
+fi
+
+if ! grep -Fq "steps.stage_runtime_web_sha_check.outcome == 'failure'" <<<"${stage_rollback_block}"; then
+  echo "ERROR: stage rollback block must trigger on remote web-app runtime SHA mismatch." >&2
   exit 1
 fi
 
@@ -690,6 +744,11 @@ if ! grep -Fq "steps.main_rollback_target.outputs.trusted_tuple_present == 'true
   exit 1
 fi
 
+if ! grep -Fq "steps.main_runtime_web_sha_check.outcome == 'failure'" <<<"${main_rollback_block}"; then
+  echo "ERROR: production rollback block must trigger on remote web-app runtime SHA mismatch." >&2
+  exit 1
+fi
+
 if ! grep -Fq "steps.main_public_edge_environment_probe.outcome == 'failure'" <<<"${main_rollback_block}"; then
   echo "ERROR: production rollback block must trigger on public-edge probe failure." >&2
   exit 1
@@ -731,6 +790,11 @@ if ! grep -Fq "steps.stage_untrusted_bootstrap_block.outcome == 'failure'" <<<"$
   exit 1
 fi
 
+if ! grep -Fq "steps.stage_runtime_web_sha_check.outcome == 'failure'" <<<"${stage_final_fail_block}"; then
+  echo "ERROR: stage terminal fail-closed block must trigger on remote web-app runtime SHA mismatch." >&2
+  exit 1
+fi
+
 if ! grep -Fq "steps.stage_untrusted_initialized_bootstrap_block.outcome == 'failure'" <<<"${stage_final_fail_block}"; then
   echo "ERROR: stage terminal fail-closed block must trigger on the initialized bootstrap guard." >&2
   exit 1
@@ -763,6 +827,11 @@ fi
 
 if ! grep -Fq "steps.stage_rollback_proof_guard.outcome == 'failure'" <<<"${stage_final_fail_block}"; then
   echo "ERROR: stage terminal fail-closed block must trigger on rollback-proof guard failure." >&2
+  exit 1
+fi
+
+if ! grep -Fq "steps.stage_rollback_runtime_web_sha_check.outcome == 'failure'" <<<"${stage_final_fail_block}"; then
+  echo "ERROR: stage terminal fail-closed block must trigger on rollback-proof web-app runtime SHA mismatch." >&2
   exit 1
 fi
 
@@ -807,6 +876,11 @@ if ! grep -Fq "steps.main_untrusted_bootstrap_block.outcome == 'failure'" <<<"${
   exit 1
 fi
 
+if ! grep -Fq "steps.main_runtime_web_sha_check.outcome == 'failure'" <<<"${main_final_fail_block}"; then
+  echo "ERROR: production terminal fail-closed block must trigger on remote web-app runtime SHA mismatch." >&2
+  exit 1
+fi
+
 if ! grep -Fq "steps.main_untrusted_initialized_bootstrap_block.outcome == 'failure'" <<<"${main_final_fail_block}"; then
   echo "ERROR: production terminal fail-closed block must trigger on the initialized bootstrap guard." >&2
   exit 1
@@ -839,6 +913,11 @@ fi
 
 if ! grep -Fq "steps.main_rollback_proof_guard.outcome == 'failure'" <<<"${main_final_fail_block}"; then
   echo "ERROR: production terminal fail-closed block must trigger on rollback-proof guard failure." >&2
+  exit 1
+fi
+
+if ! grep -Fq "steps.main_rollback_runtime_web_sha_check.outcome == 'failure'" <<<"${main_final_fail_block}"; then
+  echo "ERROR: production terminal fail-closed block must trigger on rollback-proof web-app runtime SHA mismatch." >&2
   exit 1
 fi
 

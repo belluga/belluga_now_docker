@@ -215,8 +215,14 @@ checkout_web_runtime_ref() {
   echo "INFO: runtime web-app \${target_label} resolved to \${runtime_web_sha}"
 }
 
-if ! checkout_web_runtime_ref "origin/\${DEPLOY_LANE}" "lane '\${DEPLOY_LANE}'"; then
-  echo "ERROR: failed to resolve runtime web-app lane content." >&2
+current_web_runtime_sha="\$(git ls-tree HEAD web-app 2>/dev/null | awk '{print \$3}' | tr -d '[:space:]' || true)"
+if [[ -z "\${current_web_runtime_sha}" ]]; then
+  echo "ERROR: could not resolve pinned web-app runtime SHA from root revision \$(git rev-parse HEAD)." >&2
+  exit 1
+fi
+
+if ! checkout_web_runtime_ref "\${current_web_runtime_sha}" "pinned gitlink '\${current_web_runtime_sha}'"; then
+  echo "ERROR: failed to resolve pinned web-app runtime content." >&2
   exit 1
 fi
 
