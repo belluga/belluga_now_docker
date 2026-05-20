@@ -383,13 +383,70 @@ if ! grep -Fq "steps.stage_initialize_preflight.outputs.initialized == 'true'" <
   exit 1
 fi
 
+if ! grep -Fq "steps.stage_rollback_target.outputs.trusted_tuple_present == 'true'" <<<"${stage_mark_success_block}"; then
+  echo "ERROR: stage success-marking block must require an explicit trusted tuple before stamping success." >&2
+  exit 1
+fi
+
+if ! grep -Fq "steps.stage_public_edge_environment_probe.outcome != 'failure'" <<<"${stage_mark_success_block}"; then
+  echo "ERROR: stage success-marking block must require a successful public-edge probe path." >&2
+  exit 1
+fi
+
+if ! grep -Fq "steps.stage_provenance_check.outcome != 'failure'" <<<"${stage_mark_success_block}"; then
+  echo "ERROR: stage success-marking block must require successful provenance proof." >&2
+  exit 1
+fi
+
 if ! grep -Fq "steps.stage_public_taxonomy_validation_fixture.outcome == 'success'" <<<"${stage_mark_success_block}"; then
   echo "ERROR: stage success-marking block must require a successful public taxonomy validation fixture." >&2
   exit 1
 fi
 
-if grep -Fq "steps.stage_rollback_target.outputs.trusted_tuple_present != 'true'" <<<"${stage_mark_success_block}"; then
-  echo "ERROR: stage success-marking block must not allow bootstrap success without a trusted tuple." >&2
+if ! grep -Fq "steps.stage_navigation_smoke.outcome == 'success'" <<<"${stage_mark_success_block}"; then
+  echo "ERROR: stage success-marking block must require a successful readonly navigation smoke." >&2
+  exit 1
+fi
+
+if ! grep -Fq "steps.stage_navigation_mutation_smoke.outcome == 'success'" <<<"${stage_mark_success_block}"; then
+  echo "ERROR: stage success-marking block must require a successful mutation navigation smoke." >&2
+  exit 1
+fi
+
+stage_initialized_bootstrap_block="$(awk '
+  /- name: Block stage initialized bootstrap without trusted successful tuple/ { in_block=1 }
+  in_block && /^      - name:/ && $0 !~ /Block stage initialized bootstrap without trusted successful tuple/ { exit }
+  in_block { print }
+' .github/workflows/orchestration-ci-cd.yml)"
+
+if [[ -z "${stage_initialized_bootstrap_block}" ]]; then
+  echo "ERROR: could not locate initialized stage bootstrap guard block in orchestration-ci-cd.yml." >&2
+  exit 1
+fi
+
+if ! grep -Fq "steps.stage_initialize_preflight.outputs.initialized == 'true'" <<<"${stage_initialized_bootstrap_block}"; then
+  echo "ERROR: initialized stage bootstrap guard must trigger only on initialized == true." >&2
+  exit 1
+fi
+
+if ! grep -Fq "steps.stage_rollback_target.outputs.trusted_tuple_present != 'true'" <<<"${stage_initialized_bootstrap_block}"; then
+  echo "ERROR: initialized stage bootstrap guard must trigger when no trusted tuple exists." >&2
+  exit 1
+fi
+
+stage_public_edge_probe_block="$(awk '
+  /- name: Probe public stage environment endpoints/ { in_block=1 }
+  in_block && /^      - name:/ && $0 !~ /Probe public stage environment endpoints/ { exit }
+  in_block { print }
+' .github/workflows/orchestration-ci-cd.yml)"
+
+if [[ -z "${stage_public_edge_probe_block}" ]]; then
+  echo "ERROR: could not locate stage public-edge probe block in orchestration-ci-cd.yml." >&2
+  exit 1
+fi
+
+if ! grep -Fq "steps.stage_untrusted_initialized_bootstrap_block.outcome != 'failure'" <<<"${stage_public_edge_probe_block}"; then
+  echo "ERROR: stage public-edge probe block must be gated on the initialized bootstrap guard." >&2
   exit 1
 fi
 
@@ -409,8 +466,91 @@ if ! grep -Fq "steps.main_initialize_preflight.outputs.initialized == 'true'" <<
   exit 1
 fi
 
-if grep -Fq "steps.main_rollback_target.outputs.trusted_tuple_present != 'true'" <<<"${main_mark_success_block}"; then
-  echo "ERROR: production success-marking block must not allow bootstrap success without a trusted tuple." >&2
+if ! grep -Fq "steps.main_rollback_target.outputs.trusted_tuple_present == 'true'" <<<"${main_mark_success_block}"; then
+  echo "ERROR: production success-marking block must require an explicit trusted tuple before stamping success." >&2
+  exit 1
+fi
+
+if ! grep -Fq "steps.main_public_edge_environment_probe.outcome != 'failure'" <<<"${main_mark_success_block}"; then
+  echo "ERROR: production success-marking block must require a successful public-edge probe path." >&2
+  exit 1
+fi
+
+if ! grep -Fq "steps.main_provenance_check.outcome != 'failure'" <<<"${main_mark_success_block}"; then
+  echo "ERROR: production success-marking block must require successful provenance proof." >&2
+  exit 1
+fi
+
+if ! grep -Fq "steps.main_initial_mutation_guard.outcome != 'failure'" <<<"${main_mark_success_block}"; then
+  echo "ERROR: production success-marking block must require the initial main mutation hard-block guard to pass." >&2
+  exit 1
+fi
+
+if ! grep -Fq "steps.production_navigation_smoke.outcome == 'success'" <<<"${main_mark_success_block}"; then
+  echo "ERROR: production success-marking block must require a successful readonly navigation smoke." >&2
+  exit 1
+fi
+
+main_initialized_bootstrap_block="$(awk '
+  /- name: Block production initialized bootstrap without trusted successful tuple/ { in_block=1 }
+  in_block && /^      - name:/ && $0 !~ /Block production initialized bootstrap without trusted successful tuple/ { exit }
+  in_block { print }
+' .github/workflows/orchestration-ci-cd.yml)"
+
+if [[ -z "${main_initialized_bootstrap_block}" ]]; then
+  echo "ERROR: could not locate initialized production bootstrap guard block in orchestration-ci-cd.yml." >&2
+  exit 1
+fi
+
+if ! grep -Fq "steps.main_initialize_preflight.outputs.initialized == 'true'" <<<"${main_initialized_bootstrap_block}"; then
+  echo "ERROR: initialized production bootstrap guard must trigger only on initialized == true." >&2
+  exit 1
+fi
+
+if ! grep -Fq "steps.main_rollback_target.outputs.trusted_tuple_present != 'true'" <<<"${main_initialized_bootstrap_block}"; then
+  echo "ERROR: initialized production bootstrap guard must trigger when no trusted tuple exists." >&2
+  exit 1
+fi
+
+main_public_edge_probe_block="$(awk '
+  /- name: Probe public production environment endpoints/ { in_block=1 }
+  in_block && /^      - name:/ && $0 !~ /Probe public production environment endpoints/ { exit }
+  in_block { print }
+' .github/workflows/orchestration-ci-cd.yml)"
+
+if [[ -z "${main_public_edge_probe_block}" ]]; then
+  echo "ERROR: could not locate production public-edge probe block in orchestration-ci-cd.yml." >&2
+  exit 1
+fi
+
+if ! grep -Fq "steps.main_untrusted_initialized_bootstrap_block.outcome != 'failure'" <<<"${main_public_edge_probe_block}"; then
+  echo "ERROR: production public-edge probe block must be gated on the initialized bootstrap guard." >&2
+  exit 1
+fi
+
+main_initial_mutation_guard_block="$(awk '
+  /- name: Assert mutation suite is hard-blocked on main/ { in_block=1 }
+  in_block && /^      - name:/ && $0 !~ /Assert mutation suite is hard-blocked on main/ { exit }
+  in_block { print }
+' .github/workflows/orchestration-ci-cd.yml)"
+
+if [[ -z "${main_initial_mutation_guard_block}" ]]; then
+  echo "ERROR: could not locate the initial production mutation hard-block guard in orchestration-ci-cd.yml." >&2
+  exit 1
+fi
+
+if ! grep -Fq "id: main_initial_mutation_guard" <<<"${main_initial_mutation_guard_block}"; then
+  echo "ERROR: the initial production mutation hard-block step must expose a stable main_initial_mutation_guard id." >&2
+  exit 1
+fi
+
+if ! grep -Fq "continue-on-error: true" <<<"${main_initial_mutation_guard_block}"; then
+  echo "ERROR: the initial production mutation hard-block step must continue on error so rollback and terminal fail-closed handling can execute." >&2
+  exit 1
+fi
+
+if ! grep -Fq "steps.main_untrusted_initialized_bootstrap_block.outcome != 'failure'" <<<"${main_initial_mutation_guard_block}"; then
+  echo "ERROR: the initial production mutation hard-block step must be gated on the initialized bootstrap guard." >&2
   exit 1
 fi
 
@@ -427,6 +567,26 @@ fi
 
 if ! grep -Fq "steps.stage_public_taxonomy_validation_fixture.outcome == 'failure'" <<<"${stage_rollback_block}"; then
   echo "ERROR: stage rollback block must trigger on public taxonomy validation fixture failure." >&2
+  exit 1
+fi
+
+if ! grep -Fq "steps.stage_public_edge_environment_probe.outcome == 'failure'" <<<"${stage_rollback_block}"; then
+  echo "ERROR: stage rollback block must trigger on public-edge probe failure." >&2
+  exit 1
+fi
+
+if ! grep -Fq "steps.stage_provenance_check.outcome == 'failure'" <<<"${stage_rollback_block}"; then
+  echo "ERROR: stage rollback block must trigger on provenance failure." >&2
+  exit 1
+fi
+
+if ! grep -Fq "steps.stage_navigation_smoke.outcome == 'failure'" <<<"${stage_rollback_block}"; then
+  echo "ERROR: stage rollback block must trigger on readonly navigation smoke failure." >&2
+  exit 1
+fi
+
+if ! grep -Fq "steps.stage_navigation_mutation_smoke.outcome == 'failure'" <<<"${stage_rollback_block}"; then
+  echo "ERROR: stage rollback block must trigger on mutation navigation smoke failure." >&2
   exit 1
 fi
 
@@ -456,6 +616,26 @@ if ! grep -Fq "steps.main_rollback_target.outputs.trusted_tuple_present == 'true
   exit 1
 fi
 
+if ! grep -Fq "steps.main_public_edge_environment_probe.outcome == 'failure'" <<<"${main_rollback_block}"; then
+  echo "ERROR: production rollback block must trigger on public-edge probe failure." >&2
+  exit 1
+fi
+
+if ! grep -Fq "steps.main_provenance_check.outcome == 'failure'" <<<"${main_rollback_block}"; then
+  echo "ERROR: production rollback block must trigger on provenance failure." >&2
+  exit 1
+fi
+
+if ! grep -Fq "steps.main_initial_mutation_guard.outcome == 'failure'" <<<"${main_rollback_block}"; then
+  echo "ERROR: production rollback block must trigger on initial main mutation hard-block failure." >&2
+  exit 1
+fi
+
+if ! grep -Fq "steps.production_navigation_smoke.outcome == 'failure'" <<<"${main_rollback_block}"; then
+  echo "ERROR: production rollback block must trigger on readonly navigation smoke failure." >&2
+  exit 1
+fi
+
 if grep -Fq "steps.main_untrusted_bootstrap_block.outcome == 'failure'" <<<"${main_rollback_block}"; then
   echo "ERROR: production rollback block must not attempt rollback on an untrusted bootstrap path with no trusted tuple." >&2
   exit 1
@@ -477,8 +657,33 @@ if ! grep -Fq "steps.stage_untrusted_bootstrap_block.outcome == 'failure'" <<<"$
   exit 1
 fi
 
+if ! grep -Fq "steps.stage_untrusted_initialized_bootstrap_block.outcome == 'failure'" <<<"${stage_final_fail_block}"; then
+  echo "ERROR: stage terminal fail-closed block must trigger on the initialized bootstrap guard." >&2
+  exit 1
+fi
+
+if ! grep -Fq "steps.stage_public_edge_environment_probe.outcome == 'failure'" <<<"${stage_final_fail_block}"; then
+  echo "ERROR: stage terminal fail-closed block must trigger on public-edge probe failure." >&2
+  exit 1
+fi
+
+if ! grep -Fq "steps.stage_provenance_check.outcome == 'failure'" <<<"${stage_final_fail_block}"; then
+  echo "ERROR: stage terminal fail-closed block must trigger on provenance failure." >&2
+  exit 1
+fi
+
 if ! grep -Fq "steps.stage_public_taxonomy_validation_fixture.outcome == 'failure'" <<<"${stage_final_fail_block}"; then
   echo "ERROR: stage terminal fail-closed block must trigger on public taxonomy validation fixture failure." >&2
+  exit 1
+fi
+
+if ! grep -Fq "steps.stage_navigation_smoke.outcome == 'failure'" <<<"${stage_final_fail_block}"; then
+  echo "ERROR: stage terminal fail-closed block must trigger on readonly navigation smoke failure." >&2
+  exit 1
+fi
+
+if ! grep -Fq "steps.stage_navigation_mutation_smoke.outcome == 'failure'" <<<"${stage_final_fail_block}"; then
+  echo "ERROR: stage terminal fail-closed block must trigger on mutation navigation smoke failure." >&2
   exit 1
 fi
 
@@ -495,6 +700,36 @@ fi
 
 if ! grep -Fq "steps.main_untrusted_bootstrap_block.outcome == 'failure'" <<<"${main_final_fail_block}"; then
   echo "ERROR: production terminal fail-closed block must trigger on the untrusted bootstrap guard." >&2
+  exit 1
+fi
+
+if ! grep -Fq "steps.main_untrusted_initialized_bootstrap_block.outcome == 'failure'" <<<"${main_final_fail_block}"; then
+  echo "ERROR: production terminal fail-closed block must trigger on the initialized bootstrap guard." >&2
+  exit 1
+fi
+
+if ! grep -Fq "steps.main_public_edge_environment_probe.outcome == 'failure'" <<<"${main_final_fail_block}"; then
+  echo "ERROR: production terminal fail-closed block must trigger on public-edge probe failure." >&2
+  exit 1
+fi
+
+if ! grep -Fq "steps.main_provenance_check.outcome == 'failure'" <<<"${main_final_fail_block}"; then
+  echo "ERROR: production terminal fail-closed block must trigger on provenance failure." >&2
+  exit 1
+fi
+
+if ! grep -Fq "steps.main_initial_mutation_guard.outcome == 'failure'" <<<"${main_final_fail_block}"; then
+  echo "ERROR: production terminal fail-closed block must trigger on initial main mutation hard-block failure." >&2
+  exit 1
+fi
+
+if ! grep -Fq "steps.production_navigation_smoke.outcome == 'failure'" <<<"${main_final_fail_block}"; then
+  echo "ERROR: production terminal fail-closed block must trigger on readonly navigation smoke failure." >&2
+  exit 1
+fi
+
+if ! grep -Fq "steps.main_rollback_mutation_guard.outcome == 'failure'" <<<"${main_final_fail_block}"; then
+  echo "ERROR: production terminal fail-closed block must trigger on rollback-proof mutation hard-block failure." >&2
   exit 1
 fi
 
