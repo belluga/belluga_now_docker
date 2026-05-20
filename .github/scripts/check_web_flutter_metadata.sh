@@ -20,18 +20,22 @@ if [[ "$TARGET_BRANCH" == "dev" ]]; then
   is_dev_lane=1
 fi
 
-FLUTTER_LANE_DEFINES_FILE="flutter-app/config/defines/${TARGET_BRANCH}.json"
+FLUTTER_LANE_DEFINES_PATH="config/defines/${TARGET_BRANCH}.json"
 FLUTTER_SHA="$(git ls-tree HEAD flutter-app | awk '{print $3}')"
 if [[ -z "$FLUTTER_SHA" ]]; then
   echo "ERROR: failed to resolve pinned flutter-app SHA" >&2
   exit 1
 fi
 
+FLUTTER_SUBMODULE_GIT_DIR="$(git rev-parse --git-common-dir)/modules/flutter-app"
+
 WEB_SHA="$(git ls-tree HEAD web-app | awk '{print $3}')"
 if [[ -z "$WEB_SHA" ]]; then
   echo "ERROR: failed to resolve pinned web-app SHA" >&2
   exit 1
 fi
+
+WEB_SUBMODULE_GIT_DIR="$(git rev-parse --git-common-dir)/modules/web-app"
 
 parse_repo_slug_from_url() {
   local url="$1"
@@ -61,14 +65,25 @@ get_remote_file_content() {
   printf '%s' "$encoded" | tr -d '\n' | base64 -d 2>/dev/null
 }
 
-get_pinned_local_file_content() {
-  local file_path="$1"
+get_pinned_submodule_file_content() {
+  local submodule_git_dir="$1"
+  local gitlink_sha="$2"
+  local file_path="$3"
 
-  if [[ ! -d "web-app/.git" ]]; then
+  if [[ ! -d "$submodule_git_dir" ]]; then
     return 1
   fi
 
-  git -C web-app show "${WEB_SHA}:${file_path}" 2>/dev/null
+  if ! git --git-dir "$submodule_git_dir" cat-file -e "${gitlink_sha}^{commit}" 2>/dev/null; then
+    return 1
+  fi
+
+  git --git-dir "$submodule_git_dir" show "${gitlink_sha}:${file_path}" 2>/dev/null
+}
+
+get_pinned_local_file_content() {
+  local file_path="$1"
+  get_pinned_submodule_file_content "$WEB_SUBMODULE_GIT_DIR" "$WEB_SHA" "$file_path"
 }
 
 web_repo_url="$(git config -f .gitmodules --get submodule.web-app.url || true)"
@@ -86,15 +101,25 @@ fi
 metadata_content=""
 web_index_content=""
 source_mode="pinned-gitlink-local"
+flutter_defines_content=""
+flutter_defines_mode="pinned-flutter-gitlink-local"
 
 metadata_content="$(get_pinned_local_file_content "build_metadata.json" || true)"
 web_index_content="$(get_pinned_local_file_content "index.html" || true)"
+flutter_defines_content="$(get_pinned_submodule_file_content "$FLUTTER_SUBMODULE_GIT_DIR" "$FLUTTER_SHA" "$FLUTTER_LANE_DEFINES_PATH" || true)"
 
 if [[ -z "$metadata_content" || -z "$web_index_content" ]]; then
   source_mode="pinned-gitlink-remote"
   if [[ -n "$web_repo_slug" ]]; then
     metadata_content="$(get_remote_file_content "$web_repo_slug" "build_metadata.json" "$WEB_SHA" || true)"
     web_index_content="$(get_remote_file_content "$web_repo_slug" "index.html" "$WEB_SHA" || true)"
+  fi
+fi
+
+if [[ -z "$flutter_defines_content" ]]; then
+  flutter_defines_mode="pinned-flutter-gitlink-remote"
+  if [[ -n "$flutter_repo_slug" ]]; then
+    flutter_defines_content="$(get_remote_file_content "$flutter_repo_slug" "$FLUTTER_LANE_DEFINES_PATH" "$FLUTTER_SHA" || true)"
   fi
 fi
 
@@ -116,12 +141,12 @@ if [[ -z "$web_index_content" ]]; then
   exit 1
 fi
 
-if [[ ! -f "$FLUTTER_LANE_DEFINES_FILE" ]]; then
+if [[ -z "$flutter_defines_content" ]]; then
   if [[ "$is_dev_lane" -eq 1 ]]; then
-    echo "WARN: lane defines file missing ($FLUTTER_LANE_DEFINES_FILE). Advisory on dev."
+    echo "WARN: lane defines content missing ($FLUTTER_LANE_DEFINES_PATH at flutter-app gitlink $FLUTTER_SHA). Advisory on dev."
     exit 0
   fi
-  echo "ERROR: missing lane defines file $FLUTTER_LANE_DEFINES_FILE" >&2
+  echo "ERROR: missing lane defines content $FLUTTER_LANE_DEFINES_PATH at flutter-app gitlink $FLUTTER_SHA" >&2
   exit 1
 fi
 
@@ -173,9 +198,11 @@ else
     fi
 
     if [[ -n "$metadata_full_sha" ]]; then
-      git -C flutter-app fetch origin "$TARGET_BRANCH" --quiet || true
-      git -C flutter-app fetch origin "$metadata_full_sha" --quiet || true
-      if git -C flutter-app merge-base --is-ancestor "$FLUTTER_SHA" "$metadata_full_sha" 2>/dev/null; then
+      if [[ -d "$FLUTTER_SUBMODULE_GIT_DIR" ]]; then
+        git --git-dir "$FLUTTER_SUBMODULE_GIT_DIR" fetch origin "$TARGET_BRANCH" --quiet || true
+        git --git-dir "$FLUTTER_SUBMODULE_GIT_DIR" fetch origin "$metadata_full_sha" --quiet || true
+      fi
+      if git --git-dir "$FLUTTER_SUBMODULE_GIT_DIR" merge-base --is-ancestor "$FLUTTER_SHA" "$metadata_full_sha" 2>/dev/null; then
         metadata_match_mode="descendant"
       fi
     fi
@@ -203,17 +230,17 @@ echo "INFO: pinned web-app gitlink SHA='$WEB_SHA' [mode=$source_mode]"
 expected_landlord_domain=""
 expected_landlord_host_ready=1
 if command -v jq >/dev/null 2>&1; then
-  expected_landlord_domain="$(jq -r '.LANDLORD_DOMAIN // empty' "$FLUTTER_LANE_DEFINES_FILE")"
+  expected_landlord_domain="$(printf '%s' "$flutter_defines_content" | jq -r '.LANDLORD_DOMAIN // empty' 2>/dev/null || true)"
 else
-  expected_landlord_domain="$(sed -n 's/.*"LANDLORD_DOMAIN"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$FLUTTER_LANE_DEFINES_FILE" | head -n1)"
+  expected_landlord_domain="$(printf '%s' "$flutter_defines_content" | sed -n 's/.*"LANDLORD_DOMAIN"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)"
 fi
 
 if [[ -z "$expected_landlord_domain" || "$expected_landlord_domain" == "null" ]]; then
   if [[ "$is_dev_lane" -eq 1 ]]; then
-    echo "WARN: LANDLORD_DOMAIN missing in $FLUTTER_LANE_DEFINES_FILE. Advisory on dev."
+    echo "WARN: LANDLORD_DOMAIN missing in $FLUTTER_LANE_DEFINES_PATH [mode=$flutter_defines_mode]. Advisory on dev."
     expected_landlord_host_ready=0
   else
-    echo "ERROR: LANDLORD_DOMAIN missing in $FLUTTER_LANE_DEFINES_FILE" >&2
+    echo "ERROR: LANDLORD_DOMAIN missing in $FLUTTER_LANE_DEFINES_PATH [mode=$flutter_defines_mode]" >&2
     exit 1
   fi
 fi
@@ -264,11 +291,11 @@ elif [[ -n "$expected_landlord_host" && "$actual_landlord_host" != "$expected_la
   if [[ "$is_dev_lane" -eq 1 ]]; then
     echo "WARN: host injection mismatch on dev: web-app __LANDLORD_HOST__='$actual_landlord_host', expected='$expected_landlord_host'"
   else
-    echo "ERROR: host injection mismatch for lane '$TARGET_BRANCH': web-app __LANDLORD_HOST__='$actual_landlord_host', expected '$expected_landlord_host' from $FLUTTER_LANE_DEFINES_FILE" >&2
+    echo "ERROR: host injection mismatch for lane '$TARGET_BRANCH': web-app __LANDLORD_HOST__='$actual_landlord_host', expected '$expected_landlord_host' from $FLUTTER_LANE_DEFINES_PATH [mode=$flutter_defines_mode]" >&2
     exit 1
   fi
 elif [[ "$expected_landlord_host_ready" -eq 0 ]]; then
-  echo "WARN: skipping strict host match on dev due to missing/invalid LANDLORD_DOMAIN in $FLUTTER_LANE_DEFINES_FILE"
+  echo "WARN: skipping strict host match on dev due to missing/invalid LANDLORD_DOMAIN in $FLUTTER_LANE_DEFINES_PATH [mode=$flutter_defines_mode]"
 else
   echo "OK: web index __LANDLORD_HOST__ ('$actual_landlord_host') matches expected lane host ('$expected_landlord_host') [mode=$source_mode lane=$TARGET_BRANCH]"
 fi
