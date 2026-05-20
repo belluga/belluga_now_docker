@@ -478,7 +478,7 @@ jobs:
 
       - name: Roll back stage deploy when provenance, preflight, smoke, or post-mutation deploy failure requires recovery
         id: stage_rollback
-        if: ${{ always() && ((steps.stage_deploy_remote.outcome == 'failure' && steps.stage_deploy_remote.outputs.runtime_mutated == 'true' && steps.stage_deploy_remote.outputs.internal_rollback_status != 'success') || steps.stage_initialize_preflight.outcome == 'failure' || steps.stage_unexpected_initialize_403.outcome == 'failure' || (steps.stage_initialize_preflight.outputs.initialized == 'true' && (steps.stage_public_edge_environment_probe.outcome == 'failure' || steps.stage_provenance_check.outcome == 'failure' || steps.stage_public_taxonomy_validation_fixture.outcome == 'failure' || steps.stage_navigation_smoke.outcome == 'failure' || steps.stage_navigation_mutation_smoke.outcome == 'failure'))) }}
+        if: ${{ always() && steps.stage_rollback_target.outputs.trusted_tuple_present == 'true' && ((steps.stage_deploy_remote.outcome == 'failure' && steps.stage_deploy_remote.outputs.runtime_mutated == 'true' && steps.stage_deploy_remote.outputs.internal_rollback_status != 'success') || steps.stage_initialize_preflight.outcome == 'failure' || steps.stage_unexpected_initialize_403.outcome == 'failure' || (steps.stage_initialize_preflight.outputs.initialized == 'true' && (steps.stage_public_edge_environment_probe.outcome == 'failure' || steps.stage_provenance_check.outcome == 'failure' || steps.stage_public_taxonomy_validation_fixture.outcome == 'failure' || steps.stage_navigation_smoke.outcome == 'failure' || steps.stage_navigation_mutation_smoke.outcome == 'failure'))) }}
         env:
           DEPLOY_LANE: stage
           DEPLOY_SSH_HOST: ${{ vars.STAGE_SSH_HOST }}
@@ -728,7 +728,7 @@ jobs:
           retention-days: 7
 
       - name: Fail stage deploy after rollback
-        if: ${{ always() && (steps.stage_deploy_remote.outcome == 'failure' || steps.stage_initialize_preflight.outcome == 'failure' || steps.stage_untrusted_bootstrap_block.outcome == 'failure' || steps.stage_unexpected_initialize_403.outcome == 'failure' || (steps.stage_initialize_preflight.outputs.initialized == 'true' && (steps.stage_public_edge_environment_probe.outcome == 'failure' || steps.stage_provenance_check.outcome == 'failure' || steps.stage_navigation_smoke.outcome == 'failure' || steps.stage_navigation_mutation_smoke.outcome == 'failure')) || (steps.stage_rollback_proof_plan.outputs.run == 'true' && (steps.stage_rollback_proof_guard.outcome == 'failure' || steps.stage_rollback_initialize_preflight.outcome == 'failure' || steps.stage_rollback_public_edge_environment_probe.outcome == 'failure' || steps.stage_rollback_provenance_check.outcome == 'failure' || steps.stage_rollback_navigation_smoke.outcome == 'failure' || steps.stage_rollback_navigation_mutation_smoke.outcome == 'failure'))) }}
+        if: ${{ always() && (steps.stage_deploy_remote.outcome == 'failure' || steps.stage_initialize_preflight.outcome == 'failure' || steps.stage_untrusted_bootstrap_block.outcome == 'failure' || steps.stage_unexpected_initialize_403.outcome == 'failure' || (steps.stage_initialize_preflight.outputs.initialized == 'true' && (steps.stage_public_edge_environment_probe.outcome == 'failure' || steps.stage_provenance_check.outcome == 'failure' || steps.stage_public_taxonomy_validation_fixture.outcome == 'failure' || steps.stage_navigation_smoke.outcome == 'failure' || steps.stage_navigation_mutation_smoke.outcome == 'failure')) || (steps.stage_rollback_proof_plan.outputs.run == 'true' && (steps.stage_rollback_proof_guard.outcome == 'failure' || steps.stage_rollback_initialize_preflight.outcome == 'failure' || steps.stage_rollback_public_edge_environment_probe.outcome == 'failure' || steps.stage_rollback_provenance_check.outcome == 'failure' || steps.stage_rollback_navigation_smoke.outcome == 'failure' || steps.stage_rollback_navigation_mutation_smoke.outcome == 'failure'))) }}
         run: |
           if [[ "${{ steps.stage_rollback_proof_guard.outcome }}" == "failure" ]]; then
             echo "ERROR: stage rollback restored an untrusted or unresolved target; terminal state is explicit degraded/incident." >&2
@@ -774,6 +774,10 @@ jobs:
             echo "ERROR: stage deployed build provenance validation failed and external rollback failed; terminal state is explicit degraded/incident." >&2
           elif [[ "${{ steps.stage_provenance_check.outcome }}" == "failure" ]]; then
             echo "ERROR: stage deployed build provenance validation failed; external rollback restored the previous healthy tuple and post-rollback proof passed." >&2
+          elif [[ "${{ steps.stage_public_taxonomy_validation_fixture.outcome }}" == "failure" && "${{ steps.stage_rollback.outcome }}" == "failure" ]]; then
+            echo "ERROR: stage public taxonomy validation fixture failed and external rollback failed; terminal state is explicit degraded/incident." >&2
+          elif [[ "${{ steps.stage_public_taxonomy_validation_fixture.outcome }}" == "failure" ]]; then
+            echo "ERROR: stage public taxonomy validation fixture failed; external rollback restored the previous healthy tuple and post-rollback proof passed." >&2
           elif [[ "${{ steps.stage_navigation_mutation_smoke.outcome }}" == "failure" && "${{ steps.stage_rollback.outcome }}" == "failure" ]]; then
             echo "ERROR: stage mutation navigation smoke failed and external rollback failed; terminal state is explicit degraded/incident." >&2
           elif [[ "${{ steps.stage_navigation_mutation_smoke.outcome }}" == "failure" ]]; then
@@ -1121,7 +1125,7 @@ jobs:
 
       - name: Roll back production deploy when provenance, preflight, smoke, or post-mutation deploy failure requires recovery
         id: main_rollback
-        if: ${{ always() && ((steps.main_deploy_remote.outcome == 'failure' && steps.main_deploy_remote.outputs.runtime_mutated == 'true' && steps.main_deploy_remote.outputs.internal_rollback_status != 'success') || steps.main_initialize_preflight.outcome == 'failure' || steps.main_untrusted_bootstrap_block.outcome == 'failure' || steps.main_unexpected_initialize_403.outcome == 'failure' || (steps.main_initialize_preflight.outputs.initialized == 'true' && (steps.main_public_edge_environment_probe.outcome == 'failure' || steps.main_provenance_check.outcome == 'failure' || steps.production_navigation_smoke.outcome == 'failure'))) }}
+        if: ${{ always() && steps.main_rollback_target.outputs.trusted_tuple_present == 'true' && ((steps.main_deploy_remote.outcome == 'failure' && steps.main_deploy_remote.outputs.runtime_mutated == 'true' && steps.main_deploy_remote.outputs.internal_rollback_status != 'success') || steps.main_initialize_preflight.outcome == 'failure' || steps.main_unexpected_initialize_403.outcome == 'failure' || (steps.main_initialize_preflight.outputs.initialized == 'true' && (steps.main_public_edge_environment_probe.outcome == 'failure' || steps.main_provenance_check.outcome == 'failure' || steps.production_navigation_smoke.outcome == 'failure'))) }}
         env:
           DEPLOY_LANE: main
           DEPLOY_SSH_HOST: ${{ vars.MAIN_SSH_HOST }}
