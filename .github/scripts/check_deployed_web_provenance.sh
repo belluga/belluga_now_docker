@@ -64,6 +64,8 @@ curl_args=(
 
 provenance_max_attempts="${NAV_PROVENANCE_MAX_ATTEMPTS:-3}"
 provenance_sleep_seconds="${NAV_PROVENANCE_SLEEP_SECONDS:-5}"
+validation_max_attempts="${NAV_PROVENANCE_VALIDATION_MAX_ATTEMPTS:-6}"
+validation_sleep_seconds="${NAV_PROVENANCE_VALIDATION_SLEEP_SECONDS:-5}"
 
 if [[ -n "${NAV_ORIGIN_IP:-}" ]]; then
   probe_base_url="http://${NAV_ORIGIN_IP}"
@@ -97,20 +99,31 @@ fetch_with_retries() {
   return 1
 }
 
-status="$(fetch_with_retries "${metadata_url}" "${metadata_file}" "deployed build metadata")"
-if [[ ! "${status}" =~ ^[0-9]+$ ]]; then
-  echo "ERROR: invalid HTTP status while reading deployed build metadata: '${status}'." >&2
-  exit 1
-fi
+validate_deployed_provenance_once() {
+  local status=""
+  local actual_flutter_sha=""
+  local source_branch=""
+  local metadata_match_mode=""
+  local actual_flutter_full_sha=""
+  local lane_defines_file=""
+  local expected_landlord_host=""
+  local index_status=""
+  local actual_landlord_host=""
 
-if (( status >= 400 )); then
-  echo "ERROR: could not fetch deployed build metadata (${metadata_url}); HTTP ${status}." >&2
-  cat "${metadata_file}" >&2 || true
-  exit 1
-fi
+  status="$(fetch_with_retries "${metadata_url}" "${metadata_file}" "deployed build metadata")"
+  if [[ ! "${status}" =~ ^[0-9]+$ ]]; then
+    echo "ERROR: invalid HTTP status while reading deployed build metadata: '${status}'." >&2
+    return 1
+  fi
 
-actual_flutter_sha="$(
-  python3 - <<'PY' "${metadata_file}"
+  if (( status >= 400 )); then
+    echo "ERROR: could not fetch deployed build metadata (${metadata_url}); HTTP ${status}." >&2
+    cat "${metadata_file}" >&2 || true
+    return 1
+  fi
+
+  actual_flutter_sha="$(
+    python3 - <<'PY' "${metadata_file}"
 import json
 import sys
 from pathlib import Path
@@ -121,11 +134,11 @@ payload = json.loads(raw)
 value = str(payload.get("flutter_git_sha") or "").strip().lower()
 print(value)
 PY
-)"
-actual_flutter_sha="$(echo "${actual_flutter_sha}" | tr -d '[:space:]')"
+  )"
+  actual_flutter_sha="$(echo "${actual_flutter_sha}" | tr -d '[:space:]')"
 
-source_branch="$(
-  python3 - <<'PY' "${metadata_file}"
+  source_branch="$(
+    python3 - <<'PY' "${metadata_file}"
 import json
 import sys
 from pathlib import Path
@@ -136,74 +149,71 @@ payload = json.loads(raw)
 value = str(payload.get("source_branch") or "").strip()
 print(value)
 PY
-)"
-source_branch="$(echo "${source_branch}" | tr -d '[:space:]')"
+  )"
+  source_branch="$(echo "${source_branch}" | tr -d '[:space:]')"
 
-if [[ -z "${actual_flutter_sha}" ]]; then
-  echo "ERROR: deployed build metadata is missing 'flutter_git_sha' (${metadata_url})." >&2
-  cat "${metadata_file}" >&2 || true
-  exit 1
-fi
+  if [[ -z "${actual_flutter_sha}" ]]; then
+    echo "ERROR: deployed build metadata is missing 'flutter_git_sha' (${metadata_url})." >&2
+    cat "${metadata_file}" >&2 || true
+    return 1
+  fi
 
-if [[ -z "${source_branch}" ]]; then
-  echo "ERROR: deployed build metadata is missing 'source_branch' (${metadata_url})." >&2
-  cat "${metadata_file}" >&2 || true
-  exit 1
-fi
+  if [[ -z "${source_branch}" ]]; then
+    echo "ERROR: deployed build metadata is missing 'source_branch' (${metadata_url})." >&2
+    cat "${metadata_file}" >&2 || true
+    return 1
+  fi
 
-if [[ "${source_branch}" != "${lane}" ]]; then
-  echo "ERROR: deployed build metadata source branch mismatch for lane '${lane}'." >&2
-  echo "Expected build_metadata.source_branch: ${lane}" >&2
-  echo "Actual deployed build_metadata.source_branch: ${source_branch}" >&2
-  echo "Metadata URL: ${metadata_url}" >&2
-  cat "${metadata_file}" >&2 || true
-  exit 1
-fi
+  if [[ "${source_branch}" != "${lane}" ]]; then
+    echo "ERROR: deployed build metadata source branch mismatch for lane '${lane}'." >&2
+    echo "Expected build_metadata.source_branch: ${lane}" >&2
+    echo "Actual deployed build_metadata.source_branch: ${source_branch}" >&2
+    echo "Metadata URL: ${metadata_url}" >&2
+    cat "${metadata_file}" >&2 || true
+    return 1
+  fi
 
-metadata_match_mode=""
-actual_flutter_full_sha=""
+  if [[ "${actual_flutter_sha}" =~ ^[0-9a-f]{40}$ ]]; then
+    actual_flutter_full_sha="${actual_flutter_sha}"
+  else
+    git -C "${repo_root}/flutter-app" fetch origin "${lane}" --quiet || true
+    actual_flutter_full_sha="$(git -C "${repo_root}/flutter-app" rev-parse --verify "${actual_flutter_sha}^{commit}" 2>/dev/null | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]' || true)"
+  fi
 
-if [[ "${actual_flutter_sha}" =~ ^[0-9a-f]{40}$ ]]; then
-  actual_flutter_full_sha="${actual_flutter_sha}"
-else
-  git -C "${repo_root}/flutter-app" fetch origin "${lane}" --quiet || true
-  actual_flutter_full_sha="$(git -C "${repo_root}/flutter-app" rev-parse --verify "${actual_flutter_sha}^{commit}" 2>/dev/null | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]' || true)"
-fi
-
-if sha_matches "${expected_flutter_sha}" "${actual_flutter_sha}"; then
-  metadata_match_mode="exact-or-prefix"
-else
-  if [[ -n "${actual_flutter_full_sha}" ]]; then
-    git -C "${repo_root}/flutter-app" fetch origin "${actual_flutter_full_sha}" --quiet || true
-    if git -C "${repo_root}/flutter-app" merge-base --is-ancestor "${expected_flutter_sha}" "${actual_flutter_full_sha}" 2>/dev/null; then
-      metadata_match_mode="descendant"
+  if sha_matches "${expected_flutter_sha}" "${actual_flutter_sha}"; then
+    metadata_match_mode="exact-or-prefix"
+  else
+    if [[ -n "${actual_flutter_full_sha}" ]]; then
+      git -C "${repo_root}/flutter-app" fetch origin "${actual_flutter_full_sha}" --quiet || true
+      if git -C "${repo_root}/flutter-app" merge-base --is-ancestor "${expected_flutter_sha}" "${actual_flutter_full_sha}" 2>/dev/null; then
+        metadata_match_mode="descendant"
+      fi
     fi
   fi
-fi
 
-if [[ -z "${metadata_match_mode}" ]]; then
-  echo "ERROR: deployed flutter sha mismatch for lane '${lane}'." >&2
-  echo "Expected flutter-app SHA (${expected_flutter_sha_source}): ${expected_flutter_sha}" >&2
-  echo "Actual deployed build_metadata.flutter_git_sha: ${actual_flutter_sha}" >&2
-  if [[ -n "${expected_web_sha}" ]]; then
-    echo "Expected web-app gitlink (diagnostic): ${expected_web_sha}" >&2
+  if [[ -z "${metadata_match_mode}" ]]; then
+    echo "ERROR: deployed flutter sha mismatch for lane '${lane}'." >&2
+    echo "Expected flutter-app SHA (${expected_flutter_sha_source}): ${expected_flutter_sha}" >&2
+    echo "Actual deployed build_metadata.flutter_git_sha: ${actual_flutter_sha}" >&2
+    if [[ -n "${expected_web_sha}" ]]; then
+      echo "Expected web-app gitlink (diagnostic): ${expected_web_sha}" >&2
+    fi
+    if [[ -n "${source_branch}" ]]; then
+      echo "Deployed build_metadata.source_branch: ${source_branch}" >&2
+    fi
+    echo "Metadata URL: ${metadata_url}" >&2
+    cat "${metadata_file}" >&2 || true
+    return 1
   fi
-  if [[ -n "${source_branch}" ]]; then
-    echo "Deployed build_metadata.source_branch: ${source_branch}" >&2
+
+  lane_defines_file="${repo_root}/flutter-app/config/defines/${lane}.json"
+  if [[ ! -f "${lane_defines_file}" ]]; then
+    echo "ERROR: lane defines file not found for '${lane}': ${lane_defines_file}" >&2
+    return 1
   fi
-  echo "Metadata URL: ${metadata_url}" >&2
-  cat "${metadata_file}" >&2 || true
-  exit 1
-fi
 
-lane_defines_file="${repo_root}/flutter-app/config/defines/${lane}.json"
-if [[ ! -f "${lane_defines_file}" ]]; then
-  echo "ERROR: lane defines file not found for '${lane}': ${lane_defines_file}" >&2
-  exit 1
-fi
-
-expected_landlord_host="$(
-  python3 - <<'PY' "${lane_defines_file}"
+  expected_landlord_host="$(
+    python3 - <<'PY' "${lane_defines_file}"
 import json
 import sys
 from urllib.parse import urlparse
@@ -215,28 +225,28 @@ domain = str(payload.get("LANDLORD_DOMAIN") or "").strip()
 host = (urlparse(domain).hostname or "").strip().lower()
 print(host)
 PY
-)"
-expected_landlord_host="$(echo "${expected_landlord_host}" | tr -d '[:space:]')"
-if [[ -z "${expected_landlord_host}" ]]; then
-  echo "ERROR: could not resolve expected landlord host from ${lane_defines_file}." >&2
-  exit 1
-fi
+  )"
+  expected_landlord_host="$(echo "${expected_landlord_host}" | tr -d '[:space:]')"
+  if [[ -z "${expected_landlord_host}" ]]; then
+    echo "ERROR: could not resolve expected landlord host from ${lane_defines_file}." >&2
+    return 1
+  fi
 
-index_file="/tmp/${lane}_deployed_index.html"
-index_url="${probe_base_url}/index.html?_ci_probe=${cache_key}"
-index_status="$(fetch_with_retries "${index_url}" "${index_file}" "deployed index")"
-if [[ ! "${index_status}" =~ ^[0-9]+$ ]]; then
-  echo "ERROR: invalid HTTP status while reading deployed index: '${index_status}'." >&2
-  exit 1
-fi
-if (( index_status >= 400 )); then
-  echo "ERROR: could not fetch deployed index (${index_url}); HTTP ${index_status}." >&2
-  cat "${index_file}" >&2 || true
-  exit 1
-fi
+  index_file="/tmp/${lane}_deployed_index.html"
+  index_url="${probe_base_url}/index.html?_ci_probe=${cache_key}"
+  index_status="$(fetch_with_retries "${index_url}" "${index_file}" "deployed index")"
+  if [[ ! "${index_status}" =~ ^[0-9]+$ ]]; then
+    echo "ERROR: invalid HTTP status while reading deployed index: '${index_status}'." >&2
+    return 1
+  fi
+  if (( index_status >= 400 )); then
+    echo "ERROR: could not fetch deployed index (${index_url}); HTTP ${index_status}." >&2
+    cat "${index_file}" >&2 || true
+    return 1
+  fi
 
-actual_landlord_host="$(
-  python3 - <<'PY' "${index_file}"
+  actual_landlord_host="$(
+    python3 - <<'PY' "${index_file}"
 import re
 import sys
 
@@ -244,27 +254,55 @@ html = open(sys.argv[1], "r", encoding="utf-8").read()
 match = re.search(r"window\.__LANDLORD_HOST__\s*=\s*['\"]([^'\"]+)['\"]", html)
 print((match.group(1) if match else "").strip().lower())
 PY
-)"
-actual_landlord_host="$(echo "${actual_landlord_host}" | tr -d '[:space:]')"
-if [[ -z "${actual_landlord_host}" ]]; then
-  echo "ERROR: deployed web index is missing window.__LANDLORD_HOST__ injection (${index_url})." >&2
-  exit 1
-fi
+  )"
+  actual_landlord_host="$(echo "${actual_landlord_host}" | tr -d '[:space:]')"
+  if [[ -z "${actual_landlord_host}" ]]; then
+    echo "ERROR: deployed web index is missing window.__LANDLORD_HOST__ injection (${index_url})." >&2
+    return 1
+  fi
 
-if [[ "${actual_landlord_host}" != "${expected_landlord_host}" ]]; then
-  echo "ERROR: deployed landlord host mismatch for lane '${lane}'." >&2
-  echo "Expected lane host (${lane_defines_file}): ${expected_landlord_host}" >&2
-  echo "Actual deployed window.__LANDLORD_HOST__: ${actual_landlord_host}" >&2
-  echo "Index URL: ${index_url}" >&2
-  exit 1
-fi
+  if [[ "${actual_landlord_host}" != "${expected_landlord_host}" ]]; then
+    echo "ERROR: deployed landlord host mismatch for lane '${lane}'." >&2
+    echo "Expected lane host (${lane_defines_file}): ${expected_landlord_host}" >&2
+    echo "Actual deployed window.__LANDLORD_HOST__: ${actual_landlord_host}" >&2
+    echo "Index URL: ${index_url}" >&2
+    return 1
+  fi
 
-echo "OK: deployed flutter sha matches expected lane gitlink for '${lane}' via ${metadata_match_mode}."
-echo "Expected flutter-app SHA (${expected_flutter_sha_source}): ${expected_flutter_sha}"
-echo "Deployed build_metadata.flutter_git_sha: ${actual_flutter_sha}"
-echo "Deployed build_metadata.source_branch: ${source_branch}"
-echo "Expected lane landlord host: ${expected_landlord_host}"
-echo "Deployed window.__LANDLORD_HOST__: ${actual_landlord_host}"
-if [[ -n "${expected_web_sha}" ]]; then
-  echo "Expected web-app gitlink (diagnostic): ${expected_web_sha}"
-fi
+  echo "OK: deployed flutter sha matches expected lane gitlink for '${lane}' via ${metadata_match_mode}."
+  echo "Expected flutter-app SHA (${expected_flutter_sha_source}): ${expected_flutter_sha}"
+  echo "Deployed build_metadata.flutter_git_sha: ${actual_flutter_sha}"
+  echo "Deployed build_metadata.source_branch: ${source_branch}"
+  echo "Expected lane landlord host: ${expected_landlord_host}"
+  echo "Deployed window.__LANDLORD_HOST__: ${actual_landlord_host}"
+  if [[ -n "${expected_web_sha}" ]]; then
+    echo "Expected web-app gitlink (diagnostic): ${expected_web_sha}"
+  fi
+}
+
+validation_stdout="$(mktemp)"
+validation_stderr="$(mktemp)"
+cleanup_validation_artifacts() {
+  rm -f "${validation_stdout}" "${validation_stderr}"
+}
+trap cleanup_validation_artifacts EXIT
+
+attempt=1
+while (( attempt <= validation_max_attempts )); do
+  if validate_deployed_provenance_once >"${validation_stdout}" 2>"${validation_stderr}"; then
+    cat "${validation_stdout}"
+    exit 0
+  fi
+
+  if (( attempt == validation_max_attempts )); then
+    cat "${validation_stderr}" >&2 || true
+    exit 1
+  fi
+
+  echo "WARN: deployed web provenance validation attempt ${attempt}/${validation_max_attempts} did not converge yet; retrying in ${validation_sleep_seconds}s..." >&2
+  cat "${validation_stderr}" >&2 || true
+  sleep "${validation_sleep_seconds}"
+  : > "${validation_stdout}"
+  : > "${validation_stderr}"
+  (( attempt += 1 ))
+done
