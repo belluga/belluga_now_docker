@@ -348,8 +348,10 @@ done
 
 required_workflow_markers=(
   "id: stage_rollback_proof_plan"
+  "id: stage_rollback_proof_guard"
   "id: stage_rollback_provenance_check"
   "id: main_rollback_proof_plan"
+  "id: main_rollback_proof_guard"
   "id: main_rollback_provenance_check"
   "id: stage_untrusted_bootstrap_block"
   "id: main_untrusted_bootstrap_block"
@@ -554,6 +556,78 @@ if ! grep -Fq "steps.main_untrusted_initialized_bootstrap_block.outcome != 'fail
   exit 1
 fi
 
+stage_rollback_proof_guard_block="$(awk '
+  /- name: Guard trusted rollback target for stage rollback proof/ { in_block=1 }
+  in_block && /^      - name:/ && $0 !~ /Guard trusted rollback target for stage rollback proof/ { exit }
+  in_block { print }
+' .github/workflows/orchestration-ci-cd.yml)"
+
+if [[ -z "${stage_rollback_proof_guard_block}" ]]; then
+  echo "ERROR: could not locate the stage rollback proof guard block in orchestration-ci-cd.yml." >&2
+  exit 1
+fi
+
+if ! grep -Fq "steps.stage_rollback_proof_plan.outputs.run == 'true'" <<<"${stage_rollback_proof_guard_block}"; then
+  echo "ERROR: the stage rollback proof guard must only run when rollback-proof execution is planned." >&2
+  exit 1
+fi
+
+if ! grep -Fq "steps.stage_rollback_proof_plan.outputs.trusted_tuple_present" <<<"${stage_rollback_proof_guard_block}"; then
+  echo "ERROR: the stage rollback proof guard must validate trusted_tuple_present before trusting the restored target." >&2
+  exit 1
+fi
+
+if ! grep -Fq "steps.stage_rollback_proof_plan.outputs.target_revision" <<<"${stage_rollback_proof_guard_block}"; then
+  echo "ERROR: the stage rollback proof guard must validate the restored target revision." >&2
+  exit 1
+fi
+
+if ! grep -Fq "steps.stage_rollback_proof_plan.outputs.expected_flutter_sha" <<<"${stage_rollback_proof_guard_block}"; then
+  echo "ERROR: the stage rollback proof guard must validate the restored flutter-app SHA." >&2
+  exit 1
+fi
+
+if ! grep -Fq "steps.stage_rollback_target.outputs.revision" <<<"${stage_rollback_proof_guard_block}"; then
+  echo "ERROR: the stage rollback proof guard must compare internal rollback restores against the trusted successful-release target revision." >&2
+  exit 1
+fi
+
+main_rollback_proof_guard_block="$(awk '
+  /- name: Guard trusted rollback target for production rollback proof/ { in_block=1 }
+  in_block && /^      - name:/ && $0 !~ /Guard trusted rollback target for production rollback proof/ { exit }
+  in_block { print }
+' .github/workflows/orchestration-ci-cd.yml)"
+
+if [[ -z "${main_rollback_proof_guard_block}" ]]; then
+  echo "ERROR: could not locate the production rollback proof guard block in orchestration-ci-cd.yml." >&2
+  exit 1
+fi
+
+if ! grep -Fq "steps.main_rollback_proof_plan.outputs.run == 'true'" <<<"${main_rollback_proof_guard_block}"; then
+  echo "ERROR: the production rollback proof guard must only run when rollback-proof execution is planned." >&2
+  exit 1
+fi
+
+if ! grep -Fq "steps.main_rollback_proof_plan.outputs.trusted_tuple_present" <<<"${main_rollback_proof_guard_block}"; then
+  echo "ERROR: the production rollback proof guard must validate trusted_tuple_present before trusting the restored target." >&2
+  exit 1
+fi
+
+if ! grep -Fq "steps.main_rollback_proof_plan.outputs.target_revision" <<<"${main_rollback_proof_guard_block}"; then
+  echo "ERROR: the production rollback proof guard must validate the restored target revision." >&2
+  exit 1
+fi
+
+if ! grep -Fq "steps.main_rollback_proof_plan.outputs.expected_flutter_sha" <<<"${main_rollback_proof_guard_block}"; then
+  echo "ERROR: the production rollback proof guard must validate the restored flutter-app SHA." >&2
+  exit 1
+fi
+
+if ! grep -Fq "steps.main_rollback_target.outputs.revision" <<<"${main_rollback_proof_guard_block}"; then
+  echo "ERROR: the production rollback proof guard must compare internal rollback restores against the trusted successful-release target revision." >&2
+  exit 1
+fi
+
 stage_rollback_block="$(awk '
   /- name: Roll back stage deploy when provenance, preflight, smoke, or post-mutation deploy failure requires recovery/ { in_block=1 }
   in_block && /^      - name:/ && $0 !~ /Roll back stage deploy when provenance, preflight, smoke, or post-mutation deploy failure requires recovery/ { exit }
@@ -687,6 +761,36 @@ if ! grep -Fq "steps.stage_navigation_mutation_smoke.outcome == 'failure'" <<<"$
   exit 1
 fi
 
+if ! grep -Fq "steps.stage_rollback_proof_guard.outcome == 'failure'" <<<"${stage_final_fail_block}"; then
+  echo "ERROR: stage terminal fail-closed block must trigger on rollback-proof guard failure." >&2
+  exit 1
+fi
+
+if ! grep -Fq "steps.stage_rollback_initialize_preflight.outcome == 'failure'" <<<"${stage_final_fail_block}"; then
+  echo "ERROR: stage terminal fail-closed block must trigger on rollback-proof initialize preflight failure." >&2
+  exit 1
+fi
+
+if ! grep -Fq "steps.stage_rollback_public_edge_environment_probe.outcome == 'failure'" <<<"${stage_final_fail_block}"; then
+  echo "ERROR: stage terminal fail-closed block must trigger on rollback-proof public-edge probe failure." >&2
+  exit 1
+fi
+
+if ! grep -Fq "steps.stage_rollback_provenance_check.outcome == 'failure'" <<<"${stage_final_fail_block}"; then
+  echo "ERROR: stage terminal fail-closed block must trigger on rollback-proof provenance failure." >&2
+  exit 1
+fi
+
+if ! grep -Fq "steps.stage_rollback_navigation_smoke.outcome == 'failure'" <<<"${stage_final_fail_block}"; then
+  echo "ERROR: stage terminal fail-closed block must trigger on restored readonly navigation smoke failure." >&2
+  exit 1
+fi
+
+if ! grep -Fq "steps.stage_rollback_navigation_mutation_smoke.outcome == 'failure'" <<<"${stage_final_fail_block}"; then
+  echo "ERROR: stage terminal fail-closed block must trigger on restored mutation navigation smoke failure." >&2
+  exit 1
+fi
+
 main_final_fail_block="$(awk '
   /- name: Fail production deploy after rollback/ { in_block=1 }
   in_block && /^      - name:/ && $0 !~ /Fail production deploy after rollback/ { exit }
@@ -730,6 +834,31 @@ fi
 
 if ! grep -Fq "steps.main_rollback_mutation_guard.outcome == 'failure'" <<<"${main_final_fail_block}"; then
   echo "ERROR: production terminal fail-closed block must trigger on rollback-proof mutation hard-block failure." >&2
+  exit 1
+fi
+
+if ! grep -Fq "steps.main_rollback_proof_guard.outcome == 'failure'" <<<"${main_final_fail_block}"; then
+  echo "ERROR: production terminal fail-closed block must trigger on rollback-proof guard failure." >&2
+  exit 1
+fi
+
+if ! grep -Fq "steps.main_rollback_initialize_preflight.outcome == 'failure'" <<<"${main_final_fail_block}"; then
+  echo "ERROR: production terminal fail-closed block must trigger on rollback-proof initialize preflight failure." >&2
+  exit 1
+fi
+
+if ! grep -Fq "steps.main_rollback_public_edge_environment_probe.outcome == 'failure'" <<<"${main_final_fail_block}"; then
+  echo "ERROR: production terminal fail-closed block must trigger on rollback-proof public-edge probe failure." >&2
+  exit 1
+fi
+
+if ! grep -Fq "steps.main_rollback_provenance_check.outcome == 'failure'" <<<"${main_final_fail_block}"; then
+  echo "ERROR: production terminal fail-closed block must trigger on rollback-proof provenance failure." >&2
+  exit 1
+fi
+
+if ! grep -Fq "steps.main_rollback_navigation_smoke.outcome == 'failure'" <<<"${main_final_fail_block}"; then
+  echo "ERROR: production terminal fail-closed block must trigger on restored readonly navigation smoke failure." >&2
   exit 1
 fi
 
