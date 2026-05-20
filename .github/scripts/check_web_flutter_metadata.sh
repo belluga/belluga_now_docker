@@ -27,6 +27,12 @@ if [[ -z "$FLUTTER_SHA" ]]; then
   exit 1
 fi
 
+WEB_SHA="$(git ls-tree HEAD web-app | awk '{print $3}')"
+if [[ -z "$WEB_SHA" ]]; then
+  echo "ERROR: failed to resolve pinned web-app SHA" >&2
+  exit 1
+fi
+
 parse_repo_slug_from_url() {
   local url="$1"
   url="${url#git@github.com:}"
@@ -55,6 +61,16 @@ get_remote_file_content() {
   printf '%s' "$encoded" | tr -d '\n' | base64 -d 2>/dev/null
 }
 
+get_pinned_local_file_content() {
+  local file_path="$1"
+
+  if [[ ! -d "web-app/.git" ]]; then
+    return 1
+  fi
+
+  git -C web-app show "${WEB_SHA}:${file_path}" 2>/dev/null
+}
+
 web_repo_url="$(git config -f .gitmodules --get submodule.web-app.url || true)"
 web_repo_slug=""
 if [[ -n "$web_repo_url" ]]; then
@@ -69,20 +85,16 @@ fi
 
 metadata_content=""
 web_index_content=""
-source_mode="remote"
+source_mode="pinned-gitlink-local"
 
-if [[ -n "$web_repo_slug" ]]; then
-  metadata_content="$(get_remote_file_content "$web_repo_slug" "build_metadata.json" "$TARGET_BRANCH" || true)"
-  web_index_content="$(get_remote_file_content "$web_repo_slug" "index.html" "$TARGET_BRANCH" || true)"
-fi
+metadata_content="$(get_pinned_local_file_content "build_metadata.json" || true)"
+web_index_content="$(get_pinned_local_file_content "index.html" || true)"
 
 if [[ -z "$metadata_content" || -z "$web_index_content" ]]; then
-  source_mode="local"
-  if [[ -f "web-app/build_metadata.json" ]]; then
-    metadata_content="$(cat web-app/build_metadata.json)"
-  fi
-  if [[ -f "web-app/index.html" ]]; then
-    web_index_content="$(cat web-app/index.html)"
+  source_mode="pinned-gitlink-remote"
+  if [[ -n "$web_repo_slug" ]]; then
+    metadata_content="$(get_remote_file_content "$web_repo_slug" "build_metadata.json" "$WEB_SHA" || true)"
+    web_index_content="$(get_remote_file_content "$web_repo_slug" "index.html" "$WEB_SHA" || true)"
   fi
 fi
 
@@ -186,6 +198,7 @@ if [[ "$metadata_match_mode" == "advisory-dev-mismatch" ]]; then
 else
   echo "OK: web metadata flutter_git_sha ($metadata_sha) is compatible with pinned flutter-app SHA ($FLUTTER_SHA) via $metadata_match_mode [mode=$source_mode lane=$TARGET_BRANCH]"
 fi
+echo "INFO: pinned web-app gitlink SHA='$WEB_SHA' [mode=$source_mode]"
 
 expected_landlord_domain=""
 expected_landlord_host_ready=1

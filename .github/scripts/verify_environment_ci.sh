@@ -97,6 +97,26 @@ for file in "${required_files[@]}"; do
   fi
 done
 
+if ! grep -Fq 'WEB_SHA="$(git ls-tree HEAD web-app' .github/scripts/check_web_flutter_metadata.sh; then
+  echo "ERROR: check_web_flutter_metadata.sh must resolve the pinned web-app gitlink SHA from the promoted root revision." >&2
+  exit 1
+fi
+
+if ! grep -Fq 'git -C web-app show "${WEB_SHA}:build_metadata.json"' .github/scripts/check_web_flutter_metadata.sh; then
+  echo "ERROR: check_web_flutter_metadata.sh must validate build_metadata.json from the pinned web-app gitlink content." >&2
+  exit 1
+fi
+
+if ! grep -Fq 'get_remote_file_content "$web_repo_slug" "build_metadata.json" "$WEB_SHA"' .github/scripts/check_web_flutter_metadata.sh; then
+  echo "ERROR: check_web_flutter_metadata.sh must fall back to the pinned web-app gitlink SHA when loading remote build metadata." >&2
+  exit 1
+fi
+
+if grep -Fq 'get_remote_file_content "$web_repo_slug" "build_metadata.json" "$TARGET_BRANCH"' .github/scripts/check_web_flutter_metadata.sh; then
+  echo "ERROR: check_web_flutter_metadata.sh must not validate web build metadata against the lane branch tip; use the pinned web-app gitlink SHA." >&2
+  exit 1
+fi
+
 required_cache_env_markers=(
   "normalize_laravel_cache_env_for_mongo"
   "require_laravel_mongodb_cache_env"
