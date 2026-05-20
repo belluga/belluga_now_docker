@@ -226,11 +226,12 @@ jobs:
               -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
               -o ConnectTimeout=5 -o ConnectionAttempts=1 \
               -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o TCPKeepAlive=yes \
-              "${DEPLOY_SSH_USER}@${DEPLOY_SSH_HOST}" "set -euo pipefail; if [[ -d '${DEPLOY_PATH}/.git' ]]; then cd '${DEPLOY_PATH}'; trusted_tuple_present=false; target=''; if [[ -f '.last_successful_revision' ]]; then trusted_tuple_present=true; marker=\$(cat '.last_successful_revision' | tr -d '\r'); if printf '%s\n' \"\$marker\" | grep -Eq '^[0-9a-fA-F]{40}$'; then target=\"\$marker\"; else target=\$(printf '%s\n' \"\$marker\" | sed -n 's/^ROOT_SHA=//p' | head -n 1); fi; elif git rev-parse --verify HEAD >/dev/null 2>&1; then target=\$(git rev-parse HEAD); fi; printf 'target=%s\ntrusted_tuple_present=%s\n' \"\$target\" \"\$trusted_tuple_present\"; fi"
+              "${DEPLOY_SSH_USER}@${DEPLOY_SSH_HOST}" "set -euo pipefail; if [[ -d '${DEPLOY_PATH}/.git' ]]; then cd '${DEPLOY_PATH}'; trusted_tuple_present=false; target=''; web_app_runtime_sha=''; if [[ -f '.last_successful_revision' ]]; then trusted_tuple_present=true; marker=\$(cat '.last_successful_revision' | tr -d '\r'); if printf '%s\n' \"\$marker\" | grep -Eq '^[0-9a-fA-F]{40}$'; then target=\"\$marker\"; web_app_runtime_sha=\$(git ls-tree \"\$target\" web-app 2>/dev/null | awk '{print \$3}' | tr -d '[:space:]' || true); else target=\$(printf '%s\n' \"\$marker\" | sed -n 's/^ROOT_SHA=//p' | head -n 1); web_app_runtime_sha=\$(printf '%s\n' \"\$marker\" | sed -n 's/^WEB_APP_RUNTIME_SHA=//p' | head -n 1 | tr -d '[:space:]'); if [[ -z \"\$web_app_runtime_sha\" && -n \"\$target\" ]]; then web_app_runtime_sha=\$(git ls-tree \"\$target\" web-app 2>/dev/null | awk '{print \$3}' | tr -d '[:space:]' || true); fi; fi; elif git rev-parse --verify HEAD >/dev/null 2>&1; then target=\$(git rev-parse HEAD); web_app_runtime_sha=\$(git ls-tree \"\$target\" web-app 2>/dev/null | awk '{print \$3}' | tr -d '[:space:]' || true); fi; printf 'target=%s\ntrusted_tuple_present=%s\nweb_app_runtime_sha=%s\n' \"\$target\" \"\$trusted_tuple_present\" \"\$web_app_runtime_sha\"; fi"
           )"
 
           target="$(printf '%s\n' "$remote_output" | sed -n 's/^target=//p' | head -n 1 | tr -d '[:space:]')"
           trusted_tuple_present="$(printf '%s\n' "$remote_output" | sed -n 's/^trusted_tuple_present=//p' | head -n 1 | tr -d '[:space:]')"
+          web_app_runtime_sha="$(printf '%s\n' "$remote_output" | sed -n 's/^web_app_runtime_sha=//p' | head -n 1 | tr -d '[:space:]')"
           echo "trusted_tuple_present=${trusted_tuple_present:-false}" >> "$GITHUB_OUTPUT"
           target="$(echo "$target" | tr -d '[:space:]')"
           if [[ -n "$target" ]]; then
@@ -238,6 +239,10 @@ jobs:
             echo "INFO: stage rollback target revision captured: $target"
           else
             echo "INFO: stage rollback target revision unavailable (first deployment path or no git HEAD)."
+          fi
+          if [[ -n "$web_app_runtime_sha" ]]; then
+            echo "web_app_runtime_sha=$web_app_runtime_sha" >> "$GITHUB_OUTPUT"
+            echo "INFO: stage rollback target web-app runtime SHA captured: $web_app_runtime_sha"
           fi
 
       - name: Resolve stage navigation targets
@@ -264,6 +269,18 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
           GITHUB_REF_NAME: ${{ github.ref_name }}
         run: bash .github/scripts/deploy_stage_over_ssh.sh
+
+      - name: Validate deployed stage web-app runtime SHA over SSH
+        id: stage_runtime_web_sha_check
+        if: steps.stage_deploy_remote.outcome != 'failure'
+        continue-on-error: true
+        env:
+          DEPLOY_SSH_HOST: ${{ vars.STAGE_SSH_HOST }}
+          DEPLOY_SSH_PORT: ${{ vars.STAGE_SSH_PORT }}
+          DEPLOY_SSH_USER: ${{ vars.STAGE_SSH_USER }}
+          DEPLOY_PATH: ${{ vars.STAGE_DEPLOY_PATH }}
+          DEPLOY_SSH_KEY_PATH: ~/.ssh/id_ed25519_stage
+        run: bash .github/scripts/check_remote_web_runtime_sha_over_ssh.sh
 
       - name: Preflight stage initialization status
         id: stage_initialize_preflight
@@ -346,12 +363,12 @@ jobs:
 
       - name: Reset managed stage navigation host overrides before public-edge probe
         id: stage_public_edge_host_overrides_reset
-        if: steps.stage_initialize_preflight.outputs.initialized == 'true' && steps.stage_untrusted_initialized_bootstrap_block.outcome != 'failure'
+        if: steps.stage_initialize_preflight.outputs.initialized == 'true' && steps.stage_untrusted_initialized_bootstrap_block.outcome != 'failure' && steps.stage_runtime_web_sha_check.outcome != 'failure'
         run: bash .github/scripts/manage_navigation_host_overrides.sh reset
 
       - name: Probe public stage environment endpoints
         id: stage_public_edge_environment_probe
-        if: steps.stage_initialize_preflight.outputs.initialized == 'true' && steps.stage_untrusted_initialized_bootstrap_block.outcome != 'failure'
+        if: steps.stage_initialize_preflight.outputs.initialized == 'true' && steps.stage_untrusted_initialized_bootstrap_block.outcome != 'failure' && steps.stage_runtime_web_sha_check.outcome != 'failure'
         continue-on-error: true
         env:
           NAV_LANDLORD_URL: ${{ steps.stage_nav_targets.outputs.landlord_url }}
@@ -361,7 +378,7 @@ jobs:
         run: bash .github/scripts/probe_public_navigation_environment_over_https.sh stage
 
       - name: Setup Node.js for real navigation smoke
-        if: steps.stage_initialize_preflight.outputs.initialized == 'true' && steps.stage_untrusted_initialized_bootstrap_block.outcome != 'failure' && steps.stage_public_edge_environment_probe.outcome != 'failure'
+        if: steps.stage_initialize_preflight.outputs.initialized == 'true' && steps.stage_untrusted_initialized_bootstrap_block.outcome != 'failure' && steps.stage_runtime_web_sha_check.outcome != 'failure' && steps.stage_public_edge_environment_probe.outcome != 'failure'
         uses: actions/setup-node@v6
         with:
           node-version: '24'
@@ -369,17 +386,17 @@ jobs:
           cache-dependency-path: tools/flutter/web_app_smoke_runner/package-lock.json
 
       - name: Install web navigation dependencies
-        if: steps.stage_initialize_preflight.outputs.initialized == 'true' && steps.stage_untrusted_initialized_bootstrap_block.outcome != 'failure' && steps.stage_public_edge_environment_probe.outcome != 'failure'
+        if: steps.stage_initialize_preflight.outputs.initialized == 'true' && steps.stage_untrusted_initialized_bootstrap_block.outcome != 'failure' && steps.stage_runtime_web_sha_check.outcome != 'failure' && steps.stage_public_edge_environment_probe.outcome != 'failure'
         run: npm ci
         working-directory: tools/flutter/web_app_smoke_runner
 
       - name: Install Playwright browser
-        if: steps.stage_initialize_preflight.outputs.initialized == 'true' && steps.stage_untrusted_initialized_bootstrap_block.outcome != 'failure' && steps.stage_public_edge_environment_probe.outcome != 'failure'
+        if: steps.stage_initialize_preflight.outputs.initialized == 'true' && steps.stage_untrusted_initialized_bootstrap_block.outcome != 'failure' && steps.stage_runtime_web_sha_check.outcome != 'failure' && steps.stage_public_edge_environment_probe.outcome != 'failure'
         run: npx playwright install --with-deps chromium
         working-directory: tools/flutter/web_app_smoke_runner
 
       - name: Warm up stage environment endpoints
-        if: steps.stage_initialize_preflight.outputs.initialized == 'true' && steps.stage_untrusted_initialized_bootstrap_block.outcome != 'failure' && steps.stage_public_edge_environment_probe.outcome != 'failure'
+        if: steps.stage_initialize_preflight.outputs.initialized == 'true' && steps.stage_untrusted_initialized_bootstrap_block.outcome != 'failure' && steps.stage_runtime_web_sha_check.outcome != 'failure' && steps.stage_public_edge_environment_probe.outcome != 'failure'
         env:
           NAV_LANDLORD_URL: ${{ steps.stage_nav_targets.outputs.landlord_url }}
           NAV_TENANT_URL: ${{ steps.stage_nav_targets.outputs.tenant_url }}
@@ -390,7 +407,7 @@ jobs:
 
       - name: Validate deployed stage web provenance
         id: stage_provenance_check
-        if: steps.stage_initialize_preflight.outputs.initialized == 'true' && steps.stage_untrusted_initialized_bootstrap_block.outcome != 'failure' && steps.stage_public_edge_environment_probe.outcome != 'failure'
+        if: steps.stage_initialize_preflight.outputs.initialized == 'true' && steps.stage_untrusted_initialized_bootstrap_block.outcome != 'failure' && steps.stage_runtime_web_sha_check.outcome != 'failure' && steps.stage_public_edge_environment_probe.outcome != 'failure'
         continue-on-error: true
         env:
           DEPLOY_LANE: stage
@@ -400,7 +417,7 @@ jobs:
 
       - name: Ensure stage public taxonomy validation fixture
         id: stage_public_taxonomy_validation_fixture
-        if: steps.stage_initialize_preflight.outputs.initialized == 'true' && steps.stage_untrusted_initialized_bootstrap_block.outcome != 'failure' && steps.stage_public_edge_environment_probe.outcome != 'failure' && steps.stage_provenance_check.outcome != 'failure'
+        if: steps.stage_initialize_preflight.outputs.initialized == 'true' && steps.stage_untrusted_initialized_bootstrap_block.outcome != 'failure' && steps.stage_runtime_web_sha_check.outcome != 'failure' && steps.stage_public_edge_environment_probe.outcome != 'failure' && steps.stage_provenance_check.outcome != 'failure'
         env:
           NAV_TENANT_URL: ${{ steps.stage_nav_targets.outputs.tenant_url }}
           NAV_ADMIN_EMAIL: ${{ secrets.STAGE_NAV_ADMIN_EMAIL }}
@@ -411,7 +428,7 @@ jobs:
 
       - name: Apply managed stage navigation host overrides to origin
         id: stage_origin_host_overrides
-        if: steps.stage_initialize_preflight.outputs.initialized == 'true' && steps.stage_untrusted_initialized_bootstrap_block.outcome != 'failure' && steps.stage_public_edge_environment_probe.outcome != 'failure' && steps.stage_provenance_check.outcome != 'failure' && steps.stage_public_taxonomy_validation_fixture.outcome != 'failure'
+        if: steps.stage_initialize_preflight.outputs.initialized == 'true' && steps.stage_untrusted_initialized_bootstrap_block.outcome != 'failure' && steps.stage_runtime_web_sha_check.outcome != 'failure' && steps.stage_public_edge_environment_probe.outcome != 'failure' && steps.stage_provenance_check.outcome != 'failure' && steps.stage_public_taxonomy_validation_fixture.outcome != 'failure'
         env:
           NAV_LANDLORD_URL: ${{ steps.stage_nav_targets.outputs.landlord_url }}
           NAV_TENANT_URL: ${{ steps.stage_nav_targets.outputs.tenant_url }}
@@ -420,7 +437,7 @@ jobs:
 
       - name: Run stage real navigation smoke
         id: stage_navigation_smoke
-        if: steps.stage_initialize_preflight.outputs.initialized == 'true' && steps.stage_untrusted_initialized_bootstrap_block.outcome != 'failure' && steps.stage_public_edge_environment_probe.outcome != 'failure' && steps.stage_provenance_check.outcome != 'failure' && steps.stage_public_taxonomy_validation_fixture.outcome != 'failure'
+        if: steps.stage_initialize_preflight.outputs.initialized == 'true' && steps.stage_untrusted_initialized_bootstrap_block.outcome != 'failure' && steps.stage_runtime_web_sha_check.outcome != 'failure' && steps.stage_public_edge_environment_probe.outcome != 'failure' && steps.stage_provenance_check.outcome != 'failure' && steps.stage_public_taxonomy_validation_fixture.outcome != 'failure'
         continue-on-error: true
         timeout-minutes: 15
         env:
@@ -433,7 +450,7 @@ jobs:
 
       - name: Run stage mutation navigation smoke
         id: stage_navigation_mutation_smoke
-        if: steps.stage_initialize_preflight.outputs.initialized == 'true' && steps.stage_untrusted_initialized_bootstrap_block.outcome != 'failure' && steps.stage_public_edge_environment_probe.outcome != 'failure' && steps.stage_provenance_check.outcome != 'failure' && steps.stage_public_taxonomy_validation_fixture.outcome != 'failure' && steps.stage_navigation_smoke.outcome != 'failure'
+        if: steps.stage_initialize_preflight.outputs.initialized == 'true' && steps.stage_untrusted_initialized_bootstrap_block.outcome != 'failure' && steps.stage_runtime_web_sha_check.outcome != 'failure' && steps.stage_public_edge_environment_probe.outcome != 'failure' && steps.stage_provenance_check.outcome != 'failure' && steps.stage_public_taxonomy_validation_fixture.outcome != 'failure' && steps.stage_navigation_smoke.outcome != 'failure'
         continue-on-error: true
         timeout-minutes: 25
         env:
@@ -447,7 +464,7 @@ jobs:
         run: bash tools/flutter/run_web_navigation_smoke.sh mutation
 
       - name: Collect stage deploy diagnostics before rollback
-        if: ${{ always() && (steps.stage_deploy_remote.outcome == 'failure' || steps.stage_initialize_preflight.outcome == 'failure' || steps.stage_untrusted_bootstrap_block.outcome == 'failure' || steps.stage_unexpected_initialize_403.outcome == 'failure' || steps.stage_untrusted_initialized_bootstrap_block.outcome == 'failure' || (steps.stage_initialize_preflight.outputs.initialized == 'true' && (steps.stage_public_edge_environment_probe.outcome == 'failure' || steps.stage_provenance_check.outcome == 'failure' || steps.stage_public_taxonomy_validation_fixture.outcome == 'failure' || steps.stage_navigation_smoke.outcome == 'failure' || steps.stage_navigation_mutation_smoke.outcome == 'failure'))) }}
+        if: ${{ always() && (steps.stage_deploy_remote.outcome == 'failure' || steps.stage_runtime_web_sha_check.outcome == 'failure' || steps.stage_initialize_preflight.outcome == 'failure' || steps.stage_untrusted_bootstrap_block.outcome == 'failure' || steps.stage_unexpected_initialize_403.outcome == 'failure' || steps.stage_untrusted_initialized_bootstrap_block.outcome == 'failure' || (steps.stage_initialize_preflight.outputs.initialized == 'true' && (steps.stage_public_edge_environment_probe.outcome == 'failure' || steps.stage_provenance_check.outcome == 'failure' || steps.stage_public_taxonomy_validation_fixture.outcome == 'failure' || steps.stage_navigation_smoke.outcome == 'failure' || steps.stage_navigation_mutation_smoke.outcome == 'failure'))) }}
         continue-on-error: true
         env:
           DEPLOY_LANE: stage
@@ -462,7 +479,7 @@ jobs:
         run: bash .github/scripts/collect_remote_deploy_diagnostics.sh
 
       - name: Upload stage navigation smoke artifacts
-        if: ${{ always() && (steps.stage_deploy_remote.outcome == 'failure' || steps.stage_initialize_preflight.outcome == 'failure' || steps.stage_untrusted_bootstrap_block.outcome == 'failure' || steps.stage_unexpected_initialize_403.outcome == 'failure' || steps.stage_untrusted_initialized_bootstrap_block.outcome == 'failure' || steps.stage_public_edge_environment_probe.outcome == 'failure' || steps.stage_provenance_check.outcome == 'failure' || steps.stage_public_taxonomy_validation_fixture.outcome == 'failure' || steps.stage_navigation_smoke.outcome == 'failure' || steps.stage_navigation_mutation_smoke.outcome == 'failure') }}
+        if: ${{ always() && (steps.stage_deploy_remote.outcome == 'failure' || steps.stage_runtime_web_sha_check.outcome == 'failure' || steps.stage_initialize_preflight.outcome == 'failure' || steps.stage_untrusted_bootstrap_block.outcome == 'failure' || steps.stage_unexpected_initialize_403.outcome == 'failure' || steps.stage_untrusted_initialized_bootstrap_block.outcome == 'failure' || steps.stage_public_edge_environment_probe.outcome == 'failure' || steps.stage_provenance_check.outcome == 'failure' || steps.stage_public_taxonomy_validation_fixture.outcome == 'failure' || steps.stage_navigation_smoke.outcome == 'failure' || steps.stage_navigation_mutation_smoke.outcome == 'failure') }}
         uses: actions/upload-artifact@v7
         with:
           name: stage-navigation-smoke-${{ github.run_id }}-${{ github.run_attempt }}
@@ -474,7 +491,7 @@ jobs:
           retention-days: 7
 
       - name: Mark stage revision as successful after navigation smoke
-        if: steps.stage_initialize_preflight.outputs.initialized == 'true' && steps.stage_rollback_target.outputs.trusted_tuple_present == 'true' && steps.stage_untrusted_initialized_bootstrap_block.outcome != 'failure' && steps.stage_public_edge_environment_probe.outcome != 'failure' && steps.stage_provenance_check.outcome != 'failure' && steps.stage_public_taxonomy_validation_fixture.outcome == 'success' && steps.stage_navigation_smoke.outcome == 'success' && steps.stage_navigation_mutation_smoke.outcome == 'success'
+        if: steps.stage_initialize_preflight.outputs.initialized == 'true' && steps.stage_rollback_target.outputs.trusted_tuple_present == 'true' && steps.stage_untrusted_initialized_bootstrap_block.outcome != 'failure' && steps.stage_runtime_web_sha_check.outcome != 'failure' && steps.stage_public_edge_environment_probe.outcome != 'failure' && steps.stage_provenance_check.outcome != 'failure' && steps.stage_public_taxonomy_validation_fixture.outcome == 'success' && steps.stage_navigation_smoke.outcome == 'success' && steps.stage_navigation_mutation_smoke.outcome == 'success'
         env:
           DEPLOY_LANE: stage
           DEPLOY_SSH_HOST: ${{ vars.STAGE_SSH_HOST }}
@@ -486,7 +503,7 @@ jobs:
 
       - name: Roll back stage deploy when provenance, preflight, smoke, or post-mutation deploy failure requires recovery
         id: stage_rollback
-        if: ${{ always() && steps.stage_rollback_target.outputs.trusted_tuple_present == 'true' && ((steps.stage_deploy_remote.outcome == 'failure' && steps.stage_deploy_remote.outputs.runtime_mutated == 'true' && steps.stage_deploy_remote.outputs.internal_rollback_status != 'success') || steps.stage_initialize_preflight.outcome == 'failure' || steps.stage_unexpected_initialize_403.outcome == 'failure' || (steps.stage_initialize_preflight.outputs.initialized == 'true' && (steps.stage_public_edge_environment_probe.outcome == 'failure' || steps.stage_provenance_check.outcome == 'failure' || steps.stage_public_taxonomy_validation_fixture.outcome == 'failure' || steps.stage_navigation_smoke.outcome == 'failure' || steps.stage_navigation_mutation_smoke.outcome == 'failure'))) }}
+        if: ${{ always() && steps.stage_rollback_target.outputs.trusted_tuple_present == 'true' && ((steps.stage_deploy_remote.outcome == 'failure' && steps.stage_deploy_remote.outputs.runtime_mutated == 'true' && steps.stage_deploy_remote.outputs.internal_rollback_status != 'success') || steps.stage_runtime_web_sha_check.outcome == 'failure' || steps.stage_initialize_preflight.outcome == 'failure' || steps.stage_unexpected_initialize_403.outcome == 'failure' || (steps.stage_initialize_preflight.outputs.initialized == 'true' && (steps.stage_public_edge_environment_probe.outcome == 'failure' || steps.stage_provenance_check.outcome == 'failure' || steps.stage_public_taxonomy_validation_fixture.outcome == 'failure' || steps.stage_navigation_smoke.outcome == 'failure' || steps.stage_navigation_mutation_smoke.outcome == 'failure'))) }}
         env:
           DEPLOY_LANE: stage
           DEPLOY_SSH_HOST: ${{ vars.STAGE_SSH_HOST }}
@@ -514,12 +531,16 @@ jobs:
           executor=""
           trusted_tuple_present="${{ steps.stage_rollback_target.outputs.trusted_tuple_present }}"
           target_revision="${{ steps.stage_rollback_target.outputs.revision }}"
+          expected_web_app_runtime_sha="${{ steps.stage_rollback_target.outputs.web_app_runtime_sha }}"
 
           if [[ "${{ steps.stage_deploy_remote.outputs.internal_rollback_status }}" == "success" ]]; then
             run=true
             executor=internal
             if [[ -n "${{ steps.stage_deploy_remote.outputs.internal_rollback_target_revision }}" ]]; then
               target_revision="${{ steps.stage_deploy_remote.outputs.internal_rollback_target_revision }}"
+            fi
+            if [[ -n "${{ steps.stage_deploy_remote.outputs.internal_rollback_target_web_runtime_sha }}" ]]; then
+              expected_web_app_runtime_sha="${{ steps.stage_deploy_remote.outputs.internal_rollback_target_web_runtime_sha }}"
             fi
           elif [[ "${{ steps.stage_rollback.outcome }}" == "success" ]]; then
             run=true
@@ -533,8 +554,14 @@ jobs:
           if [[ -n "${target_revision}" ]]; then
             echo "target_revision=${target_revision}" >> "$GITHUB_OUTPUT"
             expected_flutter_sha="$(git ls-tree "${target_revision}" flutter-app 2>/dev/null | awk '{print $3}' | tr -d '[:space:]')"
+            if [[ -z "${expected_web_app_runtime_sha}" ]]; then
+              expected_web_app_runtime_sha="$(git ls-tree "${target_revision}" web-app 2>/dev/null | awk '{print $3}' | tr -d '[:space:]')"
+            fi
             if [[ -n "${expected_flutter_sha}" ]]; then
               echo "expected_flutter_sha=${expected_flutter_sha}" >> "$GITHUB_OUTPUT"
+            fi
+            if [[ -n "${expected_web_app_runtime_sha}" ]]; then
+              echo "expected_web_app_runtime_sha=${expected_web_app_runtime_sha}" >> "$GITHUB_OUTPUT"
             fi
           fi
 
@@ -560,6 +587,11 @@ jobs:
             exit 1
           fi
 
+          if [[ -z "${{ steps.stage_rollback_proof_plan.outputs.expected_web_app_runtime_sha }}" ]]; then
+            echo "ERROR: stage rollback proof could not resolve the restored web-app runtime SHA from revision ${{ steps.stage_rollback_proof_plan.outputs.target_revision }}." >&2
+            exit 1
+          fi
+
           if [[ "${{ steps.stage_rollback_proof_plan.outputs.executor }}" == "internal" && "${{ steps.stage_rollback_target.outputs.trusted_tuple_present }}" == "true" && -n "${{ steps.stage_rollback_target.outputs.revision }}" && "${{ steps.stage_rollback_proof_plan.outputs.target_revision }}" != "${{ steps.stage_rollback_target.outputs.revision }}" ]]; then
             echo "ERROR: stage internal rollback restored revision ${{ steps.stage_rollback_proof_plan.outputs.target_revision }}, which does not match the trusted successful-release target ${{ steps.stage_rollback_target.outputs.revision }}." >&2
             exit 1
@@ -567,9 +599,22 @@ jobs:
 
           echo "INFO: stage rollback proof will verify restored revision ${{ steps.stage_rollback_proof_plan.outputs.target_revision }} via ${{ steps.stage_rollback_proof_plan.outputs.executor }} rollback."
 
+      - name: Validate restored stage web-app runtime SHA over SSH
+        id: stage_rollback_runtime_web_sha_check
+        if: ${{ always() && steps.stage_rollback_proof_plan.outputs.run == 'true' && steps.stage_rollback_proof_guard.outcome != 'failure' }}
+        continue-on-error: true
+        env:
+          DEPLOY_SSH_HOST: ${{ vars.STAGE_SSH_HOST }}
+          DEPLOY_SSH_PORT: ${{ vars.STAGE_SSH_PORT }}
+          DEPLOY_SSH_USER: ${{ vars.STAGE_SSH_USER }}
+          DEPLOY_PATH: ${{ vars.STAGE_DEPLOY_PATH }}
+          DEPLOY_SSH_KEY_PATH: ~/.ssh/id_ed25519_stage
+          EXPECTED_WEB_APP_RUNTIME_SHA: ${{ steps.stage_rollback_proof_plan.outputs.expected_web_app_runtime_sha }}
+        run: bash .github/scripts/check_remote_web_runtime_sha_over_ssh.sh
+
       - name: Preflight stage initialization status after rollback
         id: stage_rollback_initialize_preflight
-        if: ${{ always() && steps.stage_rollback_proof_plan.outputs.run == 'true' && steps.stage_rollback_proof_guard.outcome != 'failure' }}
+        if: ${{ always() && steps.stage_rollback_proof_plan.outputs.run == 'true' && steps.stage_rollback_proof_guard.outcome != 'failure' && steps.stage_rollback_runtime_web_sha_check.outcome != 'failure' }}
         continue-on-error: true
         env:
           NAV_LANDLORD_URL: ${{ steps.stage_nav_targets.outputs.landlord_url }}
@@ -709,7 +754,7 @@ jobs:
         run: bash tools/flutter/run_web_navigation_smoke.sh mutation
 
       - name: Collect stage rollback proof diagnostics
-        if: ${{ always() && steps.stage_rollback_proof_plan.outputs.run == 'true' && (steps.stage_rollback_proof_guard.outcome == 'failure' || steps.stage_rollback_initialize_preflight.outcome == 'failure' || steps.stage_rollback_public_edge_environment_probe.outcome == 'failure' || steps.stage_rollback_provenance_check.outcome == 'failure' || steps.stage_rollback_navigation_smoke.outcome == 'failure' || steps.stage_rollback_navigation_mutation_smoke.outcome == 'failure') }}
+        if: ${{ always() && steps.stage_rollback_proof_plan.outputs.run == 'true' && (steps.stage_rollback_proof_guard.outcome == 'failure' || steps.stage_rollback_runtime_web_sha_check.outcome == 'failure' || steps.stage_rollback_initialize_preflight.outcome == 'failure' || steps.stage_rollback_public_edge_environment_probe.outcome == 'failure' || steps.stage_rollback_provenance_check.outcome == 'failure' || steps.stage_rollback_navigation_smoke.outcome == 'failure' || steps.stage_rollback_navigation_mutation_smoke.outcome == 'failure') }}
         continue-on-error: true
         env:
           DEPLOY_LANE: stage
@@ -724,7 +769,7 @@ jobs:
         run: bash .github/scripts/collect_remote_deploy_diagnostics.sh
 
       - name: Upload stage rollback proof artifacts
-        if: ${{ always() && steps.stage_rollback_proof_plan.outputs.run == 'true' && (steps.stage_rollback_proof_guard.outcome == 'failure' || steps.stage_rollback_initialize_preflight.outcome == 'failure' || steps.stage_rollback_public_edge_environment_probe.outcome == 'failure' || steps.stage_rollback_provenance_check.outcome == 'failure' || steps.stage_rollback_navigation_smoke.outcome == 'failure' || steps.stage_rollback_navigation_mutation_smoke.outcome == 'failure') }}
+        if: ${{ always() && steps.stage_rollback_proof_plan.outputs.run == 'true' && (steps.stage_rollback_proof_guard.outcome == 'failure' || steps.stage_rollback_runtime_web_sha_check.outcome == 'failure' || steps.stage_rollback_initialize_preflight.outcome == 'failure' || steps.stage_rollback_public_edge_environment_probe.outcome == 'failure' || steps.stage_rollback_provenance_check.outcome == 'failure' || steps.stage_rollback_navigation_smoke.outcome == 'failure' || steps.stage_rollback_navigation_mutation_smoke.outcome == 'failure') }}
         uses: actions/upload-artifact@v7
         with:
           name: stage-rollback-proof-${{ github.run_id }}-${{ github.run_attempt }}
@@ -736,14 +781,18 @@ jobs:
           retention-days: 7
 
       - name: Fail stage deploy after rollback
-        if: ${{ always() && (steps.stage_deploy_remote.outcome == 'failure' || steps.stage_initialize_preflight.outcome == 'failure' || steps.stage_untrusted_bootstrap_block.outcome == 'failure' || steps.stage_unexpected_initialize_403.outcome == 'failure' || steps.stage_untrusted_initialized_bootstrap_block.outcome == 'failure' || (steps.stage_initialize_preflight.outputs.initialized == 'true' && (steps.stage_public_edge_environment_probe.outcome == 'failure' || steps.stage_provenance_check.outcome == 'failure' || steps.stage_public_taxonomy_validation_fixture.outcome == 'failure' || steps.stage_navigation_smoke.outcome == 'failure' || steps.stage_navigation_mutation_smoke.outcome == 'failure')) || (steps.stage_rollback_proof_plan.outputs.run == 'true' && (steps.stage_rollback_proof_guard.outcome == 'failure' || steps.stage_rollback_initialize_preflight.outcome == 'failure' || steps.stage_rollback_public_edge_environment_probe.outcome == 'failure' || steps.stage_rollback_provenance_check.outcome == 'failure' || steps.stage_rollback_navigation_smoke.outcome == 'failure' || steps.stage_rollback_navigation_mutation_smoke.outcome == 'failure'))) }}
+        if: ${{ always() && (steps.stage_deploy_remote.outcome == 'failure' || steps.stage_runtime_web_sha_check.outcome == 'failure' || steps.stage_initialize_preflight.outcome == 'failure' || steps.stage_untrusted_bootstrap_block.outcome == 'failure' || steps.stage_unexpected_initialize_403.outcome == 'failure' || steps.stage_untrusted_initialized_bootstrap_block.outcome == 'failure' || (steps.stage_initialize_preflight.outputs.initialized == 'true' && (steps.stage_public_edge_environment_probe.outcome == 'failure' || steps.stage_provenance_check.outcome == 'failure' || steps.stage_public_taxonomy_validation_fixture.outcome == 'failure' || steps.stage_navigation_smoke.outcome == 'failure' || steps.stage_navigation_mutation_smoke.outcome == 'failure')) || (steps.stage_rollback_proof_plan.outputs.run == 'true' && (steps.stage_rollback_proof_guard.outcome == 'failure' || steps.stage_rollback_runtime_web_sha_check.outcome == 'failure' || steps.stage_rollback_initialize_preflight.outcome == 'failure' || steps.stage_rollback_public_edge_environment_probe.outcome == 'failure' || steps.stage_rollback_provenance_check.outcome == 'failure' || steps.stage_rollback_navigation_smoke.outcome == 'failure' || steps.stage_rollback_navigation_mutation_smoke.outcome == 'failure'))) }}
         run: |
           if [[ "${{ steps.stage_rollback_proof_guard.outcome }}" == "failure" ]]; then
             echo "ERROR: stage rollback restored an untrusted or unresolved target; terminal state is explicit degraded/incident." >&2
+          elif [[ "${{ steps.stage_rollback_runtime_web_sha_check.outcome }}" == "failure" ]]; then
+            echo "ERROR: stage rollback via ${{ steps.stage_rollback_proof_plan.outputs.executor }} executor completed, but the restored web-app runtime SHA did not match the trusted target; terminal state is explicit degraded/incident." >&2
           elif [[ "${{ steps.stage_untrusted_bootstrap_block.outcome }}" == "failure" ]]; then
             echo "ERROR: stage initialize returned 403 before any trusted successful-release tuple existed; bootstrap path is explicitly untrusted and cannot stamp a healthy revision." >&2
           elif [[ "${{ steps.stage_untrusted_initialized_bootstrap_block.outcome }}" == "failure" ]]; then
             echo "ERROR: stage initialized successfully before any trusted successful-release tuple existed; bootstrap path is explicitly untrusted and cannot stamp a healthy revision." >&2
+          elif [[ "${{ steps.stage_runtime_web_sha_check.outcome }}" == "failure" ]]; then
+            echo "ERROR: stage deploy completed, but the remote web-app runtime SHA drifted from the promoted gitlink; terminal state is explicit degraded/incident." >&2
           elif [[ "${{ steps.stage_rollback_initialize_preflight.outcome }}" == "failure" ]]; then
             echo "ERROR: stage rollback via ${{ steps.stage_rollback_proof_plan.outputs.executor }} executor completed, but the restored environment did not re-establish initialize=200; terminal state is explicit degraded/incident." >&2
           elif [[ "${{ steps.stage_rollback_public_edge_environment_probe.outcome }}" == "failure" ]]; then
@@ -891,11 +940,12 @@ jobs:
               -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
               -o ConnectTimeout=5 -o ConnectionAttempts=1 \
               -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o TCPKeepAlive=yes \
-              "${DEPLOY_SSH_USER}@${DEPLOY_SSH_HOST}" "set -euo pipefail; if [[ -d '${DEPLOY_PATH}/.git' ]]; then cd '${DEPLOY_PATH}'; trusted_tuple_present=false; target=''; if [[ -f '.last_successful_revision' ]]; then trusted_tuple_present=true; marker=\$(cat '.last_successful_revision' | tr -d '\r'); if printf '%s\n' \"\$marker\" | grep -Eq '^[0-9a-fA-F]{40}$'; then target=\"\$marker\"; else target=\$(printf '%s\n' \"\$marker\" | sed -n 's/^ROOT_SHA=//p' | head -n 1); fi; elif git rev-parse --verify HEAD >/dev/null 2>&1; then target=\$(git rev-parse HEAD); fi; printf 'target=%s\ntrusted_tuple_present=%s\n' \"\$target\" \"\$trusted_tuple_present\"; fi"
+              "${DEPLOY_SSH_USER}@${DEPLOY_SSH_HOST}" "set -euo pipefail; if [[ -d '${DEPLOY_PATH}/.git' ]]; then cd '${DEPLOY_PATH}'; trusted_tuple_present=false; target=''; web_app_runtime_sha=''; if [[ -f '.last_successful_revision' ]]; then trusted_tuple_present=true; marker=\$(cat '.last_successful_revision' | tr -d '\r'); if printf '%s\n' \"\$marker\" | grep -Eq '^[0-9a-fA-F]{40}$'; then target=\"\$marker\"; web_app_runtime_sha=\$(git ls-tree \"\$target\" web-app 2>/dev/null | awk '{print \$3}' | tr -d '[:space:]' || true); else target=\$(printf '%s\n' \"\$marker\" | sed -n 's/^ROOT_SHA=//p' | head -n 1); web_app_runtime_sha=\$(printf '%s\n' \"\$marker\" | sed -n 's/^WEB_APP_RUNTIME_SHA=//p' | head -n 1 | tr -d '[:space:]'); if [[ -z \"\$web_app_runtime_sha\" && -n \"\$target\" ]]; then web_app_runtime_sha=\$(git ls-tree \"\$target\" web-app 2>/dev/null | awk '{print \$3}' | tr -d '[:space:]' || true); fi; fi; elif git rev-parse --verify HEAD >/dev/null 2>&1; then target=\$(git rev-parse HEAD); web_app_runtime_sha=\$(git ls-tree \"\$target\" web-app 2>/dev/null | awk '{print \$3}' | tr -d '[:space:]' || true); fi; printf 'target=%s\ntrusted_tuple_present=%s\nweb_app_runtime_sha=%s\n' \"\$target\" \"\$trusted_tuple_present\" \"\$web_app_runtime_sha\"; fi"
           )"
 
           target="$(printf '%s\n' "$remote_output" | sed -n 's/^target=//p' | head -n 1 | tr -d '[:space:]')"
           trusted_tuple_present="$(printf '%s\n' "$remote_output" | sed -n 's/^trusted_tuple_present=//p' | head -n 1 | tr -d '[:space:]')"
+          web_app_runtime_sha="$(printf '%s\n' "$remote_output" | sed -n 's/^web_app_runtime_sha=//p' | head -n 1 | tr -d '[:space:]')"
           echo "trusted_tuple_present=${trusted_tuple_present:-false}" >> "$GITHUB_OUTPUT"
           target="$(echo "$target" | tr -d '[:space:]')"
           if [[ -n "$target" ]]; then
@@ -903,6 +953,10 @@ jobs:
             echo "INFO: production rollback target revision captured: $target"
           else
             echo "INFO: production rollback target revision unavailable (first deployment path or no git HEAD)."
+          fi
+          if [[ -n "$web_app_runtime_sha" ]]; then
+            echo "web_app_runtime_sha=$web_app_runtime_sha" >> "$GITHUB_OUTPUT"
+            echo "INFO: production rollback target web-app runtime SHA captured: $web_app_runtime_sha"
           fi
 
       - name: Resolve production navigation targets
@@ -929,6 +983,18 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
           GITHUB_REF_NAME: ${{ github.ref_name }}
         run: bash .github/scripts/deploy_stage_over_ssh.sh
+
+      - name: Validate deployed production web-app runtime SHA over SSH
+        id: main_runtime_web_sha_check
+        if: steps.main_deploy_remote.outcome != 'failure'
+        continue-on-error: true
+        env:
+          DEPLOY_SSH_HOST: ${{ vars.MAIN_SSH_HOST }}
+          DEPLOY_SSH_PORT: ${{ vars.MAIN_SSH_PORT }}
+          DEPLOY_SSH_USER: ${{ vars.MAIN_SSH_USER }}
+          DEPLOY_PATH: ${{ vars.MAIN_DEPLOY_PATH }}
+          DEPLOY_SSH_KEY_PATH: ~/.ssh/id_ed25519_main
+        run: bash .github/scripts/check_remote_web_runtime_sha_over_ssh.sh
 
       - name: Preflight production initialization status
         id: main_initialize_preflight
@@ -1011,12 +1077,12 @@ jobs:
 
       - name: Reset managed production navigation host overrides before public-edge probe
         id: main_public_edge_host_overrides_reset
-        if: steps.main_initialize_preflight.outputs.initialized == 'true' && steps.main_untrusted_initialized_bootstrap_block.outcome != 'failure'
+        if: steps.main_initialize_preflight.outputs.initialized == 'true' && steps.main_untrusted_initialized_bootstrap_block.outcome != 'failure' && steps.main_runtime_web_sha_check.outcome != 'failure'
         run: bash .github/scripts/manage_navigation_host_overrides.sh reset
 
       - name: Probe public production environment endpoints
         id: main_public_edge_environment_probe
-        if: steps.main_initialize_preflight.outputs.initialized == 'true' && steps.main_untrusted_initialized_bootstrap_block.outcome != 'failure'
+        if: steps.main_initialize_preflight.outputs.initialized == 'true' && steps.main_untrusted_initialized_bootstrap_block.outcome != 'failure' && steps.main_runtime_web_sha_check.outcome != 'failure'
         continue-on-error: true
         env:
           NAV_LANDLORD_URL: ${{ steps.main_nav_targets.outputs.landlord_url }}
@@ -1026,7 +1092,7 @@ jobs:
         run: bash .github/scripts/probe_public_navigation_environment_over_https.sh main
 
       - name: Setup Node.js for real navigation smoke
-        if: steps.main_initialize_preflight.outputs.initialized == 'true' && steps.main_untrusted_initialized_bootstrap_block.outcome != 'failure' && steps.main_public_edge_environment_probe.outcome != 'failure'
+        if: steps.main_initialize_preflight.outputs.initialized == 'true' && steps.main_untrusted_initialized_bootstrap_block.outcome != 'failure' && steps.main_runtime_web_sha_check.outcome != 'failure' && steps.main_public_edge_environment_probe.outcome != 'failure'
         uses: actions/setup-node@v6
         with:
           node-version: '24'
@@ -1034,17 +1100,17 @@ jobs:
           cache-dependency-path: tools/flutter/web_app_smoke_runner/package-lock.json
 
       - name: Install web navigation dependencies
-        if: steps.main_initialize_preflight.outputs.initialized == 'true' && steps.main_untrusted_initialized_bootstrap_block.outcome != 'failure' && steps.main_public_edge_environment_probe.outcome != 'failure'
+        if: steps.main_initialize_preflight.outputs.initialized == 'true' && steps.main_untrusted_initialized_bootstrap_block.outcome != 'failure' && steps.main_runtime_web_sha_check.outcome != 'failure' && steps.main_public_edge_environment_probe.outcome != 'failure'
         run: npm ci
         working-directory: tools/flutter/web_app_smoke_runner
 
       - name: Install Playwright browser
-        if: steps.main_initialize_preflight.outputs.initialized == 'true' && steps.main_untrusted_initialized_bootstrap_block.outcome != 'failure' && steps.main_public_edge_environment_probe.outcome != 'failure'
+        if: steps.main_initialize_preflight.outputs.initialized == 'true' && steps.main_untrusted_initialized_bootstrap_block.outcome != 'failure' && steps.main_runtime_web_sha_check.outcome != 'failure' && steps.main_public_edge_environment_probe.outcome != 'failure'
         run: npx playwright install --with-deps chromium
         working-directory: tools/flutter/web_app_smoke_runner
 
       - name: Warm up production environment endpoints
-        if: steps.main_initialize_preflight.outputs.initialized == 'true' && steps.main_untrusted_initialized_bootstrap_block.outcome != 'failure' && steps.main_public_edge_environment_probe.outcome != 'failure'
+        if: steps.main_initialize_preflight.outputs.initialized == 'true' && steps.main_untrusted_initialized_bootstrap_block.outcome != 'failure' && steps.main_runtime_web_sha_check.outcome != 'failure' && steps.main_public_edge_environment_probe.outcome != 'failure'
         env:
           NAV_LANDLORD_URL: ${{ steps.main_nav_targets.outputs.landlord_url }}
           NAV_TENANT_URL: ${{ steps.main_nav_targets.outputs.tenant_url }}
@@ -1055,7 +1121,7 @@ jobs:
 
       - name: Validate deployed production web provenance
         id: main_provenance_check
-        if: steps.main_initialize_preflight.outputs.initialized == 'true' && steps.main_untrusted_initialized_bootstrap_block.outcome != 'failure' && steps.main_public_edge_environment_probe.outcome != 'failure'
+        if: steps.main_initialize_preflight.outputs.initialized == 'true' && steps.main_untrusted_initialized_bootstrap_block.outcome != 'failure' && steps.main_runtime_web_sha_check.outcome != 'failure' && steps.main_public_edge_environment_probe.outcome != 'failure'
         continue-on-error: true
         env:
           DEPLOY_LANE: main
@@ -1065,7 +1131,7 @@ jobs:
 
       - name: Assert mutation suite is hard-blocked on main
         id: main_initial_mutation_guard
-        if: steps.main_initialize_preflight.outputs.initialized == 'true' && steps.main_untrusted_initialized_bootstrap_block.outcome != 'failure' && steps.main_public_edge_environment_probe.outcome != 'failure' && steps.main_provenance_check.outcome != 'failure'
+        if: steps.main_initialize_preflight.outputs.initialized == 'true' && steps.main_untrusted_initialized_bootstrap_block.outcome != 'failure' && steps.main_runtime_web_sha_check.outcome != 'failure' && steps.main_public_edge_environment_probe.outcome != 'failure' && steps.main_provenance_check.outcome != 'failure'
         continue-on-error: true
         env:
           NAV_DEPLOY_LANE: main
@@ -1085,7 +1151,7 @@ jobs:
 
       - name: Apply managed production navigation host overrides to origin
         id: main_origin_host_overrides
-        if: steps.main_initialize_preflight.outputs.initialized == 'true' && steps.main_untrusted_initialized_bootstrap_block.outcome != 'failure' && steps.main_public_edge_environment_probe.outcome != 'failure' && steps.main_provenance_check.outcome != 'failure' && steps.main_initial_mutation_guard.outcome != 'failure'
+        if: steps.main_initialize_preflight.outputs.initialized == 'true' && steps.main_untrusted_initialized_bootstrap_block.outcome != 'failure' && steps.main_runtime_web_sha_check.outcome != 'failure' && steps.main_public_edge_environment_probe.outcome != 'failure' && steps.main_provenance_check.outcome != 'failure' && steps.main_initial_mutation_guard.outcome != 'failure'
         env:
           NAV_LANDLORD_URL: ${{ steps.main_nav_targets.outputs.landlord_url }}
           NAV_TENANT_URL: ${{ steps.main_nav_targets.outputs.tenant_url }}
@@ -1094,7 +1160,7 @@ jobs:
 
       - name: Run production real navigation smoke
         id: production_navigation_smoke
-        if: steps.main_initialize_preflight.outputs.initialized == 'true' && steps.main_untrusted_initialized_bootstrap_block.outcome != 'failure' && steps.main_public_edge_environment_probe.outcome != 'failure' && steps.main_provenance_check.outcome != 'failure' && steps.main_initial_mutation_guard.outcome != 'failure'
+        if: steps.main_initialize_preflight.outputs.initialized == 'true' && steps.main_untrusted_initialized_bootstrap_block.outcome != 'failure' && steps.main_runtime_web_sha_check.outcome != 'failure' && steps.main_public_edge_environment_probe.outcome != 'failure' && steps.main_provenance_check.outcome != 'failure' && steps.main_initial_mutation_guard.outcome != 'failure'
         continue-on-error: true
         timeout-minutes: 15
         env:
@@ -1106,7 +1172,7 @@ jobs:
         run: bash tools/flutter/run_web_navigation_smoke.sh readonly
 
       - name: Collect production deploy diagnostics before rollback
-        if: ${{ always() && (steps.main_deploy_remote.outcome == 'failure' || steps.main_initialize_preflight.outcome == 'failure' || steps.main_untrusted_bootstrap_block.outcome == 'failure' || steps.main_unexpected_initialize_403.outcome == 'failure' || steps.main_untrusted_initialized_bootstrap_block.outcome == 'failure' || (steps.main_initialize_preflight.outputs.initialized == 'true' && (steps.main_public_edge_environment_probe.outcome == 'failure' || steps.main_provenance_check.outcome == 'failure' || steps.main_initial_mutation_guard.outcome == 'failure' || steps.production_navigation_smoke.outcome == 'failure'))) }}
+        if: ${{ always() && (steps.main_deploy_remote.outcome == 'failure' || steps.main_runtime_web_sha_check.outcome == 'failure' || steps.main_initialize_preflight.outcome == 'failure' || steps.main_untrusted_bootstrap_block.outcome == 'failure' || steps.main_unexpected_initialize_403.outcome == 'failure' || steps.main_untrusted_initialized_bootstrap_block.outcome == 'failure' || (steps.main_initialize_preflight.outputs.initialized == 'true' && (steps.main_public_edge_environment_probe.outcome == 'failure' || steps.main_provenance_check.outcome == 'failure' || steps.main_initial_mutation_guard.outcome == 'failure' || steps.production_navigation_smoke.outcome == 'failure'))) }}
         continue-on-error: true
         env:
           DEPLOY_LANE: main
@@ -1121,7 +1187,7 @@ jobs:
         run: bash .github/scripts/collect_remote_deploy_diagnostics.sh
 
       - name: Upload production navigation smoke artifacts
-        if: ${{ always() && (steps.main_deploy_remote.outcome == 'failure' || steps.main_initialize_preflight.outcome == 'failure' || steps.main_untrusted_bootstrap_block.outcome == 'failure' || steps.main_unexpected_initialize_403.outcome == 'failure' || steps.main_untrusted_initialized_bootstrap_block.outcome == 'failure' || steps.main_public_edge_environment_probe.outcome == 'failure' || steps.main_provenance_check.outcome == 'failure' || steps.main_initial_mutation_guard.outcome == 'failure' || steps.production_navigation_smoke.outcome == 'failure') }}
+        if: ${{ always() && (steps.main_deploy_remote.outcome == 'failure' || steps.main_runtime_web_sha_check.outcome == 'failure' || steps.main_initialize_preflight.outcome == 'failure' || steps.main_untrusted_bootstrap_block.outcome == 'failure' || steps.main_unexpected_initialize_403.outcome == 'failure' || steps.main_untrusted_initialized_bootstrap_block.outcome == 'failure' || steps.main_public_edge_environment_probe.outcome == 'failure' || steps.main_provenance_check.outcome == 'failure' || steps.main_initial_mutation_guard.outcome == 'failure' || steps.production_navigation_smoke.outcome == 'failure') }}
         uses: actions/upload-artifact@v7
         with:
           name: production-navigation-smoke-${{ github.run_id }}-${{ github.run_attempt }}
@@ -1133,7 +1199,7 @@ jobs:
           retention-days: 7
 
       - name: Mark production revision as successful after navigation smoke
-        if: steps.main_initialize_preflight.outputs.initialized == 'true' && steps.main_rollback_target.outputs.trusted_tuple_present == 'true' && steps.main_untrusted_initialized_bootstrap_block.outcome != 'failure' && steps.main_public_edge_environment_probe.outcome != 'failure' && steps.main_provenance_check.outcome != 'failure' && steps.main_initial_mutation_guard.outcome != 'failure' && steps.production_navigation_smoke.outcome == 'success'
+        if: steps.main_initialize_preflight.outputs.initialized == 'true' && steps.main_rollback_target.outputs.trusted_tuple_present == 'true' && steps.main_untrusted_initialized_bootstrap_block.outcome != 'failure' && steps.main_runtime_web_sha_check.outcome != 'failure' && steps.main_public_edge_environment_probe.outcome != 'failure' && steps.main_provenance_check.outcome != 'failure' && steps.main_initial_mutation_guard.outcome != 'failure' && steps.production_navigation_smoke.outcome == 'success'
         env:
           DEPLOY_LANE: main
           DEPLOY_SSH_HOST: ${{ vars.MAIN_SSH_HOST }}
@@ -1145,7 +1211,7 @@ jobs:
 
       - name: Roll back production deploy when provenance, preflight, smoke, or post-mutation deploy failure requires recovery
         id: main_rollback
-        if: ${{ always() && steps.main_rollback_target.outputs.trusted_tuple_present == 'true' && ((steps.main_deploy_remote.outcome == 'failure' && steps.main_deploy_remote.outputs.runtime_mutated == 'true' && steps.main_deploy_remote.outputs.internal_rollback_status != 'success') || steps.main_initialize_preflight.outcome == 'failure' || steps.main_unexpected_initialize_403.outcome == 'failure' || (steps.main_initialize_preflight.outputs.initialized == 'true' && (steps.main_public_edge_environment_probe.outcome == 'failure' || steps.main_provenance_check.outcome == 'failure' || steps.main_initial_mutation_guard.outcome == 'failure' || steps.production_navigation_smoke.outcome == 'failure'))) }}
+        if: ${{ always() && steps.main_rollback_target.outputs.trusted_tuple_present == 'true' && ((steps.main_deploy_remote.outcome == 'failure' && steps.main_deploy_remote.outputs.runtime_mutated == 'true' && steps.main_deploy_remote.outputs.internal_rollback_status != 'success') || steps.main_runtime_web_sha_check.outcome == 'failure' || steps.main_initialize_preflight.outcome == 'failure' || steps.main_unexpected_initialize_403.outcome == 'failure' || (steps.main_initialize_preflight.outputs.initialized == 'true' && (steps.main_public_edge_environment_probe.outcome == 'failure' || steps.main_provenance_check.outcome == 'failure' || steps.main_initial_mutation_guard.outcome == 'failure' || steps.production_navigation_smoke.outcome == 'failure'))) }}
         env:
           DEPLOY_LANE: main
           DEPLOY_SSH_HOST: ${{ vars.MAIN_SSH_HOST }}
@@ -1173,12 +1239,16 @@ jobs:
           executor=""
           trusted_tuple_present="${{ steps.main_rollback_target.outputs.trusted_tuple_present }}"
           target_revision="${{ steps.main_rollback_target.outputs.revision }}"
+          expected_web_app_runtime_sha="${{ steps.main_rollback_target.outputs.web_app_runtime_sha }}"
 
           if [[ "${{ steps.main_deploy_remote.outputs.internal_rollback_status }}" == "success" ]]; then
             run=true
             executor=internal
             if [[ -n "${{ steps.main_deploy_remote.outputs.internal_rollback_target_revision }}" ]]; then
               target_revision="${{ steps.main_deploy_remote.outputs.internal_rollback_target_revision }}"
+            fi
+            if [[ -n "${{ steps.main_deploy_remote.outputs.internal_rollback_target_web_runtime_sha }}" ]]; then
+              expected_web_app_runtime_sha="${{ steps.main_deploy_remote.outputs.internal_rollback_target_web_runtime_sha }}"
             fi
           elif [[ "${{ steps.main_rollback.outcome }}" == "success" ]]; then
             run=true
@@ -1192,8 +1262,14 @@ jobs:
           if [[ -n "${target_revision}" ]]; then
             echo "target_revision=${target_revision}" >> "$GITHUB_OUTPUT"
             expected_flutter_sha="$(git ls-tree "${target_revision}" flutter-app 2>/dev/null | awk '{print $3}' | tr -d '[:space:]')"
+            if [[ -z "${expected_web_app_runtime_sha}" ]]; then
+              expected_web_app_runtime_sha="$(git ls-tree "${target_revision}" web-app 2>/dev/null | awk '{print $3}' | tr -d '[:space:]')"
+            fi
             if [[ -n "${expected_flutter_sha}" ]]; then
               echo "expected_flutter_sha=${expected_flutter_sha}" >> "$GITHUB_OUTPUT"
+            fi
+            if [[ -n "${expected_web_app_runtime_sha}" ]]; then
+              echo "expected_web_app_runtime_sha=${expected_web_app_runtime_sha}" >> "$GITHUB_OUTPUT"
             fi
           fi
 
@@ -1219,6 +1295,11 @@ jobs:
             exit 1
           fi
 
+          if [[ -z "${{ steps.main_rollback_proof_plan.outputs.expected_web_app_runtime_sha }}" ]]; then
+            echo "ERROR: production rollback proof could not resolve the restored web-app runtime SHA from revision ${{ steps.main_rollback_proof_plan.outputs.target_revision }}." >&2
+            exit 1
+          fi
+
           if [[ "${{ steps.main_rollback_proof_plan.outputs.executor }}" == "internal" && "${{ steps.main_rollback_target.outputs.trusted_tuple_present }}" == "true" && -n "${{ steps.main_rollback_target.outputs.revision }}" && "${{ steps.main_rollback_proof_plan.outputs.target_revision }}" != "${{ steps.main_rollback_target.outputs.revision }}" ]]; then
             echo "ERROR: production internal rollback restored revision ${{ steps.main_rollback_proof_plan.outputs.target_revision }}, which does not match the trusted successful-release target ${{ steps.main_rollback_target.outputs.revision }}." >&2
             exit 1
@@ -1226,9 +1307,22 @@ jobs:
 
           echo "INFO: production rollback proof will verify restored revision ${{ steps.main_rollback_proof_plan.outputs.target_revision }} via ${{ steps.main_rollback_proof_plan.outputs.executor }} rollback."
 
+      - name: Validate restored production web-app runtime SHA over SSH
+        id: main_rollback_runtime_web_sha_check
+        if: ${{ always() && steps.main_rollback_proof_plan.outputs.run == 'true' && steps.main_rollback_proof_guard.outcome != 'failure' }}
+        continue-on-error: true
+        env:
+          DEPLOY_SSH_HOST: ${{ vars.MAIN_SSH_HOST }}
+          DEPLOY_SSH_PORT: ${{ vars.MAIN_SSH_PORT }}
+          DEPLOY_SSH_USER: ${{ vars.MAIN_SSH_USER }}
+          DEPLOY_PATH: ${{ vars.MAIN_DEPLOY_PATH }}
+          DEPLOY_SSH_KEY_PATH: ~/.ssh/id_ed25519_main
+          EXPECTED_WEB_APP_RUNTIME_SHA: ${{ steps.main_rollback_proof_plan.outputs.expected_web_app_runtime_sha }}
+        run: bash .github/scripts/check_remote_web_runtime_sha_over_ssh.sh
+
       - name: Preflight production initialization status after rollback
         id: main_rollback_initialize_preflight
-        if: ${{ always() && steps.main_rollback_proof_plan.outputs.run == 'true' && steps.main_rollback_proof_guard.outcome != 'failure' }}
+        if: ${{ always() && steps.main_rollback_proof_plan.outputs.run == 'true' && steps.main_rollback_proof_guard.outcome != 'failure' && steps.main_rollback_runtime_web_sha_check.outcome != 'failure' }}
         continue-on-error: true
         env:
           NAV_LANDLORD_URL: ${{ steps.main_nav_targets.outputs.landlord_url }}
@@ -1373,7 +1467,7 @@ jobs:
         run: bash tools/flutter/run_web_navigation_smoke.sh readonly
 
       - name: Collect production rollback proof diagnostics
-        if: ${{ always() && steps.main_rollback_proof_plan.outputs.run == 'true' && (steps.main_rollback_proof_guard.outcome == 'failure' || steps.main_rollback_initialize_preflight.outcome == 'failure' || steps.main_rollback_public_edge_environment_probe.outcome == 'failure' || steps.main_rollback_provenance_check.outcome == 'failure' || steps.main_rollback_mutation_guard.outcome == 'failure' || steps.main_rollback_navigation_smoke.outcome == 'failure') }}
+        if: ${{ always() && steps.main_rollback_proof_plan.outputs.run == 'true' && (steps.main_rollback_proof_guard.outcome == 'failure' || steps.main_rollback_runtime_web_sha_check.outcome == 'failure' || steps.main_rollback_initialize_preflight.outcome == 'failure' || steps.main_rollback_public_edge_environment_probe.outcome == 'failure' || steps.main_rollback_provenance_check.outcome == 'failure' || steps.main_rollback_mutation_guard.outcome == 'failure' || steps.main_rollback_navigation_smoke.outcome == 'failure') }}
         continue-on-error: true
         env:
           DEPLOY_LANE: main
@@ -1388,7 +1482,7 @@ jobs:
         run: bash .github/scripts/collect_remote_deploy_diagnostics.sh
 
       - name: Upload production rollback proof artifacts
-        if: ${{ always() && steps.main_rollback_proof_plan.outputs.run == 'true' && (steps.main_rollback_proof_guard.outcome == 'failure' || steps.main_rollback_initialize_preflight.outcome == 'failure' || steps.main_rollback_public_edge_environment_probe.outcome == 'failure' || steps.main_rollback_provenance_check.outcome == 'failure' || steps.main_rollback_mutation_guard.outcome == 'failure' || steps.main_rollback_navigation_smoke.outcome == 'failure') }}
+        if: ${{ always() && steps.main_rollback_proof_plan.outputs.run == 'true' && (steps.main_rollback_proof_guard.outcome == 'failure' || steps.main_rollback_runtime_web_sha_check.outcome == 'failure' || steps.main_rollback_initialize_preflight.outcome == 'failure' || steps.main_rollback_public_edge_environment_probe.outcome == 'failure' || steps.main_rollback_provenance_check.outcome == 'failure' || steps.main_rollback_mutation_guard.outcome == 'failure' || steps.main_rollback_navigation_smoke.outcome == 'failure') }}
         uses: actions/upload-artifact@v7
         with:
           name: production-rollback-proof-${{ github.run_id }}-${{ github.run_attempt }}
@@ -1400,14 +1494,18 @@ jobs:
           retention-days: 7
 
       - name: Fail production deploy after rollback
-        if: ${{ always() && (steps.main_deploy_remote.outcome == 'failure' || steps.main_initialize_preflight.outcome == 'failure' || steps.main_untrusted_bootstrap_block.outcome == 'failure' || steps.main_unexpected_initialize_403.outcome == 'failure' || steps.main_untrusted_initialized_bootstrap_block.outcome == 'failure' || (steps.main_initialize_preflight.outputs.initialized == 'true' && (steps.main_public_edge_environment_probe.outcome == 'failure' || steps.main_provenance_check.outcome == 'failure' || steps.main_initial_mutation_guard.outcome == 'failure' || steps.production_navigation_smoke.outcome == 'failure')) || (steps.main_rollback_proof_plan.outputs.run == 'true' && (steps.main_rollback_proof_guard.outcome == 'failure' || steps.main_rollback_initialize_preflight.outcome == 'failure' || steps.main_rollback_public_edge_environment_probe.outcome == 'failure' || steps.main_rollback_provenance_check.outcome == 'failure' || steps.main_rollback_mutation_guard.outcome == 'failure' || steps.main_rollback_navigation_smoke.outcome == 'failure'))) }}
+        if: ${{ always() && (steps.main_deploy_remote.outcome == 'failure' || steps.main_runtime_web_sha_check.outcome == 'failure' || steps.main_initialize_preflight.outcome == 'failure' || steps.main_untrusted_bootstrap_block.outcome == 'failure' || steps.main_unexpected_initialize_403.outcome == 'failure' || steps.main_untrusted_initialized_bootstrap_block.outcome == 'failure' || (steps.main_initialize_preflight.outputs.initialized == 'true' && (steps.main_public_edge_environment_probe.outcome == 'failure' || steps.main_provenance_check.outcome == 'failure' || steps.main_initial_mutation_guard.outcome == 'failure' || steps.production_navigation_smoke.outcome == 'failure')) || (steps.main_rollback_proof_plan.outputs.run == 'true' && (steps.main_rollback_proof_guard.outcome == 'failure' || steps.main_rollback_runtime_web_sha_check.outcome == 'failure' || steps.main_rollback_initialize_preflight.outcome == 'failure' || steps.main_rollback_public_edge_environment_probe.outcome == 'failure' || steps.main_rollback_provenance_check.outcome == 'failure' || steps.main_rollback_mutation_guard.outcome == 'failure' || steps.main_rollback_navigation_smoke.outcome == 'failure'))) }}
         run: |
           if [[ "${{ steps.main_rollback_proof_guard.outcome }}" == "failure" ]]; then
             echo "ERROR: production rollback restored an untrusted or unresolved target; terminal state is explicit degraded/incident." >&2
+          elif [[ "${{ steps.main_rollback_runtime_web_sha_check.outcome }}" == "failure" ]]; then
+            echo "ERROR: production rollback via ${{ steps.main_rollback_proof_plan.outputs.executor }} executor completed, but the restored web-app runtime SHA did not match the trusted target; terminal state is explicit degraded/incident." >&2
           elif [[ "${{ steps.main_untrusted_bootstrap_block.outcome }}" == "failure" ]]; then
             echo "ERROR: production initialize returned 403 before any trusted successful-release tuple existed; bootstrap path is explicitly untrusted and cannot stamp a healthy revision." >&2
           elif [[ "${{ steps.main_untrusted_initialized_bootstrap_block.outcome }}" == "failure" ]]; then
             echo "ERROR: production initialized successfully before any trusted successful-release tuple existed; bootstrap path is explicitly untrusted and cannot stamp a healthy revision." >&2
+          elif [[ "${{ steps.main_runtime_web_sha_check.outcome }}" == "failure" ]]; then
+            echo "ERROR: production deploy completed, but the remote web-app runtime SHA drifted from the promoted gitlink; terminal state is explicit degraded/incident." >&2
           elif [[ "${{ steps.main_rollback_initialize_preflight.outcome }}" == "failure" ]]; then
             echo "ERROR: production rollback via ${{ steps.main_rollback_proof_plan.outputs.executor }} executor completed, but the restored environment did not re-establish initialize=200; terminal state is explicit degraded/incident." >&2
           elif [[ "${{ steps.main_rollback_public_edge_environment_probe.outcome }}" == "failure" ]]; then
