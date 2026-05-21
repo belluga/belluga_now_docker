@@ -21,6 +21,36 @@ for required in \
   require_env "$required"
 done
 
+require_protected_health_host() {
+  local source host
+
+  source="${DEPLOY_HEALTH_HOST_RAW:-}"
+  source="$(printf '%s' "$source" | tr -d '\r')"
+  source="${source%%$'\n'*}"
+  source="${source#"${source%%[![:space:]]*}"}"
+  source="${source%"${source##*[![:space:]]}"}"
+
+  if [[ -z "$source" ]]; then
+    echo "ERROR: DEPLOY_HEALTH_HOST is required for protected ${DEPLOY_LANE} rollbacks. Define the canonical ${DEPLOY_LANE} lane landlord URL/host for this lane; implicit fallback to APP_URL or localhost is forbidden." >&2
+    exit 1
+  fi
+
+  source="${source#http://}"
+  source="${source#https://}"
+  source="${source%%/*}"
+  source="${source%%:*}"
+
+  host="$(printf '%s' "$source" | tr -d '\r\n' | xargs)"
+  if ! [[ "$host" =~ ^[A-Za-z0-9.-]+$ ]]; then
+    echo "ERROR: invalid health host '$host' resolved from DEPLOY_HEALTH_HOST. Define the canonical ${DEPLOY_LANE} lane landlord URL/host explicitly; implicit fallback is forbidden." >&2
+    exit 1
+  fi
+
+  printf '%s' "$host"
+}
+
+PROTECTED_HEALTH_HOST="$(require_protected_health_host)"
+
 run_git() {
   GIT_CONFIG_COUNT=1 \
   GIT_CONFIG_KEY_0="url.https://x-access-token:${SUBMODULES_REPO_TOKEN}@github.com/.insteadOf" \
@@ -320,30 +350,7 @@ normalize_laravel_cache_env_for_mongo
 require_laravel_mongodb_cache_env
 
 resolve_health_host() {
-  local app_url_line source host
-
-  source="${DEPLOY_HEALTH_HOST_RAW:-}"
-  if [[ -z "$source" ]]; then
-    app_url_line="$(grep '^APP_URL=' .env | tail -n 1 || true)"
-    source="${app_url_line#APP_URL=}"
-  fi
-
-  source="$(printf '%s' "$source" | tr -d '\r')"
-  source="${source%%$'\n'*}"
-  source="${source#"${source%%[![:space:]]*}"}"
-  source="${source%"${source##*[![:space:]]}"}"
-  source="${source#http://}"
-  source="${source#https://}"
-  source="${source%%/*}"
-  source="${source%%:*}"
-
-  host="$(printf '%s' "$source" | tr -d '[:space:]')"
-  if [[ -z "$host" ]]; then
-    echo "ERROR: unable to resolve rollback health host from APP_URL / DEPLOY_HEALTH_HOST." >&2
-    return 1
-  fi
-
-  printf '%s' "$host"
+  printf '%s' "$PROTECTED_HEALTH_HOST"
 }
 
 best_effort_clear_disk_log_files() {
