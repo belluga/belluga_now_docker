@@ -242,6 +242,61 @@ for script in .github/scripts/deploy_stage_over_ssh.sh .github/scripts/rollback_
   done
 done
 
+if ! grep -Fq 'require_protected_health_host()' .github/scripts/deploy_stage_over_ssh.sh; then
+  echo "ERROR: deploy_stage_over_ssh.sh must define require_protected_health_host() for the protected CI path." >&2
+  exit 1
+fi
+
+if ! grep -Fq 'require_protected_health_host()' .github/scripts/rollback_over_ssh.sh; then
+  echo "ERROR: rollback_over_ssh.sh must define require_protected_health_host() for the protected CI path." >&2
+  exit 1
+fi
+
+if ! grep -Fq 'require_protected_health_host()' .github/scripts/rollback_remote.sh; then
+  echo "ERROR: rollback_remote.sh must define require_protected_health_host() for the protected CI path." >&2
+  exit 1
+fi
+
+if ! grep -Fq 'implicit fallback to APP_URL or localhost is forbidden' .github/scripts/deploy_stage_over_ssh.sh; then
+  echo "ERROR: deploy_stage_over_ssh.sh must fail closed with an explicit no-fallback contract message." >&2
+  exit 1
+fi
+
+if ! grep -Fq 'implicit fallback to APP_URL or localhost is forbidden' .github/scripts/rollback_over_ssh.sh; then
+  echo "ERROR: rollback_over_ssh.sh must fail closed with an explicit no-fallback contract message." >&2
+  exit 1
+fi
+
+if ! grep -Fq 'implicit fallback to APP_URL or localhost is forbidden' .github/scripts/rollback_remote.sh; then
+  echo "ERROR: rollback_remote.sh must fail closed with an explicit no-fallback contract message." >&2
+  exit 1
+fi
+
+if grep -Fq 'source="$(read_laravel_env_value APP_URL)"' .github/scripts/deploy_stage_over_ssh.sh; then
+  echo "ERROR: deploy_stage_over_ssh.sh must not derive health host from APP_URL in the protected CI path." >&2
+  exit 1
+fi
+
+if grep -Fq 'source="$(read_laravel_env_value APP_URL)"' .github/scripts/rollback_remote.sh; then
+  echo "ERROR: rollback_remote.sh must not derive health host from APP_URL in the protected CI path." >&2
+  exit 1
+fi
+
+if grep -Fq 'host="localhost"' .github/scripts/deploy_stage_over_ssh.sh; then
+  echo "ERROR: deploy_stage_over_ssh.sh must not fall back to localhost for protected CI health checks." >&2
+  exit 1
+fi
+
+if grep -Fq 'DEPLOY_HEALTH_HOST_RAW \\' .github/scripts/rollback_remote.sh; then
+  echo "ERROR: rollback_remote.sh must not enforce DEPLOY_HEALTH_HOST_RAW through the generic required-env gate; the protected host contract must own that failure." >&2
+  exit 1
+fi
+
+if ! grep -Fq "invalid health host '\$host' resolved from DEPLOY_HEALTH_HOST" .github/scripts/rollback_remote.sh; then
+  echo "ERROR: rollback_remote.sh must reject malformed DEPLOY_HEALTH_HOST values with the explicit protected-path invalid-host message." >&2
+  exit 1
+fi
+
 if ! grep -Fq '.github/scripts/rollback_remote.sh' .github/scripts/rollback_over_ssh.sh; then
   echo "ERROR: rollback_over_ssh.sh must ship and execute .github/scripts/rollback_remote.sh instead of embedding the remote body inline." >&2
   exit 1

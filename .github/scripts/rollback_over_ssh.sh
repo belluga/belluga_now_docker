@@ -29,10 +29,37 @@ deploy_nginx_port_443="${DEPLOY_NGINX_HOST_PORT_443:-${STAGE_NGINX_HOST_PORT_443
 deploy_health_host="${DEPLOY_HEALTH_HOST:-}"
 deploy_min_free_gb="${DEPLOY_MIN_FREE_GB:-4}"
 
+require_protected_health_host() {
+  local source host
+  source="$(printf '%s' "${deploy_health_host}" | tr -d '\r')"
+  source="${source%%$'\n'*}"
+  source="${source#"${source%%[![:space:]]*}"}"
+  source="${source%"${source##*[![:space:]]}"}"
+
+  if [[ -z "${source}" ]]; then
+    echo "ERROR: DEPLOY_HEALTH_HOST is required for protected ${deploy_lane} rollbacks. Define the canonical ${deploy_lane} lane landlord URL/host for this lane; implicit fallback to APP_URL or localhost is forbidden." >&2
+    exit 1
+  fi
+
+  host="${source#*://}"
+  host="${host%%/*}"
+  host="${host%%:*}"
+  host="$(printf '%s' "${host}" | tr -d '\r\n' | xargs)"
+
+  if ! [[ "${host}" =~ ^[A-Za-z0-9.-]+$ ]]; then
+    echo "ERROR: invalid health host '${host}' resolved from DEPLOY_HEALTH_HOST. Define the canonical ${deploy_lane} lane landlord URL/host explicitly; implicit fallback is forbidden." >&2
+    exit 1
+  fi
+
+  printf '%s' "${host}"
+}
+
 if [[ -z "${deploy_ssh_host}" || -z "${deploy_ssh_port}" || -z "${deploy_ssh_user}" || -z "${deploy_path}" || -z "${deploy_ssh_key_path}" ]]; then
   echo "ERROR: missing deploy SSH config. Set DEPLOY_SSH_HOST/PORT/USER/PATH/KEY_PATH (or legacy STAGE_* equivalents)." >&2
   exit 1
 fi
+
+deploy_health_host="$(require_protected_health_host)"
 
 for port_var in deploy_nginx_port_80 deploy_nginx_port_443; do
   port_value="${!port_var}"
