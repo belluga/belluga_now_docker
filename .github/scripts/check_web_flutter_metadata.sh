@@ -169,7 +169,7 @@ else
   metadata_source_branch="$(printf '%s' "$metadata_content" | sed -n 's/.*"source_branch"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)"
 fi
 
-if [[ "$is_dev_lane" -eq 0 ]]; then
+if [[ "$TARGET_BRANCH" == "stage" ]]; then
   if [[ -z "$metadata_source_branch" ]]; then
     echo "ERROR: build metadata missing source_branch for lane '$TARGET_BRANCH'." >&2
     exit 1
@@ -178,6 +178,8 @@ if [[ "$is_dev_lane" -eq 0 ]]; then
     echo "ERROR: metadata source_branch mismatch for lane '$TARGET_BRANCH': got '$metadata_source_branch'." >&2
     exit 1
   fi
+elif [[ "$TARGET_BRANCH" == "main" && -z "$metadata_source_branch" ]]; then
+  echo "INFO: build metadata missing source_branch for lane 'main'; main acceptance uses flutter_git_sha and host compatibility."
 fi
 
 metadata_match_mode=""
@@ -187,10 +189,14 @@ if [[ "$FLUTTER_SHA" == "$metadata_sha" || "$FLUTTER_SHA" == "$metadata_sha"* ||
   metadata_match_mode="exact-or-prefix"
 else
   # Stage/main commonly build from lane merge commits (descendants of the pinned source SHA).
-  # Accept descendant metadata SHA while still enforcing lane provenance and host compatibility.
+  # Accept descendant metadata SHA while still enforcing host compatibility; stage also enforces lane provenance.
   if [[ "$is_dev_lane" -eq 0 ]]; then
+    if [[ -d "$FLUTTER_SUBMODULE_GIT_DIR" ]]; then
+      metadata_full_sha="$(git --git-dir "$FLUTTER_SUBMODULE_GIT_DIR" rev-parse --verify "${metadata_sha}^{commit}" 2>/dev/null | tr -d '[:space:]' || true)"
+    fi
+
     if [[ -n "$flutter_repo_slug" && -n "${GH_TOKEN:-}" ]] && command -v gh >/dev/null 2>&1; then
-      metadata_full_sha="$(gh api "repos/${flutter_repo_slug}/commits/${metadata_sha}" --jq '.sha' 2>/dev/null || true)"
+      metadata_full_sha="${metadata_full_sha:-$(gh api "repos/${flutter_repo_slug}/commits/${metadata_sha}" --jq '.sha' 2>/dev/null || true)}"
     fi
 
     if [[ -z "$metadata_full_sha" ]] && [[ "$metadata_sha" =~ ^[0-9a-f]{40}$ ]]; then

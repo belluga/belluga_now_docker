@@ -87,6 +87,7 @@ required_files=(
   ".github/scripts/check_submodule_branch_alignment.sh"
   ".github/scripts/check_web_flutter_metadata.sh"
   ".github/scripts/manage_navigation_host_overrides.sh"
+  ".github/scripts/prove_web_metadata_main_contract.sh"
   ".github/scripts/prove_rollback_queue_parity.sh"
   ".github/scripts/rollback_remote.sh"
 )
@@ -215,6 +216,16 @@ fi
 
 if grep -Fq 'get_remote_file_content "$web_repo_slug" "index.html" "$TARGET_BRANCH"' .github/scripts/check_web_flutter_metadata.sh; then
   echo "ERROR: check_web_flutter_metadata.sh must not validate web index.html against the lane branch tip; use the pinned web-app gitlink SHA." >&2
+  exit 1
+fi
+
+if ! grep -Fq "main acceptance uses flutter_git_sha and host compatibility" .github/scripts/check_web_flutter_metadata.sh; then
+  echo "ERROR: check_web_flutter_metadata.sh must keep source_branch diagnostic-only for main while hard-gating flutter_git_sha and host compatibility." >&2
+  exit 1
+fi
+
+if ! grep -Fq "main acceptance uses flutter_git_sha and host compatibility" .github/scripts/check_deployed_web_provenance.sh; then
+  echo "ERROR: check_deployed_web_provenance.sh must keep source_branch diagnostic-only for main while hard-gating deployed flutter_git_sha and host compatibility." >&2
   exit 1
 fi
 
@@ -1202,6 +1213,7 @@ fi
 
 node --test tools/flutter/web_app_tests/navigation_harness_policy_test.cjs >/dev/null
 
+bash .github/scripts/prove_web_metadata_main_contract.sh >/dev/null
 bash .github/scripts/prove_rollback_queue_parity.sh >/dev/null
 
 echo "OK: CI environment invariants validated."
