@@ -1,2 +1,18 @@
-### All Application files
-# application/*
+### Local/runtime artifacts must never enter promoted Docker images.
+**/.env
+**/.env.*
+!**/.env.example
+
+laravel-app/.composer
+laravel-app/vendor
+laravel-app/storage/logs
+laravel-app/storage/framework/cache
+laravel-app/storage/framework/sessions
+laravel-app/storage/framework/views
+laravel-app/storage/framework/testing
+
+flutter-app
+web-app
+foundation_documentation
+.git
+.github

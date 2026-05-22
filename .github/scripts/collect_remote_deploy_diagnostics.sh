@@ -171,6 +171,10 @@ if [[ ${#DOCKER_COMPOSE[@]} -gt 0 ]]; then
   "${DOCKER_COMPOSE[@]}" ps || true
   echo "remote_docker_compose_ps_end"
 
+  echo "remote_docker_compose_images_start"
+  "${DOCKER_COMPOSE[@]}" images || true
+  echo "remote_docker_compose_images_end"
+
   echo "remote_service_logs_start"
   "${DOCKER_COMPOSE[@]}" logs --tail=120 app worker scheduler nginx || true
   echo "remote_service_logs_end"

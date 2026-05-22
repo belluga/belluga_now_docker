@@ -89,8 +89,8 @@ function assertStageMutationWorkflowSuppliesRuntimeCredentials() {
   assert.ok(stepMatch, 'stage mutation navigation smoke step should exist');
   assert.match(
     stepMatch[0],
-    /NAV_ADMIN_EMAIL:\s*\$\{\{\s*secrets\.STAGE_NAV_ADMIN_EMAIL\s*\}\}/,
-    'stage mutation smoke must supply NAV_ADMIN_EMAIL from stage secret',
+    /NAV_ADMIN_EMAIL:\s*\$\{\{\s*vars\.STAGE_NAV_ADMIN_EMAIL\s*\}\}/,
+    'stage mutation smoke must supply NAV_ADMIN_EMAIL from stage variable',
   );
   assert.match(
     stepMatch[0],
