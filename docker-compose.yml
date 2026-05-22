@@ -33,6 +33,7 @@ services:
       - local-db
 
   app:
+    image: ${APP_IMAGE:-belluga-now-app:local}
     build:
       context: .
       dockerfile: ./docker/laravel-app/Dockerfile
@@ -62,6 +63,7 @@ services:
     restart: unless-stopped
 
   worker:
+    image: ${WORKER_IMAGE:-belluga-now-worker:local}
     build:
       context: .
       dockerfile: ./docker/laravel-app/Dockerfile
@@ -86,6 +88,7 @@ services:
     restart: unless-stopped
 
   scheduler:
+    image: ${SCHEDULER_IMAGE:-belluga-now-scheduler:local}
     build:
       context: .
       dockerfile: ./docker/laravel-app/Dockerfile
@@ -110,6 +113,7 @@ services:
     restart: unless-stopped
 
   nginx:
+    image: ${NGINX_IMAGE:-belluga-now-nginx:local}
     build: ./docker/nginx
     env_file: .env
     ports:

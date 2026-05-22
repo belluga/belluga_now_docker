@@ -15,6 +15,8 @@ for required in \
   DEPLOY_BRANCH \
   DEPLOY_LANE \
   SUBMODULES_REPO_TOKEN \
+  GHCR_USERNAME \
+  GHCR_TOKEN \
   DEPLOY_NGINX_HOST_PORT_80 \
   DEPLOY_NGINX_HOST_PORT_443 \
   DEPLOY_MIN_FREE_GB; do
@@ -73,12 +75,63 @@ else
   DOCKER_CMD=(docker)
 fi
 
+require_immutable_image_ref() {
+  local name="$1"
+  local value="${!name:-}"
+
+  if [[ -z "${value}" ]]; then
+    echo "ERROR: ${name} is required for protected ${DEPLOY_LANE} rollback." >&2
+    return 1
+  fi
+  if [[ "${value}" != ghcr.io/*@sha256:* ]]; then
+    echo "ERROR: ${name} must be an immutable GHCR digest reference (received '${value}')." >&2
+    return 1
+  fi
+  if [[ "${value}" == *":latest"* ]]; then
+    echo "ERROR: ${name} must not use mutable ':latest' image authority." >&2
+    return 1
+  fi
+}
+
+login_to_ghcr() {
+  if [[ -z "${GHCR_USERNAME:-}" || -z "${GHCR_TOKEN:-}" ]]; then
+    echo "ERROR: GHCR_USERNAME and GHCR_TOKEN are required for protected ${DEPLOY_LANE} rollback image pulls." >&2
+    return 1
+  fi
+
+  printf '%s' "${GHCR_TOKEN}" | "${DOCKER_CMD[@]}" login ghcr.io -u "${GHCR_USERNAME}" --password-stdin >/dev/null
+}
+
+pull_runtime_images() {
+  local image seen_images=" "
+  login_to_ghcr
+
+  for image in "${APP_IMAGE}" "${WORKER_IMAGE}" "${SCHEDULER_IMAGE}" "${NGINX_IMAGE}"; do
+    case "${seen_images}" in
+      *" ${image} "*)
+        continue
+        ;;
+    esac
+    seen_images+="${image} "
+    echo "INFO: pulling rollback immutable runtime image ${image}"
+    "${DOCKER_CMD[@]}" pull "${image}"
+  done
+}
+
 cd "$DEPLOY_PATH"
 
 target_revision=""
 target_web_runtime_sha=""
+target_app_image=""
+target_worker_image=""
+target_scheduler_image=""
+target_nginx_image=""
 marker_root_sha=""
 marker_web_runtime_sha=""
+marker_app_image=""
+marker_worker_image=""
+marker_scheduler_image=""
+marker_nginx_image=""
 explicit_target="${ROLLBACK_TARGET_REVISION:-}"
 if [[ -n "$explicit_target" ]]; then
   target_revision="$(echo "$explicit_target" | tr -d '[:space:]')"
@@ -91,6 +144,10 @@ if [[ -f ".last_successful_revision" ]]; then
   else
     marker_root_sha="$(printf '%s\n' "${marker_content}" | sed -n 's/^ROOT_SHA=//p' | head -n 1 | tr -d '[:space:]')"
     marker_web_runtime_sha="$(printf '%s\n' "${marker_content}" | sed -n 's/^WEB_APP_RUNTIME_SHA=//p' | head -n 1 | tr -d '[:space:]')"
+    marker_app_image="$(printf '%s\n' "${marker_content}" | sed -n 's/^APP_IMAGE=//p' | head -n 1 | tr -d '[:space:]')"
+    marker_worker_image="$(printf '%s\n' "${marker_content}" | sed -n 's/^WORKER_IMAGE=//p' | head -n 1 | tr -d '[:space:]')"
+    marker_scheduler_image="$(printf '%s\n' "${marker_content}" | sed -n 's/^SCHEDULER_IMAGE=//p' | head -n 1 | tr -d '[:space:]')"
+    marker_nginx_image="$(printf '%s\n' "${marker_content}" | sed -n 's/^NGINX_IMAGE=//p' | head -n 1 | tr -d '[:space:]')"
   fi
 fi
 
@@ -98,24 +155,40 @@ if [[ -z "$target_revision" ]]; then
   target_revision="${marker_root_sha}"
 fi
 
-if [[ -z "$target_revision" ]]; then
-  echo "ERROR: unable to resolve rollback target revision from explicit input or successful-release marker." >&2
+if [[ -z "$target_revision" || -z "${marker_root_sha}" || "$target_revision" != "$marker_root_sha" ]]; then
+  echo "ERROR: unable to resolve rollback target from a trusted complete successful-release tuple; protected rollback will not fall back to explicit revisions or host state." >&2
   exit 1
 fi
 
-if [[ -n "${marker_root_sha}" && "${marker_root_sha}" == "${target_revision}" && -n "${marker_web_runtime_sha}" ]]; then
-  target_web_runtime_sha="${marker_web_runtime_sha}"
-fi
+target_web_runtime_sha="${marker_web_runtime_sha}"
+target_app_image="${marker_app_image}"
+target_worker_image="${marker_worker_image}"
+target_scheduler_image="${marker_scheduler_image}"
+target_nginx_image="${marker_nginx_image}"
+
 if [[ -z "${target_web_runtime_sha}" ]]; then
-  target_web_runtime_sha="$(git ls-tree "${target_revision}" web-app 2>/dev/null | awk '{print $3}' | tr -d '[:space:]' || true)"
-fi
-if [[ -z "${target_web_runtime_sha}" ]]; then
-  echo "ERROR: unable to resolve rollback web-app runtime SHA for target revision ${target_revision}." >&2
+  echo "ERROR: successful-release tuple is missing WEB_APP_RUNTIME_SHA; protected rollback will not fall back to gitlinks." >&2
   exit 1
 fi
+
+for image_value_name in target_app_image target_worker_image target_scheduler_image target_nginx_image; do
+  if [[ -z "${!image_value_name:-}" ]]; then
+    echo "ERROR: successful-release tuple is missing ${image_value_name}; protected rollback will not fall back to host-local builds." >&2
+    exit 1
+  fi
+done
+
+APP_IMAGE="${target_app_image}"
+WORKER_IMAGE="${target_worker_image}"
+SCHEDULER_IMAGE="${target_scheduler_image}"
+NGINX_IMAGE="${target_nginx_image}"
 
 echo "INFO: rollback target revision: ${target_revision}"
 echo "INFO: rollback target web-app runtime SHA: ${target_web_runtime_sha}"
+
+for image_var in APP_IMAGE WORKER_IMAGE SCHEDULER_IMAGE NGINX_IMAGE; do
+  require_immutable_image_ref "${image_var}"
+done
 
 run_git fetch --prune origin "$DEPLOY_BRANCH"
 run_git checkout "$DEPLOY_BRANCH"
@@ -173,6 +246,13 @@ if not updated:
     new_lines.append(prefix + value)
 path.write_text("\n".join(new_lines) + "\n")
 PY
+}
+
+write_runtime_image_env() {
+  upsert_env APP_IMAGE "${APP_IMAGE}"
+  upsert_env WORKER_IMAGE "${WORKER_IMAGE}"
+  upsert_env SCHEDULER_IMAGE "${SCHEDULER_IMAGE}"
+  upsert_env NGINX_IMAGE "${NGINX_IMAGE}"
 }
 
 read_env_value() {
@@ -378,6 +458,7 @@ fi
 
 upsert_env NGINX_HOST_PORT_80 "$DEPLOY_NGINX_HOST_PORT_80"
 upsert_env NGINX_HOST_PORT_443 "$DEPLOY_NGINX_HOST_PORT_443"
+write_runtime_image_env
 normalize_queue_env_for_mongo
 
 if ! ensure_laravel_app_env; then
@@ -486,16 +567,6 @@ prune_docker_artifacts() {
   fi
 }
 
-run_compose_build() {
-  local phase="$1"
-  shift
-
-  echo "INFO: docker compose build (${phase}) services: $*"
-  if ! COMPOSE_BAKE=false DOCKER_BUILDKIT=1 BUILDKIT_PROGRESS=plain "${DOCKER_COMPOSE[@]}" build "$@"; then
-    return 1
-  fi
-}
-
 wait_for_laravel_artisan() {
   for attempt in $(seq 1 30); do
     if "${DOCKER_COMPOSE[@]}" exec -T app php artisan --version >/dev/null 2>&1; then
@@ -513,11 +584,8 @@ wait_for_laravel_artisan() {
 }
 
 start_core_runtime_services() {
-  echo "INFO: starting rollback core runtime services (app, nginx)..."
-  if ! run_compose_build "rollback-core-runtime" app worker scheduler nginx; then
-    echo "ERROR: docker compose build failed for rollback runtime services." >&2
-    return 1
-  fi
+  echo "INFO: starting rollback core runtime services (app, nginx) from immutable GHCR digests..."
+  pull_runtime_images
 
   if ! "${DOCKER_COMPOSE[@]}" stop worker scheduler >/dev/null 2>&1; then
     echo "WARN: failed to stop existing rollback worker/scheduler containers; continuing." >&2

@@ -158,19 +158,23 @@ PY
     return 1
   fi
 
-  if [[ -z "${source_branch}" ]]; then
+  if [[ "${lane}" == "stage" && -z "${source_branch}" ]]; then
     echo "ERROR: deployed build metadata is missing 'source_branch' (${metadata_url})." >&2
     cat "${metadata_file}" >&2 || true
     return 1
   fi
 
-  if [[ "${source_branch}" != "${lane}" ]]; then
+  if [[ "${lane}" == "stage" && "${source_branch}" != "${lane}" ]]; then
     echo "ERROR: deployed build metadata source branch mismatch for lane '${lane}'." >&2
     echo "Expected build_metadata.source_branch: ${lane}" >&2
     echo "Actual deployed build_metadata.source_branch: ${source_branch}" >&2
     echo "Metadata URL: ${metadata_url}" >&2
     cat "${metadata_file}" >&2 || true
     return 1
+  fi
+
+  if [[ "${lane}" == "main" && -z "${source_branch}" ]]; then
+    echo "INFO: deployed build metadata source_branch is missing for main; main acceptance uses flutter_git_sha and host compatibility."
   fi
 
   if [[ "${actual_flutter_sha}" =~ ^[0-9a-f]{40}$ ]]; then
