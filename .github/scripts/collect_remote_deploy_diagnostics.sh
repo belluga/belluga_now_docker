@@ -47,6 +47,8 @@ fi
 set +e
 ssh -p "${DEPLOY_SSH_PORT}" -i "${DEPLOY_SSH_KEY_PATH}" \
   -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+  -o ConnectTimeout=5 -o ConnectionAttempts=1 \
+  -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o TCPKeepAlive=yes \
   "${DEPLOY_SSH_USER}@${DEPLOY_SSH_HOST}" "DEPLOY_PATH='${DEPLOY_PATH}' bash -s" >> "${output_file}" 2>&1 <<'REMOTE'
 set -uo pipefail
 
@@ -168,6 +170,10 @@ if [[ ${#DOCKER_COMPOSE[@]} -gt 0 ]]; then
   echo "remote_docker_compose_ps_start"
   "${DOCKER_COMPOSE[@]}" ps || true
   echo "remote_docker_compose_ps_end"
+
+  echo "remote_docker_compose_images_start"
+  "${DOCKER_COMPOSE[@]}" images || true
+  echo "remote_docker_compose_images_end"
 
   echo "remote_service_logs_start"
   "${DOCKER_COMPOSE[@]}" logs --tail=120 app worker scheduler nginx || true

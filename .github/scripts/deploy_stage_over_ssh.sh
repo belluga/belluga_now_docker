@@ -12,12 +12,47 @@ require_env() {
 require_env GITHUB_REPOSITORY
 require_env GITHUB_REF_NAME
 require_env SUBMODULES_REPO_TOKEN
+require_env WEB_APP_RUNTIME_SHA
+require_env APP_IMAGE
+require_env WORKER_IMAGE
+require_env SCHEDULER_IMAGE
+require_env NGINX_IMAGE
+require_env GHCR_USERNAME
+require_env GHCR_TOKEN
 
 deploy_lane="${DEPLOY_LANE:-stage}"
 if [[ "${deploy_lane}" != "stage" && "${deploy_lane}" != "main" ]]; then
   echo "ERROR: DEPLOY_LANE must be 'stage' or 'main' (received '${deploy_lane}')." >&2
   exit 1
 fi
+
+require_immutable_image_ref() {
+  local name="$1"
+  local value="${!name:-}"
+
+  if [[ -z "${value}" ]]; then
+    echo "ERROR: ${name} is required for protected ${deploy_lane} deploys." >&2
+    exit 1
+  fi
+  if [[ "${value}" != ghcr.io/*@sha256:* ]]; then
+    echo "ERROR: ${name} must be an immutable GHCR digest reference (received '${value}')." >&2
+    exit 1
+  fi
+  if [[ "${value}" == *":latest"* ]]; then
+    echo "ERROR: ${name} must not use mutable ':latest' image authority." >&2
+    exit 1
+  fi
+}
+
+if ! [[ "${WEB_APP_RUNTIME_SHA}" =~ ^[0-9a-fA-F]{40}$ ]]; then
+  echo "ERROR: WEB_APP_RUNTIME_SHA must be a 40-character git SHA resolved before protected deploy." >&2
+  exit 1
+fi
+WEB_APP_RUNTIME_SHA="$(printf '%s' "${WEB_APP_RUNTIME_SHA}" | tr '[:upper:]' '[:lower:]')"
+
+for image_var in APP_IMAGE WORKER_IMAGE SCHEDULER_IMAGE NGINX_IMAGE; do
+  require_immutable_image_ref "${image_var}"
+done
 
 deploy_ssh_host="${DEPLOY_SSH_HOST:-${STAGE_SSH_HOST:-}}"
 deploy_ssh_port="${DEPLOY_SSH_PORT:-${STAGE_SSH_PORT:-}}"
@@ -29,10 +64,37 @@ deploy_nginx_port_443="${DEPLOY_NGINX_HOST_PORT_443:-${STAGE_NGINX_HOST_PORT_443
 deploy_health_host="${DEPLOY_HEALTH_HOST:-}"
 deploy_min_free_gb="${DEPLOY_MIN_FREE_GB:-4}"
 
+require_protected_health_host() {
+  local source host
+  source="$(printf '%s' "${deploy_health_host}" | tr -d '\r')"
+  source="${source%%$'\n'*}"
+  source="${source#"${source%%[![:space:]]*}"}"
+  source="${source%"${source##*[![:space:]]}"}"
+
+  if [[ -z "${source}" ]]; then
+    echo "ERROR: DEPLOY_HEALTH_HOST is required for protected ${deploy_lane} deploys. Define the canonical ${deploy_lane} lane landlord URL/host for this lane; implicit fallback to APP_URL or localhost is forbidden." >&2
+    exit 1
+  fi
+
+  host="${source#*://}"
+  host="${host%%/*}"
+  host="${host%%:*}"
+  host="$(printf '%s' "${host}" | tr -d '\r\n' | xargs)"
+
+  if ! [[ "${host}" =~ ^[A-Za-z0-9.-]+$ ]]; then
+    echo "ERROR: invalid health host '${host}' resolved from DEPLOY_HEALTH_HOST. Define the canonical ${deploy_lane} lane landlord URL/host explicitly; implicit fallback is forbidden." >&2
+    exit 1
+  fi
+
+  printf '%s' "${host}"
+}
+
 if [[ -z "${deploy_ssh_host}" || -z "${deploy_ssh_port}" || -z "${deploy_ssh_user}" || -z "${deploy_path}" || -z "${deploy_ssh_key_path}" ]]; then
   echo "ERROR: missing deploy SSH config. Set DEPLOY_SSH_HOST/PORT/USER/PATH/KEY_PATH (or legacy STAGE_* equivalents)." >&2
   exit 1
 fi
+
+deploy_health_host="$(require_protected_health_host)"
 
 for port_var in deploy_nginx_port_80 deploy_nginx_port_443; do
   port_value="${!port_var}"
@@ -69,6 +131,11 @@ ssh_opts=(
   -o BatchMode=yes
   -o IdentitiesOnly=yes
   -o StrictHostKeyChecking=yes
+  -o ConnectTimeout=5
+  -o ConnectionAttempts=3
+  -o ServerAliveInterval=15
+  -o ServerAliveCountMax=40
+  -o TCPKeepAlive=yes
 )
 remote_success_marker="__REMOTE_DEPLOY_SUCCESS__"
 remote_deploy_log="$(mktemp)"
@@ -90,6 +157,13 @@ GITHUB_REPOSITORY='${GITHUB_REPOSITORY}'
 DEPLOY_BRANCH='${GITHUB_REF_NAME}'
 DEPLOY_LANE='${deploy_lane}'
 SUBMODULES_REPO_TOKEN='${SUBMODULES_REPO_TOKEN}'
+WEB_APP_RUNTIME_SHA='${WEB_APP_RUNTIME_SHA}'
+APP_IMAGE='${APP_IMAGE}'
+WORKER_IMAGE='${WORKER_IMAGE}'
+SCHEDULER_IMAGE='${SCHEDULER_IMAGE}'
+NGINX_IMAGE='${NGINX_IMAGE}'
+GHCR_USERNAME='${GHCR_USERNAME}'
+GHCR_TOKEN='${GHCR_TOKEN}'
 DEPLOY_NGINX_HOST_PORT_80='${deploy_nginx_port_80}'
 DEPLOY_NGINX_HOST_PORT_443='${deploy_nginx_port_443}'
 DEPLOY_HEALTH_HOST_RAW='${deploy_health_host}'
@@ -122,7 +196,48 @@ else
   DOCKER_CMD=(docker)
 fi
 
+require_immutable_image_ref() {
+  local name="\$1"
+  local value="\${!name:-}"
+
+  if [[ -z "\${value}" ]]; then
+    echo "ERROR: \${name} is required for protected \${DEPLOY_LANE} deploys." >&2
+    return 1
+  fi
+  if [[ "\${value}" != ghcr.io/*@sha256:* ]]; then
+    echo "ERROR: \${name} must be an immutable GHCR digest reference (received '\${value}')." >&2
+    return 1
+  fi
+  if [[ "\${value}" == *":latest"* ]]; then
+    echo "ERROR: \${name} must not use mutable ':latest' image authority." >&2
+    return 1
+  fi
+}
+
+image_digest() {
+  local image_ref="\$1"
+  local digest="\${image_ref##*@}"
+  if ! [[ "\${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+    echo "ERROR: image ref '\${image_ref}' does not contain a valid sha256 digest." >&2
+    return 1
+  fi
+  printf '%s' "\${digest}"
+}
+
+for image_var in APP_IMAGE WORKER_IMAGE SCHEDULER_IMAGE NGINX_IMAGE; do
+  require_immutable_image_ref "\${image_var}"
+done
+
+if ! [[ "\${WEB_APP_RUNTIME_SHA}" =~ ^[0-9a-fA-F]{40}$ ]]; then
+  echo "ERROR: WEB_APP_RUNTIME_SHA must be a 40-character git SHA resolved before protected deploy." >&2
+  exit 1
+fi
+WEB_APP_RUNTIME_SHA="\$(printf '%s' "\${WEB_APP_RUNTIME_SHA}" | tr '[:upper:]' '[:lower:]')"
+
 DEPLOY_RUNTIME_MUTATED=0
+internal_rollback_status="not_attempted"
+internal_rollback_target_revision=""
+internal_rollback_target_web_runtime_sha=""
 
 mkdir -p "\$DEPLOY_PATH"
 
@@ -132,9 +247,20 @@ fi
 
 cd "\$DEPLOY_PATH"
 previous_revision=""
+previous_web_runtime_sha=""
+previous_app_image=""
+previous_worker_image=""
+previous_scheduler_image=""
+previous_nginx_image=""
 rollback_protection_ref=""
-if git rev-parse --verify HEAD >/dev/null 2>&1; then
-  previous_revision="\$(git rev-parse HEAD)"
+if [[ -f ".last_successful_revision" ]]; then
+  marker_content="\$(tr -d '\r' < .last_successful_revision)"
+  previous_revision="\$(printf '%s\n' "\${marker_content}" | sed -n 's/^ROOT_SHA=//p' | head -n 1 | tr -d '[:space:]')"
+  previous_web_runtime_sha="\$(printf '%s\n' "\${marker_content}" | sed -n 's/^WEB_APP_RUNTIME_SHA=//p' | head -n 1 | tr -d '[:space:]')"
+  previous_app_image="\$(printf '%s\n' "\${marker_content}" | sed -n 's/^APP_IMAGE=//p' | head -n 1 | tr -d '[:space:]')"
+  previous_worker_image="\$(printf '%s\n' "\${marker_content}" | sed -n 's/^WORKER_IMAGE=//p' | head -n 1 | tr -d '[:space:]')"
+  previous_scheduler_image="\$(printf '%s\n' "\${marker_content}" | sed -n 's/^SCHEDULER_IMAGE=//p' | head -n 1 | tr -d '[:space:]')"
+  previous_nginx_image="\$(printf '%s\n' "\${marker_content}" | sed -n 's/^NGINX_IMAGE=//p' | head -n 1 | tr -d '[:space:]')"
 fi
 
 cleanup_rollback_protection_ref() {
@@ -151,7 +277,25 @@ cleanup_rollback_protection_ref() {
   fi
 }
 
-trap cleanup_rollback_protection_ref EXIT
+emit_remote_deploy_state_markers() {
+  echo "DEPLOY_RUNTIME_MUTATED=\${DEPLOY_RUNTIME_MUTATED}"
+  echo "INTERNAL_ROLLBACK_STATUS=\${internal_rollback_status}"
+  if [[ -n "\${internal_rollback_target_revision}" ]]; then
+    echo "INTERNAL_ROLLBACK_TARGET_REVISION=\${internal_rollback_target_revision}"
+  fi
+  if [[ -n "\${internal_rollback_target_web_runtime_sha}" ]]; then
+    echo "INTERNAL_ROLLBACK_TARGET_WEB_APP_RUNTIME_SHA=\${internal_rollback_target_web_runtime_sha}"
+  fi
+}
+
+remote_exit_trap() {
+  local exit_code=$?
+  cleanup_rollback_protection_ref
+  emit_remote_deploy_state_markers
+  return "\${exit_code}"
+}
+
+trap remote_exit_trap EXIT
 
 if [[ -n "\${previous_revision}" ]]; then
   rollback_protection_ref="refs/delphi/deploy-rollback/\${DEPLOY_BRANCH//\//-}"
@@ -165,26 +309,29 @@ run_git reset --hard "origin/\$DEPLOY_BRANCH"
 run_git submodule sync --recursive
 run_git submodule update --init --recursive
 
-sync_web_runtime_lane() {
-  local lane_ref runtime_web_sha
-
-  lane_ref="origin/\${DEPLOY_LANE}"
+checkout_web_runtime_ref() {
+  local target_ref="\$1"
+  local target_label="\$2"
+  local runtime_web_sha
   if [[ ! -d "web-app" ]]; then
     echo "ERROR: missing web-app directory after submodule checkout." >&2
     return 1
   fi
 
-  # Web is a lane-derived runtime artifact. Always deploy from lane branch
-  # instead of relying on promotable web gitlink contracts.
-  run_git -C web-app fetch --prune origin "\${DEPLOY_LANE}"
-  run_git -C web-app checkout --detach "\${lane_ref}"
+  if [[ "\${target_ref}" == origin/* ]]; then
+    run_git -C web-app fetch --prune origin "\${target_ref#origin/}"
+  else
+    run_git -C web-app fetch --prune origin "\${target_ref}" || true
+  fi
+  run_git -C web-app checkout --detach "\${target_ref}"
 
   runtime_web_sha="\$(git -C web-app rev-parse HEAD | tr -d '[:space:]')"
-  echo "INFO: runtime web-app lane '\${DEPLOY_LANE}' resolved to \${runtime_web_sha}"
+  echo "INFO: runtime web-app \${target_label} resolved to \${runtime_web_sha}"
 }
 
-if ! sync_web_runtime_lane; then
-  echo "ERROR: failed to resolve runtime web-app lane content." >&2
+current_web_runtime_sha="\${WEB_APP_RUNTIME_SHA}"
+if ! checkout_web_runtime_ref "\${current_web_runtime_sha}" "lane-resolved SHA '\${current_web_runtime_sha}'"; then
+  echo "ERROR: failed to resolve protected lane web-app runtime content." >&2
   exit 1
 fi
 
@@ -205,6 +352,38 @@ upsert_env() {
   else
     echo "\${key}=\${value}" >> .env
   fi
+}
+
+write_runtime_image_env() {
+  upsert_env APP_IMAGE "\${APP_IMAGE}"
+  upsert_env WORKER_IMAGE "\${WORKER_IMAGE}"
+  upsert_env SCHEDULER_IMAGE "\${SCHEDULER_IMAGE}"
+  upsert_env NGINX_IMAGE "\${NGINX_IMAGE}"
+}
+
+login_to_ghcr() {
+  if [[ -z "\${GHCR_USERNAME:-}" || -z "\${GHCR_TOKEN:-}" ]]; then
+    echo "ERROR: GHCR_USERNAME and GHCR_TOKEN are required for protected \${DEPLOY_LANE} runtime image pulls." >&2
+    return 1
+  fi
+
+  printf '%s' "\${GHCR_TOKEN}" | "\${DOCKER_CMD[@]}" login ghcr.io -u "\${GHCR_USERNAME}" --password-stdin >/dev/null
+}
+
+pull_runtime_images() {
+  local image seen_images=" "
+  login_to_ghcr
+
+  for image in "\${APP_IMAGE}" "\${WORKER_IMAGE}" "\${SCHEDULER_IMAGE}" "\${NGINX_IMAGE}"; do
+    case "\${seen_images}" in
+      *" \${image} "*)
+        continue
+        ;;
+    esac
+    seen_images+="\${image} "
+    echo "INFO: pulling immutable runtime image \${image}"
+    "\${DOCKER_CMD[@]}" pull "\${image}"
+  done
 }
 
 read_env_value() {
@@ -438,6 +617,7 @@ require_laravel_mongodb_cache_env() {
 
 upsert_env NGINX_HOST_PORT_80 "\$DEPLOY_NGINX_HOST_PORT_80"
 upsert_env NGINX_HOST_PORT_443 "\$DEPLOY_NGINX_HOST_PORT_443"
+write_runtime_image_env
 normalize_logging_env
 normalize_queue_env_for_mongo
 
@@ -452,30 +632,26 @@ normalize_laravel_cache_env_for_mongo
 require_laravel_mongodb_cache_env
 
 resolve_health_host() {
-  local app_url_line source host
+  local source host
 
   source="\${DEPLOY_HEALTH_HOST_RAW:-}"
-  if [[ -z "\$source" ]]; then
-    app_url_line="\$(grep '^APP_URL=' .env | tail -n 1 || true)"
-    source="\${app_url_line#APP_URL=}"
-  fi
-
   source="\$(printf '%s' "\$source" | tr -d '\r')"
   source="\${source%%\$'\\n'*}"
   source="\${source#\"\${source%%[![:space:]]*}\"}"
   source="\${source%\"\${source##*[![:space:]]}\"}"
+
+  if [[ -z "\$source" ]]; then
+    echo "ERROR: DEPLOY_HEALTH_HOST is required for protected \${DEPLOY_LANE} deploys. Define the canonical \${DEPLOY_LANE} lane landlord URL/host for this lane; implicit fallback to APP_URL or localhost is forbidden." >&2
+    return 1
+  fi
 
   host="\${source#*://}"
   host="\${host%%/*}"
   host="\${host%%:*}"
   host="\$(printf '%s' "\$host" | tr -d '\r\n' | xargs)"
 
-  if [[ -z "\$host" ]]; then
-    host="localhost"
-  fi
-
   if ! [[ "\$host" =~ ^[A-Za-z0-9.-]+$ ]]; then
-    echo "ERROR: invalid health host '\$host' resolved from DEPLOY_HEALTH_HOST/APP_URL." >&2
+    echo "ERROR: invalid health host '\$host' resolved from DEPLOY_HEALTH_HOST. Define the canonical \${DEPLOY_LANE} lane landlord URL/host explicitly; implicit fallback is forbidden." >&2
     return 1
   fi
 
@@ -778,11 +954,8 @@ prune_docker_artifacts() {
 }
 
 start_core_runtime_services() {
-  echo "INFO: starting core runtime services (app, nginx)..."
-  if ! "\${DOCKER_COMPOSE[@]}" build app worker scheduler nginx; then
-    echo "ERROR: docker compose build failed for runtime services." >&2
-    return 1
-  fi
+  echo "INFO: starting core runtime services (app, nginx) from immutable GHCR digests..."
+  pull_runtime_images
 
   if ! "\${DOCKER_COMPOSE[@]}" stop worker scheduler >/dev/null 2>&1; then
     echo "WARN: failed to stop existing worker/scheduler containers; continuing." >&2
@@ -819,11 +992,13 @@ deploy_and_check_health() {
   local health_host health_url status body
 
   DEPLOY_RUNTIME_MUTATED=0
+  emit_remote_deploy_state_markers
   if ! prebuild_cleanup_and_budget_gate "\${DEPLOY_LANE}-deploy"; then
     return 1
   fi
 
   DEPLOY_RUNTIME_MUTATED=1
+  emit_remote_deploy_state_markers
   if ! start_core_runtime_services; then
     return 1
   fi
@@ -895,24 +1070,69 @@ echo "ERROR: deploy finished but application is not healthy." >&2
 
 if [[ -n "\$previous_revision" ]]; then
   if [[ "\${DEPLOY_RUNTIME_MUTATED}" != "1" ]]; then
-    echo "WARN: deploy failed before runtime mutation; skipping internal rollback rebuild." >&2
+    internal_rollback_status="skipped_pre_mutation"
+    emit_remote_deploy_state_markers
+    echo "WARN: deploy failed before runtime mutation; skipping internal rollback." >&2
     exit 1
   fi
 
+  for rollback_image_var in previous_app_image previous_worker_image previous_scheduler_image previous_nginx_image; do
+    if [[ -z "\${!rollback_image_var:-}" ]]; then
+      internal_rollback_status="failure"
+      emit_remote_deploy_state_markers
+      echo "ERROR: previous successful tuple is missing \${rollback_image_var}; protected rollback cannot fall back to host-local builds." >&2
+      exit 1
+    fi
+  done
+
   echo "INFO: attempting rollback to previous revision \${previous_revision}..."
+  internal_rollback_status="attempting"
+  emit_remote_deploy_state_markers
   run_git reset --hard "\${previous_revision}"
   run_git submodule sync --recursive
   run_git submodule update --init --recursive
 
+  rollback_web_runtime_sha="\${previous_web_runtime_sha}"
+  if [[ -z "\${rollback_web_runtime_sha}" ]]; then
+    internal_rollback_status="failure"
+    emit_remote_deploy_state_markers
+    echo "ERROR: previous successful tuple is missing WEB_APP_RUNTIME_SHA; protected rollback cannot fall back to gitlinks." >&2
+    exit 1
+  fi
+  if ! checkout_web_runtime_ref "\${rollback_web_runtime_sha}" "rollback target '\${rollback_web_runtime_sha}'"; then
+    internal_rollback_status="failure"
+    emit_remote_deploy_state_markers
+    echo "ERROR: failed to restore rollback web-app runtime content." >&2
+    exit 1
+  fi
+
+  internal_rollback_target_revision="\${previous_revision}"
+  internal_rollback_target_web_runtime_sha="\${rollback_web_runtime_sha}"
+  APP_IMAGE="\${previous_app_image}"
+  WORKER_IMAGE="\${previous_worker_image}"
+  SCHEDULER_IMAGE="\${previous_scheduler_image}"
+  NGINX_IMAGE="\${previous_nginx_image}"
+  for image_var in APP_IMAGE WORKER_IMAGE SCHEDULER_IMAGE NGINX_IMAGE; do
+    require_immutable_image_ref "\${image_var}"
+  done
+  write_runtime_image_env
+  emit_remote_deploy_state_markers
+
   if deploy_and_check_health; then
     prune_docker_artifacts
+    internal_rollback_status="success"
+    emit_remote_deploy_state_markers
     echo "INFO: rollback succeeded; previous version restored."
   else
-    echo "ERROR: rollback failed; service may be degraded." >&2
+    internal_rollback_status="failure"
+    emit_remote_deploy_state_markers
+    echo "ERROR: rollback failed; service is in explicit degraded/incident state." >&2
     "\${DOCKER_COMPOSE[@]}" ps || true
     "\${DOCKER_COMPOSE[@]}" logs --tail=200 app worker scheduler nginx || true
   fi
 else
+  internal_rollback_status="skipped_no_previous_revision"
+  emit_remote_deploy_state_markers
   echo "WARN: previous revision not found; rollback skipped." >&2
 fi
 
@@ -922,6 +1142,36 @@ pipeline_status=("${PIPESTATUS[@]}")
 ssh_status=${pipeline_status[0]:-1}
 tee_status=${pipeline_status[1]:-1}
 set -e
+
+internal_rollback_status="$(
+  sed -n 's/^INTERNAL_ROLLBACK_STATUS=//p' "${remote_deploy_log}" | tail -n 1 | tr -d '\r[:space:]'
+)"
+internal_rollback_target_revision="$(
+  sed -n 's/^INTERNAL_ROLLBACK_TARGET_REVISION=//p' "${remote_deploy_log}" | tail -n 1 | tr -d '\r[:space:]'
+)"
+internal_rollback_target_web_runtime_sha="$(
+  sed -n 's/^INTERNAL_ROLLBACK_TARGET_WEB_APP_RUNTIME_SHA=//p' "${remote_deploy_log}" | tail -n 1 | tr -d '\r[:space:]'
+)"
+runtime_mutated_marker="$(
+  sed -n 's/^DEPLOY_RUNTIME_MUTATED=//p' "${remote_deploy_log}" | tail -n 1 | tr -d '\r[:space:]'
+)"
+runtime_mutated_output=false
+if [[ "${runtime_mutated_marker}" == "1" ]]; then
+  runtime_mutated_output=true
+fi
+
+if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
+  {
+    echo "runtime_mutated=${runtime_mutated_output}"
+    echo "internal_rollback_status=${internal_rollback_status:-not_attempted}"
+    if [[ -n "${internal_rollback_target_revision}" ]]; then
+      echo "internal_rollback_target_revision=${internal_rollback_target_revision}"
+    fi
+    if [[ -n "${internal_rollback_target_web_runtime_sha}" ]]; then
+      echo "internal_rollback_target_web_runtime_sha=${internal_rollback_target_web_runtime_sha}"
+    fi
+  } >> "${GITHUB_OUTPUT}"
+fi
 
 if [[ "${tee_status}" -ne 0 ]]; then
   echo "ERROR: failed to persist remote ${deploy_lane} deploy log locally." >&2

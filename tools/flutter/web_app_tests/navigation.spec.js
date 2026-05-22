@@ -22,6 +22,23 @@ function requireNavigationUrls() {
   return { landlordUrl, tenantUrl };
 }
 
+function applicationOrigins() {
+  return [landlordUrl, tenantUrl]
+    .filter(Boolean)
+    .map((value) => new URL(value).origin);
+}
+
+function isApplicationApiRequest(rawUrl) {
+  let parsed;
+  try {
+    parsed = new URL(rawUrl);
+  } catch (_) {
+    return false;
+  }
+
+  return applicationOrigins().includes(parsed.origin) && parsed.pathname.startsWith('/api/');
+}
+
 function installFailureCollectors(page) {
   const runtimeErrors = [];
   const failedRequests = [];
@@ -35,7 +52,7 @@ function installFailureCollectors(page) {
       return;
     }
     const url = request.url();
-    if (!url.includes('/api/')) {
+    if (!isApplicationApiRequest(url)) {
       return;
     }
     mutatingApiRequests.push(`${method} ${url}`);
@@ -277,14 +294,14 @@ test('@readonly tenant domain bootstraps as tenant and navigates to tenant route
     page,
     tenantUrl,
     '/workspace',
-    ['/workspace', '/auth/login', '/'],
+    ['/workspace', '/baixe-o-app', '/auth/login', '/'],
     'tenant'
   );
   await probePath(
     page,
     tenantUrl,
     '/workspace/account-demo',
-    ['/workspace/account-demo', '/workspace', '/auth/login'],
+    ['/workspace/account-demo', '/workspace', '/baixe-o-app', '/auth/login'],
     'tenant'
   );
 

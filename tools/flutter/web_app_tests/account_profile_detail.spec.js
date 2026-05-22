@@ -277,7 +277,23 @@ async function deleteEventType(api, baseUrl, token, eventTypeId) {
   });
 }
 
-async function resolvePoiCapableProfileType(api, baseUrl, token) {
+function matchesPoiCapableProfileType(row, { requireEvents = false } = {}) {
+  const capabilities = row?.capabilities || {};
+  const isPubliclyDiscoverable =
+    capabilities.is_publicly_discoverable !== false;
+  return capabilities.is_poi_enabled === true
+    && capabilities.is_reference_location_enabled === true
+    && capabilities.is_favoritable === true
+    && isPubliclyDiscoverable
+    && (!requireEvents || capabilities.has_events === true);
+}
+
+async function resolvePoiCapableProfileType(
+  api,
+  baseUrl,
+  token,
+  { requireEvents = false } = {},
+) {
   const response = await api.get(
     buildUrl(baseUrl, '/admin/api/v1/account_profile_types'),
     {
@@ -288,7 +304,9 @@ async function resolvePoiCapableProfileType(api, baseUrl, token) {
 
   const payload = await response.json();
   const rows = Array.isArray(payload?.data) ? payload.data : [];
-  const selected = rows.find((row) => row?.capabilities?.is_poi_enabled === true);
+  const selected = rows.find((row) =>
+    matchesPoiCapableProfileType(row, { requireEvents }),
+  );
   if (selected) {
     return { profileType: selected.type, createdType: null };
   }
@@ -309,6 +327,7 @@ async function resolvePoiCapableProfileType(api, baseUrl, token) {
         },
         capabilities: {
           is_favoritable: true,
+          is_publicly_discoverable: true,
           is_poi_enabled: true,
           is_reference_location_enabled: true,
           has_bio: false,
@@ -733,6 +752,7 @@ test('@mutation NAV-APD-07..08 agenda is occurrence-first and cards navigate to 
       api,
       baseUrl,
       sessionToken,
+      { requireEvents: true },
     );
     createdProfileType = profileTypeSeed.createdType;
     const createdProfile = await createPoiAccountProfile(

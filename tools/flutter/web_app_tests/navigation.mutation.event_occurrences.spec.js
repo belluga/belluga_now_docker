@@ -640,31 +640,52 @@ async function deleteEventType(api, baseUrl, token, eventTypeId) {
   );
 }
 
-async function fetchPhysicalHostCandidates(api, baseUrl, token, minimum = 1) {
+function candidateId(row) {
+  return row?.id?.toString().trim() || '';
+}
+
+function dedupeCandidates(rows) {
+  const seen = new Set();
+  const unique = [];
+  for (const row of rows) {
+    const id = candidateId(row);
+    if (!id || seen.has(id)) {
+      continue;
+    }
+    seen.add(id);
+    unique.push(row);
+  }
+  return unique;
+}
+
+async function listAccountProfileCandidates(api, baseUrl, token, type) {
   const url = new URL(
     buildApiUrl(baseUrl, '/admin/api/v1/events/account_profile_candidates'),
   );
-  url.searchParams.set('type', 'physical_host');
+  url.searchParams.set('type', type);
   url.searchParams.set('page', '1');
   url.searchParams.set('page_size', '20');
   const response = await api.get(url.toString(), {
     headers: authHeaders(token),
   });
-  expect(
-    response.status(),
-    'Tenant-admin physical host candidates must load for event seed.',
-  ).toBe(200);
+  expect(response.status(), `Tenant-admin ${type} candidates must load.`).toBe(200);
   const payload = await response.json();
   const rows = Array.isArray(payload?.data) ? payload.data : [];
-  const candidates = rows.filter((row) => row?.id?.toString().trim());
-  expect(
-    candidates.length,
-    `Event occurrence mutation seed requires at least ${minimum} physical host candidate(s).`,
-  ).toBeGreaterThanOrEqual(minimum);
-  return candidates.slice(0, Math.max(minimum, 1));
+  return dedupeCandidates(rows.filter((row) => candidateId(row)));
 }
 
-async function resolvePoiCapableProfileType(api, baseUrl, token) {
+function matchesPoiCapableProfileType(row, { requireEvents = false } = {}) {
+  return row?.capabilities?.is_poi_enabled === true
+    && row?.capabilities?.is_reference_location_enabled === true
+    && (!requireEvents || row?.capabilities?.has_events === true);
+}
+
+async function resolvePoiCapableProfileType(
+  api,
+  baseUrl,
+  token,
+  { requireEvents = false } = {},
+) {
   const response = await api.get(
     buildApiUrl(baseUrl, '/admin/api/v1/account_profile_types'),
     {
@@ -675,10 +696,8 @@ async function resolvePoiCapableProfileType(api, baseUrl, token) {
 
   const payload = await response.json();
   const rows = Array.isArray(payload?.data) ? payload.data : [];
-  const selected = rows.find(
-    (row) =>
-      row?.capabilities?.is_poi_enabled === true &&
-      row?.capabilities?.is_reference_location_enabled === true,
+  const selected = rows.find((row) =>
+    matchesPoiCapableProfileType(row, { requireEvents }),
   );
   if (selected?.type) {
     return { profileType: selected.type, createdType: null };
@@ -717,6 +736,56 @@ async function resolvePoiCapableProfileType(api, baseUrl, token) {
     .toBe(201);
 
   return { profileType: type, createdType: type };
+}
+
+async function ensurePhysicalHostCandidates(api, baseUrl, token, minimum = 1) {
+  const createdProfileIds = [];
+  let createdType = null;
+  const candidates = await listAccountProfileCandidates(
+    api,
+    baseUrl,
+    token,
+    'physical_host',
+  );
+
+  if (candidates.length >= minimum) {
+    return {
+      candidates: candidates.slice(0, Math.max(minimum, 1)),
+      createdProfileIds,
+      createdType,
+    };
+  }
+
+  const profileTypeSeed = await resolvePoiCapableProfileType(
+    api,
+    baseUrl,
+    token,
+  );
+  createdType = profileTypeSeed.createdType;
+  const seededCandidates = [...candidates];
+
+  for (let index = candidates.length; index < minimum; index += 1) {
+    const createdHost = await createNearbyPhysicalHost(
+      api,
+      baseUrl,
+      token,
+      profileTypeSeed.profileType,
+      `PW SR-D Auto Host ${Date.now()}-${index + 1}`,
+    );
+    createdProfileIds.push(createdHost.id);
+    seededCandidates.push(createdHost);
+  }
+
+  expect(
+    seededCandidates.length,
+    `Event occurrence mutation seed requires at least ${minimum} physical host candidate(s).`,
+  ).toBeGreaterThanOrEqual(minimum);
+
+  return {
+    candidates: seededCandidates.slice(0, Math.max(minimum, 1)),
+    createdProfileIds,
+    createdType,
+  };
 }
 
 async function createNearbyPhysicalHost(api, baseUrl, token, profileType, name) {
@@ -781,28 +850,63 @@ async function deleteAccountProfileType(api, baseUrl, token, profileType) {
   );
 }
 
-async function fetchRelatedAccountProfileCandidates(api, baseUrl, token) {
-  const url = new URL(
-    buildApiUrl(baseUrl, '/admin/api/v1/events/account_profile_candidates'),
+async function fetchRelatedAccountProfileCandidates(
+  api,
+  baseUrl,
+  token,
+  { minimum = 2, excludeIds = [] } = {},
+) {
+  const excluded = new Set(excludeIds.filter(Boolean));
+  const createdProfileIds = [];
+  let createdType = null;
+  const candidates = (await listAccountProfileCandidates(
+    api,
+    baseUrl,
+    token,
+    'related_account_profile',
+  )).filter((row) => !excluded.has(candidateId(row)));
+
+  if (candidates.length >= minimum) {
+    return {
+      candidates: candidates.slice(0, minimum),
+      createdProfileIds,
+      createdType,
+    };
+  }
+
+  const profileTypeSeed = await resolvePoiCapableProfileType(
+    api,
+    baseUrl,
+    token,
+    { requireEvents: true },
   );
-  url.searchParams.set('type', 'related_account_profile');
-  url.searchParams.set('page', '1');
-  url.searchParams.set('page_size', '10');
-  const response = await api.get(url.toString(), {
-    headers: authHeaders(token),
-  });
+  createdType = profileTypeSeed.createdType;
+  const seededCandidates = [...candidates];
+
+  for (let index = candidates.length; index < minimum; index += 1) {
+    const createdProfile = await createNearbyPhysicalHost(
+      api,
+      baseUrl,
+      token,
+      profileTypeSeed.profileType,
+      `PW SR-D Related Profile ${Date.now()}-${index + 1}`,
+    );
+    createdProfileIds.push(createdProfile.id);
+    if (!excluded.has(createdProfile.id)) {
+      seededCandidates.push(createdProfile);
+    }
+  }
+
   expect(
-    response.status(),
-    'Tenant-admin related profile candidates must load for event runtime proof.',
-  ).toBe(200);
-  const payload = await response.json();
-  const rows = Array.isArray(payload?.data) ? payload.data : [];
-  const candidates = rows.filter((row) => row?.id?.toString().trim());
-  expect(
-    candidates.length,
+    seededCandidates.length,
     'Event occurrence runtime proof requires at least two related profile candidates.',
-  ).toBeGreaterThanOrEqual(2);
-  return candidates.slice(0, 2);
+  ).toBeGreaterThanOrEqual(minimum);
+
+  return {
+    candidates: seededCandidates.slice(0, minimum),
+    createdProfileIds,
+    createdType,
+  };
 }
 
 async function createSingleOccurrenceEvent(
@@ -1537,7 +1641,7 @@ async function clickOccurrenceDateChip(page, occurrence, description) {
 async function clickImmersiveTab(
   page,
   title,
-  { confirmationTextInViewport = null } = {},
+  { confirmationTextInViewport = null, confirmationLocator = null } = {},
 ) {
   const target = page
     .getByRole('button', { name: new RegExp(`^${escapeRegExp(title)}$`) })
@@ -1547,7 +1651,12 @@ async function clickImmersiveTab(
     `Immersive tab "${title}" must expose a semantic button target.`,
   ).toBeVisible({ timeout: appBootTimeoutMs });
   await target.click({ timeout: appBootTimeoutMs });
-  if (confirmationTextInViewport) {
+  if (confirmationLocator) {
+    await expect(
+      confirmationLocator,
+      `Immersive tab "${title}" must activate visibly.`,
+    ).toBeVisible({ timeout: appBootTimeoutMs });
+  } else if (confirmationTextInViewport) {
     await waitForTextInViewport(
       page,
       confirmationTextInViewport,
@@ -1609,7 +1718,9 @@ async function countTextInViewport(page, text) {
       width: window.innerWidth,
       height: window.innerHeight,
     })));
-  const locator = page.getByText(text);
+  // Use exact text matching so semantic assertions do not overcount ancestor
+  // containers that happen to include the same visible label.
+  const locator = page.getByText(text, { exact: true });
   const count = await locator.count();
   let visibleInViewport = 0;
   for (let index = 0; index < count; index += 1) {
@@ -1634,7 +1745,7 @@ async function countTextInViewport(page, text) {
 }
 
 async function countTextInVerticalBand(page, text, top, bottom) {
-  const locator = page.getByText(text);
+  const locator = page.getByText(text, { exact: true });
   const count = await locator.count();
   let visibleInBand = 0;
   for (let index = 0; index < count; index += 1) {
@@ -1981,6 +2092,8 @@ test('@mutation NAV-ADM-LOC-01..06 admin occurrence programming location ownersh
   let session = null;
   let eventTypeId = null;
   let eventId = null;
+  const createdSeedProfileIds = [];
+  const createdSeedProfileTypes = new Set();
 
   try {
     session = await loginTenantAdmin(api, baseUrl);
@@ -1995,14 +2108,18 @@ test('@mutation NAV-ADM-LOC-01..06 admin occurrence programming location ownersh
     eventTypeId = eventType?.id?.toString() || null;
     expect(eventTypeId, 'Seeded event type must return an id.').toBeTruthy();
 
-    const physicalHosts = await fetchPhysicalHostCandidates(
+    const physicalHostSeed = await ensurePhysicalHostCandidates(
       api,
       baseUrl,
       session.token,
       2,
     );
-    const physicalHost = physicalHosts[0];
-    const programmingHost = physicalHosts[1];
+    createdSeedProfileIds.push(...physicalHostSeed.createdProfileIds);
+    if (physicalHostSeed.createdType) {
+      createdSeedProfileTypes.add(physicalHostSeed.createdType);
+    }
+    const physicalHost = physicalHostSeed.candidates[0];
+    const programmingHost = physicalHostSeed.candidates[1];
 
     const seededEvent = await createSingleOccurrenceEvent(
       api,
@@ -2244,6 +2361,12 @@ test('@mutation NAV-ADM-LOC-01..06 admin occurrence programming location ownersh
     if (session?.token) {
       await deleteEvent(api, baseUrl, session.token, eventId);
       await deleteEventType(api, baseUrl, session.token, eventTypeId);
+      for (const profileId of createdSeedProfileIds) {
+        await deleteAccountProfile(api, baseUrl, session.token, profileId);
+      }
+      for (const profileType of createdSeedProfileTypes) {
+        await deleteAccountProfileType(api, baseUrl, session.token, profileType);
+      }
     }
     if (browserContext) {
       await browserContext.close().catch(() => {});
@@ -2272,6 +2395,8 @@ test('@mutation tenant-admin event occurrence FAB persists second occurrence and
   let createdPhysicalHostId = null;
   let createdProgrammingHostId = null;
   let createdProfileType = null;
+  const createdSeedProfileIds = [];
+  const createdSeedProfileTypes = new Set();
 
   try {
     session = await loginTenantAdmin(api, baseUrl);
@@ -2307,11 +2432,19 @@ test('@mutation tenant-admin event occurrence FAB persists second occurrence and
       `PW SR-D Programming Host ${uniqueSuffix}`,
     );
     createdProgrammingHostId = programmingHost.id;
-    const relatedProfiles = await fetchRelatedAccountProfileCandidates(
+    const relatedProfileSeed = await fetchRelatedAccountProfileCandidates(
       api,
       baseUrl,
       session.token,
+      {
+        excludeIds: [physicalHost.id, programmingHost.id],
+      },
     );
+    createdSeedProfileIds.push(...relatedProfileSeed.createdProfileIds);
+    if (relatedProfileSeed.createdType) {
+      createdSeedProfileTypes.add(relatedProfileSeed.createdType);
+    }
+    const relatedProfiles = relatedProfileSeed.candidates;
 
     const seededEvent = await createSingleOccurrenceEvent(
       api,
@@ -2779,7 +2912,7 @@ test('@mutation tenant-admin event occurrence FAB persists second occurrence and
     });
     await navStep('NAV-08', async () => {
       await clickImmersiveTab(publicPage, 'Como Chegar', {
-        confirmationTextInViewport: 'Ver no mapa',
+        confirmationLocator: publicPage.getByText(/Ver no mapa/i).first(),
       });
       await expect(publicPage.getByText(physicalHost.display_name).first())
         .toBeVisible({ timeout: appBootTimeoutMs });
@@ -3249,14 +3382,14 @@ test('@mutation tenant-admin event occurrence FAB persists second occurrence and
       },
     );
     await navStep('NAV-09', async () => {
+      const mapCard = publicPage.getByText(/Ver no mapa/i).first();
       await clickImmersiveTab(publicPage, 'Como Chegar', {
-        confirmationTextInViewport: 'Ver no mapa',
+        confirmationLocator: mapCard,
       });
-      await waitForTextInViewport(
-        publicPage,
-        'Ver no mapa',
+      await expect(
+        mapCard,
         'Como Chegar must be the active visible section before destination assertions.',
-      );
+      ).toBeVisible({ timeout: appBootTimeoutMs });
       await expect(publicPage.getByText(physicalHost.display_name).first())
         .toBeVisible({ timeout: appBootTimeoutMs });
       await expect(
@@ -3365,7 +3498,15 @@ test('@mutation tenant-admin event occurrence FAB persists second occurrence and
       await deleteEventType(api, baseUrl, session.token, eventTypeId);
       await deleteAccountProfile(api, baseUrl, session.token, createdProgrammingHostId);
       await deleteAccountProfile(api, baseUrl, session.token, createdPhysicalHostId);
+      for (const profileId of createdSeedProfileIds) {
+        await deleteAccountProfile(api, baseUrl, session.token, profileId);
+      }
       await deleteAccountProfileType(api, baseUrl, session.token, createdProfileType);
+      for (const profileType of createdSeedProfileTypes) {
+        if (profileType !== createdProfileType) {
+          await deleteAccountProfileType(api, baseUrl, session.token, profileType);
+        }
+      }
     }
     if (publicContext) {
       await publicContext.close().catch(() => {});
@@ -3386,6 +3527,8 @@ test('@mutation repeated public event detail GET/hydration keeps programming pay
   let eventTypeId = null;
   let firstEventId = null;
   let secondEventId = null;
+  const createdSeedProfileIds = [];
+  const createdSeedProfileTypes = new Set();
 
   try {
     session = await loginTenantAdmin(api, baseUrl);
@@ -3398,19 +3541,31 @@ test('@mutation repeated public event detail GET/hydration keeps programming pay
     );
     eventTypeId = eventType?.id?.toString() || null;
 
-    const physicalHosts = await fetchPhysicalHostCandidates(
+    const physicalHostSeed = await ensurePhysicalHostCandidates(
       api,
       baseUrl,
       session.token,
       2,
     );
-    const physicalHost = physicalHosts[0];
-    const programmingHost = physicalHosts[1];
-    const relatedProfiles = await fetchRelatedAccountProfileCandidates(
+    createdSeedProfileIds.push(...physicalHostSeed.createdProfileIds);
+    if (physicalHostSeed.createdType) {
+      createdSeedProfileTypes.add(physicalHostSeed.createdType);
+    }
+    const physicalHost = physicalHostSeed.candidates[0];
+    const programmingHost = physicalHostSeed.candidates[1];
+    const relatedProfileSeed = await fetchRelatedAccountProfileCandidates(
       api,
       baseUrl,
       session.token,
+      {
+        excludeIds: [physicalHost.id, programmingHost.id],
+      },
     );
+    createdSeedProfileIds.push(...relatedProfileSeed.createdProfileIds);
+    if (relatedProfileSeed.createdType) {
+      createdSeedProfileTypes.add(relatedProfileSeed.createdType);
+    }
+    const relatedProfiles = relatedProfileSeed.candidates;
 
     const firstProgrammed = await createProgrammedMultiOccurrenceEvent(
       api,
@@ -3540,6 +3695,12 @@ test('@mutation repeated public event detail GET/hydration keeps programming pay
       await deleteEvent(api, baseUrl, session.token, secondEventId);
       await deleteEvent(api, baseUrl, session.token, firstEventId);
       await deleteEventType(api, baseUrl, session.token, eventTypeId);
+      for (const profileId of createdSeedProfileIds) {
+        await deleteAccountProfile(api, baseUrl, session.token, profileId);
+      }
+      for (const profileType of createdSeedProfileTypes) {
+        await deleteAccountProfileType(api, baseUrl, session.token, profileType);
+      }
     }
     await api.dispose();
   }
