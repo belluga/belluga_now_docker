@@ -175,6 +175,25 @@ path.write_text("\n".join(new_lines) + "\n")
 PY
 }
 
+read_env_value() {
+  local key="$1"
+  python3 - "$key" <<'PY'
+import pathlib
+import sys
+
+key = sys.argv[1]
+path = pathlib.Path(".env")
+if not path.exists():
+    sys.exit(1)
+
+prefix = key + "="
+for line in path.read_text().splitlines():
+    if line.startswith(prefix):
+        print(line[len(prefix):])
+        break
+PY
+}
+
 read_laravel_env_value() {
   local key="$1"
   python3 - "$key" <<'PY'
@@ -242,12 +261,33 @@ ensure_laravel_app_env() {
 }
 
 normalize_queue_env_for_mongo() {
-  local queue_connection
-  queue_connection="$(grep '^QUEUE_CONNECTION=' .env | tail -n 1 | cut -d= -f2- || true)"
+  local db_connection queue_connection db_queue_connection
+  db_connection="$(read_env_value DB_CONNECTION)"
+  db_connection="$(printf '%s' "${db_connection}" | tr '[:upper:]' '[:lower:]')"
+  queue_connection="$(read_env_value QUEUE_CONNECTION)"
   queue_connection="$(printf '%s' "${queue_connection}" | tr '[:upper:]' '[:lower:]')"
-  case "${queue_connection}" in
+  db_queue_connection="$(read_env_value DB_QUEUE_CONNECTION)"
+  db_queue_connection="$(printf '%s' "${db_queue_connection}" | tr '[:upper:]' '[:lower:]')"
+
+  case "${db_connection}" in
     mongodb*|landlord|tenant)
-      upsert_env QUEUE_CONNECTION mongodb
+      if [[ -z "${queue_connection}" ]]; then
+        upsert_env QUEUE_CONNECTION mongodb
+        echo "INFO: rollback normalized root .env QUEUE_CONNECTION to mongodb (DB_CONNECTION=${db_connection})."
+        return 0
+      fi
+
+      case "${queue_connection}" in
+        mongodb*|landlord|tenant)
+          upsert_env QUEUE_CONNECTION mongodb
+          ;;
+        database)
+          if [[ -z "${db_queue_connection}" || "${db_queue_connection}" == "mongodb" || "${db_queue_connection}" == "landlord" || "${db_queue_connection}" == "tenant" ]]; then
+            upsert_env QUEUE_CONNECTION mongodb
+            echo "WARN: rollback normalized root .env QUEUE_CONNECTION=database to mongodb because DB_QUEUE_CONNECTION was unsafe for Mongo primary connection."
+          fi
+          ;;
+      esac
       ;;
   esac
 }
