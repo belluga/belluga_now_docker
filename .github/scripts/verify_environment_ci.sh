@@ -87,6 +87,7 @@ required_files=(
   ".github/scripts/check_submodule_branch_alignment.sh"
   ".github/scripts/check_web_flutter_metadata.sh"
   ".github/scripts/manage_navigation_host_overrides.sh"
+  ".github/scripts/prove_rollback_queue_parity.sh"
   ".github/scripts/rollback_remote.sh"
 )
 
@@ -1200,5 +1201,7 @@ if ! command -v node >/dev/null 2>&1; then
 fi
 
 node --test tools/flutter/web_app_tests/navigation_harness_policy_test.cjs >/dev/null
+
+bash .github/scripts/prove_rollback_queue_parity.sh >/dev/null
 
 echo "OK: CI environment invariants validated."
