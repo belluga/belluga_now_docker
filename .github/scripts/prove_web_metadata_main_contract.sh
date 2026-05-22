@@ -27,6 +27,50 @@ fi
 
 scratch_dir="$(mktemp -d)"
 server_pid=""
+real_git="$(command -v git)"
+fake_bin="${scratch_dir}/fake-bin"
+
+mkdir -p "${fake_bin}"
+
+cat >"${fake_bin}/git" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "${1:-}" == "ls-remote" && "${2:-}" == https://x-access-token:*@github.com/proof/web.git ]]; then
+  lane_ref="${3:-}"
+  lane="${lane_ref#refs/heads/}"
+  if [[ -z "${PROOF_WEB_REPO_PATH:-}" || -z "${REAL_GIT:-}" ]]; then
+    exit 1
+  fi
+  sha="$("${REAL_GIT}" -C "${PROOF_WEB_REPO_PATH}" rev-parse HEAD)"
+  printf '%s\trefs/heads/%s\n' "${sha}" "${lane}"
+  exit 0
+fi
+
+exec "${REAL_GIT:-git}" "$@"
+SH
+
+cat >"${fake_bin}/gh" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "${1:-}" == "api" && "${2:-}" == repos/proof/web/contents/* ]]; then
+  endpoint="${2}"
+  file_path="${endpoint#repos/proof/web/contents/}"
+  ref="${file_path#*\?ref=}"
+  file_path="${file_path%%\?ref=*}"
+  if [[ -z "${PROOF_WEB_REPO_PATH:-}" || -z "${REAL_GIT:-}" ]]; then
+    exit 1
+  fi
+  "${REAL_GIT}" -C "${PROOF_WEB_REPO_PATH}" show "${ref}:${file_path}" | base64 -w 0
+  printf '\n'
+  exit 0
+fi
+
+exit 1
+SH
+
+chmod +x "${fake_bin}/git" "${fake_bin}/gh"
 
 cleanup() {
   if [[ -n "${server_pid}" ]]; then
@@ -165,8 +209,11 @@ run_metadata_success() {
   local target_lane="$2"
   local root_dir="$3"
   local output_file="${scratch_dir}/${case_name}.out"
+  local web_repo_path=""
 
-  if ! (cd "${root_dir}" && bash "${check_metadata_script}" "${target_lane}") >"${output_file}" 2>&1; then
+  web_repo_path="$(git -C "${root_dir}" config -f .gitmodules --get submodule.web-app.url)"
+
+  if ! (cd "${root_dir}" && PATH="${fake_bin}:${PATH}" REAL_GIT="${real_git}" PROOF_WEB_REPO_PATH="${web_repo_path}" WEB_APP_REPO="proof/web" GH_TOKEN="proof-token" bash "${check_metadata_script}" "${target_lane}") >"${output_file}" 2>&1; then
     echo "ERROR: expected web metadata contract case '${case_name}' to pass." >&2
     cat "${output_file}" >&2 || true
     exit 1
@@ -180,9 +227,12 @@ run_metadata_failure() {
   local expected_error="$4"
   local output_file="${scratch_dir}/${case_name}.out"
   local status=0
+  local web_repo_path=""
+
+  web_repo_path="$(git -C "${root_dir}" config -f .gitmodules --get submodule.web-app.url)"
 
   set +e
-  (cd "${root_dir}" && bash "${check_metadata_script}" "${target_lane}") >"${output_file}" 2>&1
+  (cd "${root_dir}" && PATH="${fake_bin}:${PATH}" REAL_GIT="${real_git}" PROOF_WEB_REPO_PATH="${web_repo_path}" WEB_APP_REPO="proof/web" GH_TOKEN="proof-token" bash "${check_metadata_script}" "${target_lane}") >"${output_file}" 2>&1
   status=$?
   set -e
 

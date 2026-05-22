@@ -89,6 +89,9 @@ required_files=(
   ".github/scripts/manage_navigation_host_overrides.sh"
   ".github/scripts/prove_web_metadata_main_contract.sh"
   ".github/scripts/prove_rollback_queue_parity.sh"
+  ".github/scripts/capture_successful_release_tuple_over_ssh.sh"
+  ".github/scripts/publish_runtime_images_to_ghcr.sh"
+  ".github/scripts/resolve_web_app_runtime_sha.sh"
   ".github/scripts/rollback_remote.sh"
 )
 
@@ -99,28 +102,73 @@ for file in "${required_files[@]}"; do
   fi
 done
 
-if ! grep -Fq 'WEB_SHA="$(git ls-tree HEAD web-app' .github/scripts/check_web_flutter_metadata.sh; then
-  echo "ERROR: check_web_flutter_metadata.sh must resolve the pinned web-app gitlink SHA from the promoted root revision." >&2
+if grep -Fq '${{ secrets.STAGE_NAV_ADMIN_EMAIL }}' .github/workflows/orchestration-ci-cd.yml; then
+  echo "ERROR: STAGE_NAV_ADMIN_EMAIL is non-sensitive test identity metadata and must be sourced from vars, not secrets." >&2
   exit 1
 fi
 
-if ! grep -Fq 'WEB_SUBMODULE_GIT_DIR="$(git rev-parse --git-common-dir)/modules/web-app"' .github/scripts/check_web_flutter_metadata.sh; then
-  echo "ERROR: check_web_flutter_metadata.sh must resolve pinned web-app artifacts from the shared submodule object database, not from an incidental worktree state." >&2
+if ! grep -Fq 'STAGE_SSH_KNOWN_HOSTS: ${{ secrets.STAGE_SSH_KNOWN_HOSTS }}' .github/workflows/orchestration-ci-cd.yml; then
+  echo "ERROR: orchestration workflow must source STAGE_SSH_KNOWN_HOSTS from secrets.STAGE_SSH_KNOWN_HOSTS." >&2
+  exit 1
+fi
+
+if ! grep -Fq 'MAIN_SSH_KNOWN_HOSTS: ${{ secrets.MAIN_SSH_KNOWN_HOSTS }}' .github/workflows/orchestration-ci-cd.yml; then
+  echo "ERROR: orchestration workflow must source MAIN_SSH_KNOWN_HOSTS from secrets.MAIN_SSH_KNOWN_HOSTS." >&2
+  exit 1
+fi
+
+if ! grep -Fq 'NAV_ADMIN_EMAIL: ${{ vars.STAGE_NAV_ADMIN_EMAIL }}' .github/workflows/orchestration-ci-cd.yml; then
+  echo "ERROR: stage navigation workflow must source NAV_ADMIN_EMAIL from vars.STAGE_NAV_ADMIN_EMAIL." >&2
+  exit 1
+fi
+
+if ! grep -Fq 'NAV_ADMIN_PASSWORD: ${{ secrets.STAGE_NAV_ADMIN_PASSWORD }}' .github/workflows/orchestration-ci-cd.yml; then
+  echo "ERROR: stage navigation workflow must keep NAV_ADMIN_PASSWORD sourced from secrets.STAGE_NAV_ADMIN_PASSWORD." >&2
+  exit 1
+fi
+
+if ! grep -Fq 'packages: write' .github/workflows/orchestration-ci-cd.yml; then
+  echo "ERROR: orchestration workflow must grant packages: write for GHCR immutable runtime image publishing." >&2
+  exit 1
+fi
+
+if ! grep -Fq 'run: bash .github/scripts/resolve_web_app_runtime_sha.sh' .github/workflows/orchestration-ci-cd.yml; then
+  echo "ERROR: protected deploy jobs must resolve WEB_APP_RUNTIME_SHA from WEB_APP_REPO + lane before remote mutation." >&2
+  exit 1
+fi
+
+if ! grep -Fq 'run: bash .github/scripts/publish_runtime_images_to_ghcr.sh' .github/workflows/orchestration-ci-cd.yml; then
+  echo "ERROR: protected deploy jobs must publish immutable runtime images to GHCR before remote mutation." >&2
+  exit 1
+fi
+
+if ! grep -Fq 'WEB_APP_REPO: ${{ vars.WEB_APP_REPO }}' .github/workflows/orchestration-ci-cd.yml; then
+  echo "ERROR: protected web runtime resolution must use vars.WEB_APP_REPO." >&2
+  exit 1
+fi
+
+if ! grep -Fq 'normalize_repo_slug "${WEB_APP_REPO:-}"' .github/scripts/check_web_flutter_metadata.sh; then
+  echo "ERROR: check_web_flutter_metadata.sh must require WEB_APP_REPO as the protected web runtime metadata authority." >&2
+  exit 1
+fi
+
+if ! grep -Fq 'WEB_SHA="$(resolve_lane_web_sha "$web_repo_slug" "$TARGET_BRANCH"' .github/scripts/check_web_flutter_metadata.sh; then
+  echo "ERROR: check_web_flutter_metadata.sh must resolve WEB_SHA from WEB_APP_REPO + lane before validating web runtime metadata." >&2
+  exit 1
+fi
+
+if grep -Fq 'git ls-tree HEAD web-app' .github/scripts/check_web_flutter_metadata.sh; then
+  echo "ERROR: check_web_flutter_metadata.sh must not use the root web-app gitlink as protected web runtime authority." >&2
+  exit 1
+fi
+
+if grep -Fq 'WEB_SUBMODULE_GIT_DIR' .github/scripts/check_web_flutter_metadata.sh; then
+  echo "ERROR: check_web_flutter_metadata.sh must not read protected web runtime artifacts from the local web-app submodule object database." >&2
   exit 1
 fi
 
 if ! grep -Fq 'FLUTTER_SUBMODULE_GIT_DIR="$(git rev-parse --git-common-dir)/modules/flutter-app"' .github/scripts/check_web_flutter_metadata.sh; then
   echo "ERROR: check_web_flutter_metadata.sh must resolve pinned flutter-app artifacts from the shared submodule object database, not from an incidental worktree state." >&2
-  exit 1
-fi
-
-if ! grep -Fq 'get_pinned_local_file_content "build_metadata.json"' .github/scripts/check_web_flutter_metadata.sh; then
-  echo "ERROR: check_web_flutter_metadata.sh must validate build_metadata.json from the pinned web-app gitlink content before consulting any remote fallback." >&2
-  exit 1
-fi
-
-if ! grep -Fq 'get_pinned_local_file_content "index.html"' .github/scripts/check_web_flutter_metadata.sh; then
-  echo "ERROR: check_web_flutter_metadata.sh must validate index.html from the pinned web-app gitlink content before consulting any remote fallback." >&2
   exit 1
 fi
 
@@ -130,12 +178,12 @@ if ! grep -Fq 'get_pinned_submodule_file_content "$FLUTTER_SUBMODULE_GIT_DIR" "$
 fi
 
 if ! grep -Fq 'get_remote_file_content "$web_repo_slug" "build_metadata.json" "$WEB_SHA"' .github/scripts/check_web_flutter_metadata.sh; then
-  echo "ERROR: check_web_flutter_metadata.sh must fall back to the pinned web-app gitlink SHA when loading remote build metadata." >&2
+  echo "ERROR: check_web_flutter_metadata.sh must load build_metadata.json from the lane-resolved web runtime SHA." >&2
   exit 1
 fi
 
 if ! grep -Fq 'get_remote_file_content "$web_repo_slug" "index.html" "$WEB_SHA"' .github/scripts/check_web_flutter_metadata.sh; then
-  echo "ERROR: check_web_flutter_metadata.sh must fall back to the pinned web-app gitlink SHA when loading remote index.html." >&2
+  echo "ERROR: check_web_flutter_metadata.sh must load index.html from the lane-resolved web runtime SHA." >&2
   exit 1
 fi
 
@@ -184,8 +232,31 @@ if ! grep -Fq 'php --ri mongodb >/dev/null' docker/laravel-app/Dockerfile; then
   exit 1
 fi
 
+for dockerignore_marker in '**/.env' 'laravel-app/.composer' 'laravel-app/vendor'; do
+  if ! grep -Fxq "${dockerignore_marker}" .dockerignore; then
+    echo "ERROR: .dockerignore must exclude '${dockerignore_marker}' from promoted runtime image contexts." >&2
+    exit 1
+  fi
+done
+
+for compose_image_ref in \
+  'image: ${APP_IMAGE:-belluga-now-app:local}' \
+  'image: ${WORKER_IMAGE:-belluga-now-worker:local}' \
+  'image: ${SCHEDULER_IMAGE:-belluga-now-scheduler:local}' \
+  'image: ${NGINX_IMAGE:-belluga-now-nginx:local}'; do
+  if ! grep -Fq "${compose_image_ref}" docker-compose.yml; then
+    echo "ERROR: docker-compose.yml must expose runtime image override '${compose_image_ref}'." >&2
+    exit 1
+  fi
+done
+
 if ! grep -Fq -- '--target runtime-deps' .github/scripts/preflight_promotion_runtime_builds.sh; then
   echo "ERROR: preflight_promotion_runtime_builds.sh must build the pinned runtime-deps Docker stage before promotion." >&2
+  exit 1
+fi
+
+if ! grep -Fq 'belluga-preflight-laravel-runtime:' .github/scripts/preflight_promotion_runtime_builds.sh; then
+  echo "ERROR: preflight_promotion_runtime_builds.sh must build the final Laravel runtime image candidate before promotion." >&2
   exit 1
 fi
 
@@ -210,12 +281,12 @@ if ! grep -Fq 'export DOCKER_CONFIG="${preflight_docker_config}"' .github/script
 fi
 
 if grep -Fq 'get_remote_file_content "$web_repo_slug" "build_metadata.json" "$TARGET_BRANCH"' .github/scripts/check_web_flutter_metadata.sh; then
-  echo "ERROR: check_web_flutter_metadata.sh must not validate web build metadata against the lane branch tip; use the pinned web-app gitlink SHA." >&2
+  echo "ERROR: check_web_flutter_metadata.sh must not load web build metadata through a mutable branch ref; use the lane-resolved WEB_SHA." >&2
   exit 1
 fi
 
 if grep -Fq 'get_remote_file_content "$web_repo_slug" "index.html" "$TARGET_BRANCH"' .github/scripts/check_web_flutter_metadata.sh; then
-  echo "ERROR: check_web_flutter_metadata.sh must not validate web index.html against the lane branch tip; use the pinned web-app gitlink SHA." >&2
+  echo "ERROR: check_web_flutter_metadata.sh must not load web index.html through a mutable branch ref; use the lane-resolved WEB_SHA." >&2
   exit 1
 fi
 
@@ -322,7 +393,18 @@ fi
 required_release_tuple_markers=(
   "ROOT_SHA="
   "WEB_APP_RUNTIME_SHA="
+  "WEB_APP_RUNTIME_AUTHORITY=lane-resolved-sha"
+  "RUNTIME_TOPOLOGY_VERSION=web-app-lane-sha-v1"
   "DEPLOY_LANE="
+  "APP_IMAGE="
+  "APP_IMAGE_DIGEST="
+  "WORKER_IMAGE="
+  "WORKER_IMAGE_DIGEST="
+  "SCHEDULER_IMAGE="
+  "SCHEDULER_IMAGE_DIGEST="
+  "NGINX_IMAGE="
+  "NGINX_IMAGE_DIGEST="
+  "IMAGE_AUTHORITY=ghcr-digest-v1"
   "RECORDED_AT="
 )
 
@@ -352,6 +434,42 @@ if ! grep -Fq 'echo "runtime_mutated=${runtime_mutated_output}"' .github/scripts
   exit 1
 fi
 
+for script in .github/scripts/deploy_stage_over_ssh.sh .github/scripts/rollback_remote.sh .github/scripts/mark_successful_revision_over_ssh.sh; do
+  if ! grep -Fq 'ghcr.io/*@sha256:*' "${script}"; then
+    echo "ERROR: ${script} must require immutable GHCR digest image references." >&2
+    exit 1
+  fi
+  if ! grep -Fq "must not use mutable ':latest' image authority" "${script}"; then
+    echo "ERROR: ${script} must reject mutable latest image authority." >&2
+    exit 1
+  fi
+done
+
+if grep -Fq 'docker compose build' .github/scripts/deploy_stage_over_ssh.sh .github/scripts/rollback_remote.sh; then
+  echo "ERROR: protected deploy/rollback scripts must not run docker compose build on the target host." >&2
+  exit 1
+fi
+
+if grep -Fq 'run_compose_build' .github/scripts/deploy_stage_over_ssh.sh .github/scripts/rollback_remote.sh; then
+  echo "ERROR: protected deploy/rollback scripts must not retain rollback-time compose build helpers." >&2
+  exit 1
+fi
+
+if grep -Fq 'git ls-tree "${target_revision}" web-app' .github/workflows/orchestration-ci-cd.yml .github/scripts/rollback_remote.sh; then
+  echo "ERROR: protected rollback proof must not fall back to gitlink-derived web-app runtime SHA." >&2
+  exit 1
+fi
+
+if grep -Fq 'git ls-tree "\${previous_revision}" web-app' .github/scripts/deploy_stage_over_ssh.sh; then
+  echo "ERROR: internal rollback must not fall back to gitlink-derived web-app runtime SHA." >&2
+  exit 1
+fi
+
+if ! grep -Fq 'WEB_APP_RUNTIME_SHA="${WEB_APP_RUNTIME_SHA}"' .github/scripts/deploy_stage_over_ssh.sh && ! grep -Fq 'current_web_runtime_sha="\${WEB_APP_RUNTIME_SHA}"' .github/scripts/deploy_stage_over_ssh.sh; then
+  echo "ERROR: deploy_stage_over_ssh.sh must consume the pre-resolved WEB_APP_RUNTIME_SHA instead of root gitlink authority." >&2
+  exit 1
+fi
+
 required_live_marker_emissions=(
   'DEPLOY_RUNTIME_MUTATED=1'
   'internal_rollback_status="attempting"'
@@ -365,13 +483,13 @@ for marker in "${required_live_marker_emissions[@]}"; do
   fi
 done
 
-if ! grep -Fq 'ConnectTimeout=5 -o ConnectionAttempts=1' .github/workflows/orchestration-ci-cd.yml; then
-  echo "ERROR: orchestration-ci-cd.yml must bound direct SSH capture steps with connect timeouts." >&2
+if ! grep -Fq 'ConnectTimeout=5 -o ConnectionAttempts=1' .github/scripts/capture_successful_release_tuple_over_ssh.sh; then
+  echo "ERROR: capture_successful_release_tuple_over_ssh.sh must bound direct SSH capture with connect timeouts." >&2
   exit 1
 fi
 
-if ! grep -Fq 'ServerAliveInterval=15 -o ServerAliveCountMax=4 -o TCPKeepAlive=yes' .github/workflows/orchestration-ci-cd.yml; then
-  echo "ERROR: orchestration-ci-cd.yml must add SSH keepalive options to direct remote capture steps." >&2
+if ! grep -Fq 'ServerAliveInterval=15 -o ServerAliveCountMax=4 -o TCPKeepAlive=yes' .github/scripts/capture_successful_release_tuple_over_ssh.sh; then
+  echo "ERROR: capture_successful_release_tuple_over_ssh.sh must add SSH keepalive options to direct remote capture." >&2
   exit 1
 fi
 
@@ -402,23 +520,15 @@ for script in .github/scripts/deploy_stage_over_ssh.sh .github/scripts/rollback_
   done
 done
 
-required_compose_build_markers=(
-  'run_compose_build()'
-  'COMPOSE_BAKE=false'
-  'DOCKER_BUILDKIT=1'
-  'BUILDKIT_PROGRESS=plain'
-)
+if ! grep -Fq 'pull_runtime_images' .github/scripts/deploy_stage_over_ssh.sh; then
+  echo "ERROR: deploy_stage_over_ssh.sh must pull immutable runtime images instead of building on the target host." >&2
+  exit 1
+fi
 
-for marker in "${required_compose_build_markers[@]}"; do
-  if ! grep -Fq "${marker}" .github/scripts/deploy_stage_over_ssh.sh; then
-    echo "ERROR: deploy_stage_over_ssh.sh must preserve long-build progress marker '${marker}'." >&2
-    exit 1
-  fi
-  if ! grep -Fq "${marker}" .github/scripts/rollback_remote.sh; then
-    echo "ERROR: rollback_remote.sh must preserve long-build progress marker '${marker}'." >&2
-    exit 1
-  fi
-done
+if ! grep -Fq 'pull_runtime_images' .github/scripts/rollback_remote.sh; then
+  echo "ERROR: rollback_remote.sh must pull immutable runtime images instead of building on the target host." >&2
+  exit 1
+fi
 
 if tail -n +90 .github/scripts/deploy_stage_over_ssh.sh | regex_search_stream '(?<!\\)\$(1|2|@|\*)' >/tmp/deploy_stage_unescaped_positional_refs.txt; then
   echo "ERROR: deploy_stage_over_ssh.sh remote heredoc must not contain unescaped positional parameter references; local shell expansion will break stage deploys under set -u." >&2
@@ -507,8 +617,8 @@ if grep -Fq 'checkout_web_runtime_ref "origin/\${DEPLOY_LANE}"' .github/scripts/
   exit 1
 fi
 
-if ! grep -Fq 'git ls-tree HEAD web-app' .github/scripts/deploy_stage_over_ssh.sh; then
-  echo "ERROR: deploy_stage_over_ssh.sh must resolve the pinned web-app runtime SHA from the promoted root revision." >&2
+if ! grep -Fq 'current_web_runtime_sha="\${WEB_APP_RUNTIME_SHA}"' .github/scripts/deploy_stage_over_ssh.sh; then
+  echo "ERROR: deploy_stage_over_ssh.sh must use the pre-resolved lane web-app runtime SHA." >&2
   exit 1
 fi
 

@@ -29,14 +29,6 @@ fi
 
 FLUTTER_SUBMODULE_GIT_DIR="$(git rev-parse --git-common-dir)/modules/flutter-app"
 
-WEB_SHA="$(git ls-tree HEAD web-app | awk '{print $3}')"
-if [[ -z "$WEB_SHA" ]]; then
-  echo "ERROR: failed to resolve pinned web-app SHA" >&2
-  exit 1
-fi
-
-WEB_SUBMODULE_GIT_DIR="$(git rev-parse --git-common-dir)/modules/web-app"
-
 parse_repo_slug_from_url() {
   local url="$1"
   url="${url#git@github.com:}"
@@ -45,6 +37,35 @@ parse_repo_slug_from_url() {
   url="${url#http://github.com/}"
   url="${url%.git}"
   printf '%s\n' "${url}"
+}
+
+normalize_repo_slug() {
+  local repo="$1"
+  repo="${repo#git@github.com:}"
+  repo="${repo#ssh://git@github.com/}"
+  repo="${repo#https://github.com/}"
+  repo="${repo#http://github.com/}"
+  repo="${repo%.git}"
+  repo="$(printf '%s' "$repo" | tr -d '[:space:]')"
+
+  if ! [[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+    return 1
+  fi
+
+  printf '%s\n' "$repo"
+}
+
+resolve_lane_web_sha() {
+  local repo="$1"
+  local lane="$2"
+
+  if [[ -z "${GH_TOKEN:-}" ]]; then
+    return 1
+  fi
+
+  local remote_url
+  remote_url="https://x-access-token:${GH_TOKEN}@github.com/${repo}.git"
+  git ls-remote "$remote_url" "refs/heads/${lane}" | awk '{print $1}' | head -n 1 | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]'
 }
 
 get_remote_file_content() {
@@ -81,15 +102,24 @@ get_pinned_submodule_file_content() {
   git --git-dir "$submodule_git_dir" show "${gitlink_sha}:${file_path}" 2>/dev/null
 }
 
-get_pinned_local_file_content() {
-  local file_path="$1"
-  get_pinned_submodule_file_content "$WEB_SUBMODULE_GIT_DIR" "$WEB_SHA" "$file_path"
-}
-
-web_repo_url="$(git config -f .gitmodules --get submodule.web-app.url || true)"
 web_repo_slug=""
-if [[ -n "$web_repo_url" ]]; then
-  web_repo_slug="$(parse_repo_slug_from_url "$web_repo_url")"
+if ! web_repo_slug="$(normalize_repo_slug "${WEB_APP_REPO:-}")"; then
+  if [[ "$is_dev_lane" -eq 1 ]]; then
+    echo "WARN: WEB_APP_REPO is required to resolve lane web runtime metadata. Advisory on dev."
+    exit 0
+  fi
+  echo "ERROR: WEB_APP_REPO must be an owner/repo slug for protected web runtime metadata validation." >&2
+  exit 1
+fi
+
+WEB_SHA="$(resolve_lane_web_sha "$web_repo_slug" "$TARGET_BRANCH" || true)"
+if ! [[ "$WEB_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+  if [[ "$is_dev_lane" -eq 1 ]]; then
+    echo "WARN: failed to resolve web-app SHA from ${web_repo_slug}@${TARGET_BRANCH}. Advisory on dev."
+    exit 0
+  fi
+  echo "ERROR: failed to resolve web-app SHA from ${web_repo_slug}@${TARGET_BRANCH}. Check WEB_APP_REPO, GH_TOKEN, and lane branch existence." >&2
+  exit 1
 fi
 
 flutter_repo_url="$(git config -f .gitmodules --get submodule.flutter-app.url || true)"
@@ -100,21 +130,13 @@ fi
 
 metadata_content=""
 web_index_content=""
-source_mode="pinned-gitlink-local"
+source_mode="lane-resolved-web-repo"
 flutter_defines_content=""
 flutter_defines_mode="pinned-flutter-gitlink-local"
 
-metadata_content="$(get_pinned_local_file_content "build_metadata.json" || true)"
-web_index_content="$(get_pinned_local_file_content "index.html" || true)"
+metadata_content="$(get_remote_file_content "$web_repo_slug" "build_metadata.json" "$WEB_SHA" || true)"
+web_index_content="$(get_remote_file_content "$web_repo_slug" "index.html" "$WEB_SHA" || true)"
 flutter_defines_content="$(get_pinned_submodule_file_content "$FLUTTER_SUBMODULE_GIT_DIR" "$FLUTTER_SHA" "$FLUTTER_LANE_DEFINES_PATH" || true)"
-
-if [[ -z "$metadata_content" || -z "$web_index_content" ]]; then
-  source_mode="pinned-gitlink-remote"
-  if [[ -n "$web_repo_slug" ]]; then
-    metadata_content="$(get_remote_file_content "$web_repo_slug" "build_metadata.json" "$WEB_SHA" || true)"
-    web_index_content="$(get_remote_file_content "$web_repo_slug" "index.html" "$WEB_SHA" || true)"
-  fi
-fi
 
 if [[ -z "$flutter_defines_content" ]]; then
   flutter_defines_mode="pinned-flutter-gitlink-remote"
@@ -231,7 +253,7 @@ if [[ "$metadata_match_mode" == "advisory-dev-mismatch" ]]; then
 else
   echo "OK: web metadata flutter_git_sha ($metadata_sha) is compatible with pinned flutter-app SHA ($FLUTTER_SHA) via $metadata_match_mode [mode=$source_mode lane=$TARGET_BRANCH]"
 fi
-echo "INFO: pinned web-app gitlink SHA='$WEB_SHA' [mode=$source_mode]"
+echo "INFO: resolved web-app runtime SHA='$WEB_SHA' from ${web_repo_slug}@${TARGET_BRANCH} [mode=$source_mode]"
 
 expected_landlord_domain=""
 expected_landlord_host_ready=1

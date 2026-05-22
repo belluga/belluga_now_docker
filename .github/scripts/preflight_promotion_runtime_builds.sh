@@ -23,6 +23,7 @@ printf '{"auths":{}}\n' > "${preflight_docker_config}/config.json"
 export DOCKER_CONFIG="${preflight_docker_config}"
 
 laravel_tag="belluga-preflight-laravel-runtime-deps:${lane_tag}"
+laravel_runtime_tag="belluga-preflight-laravel-runtime:${lane_tag}"
 nginx_tag="belluga-preflight-nginx:${lane_tag}"
 
 echo "INFO: building pinned Laravel runtime dependency stage for lane '${lane}'..."
@@ -31,6 +32,13 @@ DOCKER_BUILDKIT=1 BUILDKIT_PROGRESS=plain docker build \
   --target runtime-deps \
   -f "${repo_root}/docker/laravel-app/Dockerfile" \
   -t "${laravel_tag}" \
+  "${repo_root}"
+
+echo "INFO: building immutable Laravel runtime image candidate for lane '${lane}'..."
+DOCKER_BUILDKIT=1 BUILDKIT_PROGRESS=plain docker build \
+  --pull \
+  -f "${repo_root}/docker/laravel-app/Dockerfile" \
+  -t "${laravel_runtime_tag}" \
   "${repo_root}"
 
 echo "INFO: building pinned nginx runtime image for lane '${lane}'..."

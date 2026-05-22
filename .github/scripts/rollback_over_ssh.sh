@@ -12,6 +12,8 @@ require_env() {
 require_env GITHUB_REPOSITORY
 require_env GITHUB_REF_NAME
 require_env SUBMODULES_REPO_TOKEN
+require_env GHCR_USERNAME
+require_env GHCR_TOKEN
 
 deploy_lane="${DEPLOY_LANE:-stage}"
 if [[ "${deploy_lane}" != "stage" && "${deploy_lane}" != "main" ]]; then
@@ -122,6 +124,8 @@ printf -v github_repository_q '%q' "${GITHUB_REPOSITORY}"
 printf -v github_ref_name_q '%q' "${GITHUB_REF_NAME}"
 printf -v deploy_lane_q '%q' "${deploy_lane}"
 printf -v submodules_repo_token_q '%q' "${SUBMODULES_REPO_TOKEN}"
+printf -v ghcr_username_q '%q' "${GHCR_USERNAME}"
+printf -v ghcr_token_q '%q' "${GHCR_TOKEN}"
 printf -v deploy_nginx_port_80_q '%q' "${deploy_nginx_port_80}"
 printf -v deploy_nginx_port_443_q '%q' "${deploy_nginx_port_443}"
 printf -v deploy_health_host_q '%q' "${deploy_health_host}"
@@ -164,6 +168,8 @@ export GITHUB_REPOSITORY=${github_repository_q}
 export DEPLOY_BRANCH=${github_ref_name_q}
 export DEPLOY_LANE=${deploy_lane_q}
 export SUBMODULES_REPO_TOKEN=${submodules_repo_token_q}
+export GHCR_USERNAME=${ghcr_username_q}
+export GHCR_TOKEN=${ghcr_token_q}
 export DEPLOY_NGINX_HOST_PORT_80=${deploy_nginx_port_80_q}
 export DEPLOY_NGINX_HOST_PORT_443=${deploy_nginx_port_443_q}
 export DEPLOY_HEALTH_HOST_RAW=${deploy_health_host_q}
