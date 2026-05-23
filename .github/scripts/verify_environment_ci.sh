@@ -420,6 +420,7 @@ required_internal_rollback_markers=(
   "INTERNAL_ROLLBACK_STATUS="
   "INTERNAL_ROLLBACK_TARGET_REVISION="
   "INTERNAL_ROLLBACK_TARGET_WEB_APP_RUNTIME_SHA="
+  "DEPLOY_TRUSTED_TUPLE_PRESENT"
 )
 
 for marker in "${required_internal_rollback_markers[@]}"; do
@@ -431,6 +432,77 @@ done
 
 if ! grep -Fq 'echo "runtime_mutated=${runtime_mutated_output}"' .github/scripts/deploy_stage_over_ssh.sh; then
   echo "ERROR: deploy_stage_over_ssh.sh must export runtime_mutated to GITHUB_OUTPUT for workflow rollback classification." >&2
+  exit 1
+fi
+
+if ! grep -Fq "trusted_tuple_present='\${trusted_tuple_present:-<empty>}'" .github/scripts/capture_successful_release_tuple_over_ssh.sh; then
+  echo "ERROR: capture_successful_release_tuple_over_ssh.sh must reject ambiguous trusted_tuple_present capture output." >&2
+  exit 1
+fi
+
+if ! grep -Fq "complete_image_tuple_present='\${complete_image_tuple_present:-<empty>}'" .github/scripts/capture_successful_release_tuple_over_ssh.sh; then
+  echo "ERROR: capture_successful_release_tuple_over_ssh.sh must reject ambiguous complete_image_tuple_present capture output." >&2
+  exit 1
+fi
+
+if ! grep -Fq "DEPLOY_LANE='\${DEPLOY_LANE}' bash -s" .github/scripts/capture_successful_release_tuple_over_ssh.sh; then
+  echo "ERROR: capture_successful_release_tuple_over_ssh.sh must pass DEPLOY_LANE into remote tuple validation." >&2
+  exit 1
+fi
+
+if ! grep -Fq 'is_sha()' .github/scripts/capture_successful_release_tuple_over_ssh.sh; then
+  echo "ERROR: capture_successful_release_tuple_over_ssh.sh must validate release tuple SHA shape before trusting rollback authority." >&2
+  exit 1
+fi
+
+if ! grep -Fq 'is_immutable_image()' .github/scripts/capture_successful_release_tuple_over_ssh.sh; then
+  echo "ERROR: capture_successful_release_tuple_over_ssh.sh must validate immutable GHCR image refs before trusting rollback authority." >&2
+  exit 1
+fi
+
+for trusted_capture_marker in \
+  'web_authority="$(field WEB_APP_RUNTIME_AUTHORITY)"' \
+  'topology_version="$(field RUNTIME_TOPOLOGY_VERSION)"' \
+  'deploy_lane="$(field DEPLOY_LANE)"' \
+  'image_authority="$(field IMAGE_AUTHORITY)"' \
+  '"${web_authority}" == "lane-resolved-sha"' \
+  '"${topology_version}" == "web-app-lane-sha-v1"' \
+  '"${image_authority}" == "ghcr-digest-v1"' \
+  '"${deploy_lane}" == "${DEPLOY_LANE}"' \
+  '"${valid_root}" == "true" && "${valid_web}" == "true" && "${valid_authority}" == "true" && "${complete_images}" == "true"'; do
+  if ! grep -Fq "${trusted_capture_marker}" .github/scripts/capture_successful_release_tuple_over_ssh.sh; then
+    echo "ERROR: capture_successful_release_tuple_over_ssh.sh missing trusted tuple validation marker '${trusted_capture_marker}'." >&2
+    exit 1
+  fi
+done
+
+if ! grep -Fq 'require_env DEPLOY_TRUSTED_TUPLE_PRESENT' .github/scripts/deploy_stage_over_ssh.sh; then
+  echo "ERROR: deploy_stage_over_ssh.sh must require pre-captured DEPLOY_TRUSTED_TUPLE_PRESENT before protected deploy." >&2
+  exit 1
+fi
+
+if ! grep -Fq 'DEPLOY_TRUSTED_TUPLE_PRESENT must be exactly' .github/scripts/deploy_stage_over_ssh.sh; then
+  echo "ERROR: deploy_stage_over_ssh.sh must reject ambiguous DEPLOY_TRUSTED_TUPLE_PRESENT values." >&2
+  exit 1
+fi
+
+if ! grep -Fq 'if [[ "\${DEPLOY_TRUSTED_TUPLE_PRESENT}" == "true" && -f ".last_successful_revision" ]]; then' .github/scripts/deploy_stage_over_ssh.sh; then
+  echo "ERROR: deploy_stage_over_ssh.sh must gate internal rollback tuple loading on DEPLOY_TRUSTED_TUPLE_PRESENT == true." >&2
+  exit 1
+fi
+
+if ! grep -Fq 'internal rollback is disabled for this deploy attempt' .github/scripts/deploy_stage_over_ssh.sh; then
+  echo "ERROR: deploy_stage_over_ssh.sh must make no-trusted-tuple internal rollback disablement explicit." >&2
+  exit 1
+fi
+
+if ! grep -Fq 'DEPLOY_TRUSTED_TUPLE_PRESENT: ${{ steps.stage_rollback_target.outputs.trusted_tuple_present }}' .github/workflows/orchestration-ci-cd.yml; then
+  echo "ERROR: stage deploy workflow must pass the captured trusted tuple state into deploy_stage_over_ssh.sh." >&2
+  exit 1
+fi
+
+if ! grep -Fq 'DEPLOY_TRUSTED_TUPLE_PRESENT: ${{ steps.main_rollback_target.outputs.trusted_tuple_present }}' .github/workflows/orchestration-ci-cd.yml; then
+  echo "ERROR: production deploy workflow must pass the captured trusted tuple state into deploy_stage_over_ssh.sh." >&2
   exit 1
 fi
 
@@ -722,27 +794,45 @@ if [[ -z "${stage_mark_success_block}" ]]; then
   exit 1
 fi
 
+mark_success_invocation_count="$(grep -Fc 'run: bash .github/scripts/mark_successful_revision_over_ssh.sh' .github/workflows/orchestration-ci-cd.yml)"
+if [[ "${mark_success_invocation_count}" != "2" ]]; then
+  echo "ERROR: orchestration-ci-cd.yml must contain exactly two success-marker invocations (stage and production); found ${mark_success_invocation_count}." >&2
+  exit 1
+fi
+
 if ! grep -Fq "steps.stage_initialize_preflight.outputs.initialized == 'true'" <<<"${stage_mark_success_block}"; then
   echo "ERROR: stage success-marking block must require initialized == true." >&2
   exit 1
 fi
 
-if ! grep -Fq "steps.stage_rollback_target.outputs.trusted_tuple_present == 'true'" <<<"${stage_mark_success_block}"; then
-  echo "ERROR: stage success-marking block must require an explicit trusted tuple before stamping success." >&2
+stage_mark_success_expected_if="if: steps.stage_initialize_preflight.outputs.initialized == 'true' && (steps.stage_rollback_target.outputs.trusted_tuple_present == 'true' || steps.stage_untrusted_initialized_bootstrap_block.outputs.first_trusted_tuple_bootstrap == 'true') && steps.stage_untrusted_initialized_bootstrap_block.outcome != 'failure' && steps.stage_runtime_web_sha_check.outcome == 'success' && steps.stage_public_edge_environment_probe.outcome == 'success' && steps.stage_provenance_check.outcome == 'success' && steps.stage_public_taxonomy_validation_fixture.outcome == 'success' && steps.stage_navigation_smoke.outcome == 'success' && steps.stage_navigation_mutation_smoke.outcome == 'success'"
+stage_mark_success_if_line="$(printf '%s\n' "${stage_mark_success_block}" | sed -n 's/^        if: /if: /p' | head -n 1)"
+if [[ "${stage_mark_success_if_line}" != "${stage_mark_success_expected_if}" ]]; then
+  echo "ERROR: stage success-marking block must exactly match the allowlisted full-proof success expression." >&2
   exit 1
 fi
 
-if ! grep -Fq "steps.stage_runtime_web_sha_check.outcome != 'failure'" <<<"${stage_mark_success_block}"; then
+if ! grep -Fq 'run: bash .github/scripts/mark_successful_revision_over_ssh.sh' <<<"${stage_mark_success_block}"; then
+  echo "ERROR: stage success-marking block must be the owner of the stage mark_successful_revision_over_ssh.sh invocation." >&2
+  exit 1
+fi
+
+if ! grep -Fq "steps.stage_rollback_target.outputs.trusted_tuple_present == 'true' || steps.stage_untrusted_initialized_bootstrap_block.outputs.first_trusted_tuple_bootstrap == 'true'" <<<"${stage_mark_success_block}"; then
+  echo "ERROR: stage success-marking block must require either a trusted tuple or the explicit first trusted tuple bootstrap classification before stamping success." >&2
+  exit 1
+fi
+
+if ! grep -Fq "steps.stage_runtime_web_sha_check.outcome == 'success'" <<<"${stage_mark_success_block}"; then
   echo "ERROR: stage success-marking block must require an exact remote web-app runtime SHA match." >&2
   exit 1
 fi
 
-if ! grep -Fq "steps.stage_public_edge_environment_probe.outcome != 'failure'" <<<"${stage_mark_success_block}"; then
+if ! grep -Fq "steps.stage_public_edge_environment_probe.outcome == 'success'" <<<"${stage_mark_success_block}"; then
   echo "ERROR: stage success-marking block must require a successful public-edge probe path." >&2
   exit 1
 fi
 
-if ! grep -Fq "steps.stage_provenance_check.outcome != 'failure'" <<<"${stage_mark_success_block}"; then
+if ! grep -Fq "steps.stage_provenance_check.outcome == 'success'" <<<"${stage_mark_success_block}"; then
   echo "ERROR: stage success-marking block must require successful provenance proof." >&2
   exit 1
 fi
@@ -763,23 +853,38 @@ if ! grep -Fq "steps.stage_navigation_mutation_smoke.outcome == 'success'" <<<"$
 fi
 
 stage_initialized_bootstrap_block="$(awk '
-  /- name: Block stage initialized bootstrap without trusted successful tuple/ { in_block=1 }
-  in_block && /^      - name:/ && $0 !~ /Block stage initialized bootstrap without trusted successful tuple/ { exit }
+  /- name: Classify stage first trusted tuple bootstrap/ { in_block=1 }
+  in_block && /^      - name:/ && $0 !~ /Classify stage first trusted tuple bootstrap/ { exit }
   in_block { print }
 ' .github/workflows/orchestration-ci-cd.yml)"
 
 if [[ -z "${stage_initialized_bootstrap_block}" ]]; then
-  echo "ERROR: could not locate initialized stage bootstrap guard block in orchestration-ci-cd.yml." >&2
+  echo "ERROR: could not locate initialized stage first trusted tuple bootstrap classification block in orchestration-ci-cd.yml." >&2
   exit 1
 fi
 
 if ! grep -Fq "steps.stage_initialize_preflight.outputs.initialized == 'true'" <<<"${stage_initialized_bootstrap_block}"; then
-  echo "ERROR: initialized stage bootstrap guard must trigger only on initialized == true." >&2
+  echo "ERROR: initialized stage bootstrap classification must trigger only on initialized == true." >&2
   exit 1
 fi
 
-if ! grep -Fq "steps.stage_rollback_target.outputs.trusted_tuple_present != 'true'" <<<"${stage_initialized_bootstrap_block}"; then
-  echo "ERROR: initialized stage bootstrap guard must trigger when no trusted tuple exists." >&2
+if ! grep -Fq "steps.stage_rollback_target.outputs.trusted_tuple_present == 'false'" <<<"${stage_initialized_bootstrap_block}"; then
+  echo "ERROR: initialized stage bootstrap classification must trigger only on explicit trusted_tuple_present == false." >&2
+  exit 1
+fi
+
+if ! grep -Fq 'echo "first_trusted_tuple_bootstrap=true" >> "$GITHUB_OUTPUT"' <<<"${stage_initialized_bootstrap_block}"; then
+  echo "ERROR: initialized stage bootstrap classification must emit first_trusted_tuple_bootstrap=true." >&2
+  exit 1
+fi
+
+if grep -Fq 'exit 1' <<<"${stage_initialized_bootstrap_block}"; then
+  echo "ERROR: initialized stage bootstrap classification must not fail before the full forward proof contract can run." >&2
+  exit 1
+fi
+
+if grep -Fq 'continue-on-error: true' <<<"${stage_initialized_bootstrap_block}"; then
+  echo "ERROR: initialized stage bootstrap classification must not hide classifier crashes behind continue-on-error." >&2
   exit 1
 fi
 
@@ -795,12 +900,28 @@ if [[ -z "${stage_public_edge_probe_block}" ]]; then
 fi
 
 if ! grep -Fq "steps.stage_untrusted_initialized_bootstrap_block.outcome != 'failure'" <<<"${stage_public_edge_probe_block}"; then
-  echo "ERROR: stage public-edge probe block must be gated on the initialized bootstrap guard." >&2
+  echo "ERROR: stage public-edge probe block must be gated on the initialized bootstrap classification step outcome." >&2
   exit 1
 fi
 
 if ! grep -Fq "steps.stage_runtime_web_sha_check.outcome != 'failure'" <<<"${stage_public_edge_probe_block}"; then
   echo "ERROR: stage public-edge probe block must be gated on an exact remote web-app runtime SHA match." >&2
+  exit 1
+fi
+
+stage_untrusted_bootstrap_block="$(awk '
+  /- name: Block stage bootstrap without trusted successful tuple/ { in_block=1 }
+  in_block && /^      - name:/ && $0 !~ /Block stage bootstrap without trusted successful tuple/ { exit }
+  in_block { print }
+' .github/workflows/orchestration-ci-cd.yml)"
+
+if [[ -z "${stage_untrusted_bootstrap_block}" ]]; then
+  echo "ERROR: could not locate stage untrusted bootstrap fail-closed block in orchestration-ci-cd.yml." >&2
+  exit 1
+fi
+
+if ! grep -Fq "steps.stage_rollback_target.outputs.trusted_tuple_present == 'false'" <<<"${stage_untrusted_bootstrap_block}"; then
+  echo "ERROR: stage untrusted bootstrap block must trigger only on explicit trusted_tuple_present == false." >&2
   exit 1
 fi
 
@@ -820,27 +941,39 @@ if ! grep -Fq "steps.main_initialize_preflight.outputs.initialized == 'true'" <<
   exit 1
 fi
 
-if ! grep -Fq "steps.main_rollback_target.outputs.trusted_tuple_present == 'true'" <<<"${main_mark_success_block}"; then
-  echo "ERROR: production success-marking block must require an explicit trusted tuple before stamping success." >&2
+main_mark_success_expected_if="if: steps.main_initialize_preflight.outputs.initialized == 'true' && (steps.main_rollback_target.outputs.trusted_tuple_present == 'true' || steps.main_untrusted_initialized_bootstrap_block.outputs.first_trusted_tuple_bootstrap == 'true') && steps.main_untrusted_initialized_bootstrap_block.outcome != 'failure' && steps.main_runtime_web_sha_check.outcome == 'success' && steps.main_public_edge_environment_probe.outcome == 'success' && steps.main_provenance_check.outcome == 'success' && steps.main_initial_mutation_guard.outcome == 'success' && steps.production_navigation_smoke.outcome == 'success'"
+main_mark_success_if_line="$(printf '%s\n' "${main_mark_success_block}" | sed -n 's/^        if: /if: /p' | head -n 1)"
+if [[ "${main_mark_success_if_line}" != "${main_mark_success_expected_if}" ]]; then
+  echo "ERROR: production success-marking block must exactly match the allowlisted full-proof success expression." >&2
   exit 1
 fi
 
-if ! grep -Fq "steps.main_runtime_web_sha_check.outcome != 'failure'" <<<"${main_mark_success_block}"; then
+if ! grep -Fq 'run: bash .github/scripts/mark_successful_revision_over_ssh.sh' <<<"${main_mark_success_block}"; then
+  echo "ERROR: production success-marking block must be the owner of the production mark_successful_revision_over_ssh.sh invocation." >&2
+  exit 1
+fi
+
+if ! grep -Fq "steps.main_rollback_target.outputs.trusted_tuple_present == 'true' || steps.main_untrusted_initialized_bootstrap_block.outputs.first_trusted_tuple_bootstrap == 'true'" <<<"${main_mark_success_block}"; then
+  echo "ERROR: production success-marking block must require either a trusted tuple or the explicit first trusted tuple bootstrap classification before stamping success." >&2
+  exit 1
+fi
+
+if ! grep -Fq "steps.main_runtime_web_sha_check.outcome == 'success'" <<<"${main_mark_success_block}"; then
   echo "ERROR: production success-marking block must require an exact remote web-app runtime SHA match." >&2
   exit 1
 fi
 
-if ! grep -Fq "steps.main_public_edge_environment_probe.outcome != 'failure'" <<<"${main_mark_success_block}"; then
+if ! grep -Fq "steps.main_public_edge_environment_probe.outcome == 'success'" <<<"${main_mark_success_block}"; then
   echo "ERROR: production success-marking block must require a successful public-edge probe path." >&2
   exit 1
 fi
 
-if ! grep -Fq "steps.main_provenance_check.outcome != 'failure'" <<<"${main_mark_success_block}"; then
+if ! grep -Fq "steps.main_provenance_check.outcome == 'success'" <<<"${main_mark_success_block}"; then
   echo "ERROR: production success-marking block must require successful provenance proof." >&2
   exit 1
 fi
 
-if ! grep -Fq "steps.main_initial_mutation_guard.outcome != 'failure'" <<<"${main_mark_success_block}"; then
+if ! grep -Fq "steps.main_initial_mutation_guard.outcome == 'success'" <<<"${main_mark_success_block}"; then
   echo "ERROR: production success-marking block must require the initial main mutation hard-block guard to pass." >&2
   exit 1
 fi
@@ -851,23 +984,38 @@ if ! grep -Fq "steps.production_navigation_smoke.outcome == 'success'" <<<"${mai
 fi
 
 main_initialized_bootstrap_block="$(awk '
-  /- name: Block production initialized bootstrap without trusted successful tuple/ { in_block=1 }
-  in_block && /^      - name:/ && $0 !~ /Block production initialized bootstrap without trusted successful tuple/ { exit }
+  /- name: Classify production first trusted tuple bootstrap/ { in_block=1 }
+  in_block && /^      - name:/ && $0 !~ /Classify production first trusted tuple bootstrap/ { exit }
   in_block { print }
 ' .github/workflows/orchestration-ci-cd.yml)"
 
 if [[ -z "${main_initialized_bootstrap_block}" ]]; then
-  echo "ERROR: could not locate initialized production bootstrap guard block in orchestration-ci-cd.yml." >&2
+  echo "ERROR: could not locate initialized production first trusted tuple bootstrap classification block in orchestration-ci-cd.yml." >&2
   exit 1
 fi
 
 if ! grep -Fq "steps.main_initialize_preflight.outputs.initialized == 'true'" <<<"${main_initialized_bootstrap_block}"; then
-  echo "ERROR: initialized production bootstrap guard must trigger only on initialized == true." >&2
+  echo "ERROR: initialized production bootstrap classification must trigger only on initialized == true." >&2
   exit 1
 fi
 
-if ! grep -Fq "steps.main_rollback_target.outputs.trusted_tuple_present != 'true'" <<<"${main_initialized_bootstrap_block}"; then
-  echo "ERROR: initialized production bootstrap guard must trigger when no trusted tuple exists." >&2
+if ! grep -Fq "steps.main_rollback_target.outputs.trusted_tuple_present == 'false'" <<<"${main_initialized_bootstrap_block}"; then
+  echo "ERROR: initialized production bootstrap classification must trigger only on explicit trusted_tuple_present == false." >&2
+  exit 1
+fi
+
+if ! grep -Fq 'echo "first_trusted_tuple_bootstrap=true" >> "$GITHUB_OUTPUT"' <<<"${main_initialized_bootstrap_block}"; then
+  echo "ERROR: initialized production bootstrap classification must emit first_trusted_tuple_bootstrap=true." >&2
+  exit 1
+fi
+
+if grep -Fq 'exit 1' <<<"${main_initialized_bootstrap_block}"; then
+  echo "ERROR: initialized production bootstrap classification must not fail before the full forward proof contract can run." >&2
+  exit 1
+fi
+
+if grep -Fq 'continue-on-error: true' <<<"${main_initialized_bootstrap_block}"; then
+  echo "ERROR: initialized production bootstrap classification must not hide classifier crashes behind continue-on-error." >&2
   exit 1
 fi
 
@@ -883,12 +1031,28 @@ if [[ -z "${main_public_edge_probe_block}" ]]; then
 fi
 
 if ! grep -Fq "steps.main_untrusted_initialized_bootstrap_block.outcome != 'failure'" <<<"${main_public_edge_probe_block}"; then
-  echo "ERROR: production public-edge probe block must be gated on the initialized bootstrap guard." >&2
+  echo "ERROR: production public-edge probe block must be gated on the initialized bootstrap classification step outcome." >&2
   exit 1
 fi
 
 if ! grep -Fq "steps.main_runtime_web_sha_check.outcome != 'failure'" <<<"${main_public_edge_probe_block}"; then
   echo "ERROR: production public-edge probe block must be gated on an exact remote web-app runtime SHA match." >&2
+  exit 1
+fi
+
+main_untrusted_bootstrap_block="$(awk '
+  /- name: Block production bootstrap without trusted successful tuple/ { in_block=1 }
+  in_block && /^      - name:/ && $0 !~ /Block production bootstrap without trusted successful tuple/ { exit }
+  in_block { print }
+' .github/workflows/orchestration-ci-cd.yml)"
+
+if [[ -z "${main_untrusted_bootstrap_block}" ]]; then
+  echo "ERROR: could not locate production untrusted bootstrap fail-closed block in orchestration-ci-cd.yml." >&2
+  exit 1
+fi
+
+if ! grep -Fq "steps.main_rollback_target.outputs.trusted_tuple_present == 'false'" <<<"${main_untrusted_bootstrap_block}"; then
+  echo "ERROR: production untrusted bootstrap block must trigger only on explicit trusted_tuple_present == false." >&2
   exit 1
 fi
 
@@ -914,7 +1078,48 @@ if ! grep -Fq "continue-on-error: true" <<<"${main_initial_mutation_guard_block}
 fi
 
 if ! grep -Fq "steps.main_untrusted_initialized_bootstrap_block.outcome != 'failure'" <<<"${main_initial_mutation_guard_block}"; then
-  echo "ERROR: the initial production mutation hard-block step must be gated on the initialized bootstrap guard." >&2
+  echo "ERROR: the initial production mutation hard-block step must be gated on the initialized bootstrap classification step outcome." >&2
+  exit 1
+fi
+
+if ! grep -Fq 'expected_policy_message="Hard block: web mutation suite is forbidden on main lane by policy."' <<<"${main_initial_mutation_guard_block}"; then
+  echo "ERROR: the initial production mutation hard-block step must assert the exact expected main-lane policy hard block." >&2
+  exit 1
+fi
+
+if ! grep -Fq 'PIPESTATUS[0]' <<<"${main_initial_mutation_guard_block}"; then
+  echo "ERROR: the initial production mutation hard-block step must capture the runner status through pipefail/PIPESTATUS." >&2
+  exit 1
+fi
+
+if ! grep -Fq 'not with the expected main-lane policy hard block' <<<"${main_initial_mutation_guard_block}"; then
+  echo "ERROR: the initial production mutation hard-block step must fail when the mutation runner exits for an unexpected reason." >&2
+  exit 1
+fi
+
+main_rollback_mutation_guard_block="$(awk '
+  /- name: Assert mutation suite is hard-blocked on production after rollback/ { in_block=1 }
+  in_block && /^      - name:/ && $0 !~ /Assert mutation suite is hard-blocked on production after rollback/ { exit }
+  in_block { print }
+' .github/workflows/orchestration-ci-cd.yml)"
+
+if [[ -z "${main_rollback_mutation_guard_block}" ]]; then
+  echo "ERROR: could not locate the production rollback mutation hard-block guard in orchestration-ci-cd.yml." >&2
+  exit 1
+fi
+
+if ! grep -Fq 'expected_policy_message="Hard block: web mutation suite is forbidden on main lane by policy."' <<<"${main_rollback_mutation_guard_block}"; then
+  echo "ERROR: the production rollback mutation hard-block step must assert the exact expected main-lane policy hard block." >&2
+  exit 1
+fi
+
+if ! grep -Fq 'PIPESTATUS[0]' <<<"${main_rollback_mutation_guard_block}"; then
+  echo "ERROR: the production rollback mutation hard-block step must capture the runner status through pipefail/PIPESTATUS." >&2
+  exit 1
+fi
+
+if ! grep -Fq 'not with the expected main-lane policy hard block' <<<"${main_rollback_mutation_guard_block}"; then
+  echo "ERROR: the production rollback mutation hard-block step must fail when the mutation runner exits for an unexpected reason." >&2
   exit 1
 fi
 
