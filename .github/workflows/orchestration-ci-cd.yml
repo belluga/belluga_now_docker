@@ -276,6 +276,7 @@ jobs:
           WORKER_IMAGE: ${{ steps.stage_runtime_images.outputs.worker_image }}
           SCHEDULER_IMAGE: ${{ steps.stage_runtime_images.outputs.scheduler_image }}
           NGINX_IMAGE: ${{ steps.stage_runtime_images.outputs.nginx_image }}
+          DEPLOY_TRUSTED_TUPLE_PRESENT: ${{ steps.stage_rollback_target.outputs.trusted_tuple_present }}
           GHCR_USERNAME: ${{ github.actor }}
           GHCR_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
@@ -352,7 +353,7 @@ jobs:
 
       - name: Block stage bootstrap without trusted successful tuple
         id: stage_untrusted_bootstrap_block
-        if: steps.stage_initialize_preflight.outputs.initialized != 'true' && steps.stage_rollback_target.outputs.trusted_tuple_present != 'true'
+        if: steps.stage_initialize_preflight.outputs.initialized != 'true' && steps.stage_rollback_target.outputs.trusted_tuple_present == 'false'
         continue-on-error: true
         run: |
           echo "ERROR: stage initialize returned 403 before any trusted successful-release tuple existed; fail closed instead of stamping an unverified success." >&2
@@ -366,13 +367,12 @@ jobs:
           echo "ERROR: stage initialize returned 403 even though a trusted successful-release tuple already exists; failing closed." >&2
           exit 1
 
-      - name: Block stage initialized bootstrap without trusted successful tuple
+      - name: Classify stage first trusted tuple bootstrap
         id: stage_untrusted_initialized_bootstrap_block
-        if: steps.stage_initialize_preflight.outputs.initialized == 'true' && steps.stage_rollback_target.outputs.trusted_tuple_present != 'true'
-        continue-on-error: true
+        if: steps.stage_initialize_preflight.outputs.initialized == 'true' && steps.stage_rollback_target.outputs.trusted_tuple_present == 'false'
         run: |
-          echo "ERROR: stage initialized successfully before any trusted successful-release tuple existed; fail closed instead of minting first trust from the promotion lane." >&2
-          exit 1
+          echo "first_trusted_tuple_bootstrap=true" >> "$GITHUB_OUTPUT"
+          echo "INFO: stage initialized successfully with no trusted successful-release tuple. Continuing through the full forward proof contract before minting first trust."
 
       - name: Reset managed stage navigation host overrides before public-edge probe
         id: stage_public_edge_host_overrides_reset
@@ -504,7 +504,7 @@ jobs:
           retention-days: 7
 
       - name: Mark stage revision as successful after navigation smoke
-        if: steps.stage_initialize_preflight.outputs.initialized == 'true' && steps.stage_rollback_target.outputs.trusted_tuple_present == 'true' && steps.stage_untrusted_initialized_bootstrap_block.outcome != 'failure' && steps.stage_runtime_web_sha_check.outcome != 'failure' && steps.stage_public_edge_environment_probe.outcome != 'failure' && steps.stage_provenance_check.outcome != 'failure' && steps.stage_public_taxonomy_validation_fixture.outcome == 'success' && steps.stage_navigation_smoke.outcome == 'success' && steps.stage_navigation_mutation_smoke.outcome == 'success'
+        if: steps.stage_initialize_preflight.outputs.initialized == 'true' && (steps.stage_rollback_target.outputs.trusted_tuple_present == 'true' || steps.stage_untrusted_initialized_bootstrap_block.outputs.first_trusted_tuple_bootstrap == 'true') && steps.stage_untrusted_initialized_bootstrap_block.outcome != 'failure' && steps.stage_runtime_web_sha_check.outcome == 'success' && steps.stage_public_edge_environment_probe.outcome == 'success' && steps.stage_provenance_check.outcome == 'success' && steps.stage_public_taxonomy_validation_fixture.outcome == 'success' && steps.stage_navigation_smoke.outcome == 'success' && steps.stage_navigation_mutation_smoke.outcome == 'success'
         env:
           DEPLOY_LANE: stage
           DEPLOY_SSH_HOST: ${{ vars.STAGE_SSH_HOST }}
@@ -997,6 +997,7 @@ jobs:
           WORKER_IMAGE: ${{ steps.main_runtime_images.outputs.worker_image }}
           SCHEDULER_IMAGE: ${{ steps.main_runtime_images.outputs.scheduler_image }}
           NGINX_IMAGE: ${{ steps.main_runtime_images.outputs.nginx_image }}
+          DEPLOY_TRUSTED_TUPLE_PRESENT: ${{ steps.main_rollback_target.outputs.trusted_tuple_present }}
           GHCR_USERNAME: ${{ github.actor }}
           GHCR_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
@@ -1073,7 +1074,7 @@ jobs:
 
       - name: Block production bootstrap without trusted successful tuple
         id: main_untrusted_bootstrap_block
-        if: steps.main_initialize_preflight.outputs.initialized != 'true' && steps.main_rollback_target.outputs.trusted_tuple_present != 'true'
+        if: steps.main_initialize_preflight.outputs.initialized != 'true' && steps.main_rollback_target.outputs.trusted_tuple_present == 'false'
         continue-on-error: true
         run: |
           echo "ERROR: production initialize returned 403 before any trusted successful-release tuple existed; fail closed instead of stamping an unverified success." >&2
@@ -1087,13 +1088,12 @@ jobs:
           echo "ERROR: production initialize returned 403 even though a trusted successful-release tuple already exists; failing closed." >&2
           exit 1
 
-      - name: Block production initialized bootstrap without trusted successful tuple
+      - name: Classify production first trusted tuple bootstrap
         id: main_untrusted_initialized_bootstrap_block
-        if: steps.main_initialize_preflight.outputs.initialized == 'true' && steps.main_rollback_target.outputs.trusted_tuple_present != 'true'
-        continue-on-error: true
+        if: steps.main_initialize_preflight.outputs.initialized == 'true' && steps.main_rollback_target.outputs.trusted_tuple_present == 'false'
         run: |
-          echo "ERROR: production initialized successfully before any trusted successful-release tuple existed; fail closed instead of minting first trust from the promotion lane." >&2
-          exit 1
+          echo "first_trusted_tuple_bootstrap=true" >> "$GITHUB_OUTPUT"
+          echo "INFO: production initialized successfully with no trusted successful-release tuple. Continuing through the full forward proof contract before minting first trust."
 
       - name: Reset managed production navigation host overrides before public-edge probe
         id: main_public_edge_host_overrides_reset
@@ -1157,13 +1157,23 @@ jobs:
           NAV_DEPLOY_LANE: main
           NAV_WEB_TEST_TYPE: mutation
         run: |
+          guard_output="$(mktemp)"
+          expected_policy_message="Hard block: web mutation suite is forbidden on main lane by policy."
+
           set +e
-          bash tools/flutter/run_web_navigation_smoke.sh mutation
-          guard_status=$?
+          set -o pipefail
+          bash tools/flutter/run_web_navigation_smoke.sh mutation 2>&1 | tee "${guard_output}"
+          guard_status=${PIPESTATUS[0]}
+          set +o pipefail
           set -e
 
           if [[ "$guard_status" -eq 0 ]]; then
             echo "ERROR: mutation suite must be blocked on main lane." >&2
+            exit 1
+          fi
+
+          if ! grep -Fq "${expected_policy_message}" "${guard_output}"; then
+            echo "ERROR: mutation suite failed, but not with the expected main-lane policy hard block." >&2
             exit 1
           fi
 
@@ -1219,7 +1229,7 @@ jobs:
           retention-days: 7
 
       - name: Mark production revision as successful after navigation smoke
-        if: steps.main_initialize_preflight.outputs.initialized == 'true' && steps.main_rollback_target.outputs.trusted_tuple_present == 'true' && steps.main_untrusted_initialized_bootstrap_block.outcome != 'failure' && steps.main_runtime_web_sha_check.outcome != 'failure' && steps.main_public_edge_environment_probe.outcome != 'failure' && steps.main_provenance_check.outcome != 'failure' && steps.main_initial_mutation_guard.outcome != 'failure' && steps.production_navigation_smoke.outcome == 'success'
+        if: steps.main_initialize_preflight.outputs.initialized == 'true' && (steps.main_rollback_target.outputs.trusted_tuple_present == 'true' || steps.main_untrusted_initialized_bootstrap_block.outputs.first_trusted_tuple_bootstrap == 'true') && steps.main_untrusted_initialized_bootstrap_block.outcome != 'failure' && steps.main_runtime_web_sha_check.outcome == 'success' && steps.main_public_edge_environment_probe.outcome == 'success' && steps.main_provenance_check.outcome == 'success' && steps.main_initial_mutation_guard.outcome == 'success' && steps.production_navigation_smoke.outcome == 'success'
         env:
           DEPLOY_LANE: main
           DEPLOY_SSH_HOST: ${{ vars.MAIN_SSH_HOST }}
@@ -1455,13 +1465,23 @@ jobs:
           NAV_DEPLOY_LANE: main
           NAV_WEB_TEST_TYPE: mutation
         run: |
+          guard_output="$(mktemp)"
+          expected_policy_message="Hard block: web mutation suite is forbidden on main lane by policy."
+
           set +e
-          bash tools/flutter/run_web_navigation_smoke.sh mutation
-          guard_status=$?
+          set -o pipefail
+          bash tools/flutter/run_web_navigation_smoke.sh mutation 2>&1 | tee "${guard_output}"
+          guard_status=${PIPESTATUS[0]}
+          set +o pipefail
           set -e
 
           if [[ "$guard_status" -eq 0 ]]; then
             echo "ERROR: mutation suite must remain blocked on main after rollback proof." >&2
+            exit 1
+          fi
+
+          if ! grep -Fq "${expected_policy_message}" "${guard_output}"; then
+            echo "ERROR: rollback mutation suite failed, but not with the expected main-lane policy hard block." >&2
             exit 1
           fi
 

@@ -17,6 +17,7 @@ require_env APP_IMAGE
 require_env WORKER_IMAGE
 require_env SCHEDULER_IMAGE
 require_env NGINX_IMAGE
+require_env DEPLOY_TRUSTED_TUPLE_PRESENT
 require_env GHCR_USERNAME
 require_env GHCR_TOKEN
 
@@ -49,6 +50,11 @@ if ! [[ "${WEB_APP_RUNTIME_SHA}" =~ ^[0-9a-fA-F]{40}$ ]]; then
   exit 1
 fi
 WEB_APP_RUNTIME_SHA="$(printf '%s' "${WEB_APP_RUNTIME_SHA}" | tr '[:upper:]' '[:lower:]')"
+
+if [[ "${DEPLOY_TRUSTED_TUPLE_PRESENT}" != "true" && "${DEPLOY_TRUSTED_TUPLE_PRESENT}" != "false" ]]; then
+  echo "ERROR: DEPLOY_TRUSTED_TUPLE_PRESENT must be exactly 'true' or 'false' (received '${DEPLOY_TRUSTED_TUPLE_PRESENT}')." >&2
+  exit 1
+fi
 
 for image_var in APP_IMAGE WORKER_IMAGE SCHEDULER_IMAGE NGINX_IMAGE; do
   require_immutable_image_ref "${image_var}"
@@ -162,6 +168,7 @@ APP_IMAGE='${APP_IMAGE}'
 WORKER_IMAGE='${WORKER_IMAGE}'
 SCHEDULER_IMAGE='${SCHEDULER_IMAGE}'
 NGINX_IMAGE='${NGINX_IMAGE}'
+DEPLOY_TRUSTED_TUPLE_PRESENT='${DEPLOY_TRUSTED_TUPLE_PRESENT}'
 GHCR_USERNAME='${GHCR_USERNAME}'
 GHCR_TOKEN='${GHCR_TOKEN}'
 DEPLOY_NGINX_HOST_PORT_80='${deploy_nginx_port_80}'
@@ -253,7 +260,7 @@ previous_worker_image=""
 previous_scheduler_image=""
 previous_nginx_image=""
 rollback_protection_ref=""
-if [[ -f ".last_successful_revision" ]]; then
+if [[ "\${DEPLOY_TRUSTED_TUPLE_PRESENT}" == "true" && -f ".last_successful_revision" ]]; then
   marker_content="\$(tr -d '\r' < .last_successful_revision)"
   previous_revision="\$(printf '%s\n' "\${marker_content}" | sed -n 's/^ROOT_SHA=//p' | head -n 1 | tr -d '[:space:]')"
   previous_web_runtime_sha="\$(printf '%s\n' "\${marker_content}" | sed -n 's/^WEB_APP_RUNTIME_SHA=//p' | head -n 1 | tr -d '[:space:]')"
@@ -261,6 +268,8 @@ if [[ -f ".last_successful_revision" ]]; then
   previous_worker_image="\$(printf '%s\n' "\${marker_content}" | sed -n 's/^WORKER_IMAGE=//p' | head -n 1 | tr -d '[:space:]')"
   previous_scheduler_image="\$(printf '%s\n' "\${marker_content}" | sed -n 's/^SCHEDULER_IMAGE=//p' | head -n 1 | tr -d '[:space:]')"
   previous_nginx_image="\$(printf '%s\n' "\${marker_content}" | sed -n 's/^NGINX_IMAGE=//p' | head -n 1 | tr -d '[:space:]')"
+elif [[ "\${DEPLOY_TRUSTED_TUPLE_PRESENT}" != "true" ]]; then
+  echo "INFO: no trusted tuple captured before deploy; internal rollback is disabled for this deploy attempt."
 fi
 
 cleanup_rollback_protection_ref() {
