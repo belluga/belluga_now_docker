@@ -386,7 +386,7 @@ async function createPhysicalHost(api, baseUrl, token, name) {
     {
       data: {
         name,
-        ownership_state: 'tenant_owned',
+        ownership_state: 'unmanaged',
         profile_type: profileType,
         location: {
           lat: -20.671339,

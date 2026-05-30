@@ -148,7 +148,7 @@ async function listAdminEvents(api, baseUrl, token) {
   return rows;
 }
 
-async function deleteAccountProfile(api, baseUrl, token, profileId) {
+async function deleteLegacyProfileBestEffort(api, baseUrl, token, profileId) {
   if (!profileId) {
     return;
   }
@@ -295,7 +295,7 @@ async function createPublicAccountProfile(api, baseUrl, token) {
       headers: authHeaders(token),
       data: {
         name: fixture.profileName,
-        ownership_state: 'tenant_owned',
+        ownership_state: 'unmanaged',
         profile_type: fixture.profileType,
         location: fixture.location,
         taxonomy_terms: [
@@ -681,7 +681,7 @@ async function resetOwnedFixtureArtifacts(api, baseUrl, token) {
   });
 
   for (const row of ownedProfiles) {
-    await deleteAccountProfile(api, baseUrl, token, row?.id?.toString() || '');
+    await deleteLegacyProfileBestEffort(api, baseUrl, token, row?.id?.toString() || '');
   }
 
   const eventTypes = await listEventTypes(api, baseUrl, token);

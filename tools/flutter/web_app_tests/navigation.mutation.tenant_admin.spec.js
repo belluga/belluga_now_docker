@@ -6,6 +6,9 @@ const { test, expect, request } = require('@playwright/test');
 const {
   loginTenantAdmin: loginTenantAdminWithRequiredCredentials,
 } = require('./support/tenant_admin_auth');
+const {
+  cleanupOnboardedAccount,
+} = require('./support/account_onboarding_cleanup');
 
 const tenantUrl = process.env.NAV_TENANT_URL;
 const fixtureImagePath = path.join(os.tmpdir(), 'belluga-navigation-fixture.png');
@@ -594,7 +597,7 @@ async function createImageTestProfile(
   const uniqueSuffix = Date.now();
   const payload = {
     name: `Playwright Cover ${uniqueSuffix}`,
-    ownership_state: 'tenant_owned',
+    ownership_state: 'unmanaged',
     profile_type: profileType.type,
   };
 
@@ -622,20 +625,6 @@ async function createImageTestProfile(
     profileId: created?.data?.account_profile?.id,
     temporaryProfileType,
   };
-}
-
-async function deleteAccountProfile(api, baseUrl, token, profileId) {
-  if (!profileId) {
-    return;
-  }
-
-  await api.delete(
-    buildApiUrl(baseUrl, `/admin/api/v1/account_profiles/${profileId}`),
-    {
-      headers: authHeaders(token),
-      failOnStatusCode: false,
-    },
-  );
 }
 
 async function deleteEventType(api, baseUrl, token, eventTypeId) {
@@ -998,6 +987,7 @@ test('@mutation tenant-admin account-profile cover upload persists and renders a
   let browserContext;
   let verificationContext;
   let profileId = null;
+  let accountSlug = null;
   let temporaryProfileType = null;
   let session = null;
 
@@ -1007,6 +997,7 @@ test('@mutation tenant-admin account-profile cover upload persists and renders a
       requireCover: true,
     });
     profileId = created.profileId;
+    accountSlug = created.accountSlug;
     temporaryProfileType = created.temporaryProfileType;
 
     expect(created.accountSlug, 'Created onboarding must return an account slug.').toBeTruthy();
@@ -1106,7 +1097,7 @@ test('@mutation tenant-admin account-profile cover upload persists and renders a
     await assertNoBrowserFailures(verificationCollectors);
   } finally {
     if (session?.token) {
-      await deleteAccountProfile(api, baseUrl, session.token, profileId);
+      await cleanupOnboardedAccount(api, baseUrl, session.token, accountSlug);
       await deleteAccountProfileType(
         api,
         baseUrl,
@@ -1132,6 +1123,7 @@ test('@mutation tenant-admin account-profile avatar upload persists and renders 
   let browserContext;
   let verificationContext;
   let profileId = null;
+  let accountSlug = null;
   let temporaryProfileType = null;
   let session = null;
 
@@ -1141,6 +1133,7 @@ test('@mutation tenant-admin account-profile avatar upload persists and renders 
       requireAvatar: true,
     });
     profileId = created.profileId;
+    accountSlug = created.accountSlug;
     temporaryProfileType = created.temporaryProfileType;
 
     expect(created.accountSlug, 'Created onboarding must return an account slug.').toBeTruthy();
@@ -1240,7 +1233,7 @@ test('@mutation tenant-admin account-profile avatar upload persists and renders 
     await assertNoBrowserFailures(verificationCollectors);
   } finally {
     if (session?.token) {
-      await deleteAccountProfile(api, baseUrl, session.token, profileId);
+      await cleanupOnboardedAccount(api, baseUrl, session.token, accountSlug);
       await deleteAccountProfileType(
         api,
         baseUrl,

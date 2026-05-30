@@ -3,6 +3,9 @@ const { test, expect, request } = require('@playwright/test');
 const {
   loginTenantAdmin: loginTenantAdminWithRequiredCredentials,
 } = require('./support/tenant_admin_auth');
+const {
+  cleanupOnboardedAccount,
+} = require('./support/account_onboarding_cleanup');
 
 const tenantUrl = process.env.NAV_TENANT_URL;
 const appBootTimeoutMs = 90000;
@@ -227,17 +230,6 @@ async function fetchPublicProfileDetail(api, baseUrl, token, slug) {
   );
 }
 
-async function deleteAccountProfile(api, baseUrl, token, profileId) {
-  if (!profileId) {
-    return;
-  }
-
-  await api.delete(buildUrl(baseUrl, `/admin/api/v1/account_profiles/${profileId}`), {
-    headers: await authHeaders(token),
-    failOnStatusCode: false,
-  });
-}
-
 async function deleteAccountProfileType(api, baseUrl, token, profileType) {
   if (!profileType) {
     return;
@@ -354,9 +346,9 @@ async function createPoiAccountProfile(api, baseUrl, token, profileType) {
   const response = await api.post(
     buildUrl(baseUrl, '/admin/api/v1/account_onboardings'),
     {
-      data: {
+        data: {
         name: `Playwright APD ${uniqueSuffix}`,
-        ownership_state: 'tenant_owned',
+        ownership_state: 'unmanaged',
         profile_type: profileType,
         location: {
           lat: -20.671339,
@@ -742,6 +734,7 @@ test('@mutation NAV-APD-07..08 agenda is occurrence-first and cards navigate to 
   const api = await createApiContext(baseUrl);
   let sessionToken = null;
   let createdProfileId = null;
+  let createdAccountSlug = null;
   let createdProfileType = null;
   let createdEventId = null;
   let createdEventTypeId = null;
@@ -762,6 +755,7 @@ test('@mutation NAV-APD-07..08 agenda is occurrence-first and cards navigate to 
       profileTypeSeed.profileType,
     );
     createdProfileId = createdProfile.profileId;
+    createdAccountSlug = createdProfile.accountSlug;
 
     const eventType = await createDetailEventType(api, baseUrl, sessionToken);
     createdEventTypeId = eventType?.id?.toString() || null;
@@ -818,7 +812,7 @@ test('@mutation NAV-APD-07..08 agenda is occurrence-first and cards navigate to 
   } finally {
     await deleteEvent(api, baseUrl, sessionToken, createdEventId);
     await deleteEventType(api, baseUrl, sessionToken, createdEventTypeId);
-    await deleteAccountProfile(api, baseUrl, sessionToken, createdProfileId);
+    await cleanupOnboardedAccount(api, baseUrl, sessionToken, createdAccountSlug);
     await deleteAccountProfileType(
       api,
       baseUrl,
@@ -836,6 +830,7 @@ test('@mutation NAV-APD-09 Como Chegar opens focused map and shared route choose
   const api = await createApiContext(baseUrl);
   let sessionToken = null;
   let createdProfileId = null;
+  let createdAccountSlug = null;
   let createdProfileType = null;
 
   try {
@@ -858,6 +853,7 @@ test('@mutation NAV-APD-09 Como Chegar opens focused map and shared route choose
       profileTypeSeed.profileType,
     );
     createdProfileId = createdProfile.profileId;
+    createdAccountSlug = createdProfile.accountSlug;
 
     const detailPayload = await gotoPublicProfileDetailAndWaitForHydration(
       page,
@@ -901,7 +897,7 @@ test('@mutation NAV-APD-09 Como Chegar opens focused map and shared route choose
     await expect(page.getByText(/Google Maps|Apple Maps|Waze|Navegar/i).first())
       .toBeVisible({ timeout: appBootTimeoutMs });
   } finally {
-    await deleteAccountProfile(api, baseUrl, sessionToken, createdProfileId);
+    await cleanupOnboardedAccount(api, baseUrl, sessionToken, createdAccountSlug);
     await deleteAccountProfileType(
       api,
       baseUrl,

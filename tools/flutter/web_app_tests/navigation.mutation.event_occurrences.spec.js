@@ -4,6 +4,10 @@ const {
   loginTenantAdmin: loginTenantAdminWithRequiredCredentials,
 } = require('./support/tenant_admin_auth');
 const { selectDropdownOption } = require('./support/semantic_dropdown');
+const {
+  cleanupOnboardedAccount,
+  cleanupOnboardedAccounts,
+} = require('./support/account_onboarding_cleanup');
 
 const tenantUrl = process.env.NAV_TENANT_URL;
 const appBootTimeoutMs = 90000;
@@ -740,6 +744,7 @@ async function resolvePoiCapableProfileType(
 
 async function ensurePhysicalHostCandidates(api, baseUrl, token, minimum = 1) {
   const createdProfileIds = [];
+  const createdAccountSlugs = [];
   let createdType = null;
   const candidates = await listAccountProfileCandidates(
     api,
@@ -752,6 +757,7 @@ async function ensurePhysicalHostCandidates(api, baseUrl, token, minimum = 1) {
     return {
       candidates: candidates.slice(0, Math.max(minimum, 1)),
       createdProfileIds,
+      createdAccountSlugs,
       createdType,
     };
   }
@@ -773,6 +779,7 @@ async function ensurePhysicalHostCandidates(api, baseUrl, token, minimum = 1) {
       `PW SR-D Auto Host ${Date.now()}-${index + 1}`,
     );
     createdProfileIds.push(createdHost.id);
+    createdAccountSlugs.push(createdHost.accountSlug);
     seededCandidates.push(createdHost);
   }
 
@@ -784,6 +791,7 @@ async function ensurePhysicalHostCandidates(api, baseUrl, token, minimum = 1) {
   return {
     candidates: seededCandidates.slice(0, Math.max(minimum, 1)),
     createdProfileIds,
+    createdAccountSlugs,
     createdType,
   };
 }
@@ -794,7 +802,7 @@ async function createNearbyPhysicalHost(api, baseUrl, token, profileType, name) 
     {
       data: {
         name,
-        ownership_state: 'tenant_owned',
+        ownership_state: 'unmanaged',
         profile_type: profileType,
         location: {
           lat: -20.671339,
@@ -809,28 +817,16 @@ async function createNearbyPhysicalHost(api, baseUrl, token, profileType, name) 
 
   const payload = await response.json();
   const data = payload?.data || {};
+  const account = data?.account || {};
   const profile = data?.account_profile || {};
   const profileId = profile?.id?.toString() || '';
   expect(profileId, 'Nearby physical host seed must return a profile id.')
     .toBeTruthy();
   return {
     id: profileId,
+    accountSlug: account?.slug?.toString() || '',
     display_name: profile?.display_name?.toString() || name,
   };
-}
-
-async function deleteAccountProfile(api, baseUrl, token, profileId) {
-  if (!profileId) {
-    return;
-  }
-
-  await api.delete(
-    buildApiUrl(baseUrl, `/admin/api/v1/account_profiles/${profileId}`),
-    {
-      headers: authHeaders(token),
-      failOnStatusCode: false,
-    },
-  );
 }
 
 async function deleteAccountProfileType(api, baseUrl, token, profileType) {
@@ -858,6 +854,7 @@ async function fetchRelatedAccountProfileCandidates(
 ) {
   const excluded = new Set(excludeIds.filter(Boolean));
   const createdProfileIds = [];
+  const createdAccountSlugs = [];
   let createdType = null;
   const candidates = (await listAccountProfileCandidates(
     api,
@@ -870,6 +867,7 @@ async function fetchRelatedAccountProfileCandidates(
     return {
       candidates: candidates.slice(0, minimum),
       createdProfileIds,
+      createdAccountSlugs,
       createdType,
     };
   }
@@ -892,6 +890,7 @@ async function fetchRelatedAccountProfileCandidates(
       `PW SR-D Related Profile ${Date.now()}-${index + 1}`,
     );
     createdProfileIds.push(createdProfile.id);
+    createdAccountSlugs.push(createdProfile.accountSlug);
     if (!excluded.has(createdProfile.id)) {
       seededCandidates.push(createdProfile);
     }
@@ -905,6 +904,7 @@ async function fetchRelatedAccountProfileCandidates(
   return {
     candidates: seededCandidates.slice(0, minimum),
     createdProfileIds,
+    createdAccountSlugs,
     createdType,
   };
 }
@@ -2093,6 +2093,7 @@ test('@mutation NAV-ADM-LOC-01..06 admin occurrence programming location ownersh
   let eventTypeId = null;
   let eventId = null;
   const createdSeedProfileIds = [];
+  const createdSeedAccountSlugs = [];
   const createdSeedProfileTypes = new Set();
 
   try {
@@ -2115,6 +2116,7 @@ test('@mutation NAV-ADM-LOC-01..06 admin occurrence programming location ownersh
       2,
     );
     createdSeedProfileIds.push(...physicalHostSeed.createdProfileIds);
+    createdSeedAccountSlugs.push(...physicalHostSeed.createdAccountSlugs);
     if (physicalHostSeed.createdType) {
       createdSeedProfileTypes.add(physicalHostSeed.createdType);
     }
@@ -2361,9 +2363,7 @@ test('@mutation NAV-ADM-LOC-01..06 admin occurrence programming location ownersh
     if (session?.token) {
       await deleteEvent(api, baseUrl, session.token, eventId);
       await deleteEventType(api, baseUrl, session.token, eventTypeId);
-      for (const profileId of createdSeedProfileIds) {
-        await deleteAccountProfile(api, baseUrl, session.token, profileId);
-      }
+      await cleanupOnboardedAccounts(api, baseUrl, session.token, createdSeedAccountSlugs);
       for (const profileType of createdSeedProfileTypes) {
         await deleteAccountProfileType(api, baseUrl, session.token, profileType);
       }
@@ -2394,8 +2394,11 @@ test('@mutation tenant-admin event occurrence FAB persists second occurrence and
   let futureLaterEventId = null;
   let createdPhysicalHostId = null;
   let createdProgrammingHostId = null;
+  let createdPhysicalHostAccountSlug = null;
+  let createdProgrammingHostAccountSlug = null;
   let createdProfileType = null;
   const createdSeedProfileIds = [];
+  const createdSeedAccountSlugs = [];
   const createdSeedProfileTypes = new Set();
 
   try {
@@ -2424,6 +2427,7 @@ test('@mutation tenant-admin event occurrence FAB persists second occurrence and
       `PW SR-D Host ${uniqueSuffix}`,
     );
     createdPhysicalHostId = physicalHost.id;
+    createdPhysicalHostAccountSlug = physicalHost.accountSlug;
     const programmingHost = await createNearbyPhysicalHost(
       api,
       baseUrl,
@@ -2432,6 +2436,7 @@ test('@mutation tenant-admin event occurrence FAB persists second occurrence and
       `PW SR-D Programming Host ${uniqueSuffix}`,
     );
     createdProgrammingHostId = programmingHost.id;
+    createdProgrammingHostAccountSlug = programmingHost.accountSlug;
     const relatedProfileSeed = await fetchRelatedAccountProfileCandidates(
       api,
       baseUrl,
@@ -2441,6 +2446,7 @@ test('@mutation tenant-admin event occurrence FAB persists second occurrence and
       },
     );
     createdSeedProfileIds.push(...relatedProfileSeed.createdProfileIds);
+    createdSeedAccountSlugs.push(...relatedProfileSeed.createdAccountSlugs);
     if (relatedProfileSeed.createdType) {
       createdSeedProfileTypes.add(relatedProfileSeed.createdType);
     }
@@ -3390,6 +3396,22 @@ test('@mutation tenant-admin event occurrence FAB persists second occurrence and
         mapCard,
         'Como Chegar must be the active visible section before destination assertions.',
       ).toBeVisible({ timeout: appBootTimeoutMs });
+      await expect(
+        publicPage.getByRole('button', { name: /^Waze$/ }).first(),
+        'Como Chegar must expose the direct Waze provider action in the browser runtime.',
+      ).toBeVisible({ timeout: appBootTimeoutMs });
+      await expect(
+        publicPage.getByRole('button', { name: /^Uber$/ }).first(),
+        'Como Chegar must expose the direct Uber provider action in the browser runtime.',
+      ).toBeVisible({ timeout: appBootTimeoutMs });
+      await expect(
+        publicPage.getByRole('button', { name: /^Outros$/ }).first(),
+        'Como Chegar must expose the accessible three-dots Outros provider action in the browser runtime.',
+      ).toBeVisible({ timeout: appBootTimeoutMs });
+      await expect(
+        publicPage.getByRole('button', { name: /Traçar rota/i }),
+        'Como Chegar must not expose the removed tab-specific Traçar rota CTA in the browser runtime.',
+      ).toHaveCount(0);
       await expect(publicPage.getByText(physicalHost.display_name).first())
         .toBeVisible({ timeout: appBootTimeoutMs });
       await expect(
@@ -3496,11 +3518,9 @@ test('@mutation tenant-admin event occurrence FAB persists second occurrence and
       await deleteEvent(api, baseUrl, session.token, noProgrammingEventId);
       await deleteEvent(api, baseUrl, session.token, eventId);
       await deleteEventType(api, baseUrl, session.token, eventTypeId);
-      await deleteAccountProfile(api, baseUrl, session.token, createdProgrammingHostId);
-      await deleteAccountProfile(api, baseUrl, session.token, createdPhysicalHostId);
-      for (const profileId of createdSeedProfileIds) {
-        await deleteAccountProfile(api, baseUrl, session.token, profileId);
-      }
+      await cleanupOnboardedAccount(api, baseUrl, session.token, createdProgrammingHostAccountSlug);
+      await cleanupOnboardedAccount(api, baseUrl, session.token, createdPhysicalHostAccountSlug);
+      await cleanupOnboardedAccounts(api, baseUrl, session.token, createdSeedAccountSlugs);
       await deleteAccountProfileType(api, baseUrl, session.token, createdProfileType);
       for (const profileType of createdSeedProfileTypes) {
         if (profileType !== createdProfileType) {
@@ -3528,6 +3548,7 @@ test('@mutation repeated public event detail GET/hydration keeps programming pay
   let firstEventId = null;
   let secondEventId = null;
   const createdSeedProfileIds = [];
+  const createdSeedAccountSlugs = [];
   const createdSeedProfileTypes = new Set();
 
   try {
@@ -3548,6 +3569,7 @@ test('@mutation repeated public event detail GET/hydration keeps programming pay
       2,
     );
     createdSeedProfileIds.push(...physicalHostSeed.createdProfileIds);
+    createdSeedAccountSlugs.push(...physicalHostSeed.createdAccountSlugs);
     if (physicalHostSeed.createdType) {
       createdSeedProfileTypes.add(physicalHostSeed.createdType);
     }
@@ -3562,6 +3584,7 @@ test('@mutation repeated public event detail GET/hydration keeps programming pay
       },
     );
     createdSeedProfileIds.push(...relatedProfileSeed.createdProfileIds);
+    createdSeedAccountSlugs.push(...relatedProfileSeed.createdAccountSlugs);
     if (relatedProfileSeed.createdType) {
       createdSeedProfileTypes.add(relatedProfileSeed.createdType);
     }
@@ -3695,9 +3718,7 @@ test('@mutation repeated public event detail GET/hydration keeps programming pay
       await deleteEvent(api, baseUrl, session.token, secondEventId);
       await deleteEvent(api, baseUrl, session.token, firstEventId);
       await deleteEventType(api, baseUrl, session.token, eventTypeId);
-      for (const profileId of createdSeedProfileIds) {
-        await deleteAccountProfile(api, baseUrl, session.token, profileId);
-      }
+      await cleanupOnboardedAccounts(api, baseUrl, session.token, createdSeedAccountSlugs);
       for (const profileType of createdSeedProfileTypes) {
         await deleteAccountProfileType(api, baseUrl, session.token, profileType);
       }

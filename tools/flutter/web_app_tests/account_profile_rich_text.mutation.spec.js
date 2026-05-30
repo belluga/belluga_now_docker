@@ -3,6 +3,9 @@ const { test, expect, request } = require('@playwright/test');
 const {
   loginTenantAdmin: loginTenantAdminWithRequiredCredentials,
 } = require('./support/tenant_admin_auth');
+const {
+  cleanupOnboardedAccount,
+} = require('./support/account_onboarding_cleanup');
 
 const tenantUrl = process.env.NAV_TENANT_URL;
 const appBootTimeoutMs = 90000;
@@ -365,7 +368,7 @@ async function createRichTextAccountProfile(
   const suffix = Date.now();
   const requestPayload = {
     name: `Playwright Rich ${suffix}`,
-    ownership_state: 'tenant_owned',
+    ownership_state: 'unmanaged',
     profile_type: profileType,
     bio: '<p>Initial bio</p>',
     content: '<p>Initial content</p>',
@@ -479,20 +482,6 @@ async function resolveAnonymousIdentityToken(api, baseUrl) {
   return token;
 }
 
-async function deleteAccountProfile(api, baseUrl, token, profileId) {
-  if (!profileId) {
-    return;
-  }
-
-  await api.delete(
-    buildUrl(baseUrl, `/admin/api/v1/account_profiles/${profileId}`),
-    {
-      headers: authHeaders(token),
-      failOnStatusCode: false,
-    },
-  );
-}
-
 async function deleteAccountProfileType(api, baseUrl, token, profileType) {
   if (!profileType) {
     return;
@@ -528,6 +517,7 @@ test('@mutation tenant-admin account-profile rich text persists and renders on a
   let adminContext;
   let publicContext;
   let profileId = null;
+  let accountSlug = null;
   let createdType = null;
   let session = null;
 
@@ -566,6 +556,7 @@ test('@mutation tenant-admin account-profile rich text persists and renders on a
       resolvedType,
     );
     profileId = created.profileId;
+    accountSlug = created.accountSlug;
     expect(created.accountSlug, 'Created account slug must be present.')
       .toBeTruthy();
     expect(profileId, 'Created Account Profile id must be present.').toBeTruthy();
@@ -636,7 +627,7 @@ test('@mutation tenant-admin account-profile rich text persists and renders on a
     await assertNoCriticalBrowserFailures(publicCollectors);
   } finally {
     if (session?.token) {
-      await deleteAccountProfile(api, baseUrl, session.token, profileId);
+      await cleanupOnboardedAccount(api, baseUrl, session.token, accountSlug);
       await deleteAccountProfileType(api, baseUrl, session.token, createdType);
     }
     if (publicContext) {
