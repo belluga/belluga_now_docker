@@ -1078,7 +1078,16 @@ test('@mutation tenant-admin keeps public Map filter config in the canonical fil
       }),
     ).toHaveCount(0, { timeout: appBootTimeoutMs });
 
-    await openTenantPath(page, baseUrl, '/admin/filters');
+    await openTenantPath(page, baseUrl, '/admin/settings');
+    const settingsFiltersEntry = page.getByRole('button', {
+      name: /^Filtros[\s\S]*Mapa público e superfícies configuráveis/i,
+    });
+    await expect(settingsFiltersEntry)
+      .toBeVisible({ timeout: appBootTimeoutMs });
+    await settingsFiltersEntry.click();
+    await expect(page).toHaveURL(/\/admin\/filters(?:\?|$)/, {
+      timeout: appBootTimeoutMs,
+    });
     await expect(page.getByRole('button', { name: /^Mapa/i }))
       .toBeVisible({ timeout: appBootTimeoutMs });
     await expect(page.getByRole('button', { name: /Eventos na Tela Principal/i }))
@@ -1173,6 +1182,148 @@ test('@mutation public Map keeps baseline primary filters without taxonomy subfi
   ).toBeTruthy();
 
   await assertNoCriticalBrowserFailures(collectors);
+});
+
+test('@mutation public Map navigates configured canonical filters with and without marker override visuals', async ({
+  page,
+}) => {
+  const baseUrl = requireTenantUrl();
+  const api = await createApiContext(baseUrl);
+  const collectors = installFailureCollectors(page);
+  let originalDiscoveryFilters = null;
+  const unique = Date.now();
+  const overrideKey = `pw_override_${unique}`;
+  const buttonOnlyKey = `pw_button_${unique}`;
+  const overrideLabel = `PW Override ${unique}`;
+  const buttonOnlyLabel = `PW Botao ${unique}`;
+  let session = null;
+
+  try {
+    session = await loginTenantAdmin(api, baseUrl);
+    const valuesResponse = await api.get(buildUrl(baseUrl, '/admin/api/v1/settings/values'), {
+      headers: authHeaders(session.token),
+    });
+    expect(valuesResponse.status(), 'Tenant-admin settings values must be readable')
+      .toBe(200);
+    const valuesPayload = normalizePayload(await valuesResponse.json());
+    originalDiscoveryFilters =
+      valuesPayload?.discovery_filters && typeof valuesPayload.discovery_filters === 'object'
+        ? valuesPayload.discovery_filters
+        : {};
+    const originalSurfaces =
+      originalDiscoveryFilters.surfaces && typeof originalDiscoveryFilters.surfaces === 'object'
+        ? originalDiscoveryFilters.surfaces
+        : {};
+    const nextDiscoveryFilters = {
+      ...originalDiscoveryFilters,
+      surfaces: {
+        ...originalSurfaces,
+        'public_map.primary': {
+          ...(originalSurfaces['public_map.primary'] || {}),
+          target: 'map_poi',
+          primary_selection_mode: 'single',
+          filters: [
+            {
+              key: overrideKey,
+              target: 'map_poi',
+              label: overrideLabel,
+              override_marker: true,
+              marker_override: {
+                mode: 'icon',
+                icon: 'music_note',
+                color: '#0055AA',
+                icon_color: '#F3F7FF',
+              },
+              query: {
+                entities: ['event'],
+              },
+            },
+            {
+              key: buttonOnlyKey,
+              target: 'map_poi',
+              label: buttonOnlyLabel,
+              override_marker: false,
+              marker_override: {
+                mode: 'icon',
+                icon: 'storefront',
+                color: '#0F766E',
+                icon_color: '#FFFFFF',
+              },
+              query: {
+                entities: ['account_profile'],
+              },
+            },
+          ],
+        },
+      },
+    };
+
+    const patchResponse = await api.patch(
+      buildUrl(baseUrl, '/admin/api/v1/settings/values/discovery_filters'),
+      {
+        headers: authHeaders(session.token),
+        data: nextDiscoveryFilters,
+      },
+    );
+    expect(patchResponse.status(), 'Canonical map filter fixtures must persist.')
+      .toBe(200);
+
+    const categories = await fetchMapFilters(page, baseUrl);
+    const overrideCategory = categories.find((category) => category.key === overrideKey);
+    const buttonOnlyCategory = categories.find((category) => category.key === buttonOnlyKey);
+    expect(overrideCategory, `Map API must expose ${overrideKey}.`).toBeTruthy();
+    expect(buttonOnlyCategory, `Map API must expose ${buttonOnlyKey}.`).toBeTruthy();
+    expect(overrideCategory.label).toBe(overrideLabel);
+    expect(overrideCategory.override_marker).toBe(true);
+    expect(overrideCategory.marker_override?.color).toBe('#0055AA');
+    expect(buttonOnlyCategory.label).toBe(buttonOnlyLabel);
+    expect(buttonOnlyCategory.override_marker).toBe(false);
+    expect(buttonOnlyCategory.marker_override?.color).toBe('#0F766E');
+
+    await openTenantPath(page, baseUrl, '/mapa');
+    await continueWithoutLocationIfPrompted(page);
+    await expect(page.getByRole('button', { name: labelPattern(overrideLabel) }))
+      .toBeVisible({ timeout: appBootTimeoutMs });
+    await expect(page.getByRole('button', { name: labelPattern(buttonOnlyLabel) }))
+      .toBeVisible({ timeout: appBootTimeoutMs });
+
+    const overrideRequest = page.waitForRequest((request) =>
+      request.url().includes('/api/v1/map/pois') &&
+      requestContainsFilterValue(request.url(), { value: 'event' }),
+    { timeout: appBootTimeoutMs });
+    await page.getByRole('button', { name: labelPattern(overrideLabel) })
+      .first()
+      .click();
+    await overrideRequest;
+    await expect(page.getByText(overrideLabel, { exact: true }))
+      .toBeVisible({ timeout: appBootTimeoutMs });
+    await page.getByRole('button', { name: /Remover filtro/i }).click();
+
+    const buttonOnlyRequest = page.waitForRequest((request) =>
+      request.url().includes('/api/v1/map/pois') &&
+      requestContainsFilterValue(request.url(), { value: 'account_profile' }),
+    { timeout: appBootTimeoutMs });
+    await page.getByRole('button', { name: labelPattern(buttonOnlyLabel) })
+      .first()
+      .click();
+    await buttonOnlyRequest;
+    await expect(page.getByText(buttonOnlyLabel, { exact: true }))
+      .toBeVisible({ timeout: appBootTimeoutMs });
+
+    await assertNoCriticalBrowserFailures(collectors);
+  } finally {
+    if (originalDiscoveryFilters !== null) {
+      await api.patch(
+        buildUrl(baseUrl, '/admin/api/v1/settings/values/discovery_filters'),
+        {
+          headers: authHeaders(session?.token ?? ''),
+          data: originalDiscoveryFilters,
+          failOnStatusCode: false,
+        },
+      ).catch(() => {});
+    }
+    await api.dispose();
+  }
 });
 
 test('@mutation Home filters honor Event Type taxonomy compatibility, hide zero-taxonomy rows, and keep selected icon foreground aligned with the label', async ({

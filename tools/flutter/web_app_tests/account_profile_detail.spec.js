@@ -907,3 +907,145 @@ test('@mutation NAV-APD-09 Como Chegar opens focused map and shared route choose
     await api.dispose();
   }
 });
+
+test('@mutation NAV-APD-11 reference point action opens confirmation modal', async ({
+  page,
+}) => {
+  const baseUrl = requireTenantUrl();
+  const api = await createApiContext(baseUrl);
+  let sessionToken = null;
+  let createdAccountSlug = null;
+  let createdProfileType = null;
+
+  try {
+    sessionToken = await loginTenantAdmin(api, baseUrl);
+    const profileTypeSeed = await resolvePoiCapableProfileType(
+      api,
+      baseUrl,
+      sessionToken,
+    );
+    createdProfileType = profileTypeSeed.createdType;
+    const createdProfile = await createPoiAccountProfile(
+      api,
+      baseUrl,
+      sessionToken,
+      profileTypeSeed.profileType,
+    );
+    createdAccountSlug = createdProfile.accountSlug;
+
+    await gotoPublicProfileDetailAndWaitForHydration(
+      page,
+      baseUrl,
+      createdProfile.profileSlug,
+    );
+
+    const referencePointButton = page.getByRole('button', {
+      name: /Usar como ponto de referência/i,
+    }).first();
+    await clickLocatorCenter(
+      page,
+      referencePointButton,
+      'Eligible Account Profile detail must expose the reference-point CTA.',
+    );
+
+    await expect(
+      page.getByText(
+        'Todas as distâncias serão calculadas a partir desse local:',
+        { exact: true },
+      ),
+    ).toBeVisible({ timeout: appBootTimeoutMs });
+    await expect(page.getByText(labelPattern(createdProfile.displayName)).first())
+      .toBeVisible({ timeout: appBootTimeoutMs });
+    await expect(
+      page.getByRole('button', {
+        name: /Usar como Ponto de Referência/i,
+      }).first(),
+    ).toBeVisible({ timeout: appBootTimeoutMs });
+  } finally {
+    await cleanupOnboardedAccount(api, baseUrl, sessionToken, createdAccountSlug);
+    await deleteAccountProfileType(
+      api,
+      baseUrl,
+      sessionToken,
+      createdProfileType,
+    );
+    await api.dispose();
+  }
+});
+
+test('@mutation NAV-APD-13 map reference point action opens confirmation modal', async ({
+  page,
+}) => {
+  const baseUrl = requireTenantUrl();
+  const api = await createApiContext(baseUrl);
+  let sessionToken = null;
+  let createdAccountSlug = null;
+  let createdProfileType = null;
+
+  try {
+    await page.context().grantPermissions(['geolocation'], { origin: baseUrl });
+    await page
+      .context()
+      .setGeolocation({ latitude: -20.671339, longitude: -40.495395 });
+
+    sessionToken = await loginTenantAdmin(api, baseUrl);
+    const profileTypeSeed = await resolvePoiCapableProfileType(
+      api,
+      baseUrl,
+      sessionToken,
+    );
+    createdProfileType = profileTypeSeed.createdType;
+    const createdProfile = await createPoiAccountProfile(
+      api,
+      baseUrl,
+      sessionToken,
+      profileTypeSeed.profileType,
+    );
+    createdAccountSlug = createdProfile.accountSlug;
+
+    await gotoPublicProfileDetailAndWaitForHydration(
+      page,
+      baseUrl,
+      createdProfile.profileSlug,
+    );
+    await expect(page.getByText(/Como Chegar/i).first()).toBeVisible({
+      timeout: appBootTimeoutMs,
+    });
+    await page.getByText(/Ver no mapa/i).first().click();
+    await continueWithoutLocationIfPrompted(page);
+    await expect(page).toHaveURL(/\/mapa.*poi=account_profile/i, {
+      timeout: appBootTimeoutMs,
+    });
+
+    const referencePointButton = page.getByRole('button', {
+      name: /Usar como ponto de referência/i,
+    }).first();
+    await clickLocatorCenter(
+      page,
+      referencePointButton,
+      'Focused Account Profile map card must expose the reference-point CTA.',
+    );
+    await expect(
+      page.getByText(
+        'Todas as distâncias serão calculadas a partir desse local:',
+        { exact: true },
+      ),
+    ).toBeVisible({ timeout: appBootTimeoutMs });
+    await expect(page.getByText(labelPattern(createdProfile.displayName)).first())
+      .toBeVisible({ timeout: appBootTimeoutMs });
+    await expect(
+      page.getByRole('button', {
+        name: /Usar como Ponto de Referência/i,
+      }).first(),
+    ).toBeVisible({ timeout: appBootTimeoutMs });
+  } finally {
+    await cleanupOnboardedAccount(api, baseUrl, sessionToken, createdAccountSlug);
+    await deleteAccountProfileType(
+      api,
+      baseUrl,
+      sessionToken,
+      createdProfileType,
+    );
+    await api.dispose();
+  }
+});
