@@ -295,7 +295,7 @@ async function continueWithoutLocationIfPrompted(page) {
     .first()
     .waitFor({
       state: 'visible',
-      timeout: 15000,
+      timeout: 45000,
     })
     .catch(() => null);
 

@@ -2,17 +2,20 @@
   "mutation": {
     "shards": {
       "apd": {
-        "grep_extra": "(?:account-profile rich text|NAV-APD-07|NAV-APD-09)",
+        "grep_extra": "(?:account-profile rich text|NAV-APD-07|NAV-APD-09|NAV-APD-11|NAV-APD-13)",
         "expected_titles": [
           "@mutation tenant-admin account-profile rich text persists and renders on admin and public surfaces",
           "@mutation NAV-APD-07..08 agenda is occurrence-first and cards navigate to event detail",
-          "@mutation NAV-APD-09 Como Chegar opens focused map and shared route chooser"
+          "@mutation NAV-APD-09 Como Chegar opens focused map and shared route chooser",
+          "@mutation NAV-APD-11 reference point action opens confirmation modal",
+          "@mutation NAV-APD-13 map reference point action opens confirmation modal"
         ]
       },
       "filters": {
-        "grep_extra": "(?:public Map keeps|Home filters honor|Profile Discovery excludes|event rich text)",
+        "grep_extra": "(?:public Map keeps|public Map navigates|Home filters honor|Profile Discovery excludes|event rich text)",
         "expected_titles": [
           "@mutation public Map keeps baseline primary filters without taxonomy subfilters and uses backend filtering",
+          "@mutation public Map navigates configured canonical filters with and without marker override visuals",
           "@mutation Home filters honor Event Type taxonomy compatibility, hide zero-taxonomy rows, and keep selected icon foreground aligned with the label",
           "@mutation Profile Discovery excludes non-favoritable types and keeps selected icon foreground aligned with the label",
           "@mutation tenant-admin event rich text persists and renders in public Sobre"
@@ -61,7 +64,7 @@
         "expected_titles": [
           "@mutation INVITE-SESSION-CONTEXT invite landing exposes dynamic share metadata",
           "@mutation INVITE-SESSION-CONTEXT Android direct invite and event links generate app intent handoff",
-          "@mutation T6-EVENT-SHARE anonymous web event detail share preserves promotion boundary"
+          "@mutation T6-EVENT-SHARE anonymous web event invite preserves promotion boundary"
         ]
       }
     }

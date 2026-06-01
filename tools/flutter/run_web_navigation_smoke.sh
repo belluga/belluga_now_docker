@@ -88,7 +88,9 @@ fi
 
 DEFAULT_OUTPUT_DIR="${RUNNER_DIR}/test-results"
 WEB_WORKERS="${NAV_WEB_WORKERS:-}"
-if [[ -z "${WEB_WORKERS}" && "${SUITE}" == "mutation" ]]; then
+if [[ -z "${WEB_WORKERS}" ]]; then
+  # Public-tunnel navigation smoke is a deterministic gate, not a load test.
+  # Runtime/load behavior belongs in dedicated stress validation.
   WEB_WORKERS=1
 fi
 

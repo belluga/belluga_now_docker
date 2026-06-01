@@ -83,26 +83,15 @@ async function fetchAndroidIntentRedirect(request, baseUrl, params) {
   return response.headers().location || '';
 }
 
-function waitForOpenAppResponse(context, baseUrl, timeoutMs) {
+function waitForOpenAppResponse(page, baseUrl, timeoutMs) {
   const expectedOrigin = new URL(baseUrl).origin;
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      context.off('response', onResponse);
-      reject(new Error(`Timed out waiting for /open-app on ${expectedOrigin}`));
-    }, timeoutMs);
-
-    function onResponse(response) {
+  return page.waitForResponse(
+    (response) => {
       const url = new URL(response.url());
-      if (url.origin !== expectedOrigin || url.pathname !== '/open-app') {
-        return;
-      }
-      clearTimeout(timer);
-      context.off('response', onResponse);
-      resolve(response);
-    }
-
-    context.on('response', onResponse);
-  });
+      return url.origin === expectedOrigin && url.pathname === '/open-app';
+    },
+    { timeout: timeoutMs },
+  );
 }
 
 async function expectAndroidOpenAppIntent({
@@ -113,7 +102,7 @@ async function expectAndroidOpenAppIntent({
   timeoutMs,
 }) {
   const responsePromise = waitForOpenAppResponse(
-    page.context(),
+    page,
     baseUrl,
     timeoutMs,
   );
@@ -137,7 +126,7 @@ async function expectAndroidOpenAppHandoff({
   timeoutMs,
 }) {
   const responsePromise = waitForOpenAppResponse(
-    page.context(),
+    page,
     baseUrl,
     timeoutMs,
   );

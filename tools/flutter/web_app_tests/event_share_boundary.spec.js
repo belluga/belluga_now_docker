@@ -280,7 +280,7 @@ function recordShareCreateRequests(page) {
   return requests;
 }
 
-test('@mutation T6-EVENT-SHARE anonymous web event detail share preserves promotion boundary', async ({
+test('@mutation T6-EVENT-SHARE anonymous web event invite preserves promotion boundary', async ({
   browser,
 }) => {
   const baseUrl = requireTenantUrl();
@@ -312,6 +312,9 @@ test('@mutation T6-EVENT-SHARE anonymous web event detail share preserves promot
 
     await assertAppBooted(page);
     await enableAccessibilityIfNeeded(page);
+    await expect(page.getByRole('button', { name: /Convidar/i })).toBeVisible({
+      timeout: appBootTimeoutMs,
+    });
     await expect(page.getByRole('button', { name: /Compartilhar/i })).toBeVisible({
       timeout: appBootTimeoutMs,
     });
@@ -319,9 +322,10 @@ test('@mutation T6-EVENT-SHARE anonymous web event detail share preserves promot
       timeout: appBootTimeoutMs,
     });
 
-    await page.getByRole('button', { name: /Compartilhar/i }).click();
+    await page.getByRole('button', { name: /Convidar/i }).click();
 
-    const expectedPromotionUrl = `**/baixe-o-app?redirect=${encodeURIComponent(eventPath)}`;
+    const inviteSharePath = '/convites/compartilhar';
+    const expectedPromotionUrl = `**/baixe-o-app?redirect=${encodeURIComponent(inviteSharePath)}`;
     const promotionOverlayTitle = page.getByText(/fica melhor no app/i).first();
 
     await Promise.race([
@@ -346,7 +350,7 @@ test('@mutation T6-EVENT-SHARE anonymous web event detail share preserves promot
 
     expect(
       shareCreateRequests,
-      'Anonymous web event-detail share must not create invite share codes on web.',
+      'Anonymous web event invite action must stop at the promotion/auth boundary and must not create invite share codes on web.',
     ).toEqual([]);
   } finally {
     await context.close();

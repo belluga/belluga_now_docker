@@ -432,7 +432,12 @@ async function createDetailEventType(api, baseUrl, token) {
   return payload?.data || {};
 }
 
-async function gotoPublicProfileDetailAndWaitForHydration(page, baseUrl, slug) {
+async function gotoPublicProfileDetailAndWaitForHydration(
+  page,
+  baseUrl,
+  slug,
+  { readPayload = true } = {},
+) {
   const responsePromise = page.waitForResponse(
     (candidate) => {
       if (candidate.request().method().toUpperCase() !== 'GET') {
@@ -455,10 +460,25 @@ async function gotoPublicProfileDetailAndWaitForHydration(page, baseUrl, slug) {
   const hydratedResponse = await responsePromise;
   expect(hydratedResponse.status(), 'Profile detail API must load.')
     .toBeLessThan(400);
+  if (!readPayload) {
+    await assertAppBooted(page);
+    await enableAccessibilityIfNeeded(page);
+    return null;
+  }
+  let payload;
+  try {
+    payload = await hydratedResponse.json();
+  } catch (_) {
+    const fallbackResponse = await page.request.get(
+      buildUrl(baseUrl, `/api/v1/account_profiles/${slug}`),
+    );
+    expect(fallbackResponse.status(), 'Profile detail API fallback must load.')
+      .toBeLessThan(400);
+    payload = await fallbackResponse.json();
+  }
   await assertAppBooted(page);
   await enableAccessibilityIfNeeded(page);
 
-  const payload = await hydratedResponse.json();
   return normalizePayload(payload);
 }
 
@@ -878,23 +898,15 @@ test('@mutation NAV-APD-09 Como Chegar opens focused map and shared route choose
       page,
       baseUrl,
       createdProfile.profileSlug,
+      { readPayload: false },
     );
-    const routeChooserCta = page
-      .getByRole('button', { name: /Traçar rota/i })
-      .first();
-    if (!(await routeChooserCta.isVisible().catch(() => false))) {
-      await clickLocatorCenter(
-        page,
-        page.getByRole('button', { name: /^Como Chegar$/i }).first(),
-        'Account Profile detail must expose the Como Chegar tab as a semantic button when route CTA is not already visible.',
-      );
-    }
+    const routeChooserCta = page.getByRole('button', { name: /^Outros$/i }).first();
     await clickLocatorCenter(
       page,
       routeChooserCta,
-      'Account Profile detail must expose the shared route chooser CTA.',
+      'Account Profile detail must expose the shared directions chooser through the inline Outros action.',
     );
-    await expect(page.getByText(/Google Maps|Apple Maps|Waze|Navegar/i).first())
+    await expect(page.getByText(/Google Maps|99|Waze|Uber/i).first())
       .toBeVisible({ timeout: appBootTimeoutMs });
   } finally {
     await cleanupOnboardedAccount(api, baseUrl, sessionToken, createdAccountSlug);
