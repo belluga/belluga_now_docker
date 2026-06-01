@@ -627,6 +627,42 @@ async function createImageTestProfile(
   };
 }
 
+async function createAccountProfileForType(
+  api,
+  baseUrl,
+  token,
+  { name, profileType },
+) {
+  const payload = {
+    name,
+    ownership_state: 'unmanaged',
+    profile_type: profileType.type,
+  };
+
+  if (profileType?.capabilities?.is_poi_enabled === true) {
+    payload.location = {
+      lat: -20.671339,
+      lng: -40.495395,
+    };
+  }
+
+  const response = await api.post(
+    buildApiUrl(baseUrl, '/admin/api/v1/account_onboardings'),
+    {
+      data: payload,
+      headers: authHeaders(token),
+    },
+  );
+  expect(response.status(), `Account onboarding must succeed for ${name}.`).toBe(
+    201,
+  );
+  const created = await response.json();
+  return {
+    accountSlug: created?.data?.account?.slug,
+    profileId: created?.data?.account_profile?.id,
+  };
+}
+
 async function deleteEventType(api, baseUrl, token, eventTypeId) {
   if (!eventTypeId) {
     return;
@@ -1243,6 +1279,139 @@ test('@mutation tenant-admin account-profile avatar upload persists and renders 
     }
     if (verificationContext) {
       await verificationContext.close();
+    }
+    if (browserContext) {
+      await browserContext.close();
+    }
+    await api.dispose();
+  }
+});
+
+test('@mutation tenant-admin account profile nested tabs obey profile type capability', async ({
+  browser,
+}) => {
+  const baseUrl = requireTenantUrl();
+  const api = await createApiContext(baseUrl);
+  let browserContext;
+  let session = null;
+  let disabledTypeKey = null;
+  let enabledTypeKey = null;
+  let disabledAccountSlug = null;
+  let enabledAccountSlug = null;
+
+  try {
+    session = await loginTenantAdmin(api, baseUrl);
+    const unique = Date.now();
+    const disabledType = (
+      await createAccountProfileType(api, baseUrl, session.token, {
+        type: `pw-nested-off-${unique}`,
+        label: `PW Nested Off ${unique}`,
+        allowedTaxonomies: [],
+        markerColor: '#65758B',
+        capabilities: {
+          is_favoritable: false,
+          is_poi_enabled: false,
+          has_avatar: false,
+          has_cover: false,
+          has_taxonomies: false,
+          has_nested_profile_groups: false,
+        },
+      })
+    )?.data;
+    const enabledType = (
+      await createAccountProfileType(api, baseUrl, session.token, {
+        type: `pw-nested-on-${unique}`,
+        label: `PW Nested On ${unique}`,
+        allowedTaxonomies: [],
+        markerColor: '#0E7A6A',
+        capabilities: {
+          is_favoritable: false,
+          is_poi_enabled: false,
+          has_avatar: false,
+          has_cover: false,
+          has_taxonomies: false,
+          has_nested_profile_groups: true,
+        },
+      })
+    )?.data;
+    disabledTypeKey = disabledType?.type?.toString() || '';
+    enabledTypeKey = enabledType?.type?.toString() || '';
+    expect(disabledTypeKey, 'Disabled nested type must be created.').toBeTruthy();
+    expect(enabledTypeKey, 'Enabled nested type must be created.').toBeTruthy();
+
+    const disabledProfile = await createAccountProfileForType(
+      api,
+      baseUrl,
+      session.token,
+      {
+        name: `PW Nested Disabled ${unique}`,
+        profileType: disabledType,
+      },
+    );
+    const enabledProfile = await createAccountProfileForType(
+      api,
+      baseUrl,
+      session.token,
+      {
+        name: `PW Nested Enabled ${unique}`,
+        profileType: enabledType,
+      },
+    );
+    disabledAccountSlug = disabledProfile.accountSlug;
+    enabledAccountSlug = enabledProfile.accountSlug;
+    expect(disabledProfile.profileId, 'Disabled profile id must exist.').toBeTruthy();
+    expect(enabledProfile.profileId, 'Enabled profile id must exist.').toBeTruthy();
+
+    const pageBundle = await createAuthenticatedTenantAdminPage(browser, session);
+    browserContext = pageBundle.context;
+    const page = pageBundle.page;
+    const collectors = installFailureCollectors(page);
+
+    let response = await page.goto(
+      buildApiUrl(
+        baseUrl,
+        `/admin/accounts/${disabledProfile.accountSlug}/profiles/${disabledProfile.profileId}/edit`,
+      ),
+      { waitUntil: 'domcontentloaded' },
+    );
+    expect(response, 'Disabled profile edit response should be available.').not.toBeNull();
+    expect(response.status()).toBeLessThan(400);
+    await assertAppBooted(page);
+    await enableAccessibilityIfNeeded(page);
+    await expect(page.getByText('Editar Perfil')).toBeVisible({
+      timeout: appBootTimeoutMs,
+    });
+    await expect(page.getByText('Abas de contas vinculadas')).toHaveCount(0);
+    await expect(
+      page.getByRole('button', { name: 'Adicionar grupo' }),
+    ).toHaveCount(0);
+
+    response = await page.goto(
+      buildApiUrl(
+        baseUrl,
+        `/admin/accounts/${enabledProfile.accountSlug}/profiles/${enabledProfile.profileId}/edit`,
+      ),
+      { waitUntil: 'domcontentloaded' },
+    );
+    expect(response, 'Enabled profile edit response should be available.').not.toBeNull();
+    expect(response.status()).toBeLessThan(400);
+    await assertAppBooted(page);
+    await enableAccessibilityIfNeeded(page);
+    await scrollUntilVisible(
+      page,
+      page.getByText('Abas de contas vinculadas'),
+      'Expected nested account tabs section for a capability-enabled profile type.',
+    );
+    await expect(page.getByText('Abas de contas vinculadas')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Adicionar grupo' })).toBeVisible();
+
+    await assertNoBrowserFailures(collectors);
+  } finally {
+    if (session?.token) {
+      await cleanupOnboardedAccount(api, baseUrl, session.token, disabledAccountSlug);
+      await cleanupOnboardedAccount(api, baseUrl, session.token, enabledAccountSlug);
+      await deleteAccountProfileType(api, baseUrl, session.token, disabledTypeKey);
+      await deleteAccountProfileType(api, baseUrl, session.token, enabledTypeKey);
     }
     if (browserContext) {
       await browserContext.close();

@@ -41,10 +41,11 @@
         ]
       },
       "admin-final": {
-        "grep_extra": "(?:cover upload|avatar upload|event type create|event type type asset|branding public|profile-type editors|tenant agenda UI|T6-PLURAL)",
+        "grep_extra": "(?:cover upload|avatar upload|nested tabs obey|event type create|event type type asset|branding public|profile-type editors|tenant agenda UI|T6-PLURAL)",
         "expected_titles": [
           "@mutation tenant-admin account-profile cover upload persists and renders after reload",
           "@mutation tenant-admin account-profile avatar upload persists and renders after reload",
+          "@mutation tenant-admin account profile nested tabs obey profile type capability",
           "@mutation tenant-admin event type create flow works through the real browser",
           "@mutation tenant-admin event type type asset upload persists and renders after edit reopen",
           "@mutation tenant-admin branding public default image and favicon persist after save and reload",
