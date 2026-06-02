@@ -500,9 +500,19 @@ function locationPayload(row) {
   return row?.location || row?.poi || row?.map_poi || null;
 }
 
+function hasNestedProfileGroups(row) {
+  const groups = Array.isArray(row?.nested_profile_groups)
+    ? row.nested_profile_groups
+    : [];
+  return groups.length > 0;
+}
+
 function isMinimalNoSections(row) {
   const about = textValue(row?.bio, row?.content, row?.description);
-  return !about && agendaOccurrences(row).length === 0 && locationPayload(row) == null;
+  return !about
+    && agendaOccurrences(row).length === 0
+    && locationPayload(row) == null
+    && !hasNestedProfileGroups(row);
 }
 
 async function loadRuntimeProfiles(api, baseUrl) {
