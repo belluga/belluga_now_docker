@@ -691,6 +691,16 @@ function filterOption(panel, label) {
     .or(panel.getByRole('switch', { name: pattern }));
 }
 
+async function expectFilterChipShowsVisibleLabel(locator, minWidth = 96) {
+  await expect(locator).toBeVisible({ timeout: appBootTimeoutMs });
+  const bounds = await locator.boundingBox();
+  expect(bounds, 'Filter chip must expose a measurable bounding box.').toBeTruthy();
+  expect(
+    bounds.width,
+    `Filter chip must stay wider than the icon-only compact state (${minWidth}px minimum).`,
+  ).toBeGreaterThan(minWidth);
+}
+
 async function expectAccessibleGroupContains(locator, text) {
   await expect(locator).toHaveAccessibleName(
     accessibleTextPattern(text),
@@ -808,6 +818,148 @@ async function deleteEventType(api, baseUrl, token, eventTypeId) {
 
   await api.delete(
     buildUrl(baseUrl, `/admin/api/v1/event_types/${eventTypeId}`),
+    {
+      headers: authHeaders(token),
+      failOnStatusCode: false,
+    },
+  );
+}
+
+async function createNearbyAccountProfile(
+  api,
+  baseUrl,
+  token,
+  profileType,
+  name,
+) {
+  const response = await api.post(
+    buildUrl(baseUrl, '/admin/api/v1/account_onboardings'),
+    {
+      headers: authHeaders(token),
+      data: {
+        name,
+        ownership_state: 'unmanaged',
+        profile_type: profileType,
+        location: {
+          lat: navigationGeolocation.latitude,
+          lng: navigationGeolocation.longitude,
+        },
+      },
+    },
+  );
+  expect(response.status(), `Account profile ${name} must be created.`).toBe(201);
+
+  const payload = await response.json();
+  const data = payload?.data || {};
+  const account = data?.account || {};
+  const profile = data?.account_profile || {};
+  const id = profile?.id?.toString() || '';
+  expect(id, `Account profile ${name} must return id.`).toBeTruthy();
+  return {
+    id,
+    accountSlug: account?.slug?.toString() || '',
+    displayName: profile?.display_name?.toString() || name,
+    slug: profile?.slug?.toString() || '',
+    profileType,
+  };
+}
+
+async function updateAccountProfileTaxonomyTerms(
+  api,
+  baseUrl,
+  token,
+  profile,
+  taxonomyTerms,
+) {
+  const response = await api.patch(
+    buildUrl(baseUrl, `/admin/api/v1/account_profiles/${profile.id}`),
+    {
+      headers: authHeaders(token),
+      data: {
+        profile_type: profile.profileType,
+        display_name: profile.displayName,
+        taxonomy_terms: taxonomyTerms,
+      },
+    },
+  );
+  expect(
+    response.status(),
+    `Account profile ${profile.displayName} taxonomy update must succeed.`,
+  ).toBeLessThan(400);
+}
+
+function futureWindow(daysFromNow) {
+  const start = new Date();
+  start.setDate(start.getDate() + daysFromNow);
+  start.setHours(20, 0, 0, 0);
+
+  const end = new Date(start);
+  end.setHours(end.getHours() + 2);
+
+  return {
+    date_time_start: start.toISOString(),
+    date_time_end: end.toISOString(),
+  };
+}
+
+async function createDiagnosticEvent(
+  api,
+  baseUrl,
+  token,
+  {
+    title,
+    eventType,
+    host,
+    taxonomyTerms = [],
+    daysFromNow = 1,
+  },
+) {
+  const response = await api.post(
+    buildUrl(baseUrl, '/admin/api/v1/events'),
+    {
+      headers: authHeaders(token),
+      data: {
+        title,
+        content: `<p>${title} validates discovery filter runtime facets.</p>`,
+        type: {
+          id: eventType.id,
+          name: eventType.name,
+          slug: eventType.slug,
+          description: eventType.description || 'Discovery filters diagnostic event type',
+        },
+        location: {
+          mode: 'physical',
+        },
+        place_ref: {
+          type: 'account_profile',
+          id: host.id,
+        },
+        taxonomy_terms: taxonomyTerms,
+        occurrences: [futureWindow(daysFromNow)],
+        publication: {
+          status: 'published',
+          publish_at: new Date(Date.now() - 60 * 1000).toISOString(),
+        },
+      },
+    },
+  );
+  const responseBody = await response.json().catch(async () => ({
+    raw: await response.text().catch(() => ''),
+  }));
+  expect(
+    response.status(),
+    `Diagnostic event ${title} must be created. Response: ${JSON.stringify(responseBody)}`,
+  ).toBe(201);
+  return responseBody?.data || {};
+}
+
+async function deleteEvent(api, baseUrl, token, eventId) {
+  if (!eventId) {
+    return;
+  }
+
+  await api.delete(
+    buildUrl(baseUrl, `/admin/api/v1/events/${eventId}`),
     {
       headers: authHeaders(token),
       failOnStatusCode: false,
@@ -1333,11 +1485,13 @@ test('@mutation Home filters honor Event Type taxonomy compatibility, hide zero-
   const api = await createApiContext(baseUrl);
   const collectors = installFailureCollectors(page);
   let session = null;
+  let physicalHost = null;
   let typeAId = null;
   let typeBId = null;
   let typeCId = null;
   let taxonomyAId = null;
   let taxonomyBId = null;
+  const createdEventIds = [];
 
   try {
     session = await loginTenantAdmin(api, baseUrl);
@@ -1397,6 +1551,50 @@ test('@mutation Home filters honor Event Type taxonomy compatibility, hide zero-
       `hd10-empty-${unique}`,
     ]));
 
+    physicalHost = await createNearbyAccountProfile(
+      api,
+      baseUrl,
+      session.token,
+      'venue',
+      `HD10 Venue ${unique}`,
+    );
+
+    const eventA = await createDiagnosticEvent(api, baseUrl, session.token, {
+      title: `HD10 Event A ${unique}`,
+      eventType: typeA.data,
+      host: physicalHost,
+      taxonomyTerms: [
+        {
+          type: taxonomyA.slug,
+          value: `rock-${unique}`,
+        },
+      ],
+      daysFromNow: 1,
+    });
+    createdEventIds.push(eventA.event_id?.toString() || '');
+
+    const eventB = await createDiagnosticEvent(api, baseUrl, session.token, {
+      title: `HD10 Event B ${unique}`,
+      eventType: typeB.data,
+      host: physicalHost,
+      taxonomyTerms: [
+        {
+          type: taxonomyB.slug,
+          value: `chef-${unique}`,
+        },
+      ],
+      daysFromNow: 2,
+    });
+    createdEventIds.push(eventB.event_id?.toString() || '');
+
+    const eventC = await createDiagnosticEvent(api, baseUrl, session.token, {
+      title: `HD10 Event C ${unique}`,
+      eventType: typeC.data,
+      host: physicalHost,
+      daysFromNow: 3,
+    });
+    createdEventIds.push(eventC.event_id?.toString() || '');
+
     await grantNavigationGeolocation(page, baseUrl);
     await openTenantPath(page, baseUrl, '/');
     const filterAction = page.getByRole('button', {
@@ -1407,6 +1605,9 @@ test('@mutation Home filters honor Event Type taxonomy compatibility, hide zero-
 
     const panel = filterPanel(page, /Painel de filtros de eventos/i);
     await expect(panel).toBeVisible({ timeout: appBootTimeoutMs });
+    await expectFilterChipShowsVisibleLabel(filterOption(panel, typeALabel));
+    await expectFilterChipShowsVisibleLabel(filterOption(panel, typeBLabel));
+    await expectFilterChipShowsVisibleLabel(filterOption(panel, typeCLabel));
     await expect(filterOption(panel, typeALabel))
       .toBeVisible({ timeout: appBootTimeoutMs });
     await expect(filterOption(panel, typeBLabel))
@@ -1475,6 +1676,9 @@ test('@mutation Home filters honor Event Type taxonomy compatibility, hide zero-
 
     await assertNoCriticalBrowserFailures(collectors);
   } finally {
+    for (const eventId of createdEventIds.reverse()) {
+      await deleteEvent(api, baseUrl, session?.token, eventId);
+    }
     await deleteEventType(api, baseUrl, session?.token, typeCId);
     await deleteEventType(api, baseUrl, session?.token, typeBId);
     await deleteEventType(api, baseUrl, session?.token, typeAId);
@@ -1494,6 +1698,8 @@ test('@mutation Profile Discovery excludes non-favoritable types and keeps selec
   let visibleType = null;
   let hiddenType = null;
   let taxonomyId = null;
+  let visibleProfile = null;
+  let hiddenProfile = null;
 
   try {
     session = await loginTenantAdmin(api, baseUrl);
@@ -1539,6 +1745,46 @@ test('@mutation Profile Discovery excludes non-favoritable types and keeps selec
     expect(typeOptions.map((option) => option.value)).toContain(`hd12-visible-${unique}`);
     expect(typeOptions.map((option) => option.value)).not.toContain(`hd12-hidden-${unique}`);
 
+    visibleProfile = await createNearbyAccountProfile(
+      api,
+      baseUrl,
+      session.token,
+      `hd12-visible-${unique}`,
+      `HD12 Visivel ${unique}`,
+    );
+    await updateAccountProfileTaxonomyTerms(
+      api,
+      baseUrl,
+      session.token,
+      visibleProfile,
+      [
+        {
+          type: taxonomy.slug,
+          value: `japanese-${unique}`,
+        },
+      ],
+    );
+
+    hiddenProfile = await createNearbyAccountProfile(
+      api,
+      baseUrl,
+      session.token,
+      `hd12-hidden-${unique}`,
+      `HD12 Oculto ${unique}`,
+    );
+    await updateAccountProfileTaxonomyTerms(
+      api,
+      baseUrl,
+      session.token,
+      hiddenProfile,
+      [
+        {
+          type: taxonomy.slug,
+          value: `japanese-${unique}`,
+        },
+      ],
+    );
+
     await openTenantPath(page, baseUrl, '/descobrir');
     await expect(page.getByText('Descubra', { exact: true }))
       .toBeVisible({ timeout: appBootTimeoutMs });
@@ -1551,6 +1797,7 @@ test('@mutation Profile Discovery excludes non-favoritable types and keeps selec
 
     const panel = filterPanel(page, /Painel de filtros de perfis/i);
     await expect(panel).toBeVisible({ timeout: appBootTimeoutMs });
+    await expectFilterChipShowsVisibleLabel(filterOption(panel, visibleTypeLabel));
     await expect(filterOption(panel, visibleTypeLabel))
       .toBeVisible({ timeout: appBootTimeoutMs });
     await expect(filterOption(panel, hiddenTypeLabel))
