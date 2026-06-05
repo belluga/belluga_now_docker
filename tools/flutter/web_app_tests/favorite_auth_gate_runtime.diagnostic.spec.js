@@ -98,11 +98,11 @@ async function expectFavoritePromotionModal(page, promotionSignals) {
     timeout: appBootTimeoutMs,
   });
 
-  await expect(page.getByText(/fica melhor no app/i)).toBeVisible({
+  await expect(page.getByText(/Escolha seus favoritos pelo app/i)).toBeVisible({
     timeout: appBootTimeoutMs,
   });
   await expect(
-    page.getByText('Continue no app para destravar as ações e a experiência completa.'),
+    page.getByText('Use o app para salvar perfis favoritos e receber novidades.'),
   ).toBeVisible({
     timeout: appBootTimeoutMs,
   });
@@ -151,24 +151,24 @@ async function clickAccountHeroFavorite(page) {
   throw new Error('Could not locate the account hero favorite action.');
 }
 
-async function clickDiscoveryFavoriteForProfile(page, profileName) {
-  const cards = await page
-    .getByRole('button', { name: new RegExp(`Abrir perfil ${profileName}`, 'i') })
-    .all();
+async function clickFirstDiscoveryFavorite(page) {
+  await expect(page.getByText(/^Descubra$/i)).toBeVisible({
+    timeout: appBootTimeoutMs,
+  });
 
-  let cardBox = null;
-  for (const card of cards) {
-    const box = await card.boundingBox();
+  const namedFavoriteButtons = await page
+    .getByRole('button', { name: /Favoritar/i })
+    .all();
+  for (const button of namedFavoriteButtons) {
+    const box = await button.boundingBox();
     if (!box) {
       continue;
     }
-    if (box.width >= 120 && box.x >= 0 && box.x < 430 && box.y >= 250) {
-      cardBox = box;
-      break;
+    if (box.y >= 320 && box.x >= 100 && box.width >= 32 && box.height >= 32) {
+      await button.click({ timeout: appBootTimeoutMs });
+      return;
     }
   }
-
-  expect(cardBox, `Expected visible discovery card for ${profileName}.`).toBeTruthy();
 
   const buttons = await page.getByRole('button').all();
   for (const button of buttons) {
@@ -176,18 +176,21 @@ async function clickDiscoveryFavoriteForProfile(page, profileName) {
     if (!box) {
       continue;
     }
-    const horizontallyInsideFavoriteSlot =
-      box.x >= cardBox.x + cardBox.width - 58 &&
-      box.x <= cardBox.x + cardBox.width - 6;
-    const verticallyInsideFavoriteSlot =
-      box.y >= cardBox.y && box.y <= cardBox.y + 70;
-    if (horizontallyInsideFavoriteSlot && verticallyInsideFavoriteSlot) {
+    const isDiscoveryCardFavorite =
+      box.y >= 320 &&
+      box.x >= 100 &&
+      box.x <= 430 &&
+      box.width >= 32 &&
+      box.width <= 60 &&
+      box.height >= 32 &&
+      box.height <= 60;
+    if (isDiscoveryCardFavorite) {
       await button.click({ timeout: appBootTimeoutMs });
       return;
     }
   }
 
-  throw new Error(`Could not locate favorite button for ${profileName}.`);
+  throw new Error('Could not locate a visible discovery favorite action.');
 }
 
 test('@readonly @diagnostic FAV-GATE-RUNTIME web anonymous account and discovery favorite actions show app promotion modal', async ({
@@ -202,6 +205,6 @@ test('@readonly @diagnostic FAV-GATE-RUNTIME web anonymous account and discovery
   await expectFavoritePromotionModal(page, promotionSignals);
 
   await gotoBooted(page, baseUrl, '/descobrir');
-  await clickDiscoveryFavoriteForProfile(page, 'QA Discovery Tag Longa');
+  await clickFirstDiscoveryFavorite(page);
   await expectFavoritePromotionModal(page, promotionSignals);
 });

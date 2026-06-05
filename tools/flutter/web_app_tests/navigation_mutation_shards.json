@@ -65,7 +65,14 @@
         "expected_titles": [
           "@mutation INVITE-SESSION-CONTEXT invite landing exposes dynamic share metadata",
           "@mutation INVITE-SESSION-CONTEXT Android direct invite and event links generate app intent handoff",
-          "@mutation T6-EVENT-SHARE anonymous web event invite preserves promotion boundary"
+          "@mutation T6-EVENT-SHARE anonymous web event invite opens contextual promotion directly"
+        ]
+      },
+      "runtime-diagnostics": {
+        "grep_extra": "(?:QRY-RUNTIME|EVG-RUNTIME)",
+        "expected_titles": [
+          "@mutation @diagnostic QRY-RUNTIME admin/public queryability and navigation contract holds",
+          "@mutation @diagnostic EVG-RUNTIME admin/public event groups honor saved groups, legacy fallback, and invalid historical data"
         ]
       }
     }

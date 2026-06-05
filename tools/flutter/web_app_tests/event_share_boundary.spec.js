@@ -280,7 +280,33 @@ function recordShareCreateRequests(page) {
   return requests;
 }
 
-test('@mutation T6-EVENT-SHARE anonymous web event invite preserves promotion boundary', async ({
+async function installSystemShareRecorder(context) {
+  await context.addInitScript(() => {
+    const payloads = [];
+    Object.defineProperty(window, '__bellugaSystemSharePayloads', {
+      configurable: false,
+      enumerable: false,
+      value: payloads,
+      writable: false,
+    });
+    Object.defineProperty(navigator, 'canShare', {
+      configurable: true,
+      value: () => true,
+    });
+    Object.defineProperty(navigator, 'share', {
+      configurable: true,
+      value: async (payload) => {
+        payloads.push({
+          title: payload?.title || '',
+          text: payload?.text || '',
+          url: payload?.url || '',
+        });
+      },
+    });
+  });
+}
+
+test('@mutation T6-EVENT-SHARE anonymous web event invite opens contextual promotion directly', async ({
   browser,
 }) => {
   const baseUrl = requireTenantUrl();
@@ -300,6 +326,7 @@ test('@mutation T6-EVENT-SHARE anonymous web event invite preserves promotion bo
   const context = await browser.newContext({
     ignoreHTTPSErrors: true,
   });
+  await installSystemShareRecorder(context);
   const page = await context.newPage();
   const shareCreateRequests = recordShareCreateRequests(page);
 
@@ -318,39 +345,92 @@ test('@mutation T6-EVENT-SHARE anonymous web event invite preserves promotion bo
     await expect(page.getByRole('button', { name: /Compartilhar/i })).toBeVisible({
       timeout: appBootTimeoutMs,
     });
+    await expect(page.getByRole('button', { name: /WhatsApp/i })).toBeVisible({
+      timeout: appBootTimeoutMs,
+    });
     await expect(page.getByText(new RegExp(escapeRegExp(seedTitle), 'i'))).toBeVisible({
+      timeout: appBootTimeoutMs,
+    });
+
+    await page.getByRole('button', { name: /Compartilhar/i }).click();
+    await expect
+      .poll(
+        () =>
+          page.evaluate(
+            () => window.__bellugaSystemSharePayloads?.length || 0,
+          ),
+        {
+          message:
+            'Anonymous web share must call the system share bridge with public event payload.',
+          timeout: appBootTimeoutMs,
+        },
+      )
+      .toBe(1);
+    const [publicSharePayload] = await page.evaluate(
+      () => window.__bellugaSystemSharePayloads || [],
+    );
+    const publicShareText = [
+      publicSharePayload?.title || '',
+      publicSharePayload?.text || '',
+      publicSharePayload?.url || '',
+    ].join('\n');
+    expect(publicShareText).toContain(seedTitle);
+    expect(publicShareText).toContain('Ver evento:');
+    expect(publicShareText).toContain(`/agenda/evento/${routeRef}`);
+    expect(publicShareText).toContain(`occurrence=${occurrenceId}`);
+    expect(publicShareText).not.toContain('Convite para');
+    expect(publicShareText).not.toContain('te convidou');
+    expect(publicShareText).not.toContain('Responder ao convite:');
+    expect(publicShareText).not.toContain('/invite?code=');
+    expect(
+      shareCreateRequests,
+      'Anonymous web public share must not create invite share codes.',
+    ).toEqual([]);
+
+    await page.getByRole('button', { name: /Confirmar Presen/i }).click();
+    await expect(
+      page.getByText(/Confirme presença pelo app/i).first(),
+      'Anonymous web confirm attendance must open the canonical app promotion surface.',
+    ).toBeVisible({
+      timeout: appBootTimeoutMs,
+    });
+    await expect(
+      page.getByText(/Use o app para confirmar sua presença/i).first(),
+      'Anonymous web confirm attendance must explain the contextual app action.',
+    ).toBeVisible({
+      timeout: appBootTimeoutMs,
+    });
+    expect(
+      shareCreateRequests,
+      'Anonymous web confirm attendance must not create invite share codes.',
+    ).toEqual([]);
+    await page.getByRole('button', { name: /^Agora não$/i }).click();
+    await expect(page.getByText(/Confirme presença pelo app/i).first()).toBeHidden({
       timeout: appBootTimeoutMs,
     });
 
     await page.getByRole('button', { name: /Convidar/i }).click();
 
-    const inviteSharePath = '/convites/compartilhar';
-    const expectedPromotionUrl = `**/baixe-o-app?redirect=${encodeURIComponent(inviteSharePath)}`;
-    const promotionOverlayTitle = page.getByText(/fica melhor no app/i).first();
-
-    await Promise.race([
-      page.waitForURL(expectedPromotionUrl, {
-        timeout: appBootTimeoutMs,
-      }),
-      promotionOverlayTitle.waitFor({
-        state: 'visible',
-        timeout: appBootTimeoutMs,
-      }),
-    ]);
-
-    const landedOnPromotionRoute = page.url().includes('/baixe-o-app?redirect=');
-    if (!landedOnPromotionRoute) {
-      await expect(
-        promotionOverlayTitle,
-        'Anonymous event share may stay on the event route only if the promotion guard/modal is visibly open.',
-      ).toBeVisible({
-        timeout: appBootTimeoutMs,
-      });
-    }
+    await expect(
+      page.getByText(/Convide pessoas pelo app/i).first(),
+      'Anonymous event invite action must open the canonical contextual app-promotion modal directly.',
+    ).toBeVisible({
+      timeout: appBootTimeoutMs,
+    });
+    await expect(
+      page.getByText(/Use o app para escolher contatos/i).first(),
+      'Anonymous event invite action must explain the invite-specific app boundary.',
+    ).toBeVisible({
+      timeout: appBootTimeoutMs,
+    });
+    expect(
+      page.url(),
+      'Anonymous event invite action must not navigate to the legacy app-promotion route.',
+    ).not.toContain('/baixe-o-app');
 
     expect(
       shareCreateRequests,
-      'Anonymous web event invite action must stop at the promotion/auth boundary and must not create invite share codes on web.',
+      'Anonymous web invite action must stop at the promotion/auth boundary and must not create invite share codes on web.',
     ).toEqual([]);
   } finally {
     await context.close();

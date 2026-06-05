@@ -1002,6 +1002,14 @@ async function createSingleOccurrenceProgrammedEvent(
                 permissions: { can_edit: false },
               },
             ],
+            profile_groups: [
+              {
+                id: `programacao-single-${uniqueSuffix}`,
+                label: 'Participantes',
+                order: 0,
+                account_profile_ids: [occurrenceParty.id],
+              },
+            ],
             programming_items: [
               {
                 time: '17:00',
@@ -1019,12 +1027,14 @@ async function createSingleOccurrenceProgrammedEvent(
       headers: authHeaders(token),
     },
   );
+  const responseBody = await response.json().catch(async () => ({
+    raw: await response.text().catch(() => ''),
+  }));
   expect(
     response.status(),
-    'Single-occurrence programmed event seed must succeed.',
+    `Single-occurrence programmed event seed must succeed. Response: ${JSON.stringify(responseBody)}`,
   ).toBe(201);
-  const payload = await response.json();
-  const data = payload?.data;
+  const data = responseBody?.data;
   expect(
     data?.occurrences || [],
     'Single-occurrence programmed event must return one occurrence.',
@@ -1072,6 +1082,14 @@ async function createProgrammedMultiOccurrenceEvent(
             permissions: { can_edit: false },
           },
         ],
+        profile_groups: [
+          {
+            id: `programacao-evento-${uniqueSuffix}`,
+            label: 'Participantes',
+            order: 0,
+            account_profile_ids: [eventParty.id],
+          },
+        ],
         occurrences: [
           {
             date_time_start: firstStart.toISOString(),
@@ -1084,6 +1102,14 @@ async function createProgrammedMultiOccurrenceEvent(
               {
                 party_ref_id: occurrenceParty.id,
                 permissions: { can_edit: false },
+              },
+            ],
+            profile_groups: [
+              {
+                id: `programacao-ocorrencia-${uniqueSuffix}`,
+                label: 'Participantes',
+                order: 0,
+                account_profile_ids: [occurrenceParty.id],
               },
             ],
             programming_items: [
@@ -1121,10 +1147,15 @@ async function createProgrammedMultiOccurrenceEvent(
       headers: authHeaders(token),
     },
   );
-  expect(response.status(), 'Programmed multi-occurrence event seed must succeed.')
+  const responseBody = await response.json().catch(async () => ({
+    raw: await response.text().catch(() => ''),
+  }));
+  expect(
+    response.status(),
+    `Programmed multi-occurrence event seed must succeed. Response: ${JSON.stringify(responseBody)}`,
+  )
     .toBe(201);
-  const payload = await response.json();
-  const data = payload?.data;
+  const data = responseBody?.data;
   expect(data?.event_id?.toString(), 'Programmed event must return event_id.')
     .toBeTruthy();
   expect(data?.occurrences || [], 'Programmed event must return two occurrences.')

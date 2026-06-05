@@ -1,7 +1,7 @@
 const { execFileSync } = require('child_process');
 const crypto = require('crypto');
 const path = require('path');
-const { test, expect, request } = require('@playwright/test');
+const { test, expect, request, chromium } = require('@playwright/test');
 const { loginTenantAdmin } = require('./support/tenant_admin_auth');
 const {
   createAuthenticatedTenantAdminPage,
@@ -105,7 +105,12 @@ async function createApiContext(baseUrl) {
       Accept: 'application/json',
     },
     ignoreHTTPSErrors: true,
+    timeout: 45000,
   });
+}
+
+function logDiagnosticStep(message) {
+  console.log(`[EVG-RUNTIME] ${message}`);
 }
 
 async function assertAppBooted(page) {
@@ -172,6 +177,8 @@ async function createAccountProfileType(api, baseUrl, token, type, label, plural
         },
         allowed_taxonomies: [],
         capabilities: {
+          is_queryable: true,
+          is_publicly_navigable: false,
           is_favoritable: false,
           is_publicly_discoverable: false,
           is_poi_enabled: false,
@@ -206,6 +213,7 @@ async function deleteAccountProfileType(api, baseUrl, token, type) {
     {
       headers: authHeaders(token),
       failOnStatusCode: false,
+      timeout: 15000,
     },
   );
 }
@@ -428,6 +436,8 @@ async function resolvePoiCapableProfileType(api, baseUrl, token, suffix) {
         },
         allowed_taxonomies: [],
         capabilities: {
+          is_queryable: true,
+          is_publicly_navigable: false,
           is_favoritable: false,
           is_publicly_discoverable: false,
           is_poi_enabled: true,
@@ -555,9 +565,14 @@ async function createDiagnosticEvent(
     headers: authHeaders(token),
     data,
   });
-  expect(response.status(), `Diagnostic event ${title} must be created.`).toBe(201);
-  const payload = await response.json();
-  return payload?.data;
+  const responseBody = await response.json().catch(async () => ({
+    raw: await response.text().catch(() => ''),
+  }));
+  expect(
+    response.status(),
+    `Diagnostic event ${title} must be created. Response: ${JSON.stringify(responseBody)}`,
+  ).toBe(201);
+  return responseBody?.data;
 }
 
 function firstOccurrenceId(event) {
@@ -633,6 +648,21 @@ async function clickTab(page, label) {
   await textTab.click();
 }
 
+async function openOccurrenceFromPublicRoute(page, baseUrl, event, occurrenceIndex) {
+  const expectedOccurrenceId = occurrenceIdAt(event, occurrenceIndex);
+  logDiagnosticStep(`opening occurrence ${expectedOccurrenceId} at index ${occurrenceIndex}`);
+  await openEventDetail(page, baseUrl, event, occurrenceIndex);
+  await clickTab(page, 'Programação');
+  await page.waitForFunction(
+    ({ occurrenceId }) =>
+      window.location.href.includes(`occurrence=${encodeURIComponent(occurrenceId)}`),
+    { occurrenceId: expectedOccurrenceId },
+    { timeout: appBootTimeoutMs },
+  );
+  await assertAppBooted(page);
+  await enableAccessibilityIfNeeded(page);
+}
+
 async function assertTabMembers(page, tabLabel, expectedNames) {
   await clickTab(page, tabLabel);
   for (const name of expectedNames) {
@@ -648,6 +678,7 @@ async function deleteEvent(api, baseUrl, token, event) {
   await api.delete(buildUrl(baseUrl, `/admin/api/v1/events/${eventId}`), {
     headers: authHeaders(token),
     failOnStatusCode: false,
+    timeout: 15000,
   });
 }
 
@@ -707,19 +738,22 @@ function mutateEventProfileGroupsDirectly({ tenantId, eventId, profileIdToAppend
     {
       cwd: repoRoot,
       encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: 'ignore',
+      timeout: 30000,
     },
   );
 }
 
-test('@diagnostic EVG-RUNTIME admin/public event groups honor saved groups, legacy fallback, and invalid historical data', async ({
-  browser,
-}) => {
+test('@mutation @diagnostic EVG-RUNTIME admin/public event groups honor saved groups, legacy fallback, and invalid historical data', async () => {
   const baseUrl = requireTenantUrl();
   const api = await createApiContext(baseUrl);
   const createdEvents = [];
   const createdAccountSlugs = [];
   const createdProfileTypes = [];
+  const browser = await chromium.launch({
+    headless: true,
+    executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || undefined,
+  });
 
   try {
     const environmentResponse = await api.get(buildUrl(baseUrl, '/api/v1/environment'));
@@ -736,6 +770,7 @@ test('@diagnostic EVG-RUNTIME admin/public event groups honor saved groups, lega
     const { token } = adminSession;
 
     const suffix = Date.now().toString();
+    logDiagnosticStep(`seeding runtime data ${suffix}`);
     const typeA = `pw_evg_alpha_${suffix}`;
     const typeB = `pw_evg_beta_${suffix}`;
     const typeAPlural = `Tipos Alpha ${suffix}`;
@@ -778,10 +813,10 @@ test('@diagnostic EVG-RUNTIME admin/public event groups honor saved groups, lega
           account_profile_ids: [alphaTwo.id, betaTwo.id],
         },
       ],
-      occurrenceParties: [alphaOne, betaOne, alphaTwo, betaTwo],
       daysFromNow: 11,
     });
     createdEvents.push(groupedEvent);
+    logDiagnosticStep('created grouped event');
 
     const legacyEvent = await createDiagnosticEvent(api, baseUrl, token, {
       title: `PW EVG Legado Sem Grupos ${suffix}`,
@@ -791,6 +826,7 @@ test('@diagnostic EVG-RUNTIME admin/public event groups honor saved groups, lega
       daysFromNow: 12,
     });
     createdEvents.push(legacyEvent);
+    logDiagnosticStep('created legacy fallback event');
 
     const inconsistentEvent = await createDiagnosticEvent(api, baseUrl, token, {
       title: `PW EVG Historico Inconsistente ${suffix}`,
@@ -813,6 +849,7 @@ test('@diagnostic EVG-RUNTIME admin/public event groups honor saved groups, lega
       eventId: inconsistentEvent.event_id,
       profileIdToAppend: betaOne.id,
     });
+    logDiagnosticStep('created and mutated inconsistent event');
 
     const multiOccurrenceEvent = await createDiagnosticEvent(api, baseUrl, token, {
       title: `PW EVG Multi Ocorrencias ${suffix}`,
@@ -833,6 +870,14 @@ test('@diagnostic EVG-RUNTIME admin/public event groups honor saved groups, lega
               account_profile_ids: [alphaOne.id, betaOne.id],
             },
           ],
+          programming_items: [
+            {
+              time: '13:00',
+              end_time: '13:30',
+              title: 'Abertura Palco Sexta',
+              account_profile_ids: [alphaOne.id, betaOne.id],
+            },
+          ],
         },
         {
           ...futureWindow(15, 2),
@@ -847,10 +892,55 @@ test('@diagnostic EVG-RUNTIME admin/public event groups honor saved groups, lega
               account_profile_ids: [alphaTwo.id, betaTwo.id],
             },
           ],
+          programming_items: [
+            {
+              time: '14:00',
+              end_time: '14:30',
+              title: 'Abertura Palco Sabado',
+              account_profile_ids: [alphaTwo.id, betaTwo.id],
+            },
+          ],
         },
       ],
     });
     createdEvents.push(multiOccurrenceEvent);
+    logDiagnosticStep('created multi-occurrence event');
+
+    const overlapEvent = await createDiagnosticEvent(api, baseUrl, token, {
+      title: `PW EVG Sobreposicao Explicita ${suffix}`,
+      eventType,
+      host,
+      eventParties: [alphaOne, betaOne],
+      profileGroups: [
+        {
+          id: 'bandas-customizadas',
+          label: 'Bandas Customizadas',
+          order: 0,
+          account_profile_ids: [alphaOne.id, betaOne.id],
+        },
+      ],
+      occurrences: [
+        {
+          ...futureWindow(16, 0),
+        },
+        {
+          ...futureWindow(17, 2),
+          event_parties: [alphaOne, betaOne].map((profile) => ({
+            party_ref_id: profile.id,
+          })),
+          profile_groups: [
+            {
+              id: 'outro-grupo',
+              label: 'Outro Grupo',
+              order: 0,
+              account_profile_ids: [alphaOne.id, betaOne.id],
+            },
+          ],
+        },
+      ],
+    });
+    createdEvents.push(overlapEvent);
+    logDiagnosticStep('created explicit overlap event');
 
     const groupedApi = await fetchPublicEvent(api, baseUrl, groupedEvent);
     expect(groupedApi.profile_groups.map((group) => group.label)).toEqual([
@@ -880,10 +970,13 @@ test('@diagnostic EVG-RUNTIME admin/public event groups honor saved groups, lega
       0,
     );
     expect(multiOccurrenceFirstApi.profile_groups.map((group) => group.label))
-      .toEqual(['Palco Sexta']);
+      .toEqual(['Palco Sexta', 'Palco Sabado']);
     expect(
       multiOccurrenceFirstApi.profile_groups[0].profiles.map((profile) => profile.id),
     ).toEqual([alphaOne.id, betaOne.id]);
+    expect(
+      multiOccurrenceFirstApi.profile_groups[1].profiles.map((profile) => profile.id),
+    ).toEqual([alphaTwo.id, betaTwo.id]);
 
     const multiOccurrenceSecondApi = await fetchPublicEvent(
       api,
@@ -892,10 +985,29 @@ test('@diagnostic EVG-RUNTIME admin/public event groups honor saved groups, lega
       1,
     );
     expect(multiOccurrenceSecondApi.profile_groups.map((group) => group.label))
-      .toEqual(['Palco Sabado']);
+      .toEqual(['Palco Sexta', 'Palco Sabado']);
     expect(
       multiOccurrenceSecondApi.profile_groups[0].profiles.map((profile) => profile.id),
+    ).toEqual([alphaOne.id, betaOne.id]);
+    expect(
+      multiOccurrenceSecondApi.profile_groups[1].profiles.map((profile) => profile.id),
     ).toEqual([alphaTwo.id, betaTwo.id]);
+
+    const overlapApi = await fetchPublicEvent(
+      api,
+      baseUrl,
+      overlapEvent,
+      1,
+    );
+    expect(overlapApi.profile_groups.map((group) => group.label))
+      .toEqual(['Bandas Customizadas', 'Outro Grupo']);
+    expect(
+      overlapApi.profile_groups[0].profiles.map((profile) => profile.id),
+    ).toEqual([alphaOne.id, betaOne.id]);
+    expect(
+      overlapApi.profile_groups[1].profiles.map((profile) => profile.id),
+    ).toEqual([alphaOne.id, betaOne.id]);
+    logDiagnosticStep('public API assertions passed');
 
     const groupedPlacement = await locateAdminEventListPlacement(
       api,
@@ -914,6 +1026,7 @@ test('@diagnostic EVG-RUNTIME admin/public event groups honor saved groups, lega
       adminSession,
     );
     try {
+      logDiagnosticStep('admin browser assertions started');
       await openSeededEventFromAdminList(
         adminRuntime.page,
         baseUrl,
@@ -943,6 +1056,7 @@ test('@diagnostic EVG-RUNTIME admin/public event groups honor saved groups, lega
       );
     } finally {
       await adminRuntime.context.close();
+      logDiagnosticStep('admin browser context closed');
     }
 
     const context = await browser.newContext({
@@ -953,6 +1067,7 @@ test('@diagnostic EVG-RUNTIME admin/public event groups honor saved groups, lega
     });
     const page = await context.newPage();
     try {
+      logDiagnosticStep('public browser assertions started');
       await openEventDetail(page, baseUrl, groupedEvent);
       await expectVisibleText(page, 'Bandas Customizadas');
       await expectVisibleText(page, 'Expositores Curados');
@@ -987,54 +1102,85 @@ test('@diagnostic EVG-RUNTIME admin/public event groups honor saved groups, lega
 
       await openEventDetail(page, baseUrl, multiOccurrenceEvent, 0);
       await expectVisibleText(page, 'Palco Sexta');
+      await expectVisibleText(page, 'Palco Sabado');
+      await assertTabMembers(page, 'Palco Sexta', [
+        alphaOne.displayName,
+        betaOne.displayName,
+      ]);
+      await assertTabMembers(page, 'Palco Sabado', [
+        alphaTwo.displayName,
+        betaTwo.displayName,
+      ]);
+
+      await openOccurrenceFromPublicRoute(page, baseUrl, multiOccurrenceEvent, 1);
+      await expectVisibleText(page, 'Abertura Palco Sabado');
       await expectTextAbsent(
         page,
-        'Palco Sabado',
-        'First selected occurrence must not render second occurrence group.',
+        'Abertura Palco Sexta',
+        'Switching occurrence must change programming items.',
+      );
+      await expectVisibleText(page, 'Palco Sexta');
+      await expectVisibleText(page, 'Palco Sabado');
+      await assertTabMembers(page, 'Palco Sexta', [
+        alphaOne.displayName,
+        betaOne.displayName,
+      ]);
+      await assertTabMembers(page, 'Palco Sabado', [
+        alphaTwo.displayName,
+        betaTwo.displayName,
+      ]);
+
+      await openOccurrenceFromPublicRoute(page, baseUrl, multiOccurrenceEvent, 0);
+      await expectVisibleText(page, 'Palco Sexta');
+      await expectVisibleText(page, 'Palco Sabado');
+      await expectVisibleText(page, 'Abertura Palco Sexta');
+      await expectTextAbsent(
+        page,
+        'Abertura Palco Sabado',
+        'Switching back must change programming items.',
       );
       await assertTabMembers(page, 'Palco Sexta', [
         alphaOne.displayName,
         betaOne.displayName,
       ]);
-      await expectTextAbsent(
-        page,
-        alphaTwo.displayName,
-        'First selected occurrence must not render second occurrence alpha member.',
-      );
-      await expectTextAbsent(
-        page,
-        betaTwo.displayName,
-        'First selected occurrence must not render second occurrence beta member.',
-      );
-
-      await openEventDetail(page, baseUrl, multiOccurrenceEvent, 1);
-      await expectVisibleText(page, 'Palco Sabado');
-      await expectTextAbsent(
-        page,
-        'Palco Sexta',
-        'Second selected occurrence must not render first occurrence group.',
-      );
       await assertTabMembers(page, 'Palco Sabado', [
         alphaTwo.displayName,
         betaTwo.displayName,
       ]);
-      await expectTextAbsent(
-        page,
+
+      await openEventDetail(page, baseUrl, multiOccurrenceEvent, 1);
+      await expectVisibleText(page, 'Palco Sexta');
+      await expectVisibleText(page, 'Palco Sabado');
+      await assertTabMembers(page, 'Palco Sexta', [
         alphaOne.displayName,
-        'Second selected occurrence must not render first occurrence alpha member.',
-      );
-      await expectTextAbsent(
-        page,
         betaOne.displayName,
-        'Second selected occurrence must not render first occurrence beta member.',
-      );
+      ]);
+      await assertTabMembers(page, 'Palco Sabado', [
+        alphaTwo.displayName,
+        betaTwo.displayName,
+      ]);
+
+      await openEventDetail(page, baseUrl, overlapEvent, 1);
+      await expectVisibleText(page, 'Bandas Customizadas');
+      await expectVisibleText(page, 'Outro Grupo');
+      await assertTabMembers(page, 'Bandas Customizadas', [
+        alphaOne.displayName,
+        betaOne.displayName,
+      ]);
+      await assertTabMembers(page, 'Outro Grupo', [
+        alphaOne.displayName,
+        betaOne.displayName,
+      ]);
+      logDiagnosticStep('public browser assertions passed');
     } finally {
       await context.close();
+      logDiagnosticStep('public browser context closed');
     }
   } finally {
     const baseUrl = tenantUrl;
     const cleanupApi = await createApiContext(baseUrl);
     try {
+      logDiagnosticStep('cleanup started');
       const { token } = await loginTenantAdmin({
         api: cleanupApi,
         baseUrl,
@@ -1052,11 +1198,17 @@ test('@diagnostic EVG-RUNTIME admin/public event groups honor saved groups, lega
       for (const profileType of createdProfileTypes.reverse()) {
         await deleteAccountProfileType(cleanupApi, baseUrl, token, profileType);
       }
+      logDiagnosticStep('cleanup completed');
     } catch (_) {
       // Diagnostic cleanup is best effort; failing cleanup must not hide the validation result.
+      logDiagnosticStep('cleanup skipped after best-effort failure');
     } finally {
       await cleanupApi.dispose();
       await api.dispose();
+      logDiagnosticStep('api contexts disposed');
+      await browser.close().catch(() => {});
+      logDiagnosticStep('standalone browser closed');
     }
   }
+  logDiagnosticStep('test function returning');
 });
