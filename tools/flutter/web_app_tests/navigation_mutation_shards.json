@@ -2,22 +2,23 @@
   "mutation": {
     "shards": {
       "apd": {
-        "grep_extra": "(?:account-profile rich text|NAV-APD-07|NAV-APD-09|NAV-APD-11|NAV-APD-13)",
+        "grep_extra": "(?:account-profile rich text|NAV-APD-07|NAV-APD-09|NAV-APD-11|NAV-APD-13|NAV-DIR-BRAND-01)",
         "expected_titles": [
           "@mutation tenant-admin account-profile rich text persists and renders on admin and public surfaces",
           "@mutation NAV-APD-07..08 agenda is occurrence-first and cards navigate to event detail",
           "@mutation NAV-APD-09 Como Chegar opens focused map and shared route chooser",
           "@mutation NAV-APD-11 reference point action opens confirmation modal",
-          "@mutation NAV-APD-13 map reference point action opens confirmation modal"
+          "@mutation NAV-APD-13 map reference point action opens confirmation modal",
+          "@mutation NAV-DIR-BRAND-01 Waze and Uber brand controls render on shared directions surfaces"
         ]
       },
       "filters": {
-        "grep_extra": "(?:public Map keeps|public Map navigates|Home filters honor|Profile Discovery excludes|event rich text)",
+        "grep_extra": "(?:public Map keeps|public Map navigates|Home filters honor|Profile Discovery hides|event rich text)",
         "expected_titles": [
           "@mutation public Map keeps baseline primary filters without taxonomy subfilters and uses backend filtering",
           "@mutation public Map navigates configured canonical filters with and without marker override visuals",
           "@mutation Home filters honor Event Type taxonomy compatibility, hide zero-taxonomy rows, and keep selected icon foreground aligned with the label",
-          "@mutation Profile Discovery excludes non-favoritable types and keeps selected icon foreground aligned with the label",
+          "@mutation Profile Discovery hides non-publicly-discoverable types and keeps selected icon foreground aligned with the label",
           "@mutation tenant-admin event rich text persists and renders in public Sobre"
         ]
       },
@@ -67,14 +68,33 @@
           "@mutation INVITE-SESSION-CONTEXT Android direct invite and event links generate app intent handoff",
           "@mutation T6-EVENT-SHARE anonymous web event invite opens contextual promotion directly"
         ]
-      },
-      "runtime-diagnostics": {
-        "grep_extra": "(?:QRY-RUNTIME|EVG-RUNTIME)",
-        "expected_titles": [
-          "@mutation @diagnostic QRY-RUNTIME admin/public queryability and navigation contract holds",
-          "@mutation @diagnostic EVG-RUNTIME admin/public event groups honor saved groups, legacy fallback, and invalid historical data"
-        ]
       }
     }
+  },
+  "diagnostic": {
+    "expected_titles": [
+      "@diagnostic QRY-RUNTIME admin/public queryability and navigation contract holds",
+      "@diagnostic EVG-RUNTIME admin/public event groups honor saved groups, legacy fallback, and invalid historical data"
+    ]
+  },
+  "readonly": {
+    "expected_titles": [
+      "@readonly NAV-APD-01 Discovery profile detail back stack does not reopen stale detail",
+      "@readonly NAV-APD-02..06 and NAV-APD-10 hero, taxonomy, tabs, social removal, and optional favorite empty state are visible",
+      "@readonly NAV-APD-12 mobile breakpoint keeps title and taxonomy chips readable",
+      "@readonly BOORA-FONT-01 web runtime loads and draws BooraIcons glyphs",
+      "@readonly landlord and tenant well-known endpoints are JSON and not SPA fallback",
+      "@readonly landlord and tenant manifest endpoint is JSON and not SPA fallback",
+      "@readonly landlord and tenant favicon endpoint is image and not SPA fallback",
+      "@readonly tenant open-app generates Android handoff redirects for pre-Guard action targets",
+      "@readonly tenant Android direct public links request open-app handoff redirects",
+      "@readonly FAV-GATE-RUNTIME web anonymous account and discovery favorite actions show app promotion modal",
+      "@readonly MAP-NAV-REENTRY-01 tenant home can reopen map after returning from a warm permission-gated entry",
+      "@readonly MAP-WEB-WIDTH-01 tenant map route is full width while framed tenant routes remain constrained",
+      "@readonly landlord domain bootstraps as landlord and navigates",
+      "@readonly tenant domain bootstraps as tenant and navigates to tenant routes",
+      "@readonly OTP-WEB-BOUNDARY-01 tenant-public web auth remains app promotion boundary",
+      "@readonly taxonomy display snapshots render labels instead of slugs on public runtime routes"
+    ]
   }
 }

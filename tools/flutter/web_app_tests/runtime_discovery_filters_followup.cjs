@@ -3,6 +3,9 @@ const crypto = require('crypto');
 const {
   loginTenantAdmin: loginTenantAdminWithRequiredCredentials,
 } = require('./support/tenant_admin_auth');
+const {
+  requireLiveMutationContract,
+} = require('./support/live_navigation_mutation_contract');
 
 const baseUrl = process.env.NAV_TENANT_URL;
 const requestBaseUrl = process.env.NAV_REQUEST_BASE_URL || baseUrl;
@@ -268,7 +271,7 @@ async function createAccountProfileType(
           is_favoritable: isFavoritable,
           has_taxonomies: allowedTaxonomies.length > 0,
         },
-        poi_visual: {
+        visual: {
           mode: 'icon',
           icon,
           color,
@@ -640,6 +643,13 @@ async function validateDiscoveryFavoritableFiltering(page, api, session) {
 }
 
 async function main() {
+  requireLiveMutationContract({
+    scriptLabel: 'Runtime discovery filters follow-up',
+    allowedLanes: ['local'],
+    urlEnvNames: ['NAV_TENANT_URL', 'NAV_REQUEST_BASE_URL'],
+    hostEnvNames: ['NAV_REQUEST_HOST_HEADER'],
+    requireRuntimeMutationFlag: true,
+  });
   requireTenantUrl();
   const api = await createApiContext();
   const session = await loginTenantAdmin(api);

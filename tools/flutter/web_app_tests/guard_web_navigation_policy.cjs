@@ -12,12 +12,12 @@ const lane =
     .trim()
     .toLowerCase();
 
-const allowedSuiteTypes = new Set(['readonly', 'mutation']);
+const allowedSuiteTypes = new Set(['readonly', 'mutation', 'diagnostic']);
 
 if (!allowedSuiteTypes.has(suiteType)) {
   console.error(
     `Invalid NAV_WEB_TEST_TYPE "${process.env.NAV_WEB_TEST_TYPE ?? ''}". ` +
-      'Expected one of: readonly, mutation.',
+      'Expected one of: readonly, mutation, diagnostic.',
   );
   process.exit(1);
 }
@@ -29,12 +29,19 @@ if (suiteType === 'mutation' && lane === 'main') {
   process.exit(1);
 }
 
-if (suiteType === 'mutation') {
+if (suiteType === 'diagnostic' && lane !== 'local') {
+  console.error(
+    'Hard block: web diagnostic suite is local-only because runtime mutation diagnostics depend on the local docker stack.',
+  );
+  process.exit(1);
+}
+
+if (suiteType === 'mutation' || suiteType === 'diagnostic') {
   const adminEmail = (process.env.NAV_ADMIN_EMAIL || '').trim();
   const adminPassword = process.env.NAV_ADMIN_PASSWORD || '';
   if (!adminEmail || !adminPassword) {
     console.error(
-      'Hard block: mutation navigation requires NAV_ADMIN_EMAIL and NAV_ADMIN_PASSWORD from the runtime environment. Committed fallbacks are forbidden.',
+      `Hard block: ${suiteType} navigation requires NAV_ADMIN_EMAIL and NAV_ADMIN_PASSWORD from the runtime environment. Committed fallbacks are forbidden.`,
     );
     process.exit(1);
   }
@@ -48,13 +55,25 @@ const forbiddenCredentialPatterns = [
   /NAV_ADMIN_PASSWORD\s*\|\|\s*['"`][^'"`]+['"`]/,
   /process\.env\.NAV_ADMIN_EMAIL\s*\?\?\s*['"`][^'"`]+['"`]/,
   /process\.env\.NAV_ADMIN_PASSWORD\s*\?\?\s*['"`][^'"`]+['"`]/,
+  /(?:const|let|var)\s*\{[^}]*NAV_ADMIN_EMAIL\s*=\s*['"`][^'"`]+['"`][^}]*\}\s*=\s*process\.env/m,
+  /(?:const|let|var)\s*\{[^}]*NAV_ADMIN_PASSWORD\s*=\s*['"`][^'"`]+['"`][^}]*\}\s*=\s*process\.env/m,
   /const\s+admin(?:Email|Password)\s*=\s*['"`][^'"`]+['"`]/i,
 ];
 const credentialViolations = [];
 const coordinateClickViolations = [];
+const positionClickViolations = [];
 const forcedClickViolations = [];
+const evaluatedClickViolations = [];
 const nonSemanticDropdownViolations = [];
 const localDropdownHelperViolations = [];
+const evaluatedClickExpressionPattern =
+  /\.evaluate\s*\(\s*(?:async\s+)?(?:\(\s*[^)]*\s*\)|[A-Za-z_$][\w$]*)\s*=>\s*[^)\n]{0,120}?\.\s*click\s*\(\s*\)\s*\)/m;
+const evaluatedClickBlockPattern =
+  /\.evaluate\s*\(\s*(?:async\s+)?(?:\(\s*[^)]*\s*\)|[A-Za-z_$][\w$]*)\s*=>\s*\{[\s\S]{0,120}?\.\s*click\s*\(\s*\)[\s\S]{0,120}?\}\s*\)/m;
+const evaluatedClickFunctionPattern =
+  /\.evaluate\s*\(\s*(?:async\s+)?function(?:\s+[A-Za-z_$][\w$]*)?\s*\([^)]*\)\s*\{[\s\S]{0,160}?\.\s*click\s*\(\s*\)[\s\S]{0,160}?\}\s*\)/m;
+const localDropdownHelperPattern =
+  /\b(?:async\s+)?function\s+selectDropdownOption\b|\b(?:const|let|var)\s+selectDropdownOption\s*=|\b(?:module\.)?exports\.selectDropdownOption\s*=/m;
 function scanTestFiles(dir) {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     const filePath = path.join(dir, entry.name);
@@ -79,11 +98,21 @@ function scanTestFiles(dir) {
     if (/(?:^|[^\w$])(?:page|\w+(?:\.\w+)*\(\)|\w+(?:\.\w+)*)\.mouse\.click\s*\(/m.test(source)) {
       coordinateClickViolations.push(relativePath);
     }
+    if (/\.click\s*\(\s*\{[\s\S]*?\bposition\s*:/m.test(source)) {
+      positionClickViolations.push(relativePath);
+    }
     if (/\.click\s*\(\s*\{[^}]*force\s*:\s*true/m.test(source)) {
       forcedClickViolations.push(relativePath);
     }
     if (
-      /page\.getByText\s*\(\s*optionText/.test(source) ||
+      evaluatedClickExpressionPattern.test(source) ||
+      evaluatedClickBlockPattern.test(source) ||
+      evaluatedClickFunctionPattern.test(source)
+    ) {
+      evaluatedClickViolations.push(relativePath);
+    }
+    if (
+      /\.getByText\s*\(\s*optionText\s*\)\s*\.click\s*\(/.test(source) ||
       /\bkeyboard\.press\s*\(\s*['"`](?:ArrowDown|Home|End)['"`]\s*\)/.test(source) ||
       /\bfallback(?:ArrowDownCount|SelectFirstOption)\b/.test(source) ||
       /fallback to keyboard selection/i.test(source)
@@ -91,7 +120,7 @@ function scanTestFiles(dir) {
       nonSemanticDropdownViolations.push(relativePath);
     }
     if (
-      /function\s+selectDropdownOption\b/.test(source) &&
+      localDropdownHelperPattern.test(source) &&
       relativePath !== path.join('support', 'semantic_dropdown.js')
     ) {
       localDropdownHelperViolations.push(relativePath);
@@ -117,10 +146,28 @@ if (coordinateClickViolations.length > 0) {
   process.exit(1);
 }
 
+if (positionClickViolations.length > 0) {
+  console.error(
+    `Hard block: release-gating web navigation specs must not use locator.click({ position: ... }) coordinate targeting in ${[
+      ...new Set(positionClickViolations),
+    ].join(', ')}.`,
+  );
+  process.exit(1);
+}
+
 if (forcedClickViolations.length > 0) {
   console.error(
     `Hard block: release-gating web navigation specs must not bypass browser actionability with click({ force: true }) in ${[
       ...new Set(forcedClickViolations),
+    ].join(', ')}.`,
+  );
+  process.exit(1);
+}
+
+if (evaluatedClickViolations.length > 0) {
+  console.error(
+    `Hard block: release-gating web navigation specs must not bypass Playwright actionability with locator.evaluate(...click()) in ${[
+      ...new Set(evaluatedClickViolations),
     ].join(', ')}.`,
   );
   process.exit(1);

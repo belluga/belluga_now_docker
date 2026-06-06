@@ -432,9 +432,12 @@ jobs:
         id: stage_public_taxonomy_validation_fixture
         if: steps.stage_initialize_preflight.outputs.initialized == 'true' && steps.stage_untrusted_initialized_bootstrap_block.outcome != 'failure' && steps.stage_runtime_web_sha_check.outcome != 'failure' && steps.stage_public_edge_environment_probe.outcome != 'failure' && steps.stage_provenance_check.outcome != 'failure'
         env:
+          NAV_DEPLOY_LANE: stage
+          NAV_TEST_RUN_ID: stage-${{ github.run_id }}-${{ github.run_attempt }}
           NAV_TENANT_URL: ${{ steps.stage_nav_targets.outputs.tenant_url }}
           NAV_ADMIN_EMAIL: ${{ vars.STAGE_NAV_ADMIN_EMAIL }}
           NAV_ADMIN_PASSWORD: ${{ secrets.STAGE_NAV_ADMIN_PASSWORD }}
+          NAV_WEB_ALLOW_NONLOCAL_MUTATION_HOSTS: '1'
           NODE_PATH: ${{ github.workspace }}/tools/flutter/web_app_smoke_runner/node_modules
         working-directory: tools/flutter/web_app_smoke_runner
         run: node ../web_app_tests/ensure_public_taxonomy_validation_fixture.cjs
@@ -452,9 +455,11 @@ jobs:
         id: stage_navigation_smoke
         if: steps.stage_initialize_preflight.outputs.initialized == 'true' && steps.stage_untrusted_initialized_bootstrap_block.outcome != 'failure' && steps.stage_runtime_web_sha_check.outcome != 'failure' && steps.stage_public_edge_environment_probe.outcome != 'failure' && steps.stage_provenance_check.outcome != 'failure' && steps.stage_public_taxonomy_validation_fixture.outcome != 'failure'
         continue-on-error: true
-        timeout-minutes: 15
+        timeout-minutes: 25
         env:
           NAV_DEPLOY_LANE: stage
+          NAV_TEST_RUN_ID: stage-${{ github.run_id }}-${{ github.run_attempt }}
+          NAV_PUBLIC_TAXONOMY_MANAGED_FIXTURE: '1'
           NAV_WEB_TEST_TYPE: readonly
           NAV_LANDLORD_URL: ${{ steps.stage_nav_targets.outputs.landlord_url }}
           NAV_TENANT_URL: ${{ steps.stage_nav_targets.outputs.tenant_url }}
@@ -465,19 +470,37 @@ jobs:
         id: stage_navigation_mutation_smoke
         if: steps.stage_initialize_preflight.outputs.initialized == 'true' && steps.stage_untrusted_initialized_bootstrap_block.outcome != 'failure' && steps.stage_runtime_web_sha_check.outcome != 'failure' && steps.stage_public_edge_environment_probe.outcome != 'failure' && steps.stage_provenance_check.outcome != 'failure' && steps.stage_public_taxonomy_validation_fixture.outcome != 'failure' && steps.stage_navigation_smoke.outcome != 'failure'
         continue-on-error: true
-        timeout-minutes: 25
+        timeout-minutes: 35
         env:
           NAV_DEPLOY_LANE: stage
+          NAV_TEST_RUN_ID: stage-${{ github.run_id }}-${{ github.run_attempt }}
           NAV_WEB_TEST_TYPE: mutation
           NAV_LANDLORD_URL: ${{ steps.stage_nav_targets.outputs.landlord_url }}
           NAV_TENANT_URL: ${{ steps.stage_nav_targets.outputs.tenant_url }}
           PLAYWRIGHT_IGNORE_HTTPS_ERRORS: ${{ steps.stage_origin_host_overrides.outputs.playwright_ignore_https_errors }}
           NAV_ADMIN_EMAIL: ${{ vars.STAGE_NAV_ADMIN_EMAIL }}
           NAV_ADMIN_PASSWORD: ${{ secrets.STAGE_NAV_ADMIN_PASSWORD }}
+          NAV_WEB_ALLOW_NONLOCAL_MUTATION_HOSTS: '1'
         run: bash tools/flutter/run_web_navigation_smoke.sh mutation
 
+      - name: Clean up stage public taxonomy validation fixture
+        id: stage_public_taxonomy_validation_fixture_cleanup
+        if: ${{ always() && steps.stage_initialize_preflight.outputs.initialized == 'true' && steps.stage_public_taxonomy_validation_fixture.outcome != 'skipped' }}
+        continue-on-error: true
+        env:
+          NAV_DEPLOY_LANE: stage
+          NAV_PUBLIC_TAXONOMY_FIXTURE_ACTION: cleanup
+          NAV_TEST_RUN_ID: stage-${{ github.run_id }}-${{ github.run_attempt }}
+          NAV_TENANT_URL: ${{ steps.stage_nav_targets.outputs.tenant_url }}
+          NAV_ADMIN_EMAIL: ${{ vars.STAGE_NAV_ADMIN_EMAIL }}
+          NAV_ADMIN_PASSWORD: ${{ secrets.STAGE_NAV_ADMIN_PASSWORD }}
+          NAV_WEB_ALLOW_NONLOCAL_MUTATION_HOSTS: '1'
+          NODE_PATH: ${{ github.workspace }}/tools/flutter/web_app_smoke_runner/node_modules
+        working-directory: tools/flutter/web_app_smoke_runner
+        run: node ../web_app_tests/ensure_public_taxonomy_validation_fixture.cjs
+
       - name: Collect stage deploy diagnostics before rollback
-        if: ${{ always() && (steps.stage_deploy_remote.outcome == 'failure' || steps.stage_runtime_web_sha_check.outcome == 'failure' || steps.stage_initialize_preflight.outcome == 'failure' || steps.stage_untrusted_bootstrap_block.outcome == 'failure' || steps.stage_unexpected_initialize_403.outcome == 'failure' || steps.stage_untrusted_initialized_bootstrap_block.outcome == 'failure' || (steps.stage_initialize_preflight.outputs.initialized == 'true' && (steps.stage_public_edge_environment_probe.outcome == 'failure' || steps.stage_provenance_check.outcome == 'failure' || steps.stage_public_taxonomy_validation_fixture.outcome == 'failure' || steps.stage_navigation_smoke.outcome == 'failure' || steps.stage_navigation_mutation_smoke.outcome == 'failure'))) }}
+        if: ${{ always() && (steps.stage_deploy_remote.outcome == 'failure' || steps.stage_runtime_web_sha_check.outcome == 'failure' || steps.stage_initialize_preflight.outcome == 'failure' || steps.stage_untrusted_bootstrap_block.outcome == 'failure' || steps.stage_unexpected_initialize_403.outcome == 'failure' || steps.stage_untrusted_initialized_bootstrap_block.outcome == 'failure' || (steps.stage_initialize_preflight.outputs.initialized == 'true' && (steps.stage_public_edge_environment_probe.outcome == 'failure' || steps.stage_provenance_check.outcome == 'failure' || steps.stage_public_taxonomy_validation_fixture.outcome == 'failure' || steps.stage_navigation_smoke.outcome == 'failure' || steps.stage_navigation_mutation_smoke.outcome == 'failure' || steps.stage_public_taxonomy_validation_fixture_cleanup.outcome == 'failure'))) }}
         continue-on-error: true
         env:
           DEPLOY_LANE: stage
@@ -492,7 +515,7 @@ jobs:
         run: bash .github/scripts/collect_remote_deploy_diagnostics.sh
 
       - name: Upload stage navigation smoke artifacts
-        if: ${{ always() && (steps.stage_deploy_remote.outcome == 'failure' || steps.stage_runtime_web_sha_check.outcome == 'failure' || steps.stage_initialize_preflight.outcome == 'failure' || steps.stage_untrusted_bootstrap_block.outcome == 'failure' || steps.stage_unexpected_initialize_403.outcome == 'failure' || steps.stage_untrusted_initialized_bootstrap_block.outcome == 'failure' || steps.stage_public_edge_environment_probe.outcome == 'failure' || steps.stage_provenance_check.outcome == 'failure' || steps.stage_public_taxonomy_validation_fixture.outcome == 'failure' || steps.stage_navigation_smoke.outcome == 'failure' || steps.stage_navigation_mutation_smoke.outcome == 'failure') }}
+        if: ${{ always() && (steps.stage_deploy_remote.outcome == 'failure' || steps.stage_runtime_web_sha_check.outcome == 'failure' || steps.stage_initialize_preflight.outcome == 'failure' || steps.stage_untrusted_bootstrap_block.outcome == 'failure' || steps.stage_unexpected_initialize_403.outcome == 'failure' || steps.stage_untrusted_initialized_bootstrap_block.outcome == 'failure' || steps.stage_public_edge_environment_probe.outcome == 'failure' || steps.stage_provenance_check.outcome == 'failure' || steps.stage_public_taxonomy_validation_fixture.outcome == 'failure' || steps.stage_navigation_smoke.outcome == 'failure' || steps.stage_navigation_mutation_smoke.outcome == 'failure' || steps.stage_public_taxonomy_validation_fixture_cleanup.outcome == 'failure') }}
         uses: actions/upload-artifact@v7
         with:
           name: stage-navigation-smoke-${{ github.run_id }}-${{ github.run_attempt }}
@@ -504,7 +527,7 @@ jobs:
           retention-days: 7
 
       - name: Mark stage revision as successful after navigation smoke
-        if: steps.stage_initialize_preflight.outputs.initialized == 'true' && (steps.stage_rollback_target.outputs.trusted_tuple_present == 'true' || steps.stage_untrusted_initialized_bootstrap_block.outputs.first_trusted_tuple_bootstrap == 'true') && steps.stage_untrusted_initialized_bootstrap_block.outcome != 'failure' && steps.stage_runtime_web_sha_check.outcome == 'success' && steps.stage_public_edge_environment_probe.outcome == 'success' && steps.stage_provenance_check.outcome == 'success' && steps.stage_public_taxonomy_validation_fixture.outcome == 'success' && steps.stage_navigation_smoke.outcome == 'success' && steps.stage_navigation_mutation_smoke.outcome == 'success'
+        if: steps.stage_initialize_preflight.outputs.initialized == 'true' && (steps.stage_rollback_target.outputs.trusted_tuple_present == 'true' || steps.stage_untrusted_initialized_bootstrap_block.outputs.first_trusted_tuple_bootstrap == 'true') && steps.stage_untrusted_initialized_bootstrap_block.outcome != 'failure' && steps.stage_runtime_web_sha_check.outcome == 'success' && steps.stage_public_edge_environment_probe.outcome == 'success' && steps.stage_provenance_check.outcome == 'success' && steps.stage_public_taxonomy_validation_fixture.outcome == 'success' && steps.stage_navigation_smoke.outcome == 'success' && steps.stage_navigation_mutation_smoke.outcome == 'success' && steps.stage_public_taxonomy_validation_fixture_cleanup.outcome != 'failure'
         env:
           DEPLOY_LANE: stage
           DEPLOY_SSH_HOST: ${{ vars.STAGE_SSH_HOST }}
@@ -518,9 +541,9 @@ jobs:
           NGINX_IMAGE: ${{ steps.stage_runtime_images.outputs.nginx_image }}
         run: bash .github/scripts/mark_successful_revision_over_ssh.sh
 
-      - name: Roll back stage deploy when provenance, preflight, smoke, or post-mutation deploy failure requires recovery
+      - name: Roll back stage deploy when provenance, preflight, smoke, cleanup, or post-mutation deploy failure requires recovery
         id: stage_rollback
-        if: ${{ always() && steps.stage_rollback_target.outputs.trusted_tuple_present == 'true' && ((steps.stage_deploy_remote.outcome == 'failure' && steps.stage_deploy_remote.outputs.runtime_mutated == 'true' && steps.stage_deploy_remote.outputs.internal_rollback_status != 'success') || steps.stage_runtime_web_sha_check.outcome == 'failure' || steps.stage_initialize_preflight.outcome == 'failure' || steps.stage_unexpected_initialize_403.outcome == 'failure' || (steps.stage_initialize_preflight.outputs.initialized == 'true' && (steps.stage_public_edge_environment_probe.outcome == 'failure' || steps.stage_provenance_check.outcome == 'failure' || steps.stage_public_taxonomy_validation_fixture.outcome == 'failure' || steps.stage_navigation_smoke.outcome == 'failure' || steps.stage_navigation_mutation_smoke.outcome == 'failure'))) }}
+        if: ${{ always() && steps.stage_rollback_target.outputs.trusted_tuple_present == 'true' && ((steps.stage_deploy_remote.outcome == 'failure' && steps.stage_deploy_remote.outputs.runtime_mutated == 'true' && steps.stage_deploy_remote.outputs.internal_rollback_status != 'success') || steps.stage_runtime_web_sha_check.outcome == 'failure' || steps.stage_initialize_preflight.outcome == 'failure' || steps.stage_unexpected_initialize_403.outcome == 'failure' || (steps.stage_initialize_preflight.outputs.initialized == 'true' && (steps.stage_public_edge_environment_probe.outcome == 'failure' || steps.stage_provenance_check.outcome == 'failure' || steps.stage_public_taxonomy_validation_fixture.outcome == 'failure' || steps.stage_navigation_smoke.outcome == 'failure' || steps.stage_navigation_mutation_smoke.outcome == 'failure' || steps.stage_public_taxonomy_validation_fixture_cleanup.outcome == 'failure'))) }}
         env:
           DEPLOY_LANE: stage
           DEPLOY_SSH_HOST: ${{ vars.STAGE_SSH_HOST }}
@@ -732,9 +755,23 @@ jobs:
           EXPECTED_FLUTTER_SHA: ${{ steps.stage_rollback_proof_plan.outputs.expected_flutter_sha }}
         run: bash .github/scripts/check_deployed_web_provenance.sh stage
 
+      - name: Ensure restored stage public taxonomy validation fixture
+        id: stage_rollback_public_taxonomy_validation_fixture
+        if: ${{ always() && steps.stage_rollback_proof_plan.outputs.run == 'true' && steps.stage_rollback_initialize_preflight.outcome != 'failure' && steps.stage_rollback_public_edge_environment_probe.outcome != 'failure' && steps.stage_rollback_provenance_check.outcome != 'failure' }}
+        env:
+          NAV_DEPLOY_LANE: stage
+          NAV_TEST_RUN_ID: stage-${{ github.run_id }}-${{ github.run_attempt }}
+          NAV_TENANT_URL: ${{ steps.stage_nav_targets.outputs.tenant_url }}
+          NAV_ADMIN_EMAIL: ${{ vars.STAGE_NAV_ADMIN_EMAIL }}
+          NAV_ADMIN_PASSWORD: ${{ secrets.STAGE_NAV_ADMIN_PASSWORD }}
+          NAV_WEB_ALLOW_NONLOCAL_MUTATION_HOSTS: '1'
+          NODE_PATH: ${{ github.workspace }}/tools/flutter/web_app_smoke_runner/node_modules
+        working-directory: tools/flutter/web_app_smoke_runner
+        run: node ../web_app_tests/ensure_public_taxonomy_validation_fixture.cjs
+
       - name: Apply managed stage rollback-proof navigation host overrides to origin
         id: stage_rollback_origin_host_overrides
-        if: ${{ always() && steps.stage_rollback_proof_plan.outputs.run == 'true' && steps.stage_rollback_initialize_preflight.outcome != 'failure' && steps.stage_rollback_public_edge_environment_probe.outcome != 'failure' && steps.stage_rollback_provenance_check.outcome != 'failure' }}
+        if: ${{ always() && steps.stage_rollback_proof_plan.outputs.run == 'true' && steps.stage_rollback_initialize_preflight.outcome != 'failure' && steps.stage_rollback_public_edge_environment_probe.outcome != 'failure' && steps.stage_rollback_provenance_check.outcome != 'failure' && steps.stage_rollback_public_taxonomy_validation_fixture.outcome != 'failure' }}
         env:
           NAV_LANDLORD_URL: ${{ steps.stage_nav_targets.outputs.landlord_url }}
           NAV_TENANT_URL: ${{ steps.stage_nav_targets.outputs.tenant_url }}
@@ -743,11 +780,13 @@ jobs:
 
       - name: Run restored stage readonly navigation smoke
         id: stage_rollback_navigation_smoke
-        if: ${{ always() && steps.stage_rollback_proof_plan.outputs.run == 'true' && steps.stage_rollback_initialize_preflight.outcome != 'failure' && steps.stage_rollback_public_edge_environment_probe.outcome != 'failure' && steps.stage_rollback_provenance_check.outcome != 'failure' }}
+        if: ${{ always() && steps.stage_rollback_proof_plan.outputs.run == 'true' && steps.stage_rollback_initialize_preflight.outcome != 'failure' && steps.stage_rollback_public_edge_environment_probe.outcome != 'failure' && steps.stage_rollback_provenance_check.outcome != 'failure' && steps.stage_rollback_public_taxonomy_validation_fixture.outcome != 'failure' }}
         continue-on-error: true
-        timeout-minutes: 15
+        timeout-minutes: 25
         env:
           NAV_DEPLOY_LANE: stage
+          NAV_TEST_RUN_ID: stage-${{ github.run_id }}-${{ github.run_attempt }}
+          NAV_PUBLIC_TAXONOMY_MANAGED_FIXTURE: '1'
           NAV_WEB_TEST_TYPE: readonly
           NAV_LANDLORD_URL: ${{ steps.stage_nav_targets.outputs.landlord_url }}
           NAV_TENANT_URL: ${{ steps.stage_nav_targets.outputs.tenant_url }}
@@ -756,21 +795,39 @@ jobs:
 
       - name: Run restored stage mutation navigation smoke
         id: stage_rollback_navigation_mutation_smoke
-        if: ${{ always() && steps.stage_rollback_proof_plan.outputs.run == 'true' && steps.stage_rollback_initialize_preflight.outcome != 'failure' && steps.stage_rollback_public_edge_environment_probe.outcome != 'failure' && steps.stage_rollback_provenance_check.outcome != 'failure' && steps.stage_rollback_navigation_smoke.outcome != 'failure' }}
+        if: ${{ always() && steps.stage_rollback_proof_plan.outputs.run == 'true' && steps.stage_rollback_initialize_preflight.outcome != 'failure' && steps.stage_rollback_public_edge_environment_probe.outcome != 'failure' && steps.stage_rollback_provenance_check.outcome != 'failure' && steps.stage_rollback_public_taxonomy_validation_fixture.outcome != 'failure' && steps.stage_rollback_navigation_smoke.outcome != 'failure' }}
         continue-on-error: true
-        timeout-minutes: 25
+        timeout-minutes: 35
         env:
           NAV_DEPLOY_LANE: stage
+          NAV_TEST_RUN_ID: stage-${{ github.run_id }}-${{ github.run_attempt }}
           NAV_WEB_TEST_TYPE: mutation
           NAV_LANDLORD_URL: ${{ steps.stage_nav_targets.outputs.landlord_url }}
           NAV_TENANT_URL: ${{ steps.stage_nav_targets.outputs.tenant_url }}
           PLAYWRIGHT_IGNORE_HTTPS_ERRORS: ${{ steps.stage_rollback_origin_host_overrides.outputs.playwright_ignore_https_errors }}
           NAV_ADMIN_EMAIL: ${{ vars.STAGE_NAV_ADMIN_EMAIL }}
           NAV_ADMIN_PASSWORD: ${{ secrets.STAGE_NAV_ADMIN_PASSWORD }}
+          NAV_WEB_ALLOW_NONLOCAL_MUTATION_HOSTS: '1'
         run: bash tools/flutter/run_web_navigation_smoke.sh mutation
 
+      - name: Clean up restored stage public taxonomy validation fixture
+        id: stage_rollback_public_taxonomy_validation_fixture_cleanup
+        if: ${{ always() && steps.stage_rollback_proof_plan.outputs.run == 'true' && steps.stage_rollback_public_taxonomy_validation_fixture.outcome != 'skipped' }}
+        continue-on-error: true
+        env:
+          NAV_DEPLOY_LANE: stage
+          NAV_PUBLIC_TAXONOMY_FIXTURE_ACTION: cleanup
+          NAV_TEST_RUN_ID: stage-${{ github.run_id }}-${{ github.run_attempt }}
+          NAV_TENANT_URL: ${{ steps.stage_nav_targets.outputs.tenant_url }}
+          NAV_ADMIN_EMAIL: ${{ vars.STAGE_NAV_ADMIN_EMAIL }}
+          NAV_ADMIN_PASSWORD: ${{ secrets.STAGE_NAV_ADMIN_PASSWORD }}
+          NAV_WEB_ALLOW_NONLOCAL_MUTATION_HOSTS: '1'
+          NODE_PATH: ${{ github.workspace }}/tools/flutter/web_app_smoke_runner/node_modules
+        working-directory: tools/flutter/web_app_smoke_runner
+        run: node ../web_app_tests/ensure_public_taxonomy_validation_fixture.cjs
+
       - name: Collect stage rollback proof diagnostics
-        if: ${{ always() && steps.stage_rollback_proof_plan.outputs.run == 'true' && (steps.stage_rollback_proof_guard.outcome == 'failure' || steps.stage_rollback_runtime_web_sha_check.outcome == 'failure' || steps.stage_rollback_initialize_preflight.outcome == 'failure' || steps.stage_rollback_public_edge_environment_probe.outcome == 'failure' || steps.stage_rollback_provenance_check.outcome == 'failure' || steps.stage_rollback_navigation_smoke.outcome == 'failure' || steps.stage_rollback_navigation_mutation_smoke.outcome == 'failure') }}
+        if: ${{ always() && steps.stage_rollback_proof_plan.outputs.run == 'true' && (steps.stage_rollback_proof_guard.outcome == 'failure' || steps.stage_rollback_runtime_web_sha_check.outcome == 'failure' || steps.stage_rollback_initialize_preflight.outcome == 'failure' || steps.stage_rollback_public_edge_environment_probe.outcome == 'failure' || steps.stage_rollback_provenance_check.outcome == 'failure' || steps.stage_rollback_public_taxonomy_validation_fixture.outcome == 'failure' || steps.stage_rollback_navigation_smoke.outcome == 'failure' || steps.stage_rollback_navigation_mutation_smoke.outcome == 'failure' || steps.stage_rollback_public_taxonomy_validation_fixture_cleanup.outcome == 'failure') }}
         continue-on-error: true
         env:
           DEPLOY_LANE: stage
@@ -785,7 +842,7 @@ jobs:
         run: bash .github/scripts/collect_remote_deploy_diagnostics.sh
 
       - name: Upload stage rollback proof artifacts
-        if: ${{ always() && steps.stage_rollback_proof_plan.outputs.run == 'true' && (steps.stage_rollback_proof_guard.outcome == 'failure' || steps.stage_rollback_runtime_web_sha_check.outcome == 'failure' || steps.stage_rollback_initialize_preflight.outcome == 'failure' || steps.stage_rollback_public_edge_environment_probe.outcome == 'failure' || steps.stage_rollback_provenance_check.outcome == 'failure' || steps.stage_rollback_navigation_smoke.outcome == 'failure' || steps.stage_rollback_navigation_mutation_smoke.outcome == 'failure') }}
+        if: ${{ always() && steps.stage_rollback_proof_plan.outputs.run == 'true' && (steps.stage_rollback_proof_guard.outcome == 'failure' || steps.stage_rollback_runtime_web_sha_check.outcome == 'failure' || steps.stage_rollback_initialize_preflight.outcome == 'failure' || steps.stage_rollback_public_edge_environment_probe.outcome == 'failure' || steps.stage_rollback_provenance_check.outcome == 'failure' || steps.stage_rollback_public_taxonomy_validation_fixture.outcome == 'failure' || steps.stage_rollback_navigation_smoke.outcome == 'failure' || steps.stage_rollback_navigation_mutation_smoke.outcome == 'failure' || steps.stage_rollback_public_taxonomy_validation_fixture_cleanup.outcome == 'failure') }}
         uses: actions/upload-artifact@v7
         with:
           name: stage-rollback-proof-${{ github.run_id }}-${{ github.run_attempt }}
@@ -797,7 +854,7 @@ jobs:
           retention-days: 7
 
       - name: Fail stage deploy after rollback
-        if: ${{ always() && (steps.stage_deploy_remote.outcome == 'failure' || steps.stage_runtime_web_sha_check.outcome == 'failure' || steps.stage_initialize_preflight.outcome == 'failure' || steps.stage_untrusted_bootstrap_block.outcome == 'failure' || steps.stage_unexpected_initialize_403.outcome == 'failure' || steps.stage_untrusted_initialized_bootstrap_block.outcome == 'failure' || (steps.stage_initialize_preflight.outputs.initialized == 'true' && (steps.stage_public_edge_environment_probe.outcome == 'failure' || steps.stage_provenance_check.outcome == 'failure' || steps.stage_public_taxonomy_validation_fixture.outcome == 'failure' || steps.stage_navigation_smoke.outcome == 'failure' || steps.stage_navigation_mutation_smoke.outcome == 'failure')) || (steps.stage_rollback_proof_plan.outputs.run == 'true' && (steps.stage_rollback_proof_guard.outcome == 'failure' || steps.stage_rollback_runtime_web_sha_check.outcome == 'failure' || steps.stage_rollback_initialize_preflight.outcome == 'failure' || steps.stage_rollback_public_edge_environment_probe.outcome == 'failure' || steps.stage_rollback_provenance_check.outcome == 'failure' || steps.stage_rollback_navigation_smoke.outcome == 'failure' || steps.stage_rollback_navigation_mutation_smoke.outcome == 'failure'))) }}
+        if: ${{ always() && (steps.stage_deploy_remote.outcome == 'failure' || steps.stage_runtime_web_sha_check.outcome == 'failure' || steps.stage_initialize_preflight.outcome == 'failure' || steps.stage_untrusted_bootstrap_block.outcome == 'failure' || steps.stage_unexpected_initialize_403.outcome == 'failure' || steps.stage_untrusted_initialized_bootstrap_block.outcome == 'failure' || (steps.stage_initialize_preflight.outputs.initialized == 'true' && (steps.stage_public_edge_environment_probe.outcome == 'failure' || steps.stage_provenance_check.outcome == 'failure' || steps.stage_public_taxonomy_validation_fixture.outcome == 'failure' || steps.stage_navigation_smoke.outcome == 'failure' || steps.stage_navigation_mutation_smoke.outcome == 'failure' || steps.stage_public_taxonomy_validation_fixture_cleanup.outcome == 'failure')) || (steps.stage_rollback_proof_plan.outputs.run == 'true' && (steps.stage_rollback_proof_guard.outcome == 'failure' || steps.stage_rollback_runtime_web_sha_check.outcome == 'failure' || steps.stage_rollback_initialize_preflight.outcome == 'failure' || steps.stage_rollback_public_edge_environment_probe.outcome == 'failure' || steps.stage_rollback_provenance_check.outcome == 'failure' || steps.stage_rollback_public_taxonomy_validation_fixture.outcome == 'failure' || steps.stage_rollback_navigation_smoke.outcome == 'failure' || steps.stage_rollback_navigation_mutation_smoke.outcome == 'failure' || steps.stage_rollback_public_taxonomy_validation_fixture_cleanup.outcome == 'failure'))) }}
         run: |
           if [[ "${{ steps.stage_rollback_proof_guard.outcome }}" == "failure" ]]; then
             echo "ERROR: stage rollback restored an untrusted or unresolved target; terminal state is explicit degraded/incident." >&2
@@ -815,6 +872,12 @@ jobs:
             echo "ERROR: stage rollback via ${{ steps.stage_rollback_proof_plan.outputs.executor }} executor completed, but the restored public-edge environment probe failed; terminal state is explicit degraded/incident." >&2
           elif [[ "${{ steps.stage_rollback_provenance_check.outcome }}" == "failure" ]]; then
             echo "ERROR: stage rollback via ${{ steps.stage_rollback_proof_plan.outputs.executor }} executor completed, but restored provenance proof failed; terminal state is explicit degraded/incident." >&2
+          elif [[ "${{ steps.stage_rollback_public_taxonomy_validation_fixture_cleanup.outcome }}" == "failure" ]]; then
+            echo "ERROR: stage rollback proof completed, but managed public taxonomy fixture cleanup failed; terminal state is explicit degraded/incident." >&2
+          elif [[ "${{ steps.stage_public_taxonomy_validation_fixture_cleanup.outcome }}" == "failure" ]]; then
+            echo "ERROR: stage deploy validation passed, but managed public taxonomy fixture cleanup failed before trust stamping; terminal state is explicit degraded/incident." >&2
+          elif [[ "${{ steps.stage_rollback_public_taxonomy_validation_fixture.outcome }}" == "failure" ]]; then
+            echo "ERROR: stage rollback via ${{ steps.stage_rollback_proof_plan.outputs.executor }} executor completed, but public taxonomy validation fixture bootstrap failed; terminal state is explicit degraded/incident." >&2
           elif [[ "${{ steps.stage_rollback_navigation_mutation_smoke.outcome }}" == "failure" ]]; then
             echo "ERROR: stage rollback via ${{ steps.stage_rollback_proof_plan.outputs.executor }} executor completed, but restored mutation smoke failed; terminal state is explicit degraded/incident." >&2
           elif [[ "${{ steps.stage_rollback_navigation_smoke.outcome }}" == "failure" ]]; then
@@ -1192,7 +1255,7 @@ jobs:
         id: production_navigation_smoke
         if: steps.main_initialize_preflight.outputs.initialized == 'true' && steps.main_untrusted_initialized_bootstrap_block.outcome != 'failure' && steps.main_runtime_web_sha_check.outcome != 'failure' && steps.main_public_edge_environment_probe.outcome != 'failure' && steps.main_provenance_check.outcome != 'failure' && steps.main_initial_mutation_guard.outcome != 'failure'
         continue-on-error: true
-        timeout-minutes: 15
+        timeout-minutes: 25
         env:
           NAV_DEPLOY_LANE: main
           NAV_WEB_TEST_TYPE: readonly
@@ -1500,7 +1563,7 @@ jobs:
         id: main_rollback_navigation_smoke
         if: ${{ always() && steps.main_rollback_proof_plan.outputs.run == 'true' && steps.main_rollback_initialize_preflight.outcome != 'failure' && steps.main_rollback_public_edge_environment_probe.outcome != 'failure' && steps.main_rollback_provenance_check.outcome != 'failure' && steps.main_rollback_mutation_guard.outcome != 'failure' }}
         continue-on-error: true
-        timeout-minutes: 15
+        timeout-minutes: 25
         env:
           NAV_DEPLOY_LANE: main
           NAV_WEB_TEST_TYPE: readonly
