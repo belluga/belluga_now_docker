@@ -1,6 +1,4 @@
-const { execFileSync } = require('child_process');
 const crypto = require('crypto');
-const path = require('path');
 const { test, expect, request, chromium } = require('@playwright/test');
 const { loginTenantAdmin } = require('./support/tenant_admin_auth');
 const {
@@ -8,13 +6,32 @@ const {
 } = require('./support/tenant_admin_seeded_session');
 const {
   cleanupOnboardedAccounts,
+  runCleanupPreservingPrimaryError,
 } = require('./support/account_onboarding_cleanup');
+const {
+  executeLocalDockerArtisan,
+} = require('./support/local_docker_artisan');
 
 const tenantUrl = process.env.NAV_TENANT_URL;
 const appBootTimeoutMs = 90000;
 let anonymousIdentityToken = null;
 
 test.describe.configure({ timeout: 360000 });
+
+function diagnosticRunSuffix() {
+  const raw = (process.env.NAV_TEST_RUN_ID || '').toString().trim();
+  expect(raw, 'EVG-RUNTIME requires NAV_TEST_RUN_ID for deterministic fixture ids.').toBeTruthy();
+  const normalized = raw
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 48);
+  expect(
+    normalized,
+    'EVG-RUNTIME requires NAV_TEST_RUN_ID to normalize into a non-empty deterministic suffix.',
+  ).toBeTruthy();
+  return normalized;
+}
 
 function requireTenantUrl() {
   expect(
@@ -33,6 +50,13 @@ function authHeaders(token) {
     Authorization: `Bearer ${token}`,
     Accept: 'application/json',
   };
+}
+
+function expectDeleteSucceeded(response, label) {
+  expect(
+    [200, 202, 204, 404],
+    `${label} cleanup must succeed or already be absent.`,
+  ).toContain(response.status());
 }
 
 function escapeRegExp(value) {
@@ -208,7 +232,7 @@ async function deleteAccountProfileType(api, baseUrl, token, type) {
     return;
   }
 
-  await api.delete(
+  const response = await api.delete(
     buildUrl(baseUrl, `/admin/api/v1/account_profile_types/${encodeURIComponent(type)}`),
     {
       headers: authHeaders(token),
@@ -216,6 +240,7 @@ async function deleteAccountProfileType(api, baseUrl, token, type) {
       timeout: 15000,
     },
   );
+  expectDeleteSucceeded(response, `Account profile type ${type}`);
 }
 
 async function createAccountProfile(api, baseUrl, token, profileType, name) {
@@ -234,13 +259,14 @@ async function createAccountProfile(api, baseUrl, token, profileType, name) {
 
   const payload = await response.json();
   const data = payload?.data || {};
+  const account = data?.account || {};
   const profile = data?.account_profile || {};
   const id = profile?.id?.toString() || '';
   expect(id, `Account profile ${name} must return id.`).toBeTruthy();
   return {
     id,
     displayName: textValue(profile?.display_name, name),
-    slug: profile?.slug?.toString() || '',
+    accountSlug: account?.slug?.toString() || '',
   };
 }
 
@@ -256,6 +282,19 @@ async function createEventType(api, baseUrl, token, suffix) {
   expect(response.status(), 'Diagnostic event type must be created.').toBe(201);
   const payload = await response.json();
   return payload?.data;
+}
+
+async function deleteEventType(api, baseUrl, token, eventTypeId) {
+  if (!eventTypeId) {
+    return;
+  }
+
+  const response = await api.delete(buildUrl(baseUrl, `/admin/api/v1/event_types/${eventTypeId}`), {
+    headers: authHeaders(token),
+    failOnStatusCode: false,
+    timeout: 15000,
+  });
+  expectDeleteSucceeded(response, `Event type ${eventTypeId}`);
 }
 
 async function locateAdminEventListPlacement(api, baseUrl, token, eventId) {
@@ -391,37 +430,7 @@ async function assertAdminGroupEditor(page, expectedGroups) {
   }
 }
 
-async function fetchPhysicalHostCandidates(api, baseUrl, token) {
-  const url = new URL(buildUrl(baseUrl, '/admin/api/v1/events/account_profile_candidates'));
-  url.searchParams.set('type', 'physical_host');
-  url.searchParams.set('page', '1');
-  url.searchParams.set('page_size', '20');
-  const response = await api.get(url.toString(), {
-    headers: authHeaders(token),
-  });
-  expect(response.status(), 'Physical host candidates must load.').toBe(200);
-  const payload = await response.json();
-  const rows = Array.isArray(payload?.data) ? payload.data : [];
-  return rows.filter((row) => row?.id?.toString().trim());
-}
-
-async function resolvePoiCapableProfileType(api, baseUrl, token, suffix) {
-  const response = await api.get(
-    buildUrl(baseUrl, '/admin/api/v1/account_profile_types'),
-    { headers: authHeaders(token) },
-  );
-  expect(response.status(), 'Account profile type catalog must load.').toBe(200);
-  const payload = await response.json();
-  const rows = Array.isArray(payload?.data) ? payload.data : [];
-  const existing = rows.find(
-    (row) =>
-      row?.capabilities?.is_poi_enabled === true &&
-      row?.capabilities?.is_reference_location_enabled === true,
-  );
-  if (existing?.type) {
-    return existing.type;
-  }
-
+async function createPoiCapableProfileType(api, baseUrl, token, suffix) {
   const type = `pw_evg_host_${suffix}`;
   const createResponse = await api.post(
     buildUrl(baseUrl, '/admin/api/v1/account_profile_types'),
@@ -460,19 +469,13 @@ async function resolvePoiCapableProfileType(api, baseUrl, token, suffix) {
   );
   expect(createResponse.status(), 'POI-capable host type seed must succeed.')
     .toBe(201);
-  return type;
+  return {
+    type,
+  };
 }
 
 async function createPhysicalHost(api, baseUrl, token, suffix) {
-  const existing = await fetchPhysicalHostCandidates(api, baseUrl, token);
-  if (existing[0]?.id) {
-    return {
-      id: existing[0].id.toString(),
-      displayName: textValue(existing[0].display_name, existing[0].name),
-    };
-  }
-
-  const profileType = await resolvePoiCapableProfileType(api, baseUrl, token, suffix);
+  const profileType = await createPoiCapableProfileType(api, baseUrl, token, suffix);
   const response = await api.post(
     buildUrl(baseUrl, '/admin/api/v1/account_onboardings'),
     {
@@ -480,7 +483,7 @@ async function createPhysicalHost(api, baseUrl, token, suffix) {
       data: {
         name: `PW EVG Host ${suffix}`,
         ownership_state: 'unmanaged',
-        profile_type: profileType,
+        profile_type: profileType.type,
         location: {
           lat: -20.671339,
           lng: -40.495395,
@@ -490,10 +493,13 @@ async function createPhysicalHost(api, baseUrl, token, suffix) {
   );
   expect(response.status(), 'Physical host seed must succeed.').toBe(201);
   const payload = await response.json();
+  const account = payload?.data?.account || {};
   const profile = payload?.data?.account_profile || {};
   return {
     id: profile?.id?.toString() || '',
     displayName: textValue(profile?.display_name, `PW EVG Host ${suffix}`),
+    cleanupAccountSlug: account?.slug?.toString() || '',
+    cleanupProfileType: profileType.type,
   };
 }
 
@@ -675,11 +681,12 @@ async function deleteEvent(api, baseUrl, token, event) {
   if (!eventId) {
     return;
   }
-  await api.delete(buildUrl(baseUrl, `/admin/api/v1/events/${eventId}`), {
+  const response = await api.delete(buildUrl(baseUrl, `/admin/api/v1/events/${eventId}`), {
     headers: authHeaders(token),
     failOnStatusCode: false,
     timeout: 15000,
   });
+  expectDeleteSucceeded(response, `Event ${eventId}`);
 }
 
 function mutateEventProfileGroupsDirectly({ tenantId, eventId, profileIdToAppend }) {
@@ -689,71 +696,28 @@ function mutateEventProfileGroupsDirectly({ tenantId, eventId, profileIdToAppend
     );
   }
 
-  const script = `
-    $tenant = \\\\App\\\\Models\\\\Landlord\\\\Tenant::query()
-      ->where('_id', '${tenantId}')
-      ->firstOrFail();
-    $tenant->makeCurrent();
-    $event = \\\\Belluga\\\\Events\\\\Models\\\\Tenants\\\\Event::query()
-      ->where('_id', '${eventId}')
-      ->firstOrFail();
-    $groups = $event->profile_groups ?? [];
-    if ($groups instanceof \\\\MongoDB\\\\Model\\\\BSONArray || $groups instanceof \\\\MongoDB\\\\Model\\\\BSONDocument) {
-      $groups = $groups->getArrayCopy();
-    }
-    $groups = array_values(array_map(static function ($group) {
-      if ($group instanceof \\\\MongoDB\\\\Model\\\\BSONArray || $group instanceof \\\\MongoDB\\\\Model\\\\BSONDocument) {
-        $group = $group->getArrayCopy();
-      }
-      return is_array($group) ? $group : [];
-    }, is_array($groups) ? $groups : []));
-    if (!isset($groups[0])) {
-      throw new \\\\RuntimeException('Missing first profile group for diagnostic mutation.');
-    }
-    $memberIds = $groups[0]['account_profile_ids'] ?? [];
-    if ($memberIds instanceof \\\\MongoDB\\\\Model\\\\BSONArray || $memberIds instanceof \\\\MongoDB\\\\Model\\\\BSONDocument) {
-      $memberIds = $memberIds->getArrayCopy();
-    }
-    $memberIds = array_values(is_array($memberIds) ? $memberIds : []);
-    if (!in_array('${profileIdToAppend}', $memberIds, true)) {
-      $memberIds[] = '${profileIdToAppend}';
-    }
-    $groups[0]['account_profile_ids'] = $memberIds;
-    $event->profile_groups = $groups;
-    $event->save();
-  `;
-  const encoded = Buffer.from(script).toString('base64');
-  const repoRoot = path.resolve(__dirname, '..', '..');
-  execFileSync(
-    'docker',
-    [
-      'exec',
-      'belluga_now_docker-app-1',
-      'php',
-      'artisan',
-      'tinker',
-      '--execute',
-      `eval(base64_decode('${encoded}'));`,
-    ],
-    {
-      cwd: repoRoot,
-      encoding: 'utf8',
-      stdio: 'ignore',
-      timeout: 30000,
-    },
+  executeLocalDockerArtisan(
+    'events:diagnostic:append-profile-group-member',
+    [tenantId, eventId, profileIdToAppend],
   );
 }
 
-test('@mutation @diagnostic EVG-RUNTIME admin/public event groups honor saved groups, legacy fallback, and invalid historical data', async () => {
+test('@diagnostic EVG-RUNTIME admin/public event groups honor saved groups, legacy fallback, and invalid historical data', async () => {
+  expect(
+    process.env.NAV_RUNTIME_DB_MUTATION_ALLOWED,
+    'EVG-RUNTIME requires NAV_RUNTIME_DB_MUTATION_ALLOWED=1.',
+  ).toBe('1');
   const baseUrl = requireTenantUrl();
   const api = await createApiContext(baseUrl);
   const createdEvents = [];
   const createdAccountSlugs = [];
+  const createdEventTypeIds = [];
   const createdProfileTypes = [];
   const browser = await chromium.launch({
     headless: true,
     executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || undefined,
   });
+  let primaryError = null;
 
   try {
     const environmentResponse = await api.get(buildUrl(baseUrl, '/api/v1/environment'));
@@ -769,7 +733,7 @@ test('@mutation @diagnostic EVG-RUNTIME admin/public event groups honor saved gr
     });
     const { token } = adminSession;
 
-    const suffix = Date.now().toString();
+    const suffix = diagnosticRunSuffix();
     logDiagnosticStep(`seeding runtime data ${suffix}`);
     const typeA = `pw_evg_alpha_${suffix}`;
     const typeB = `pw_evg_beta_${suffix}`;
@@ -786,13 +750,20 @@ test('@mutation @diagnostic EVG-RUNTIME admin/public event groups honor saved gr
       createAccountProfile(api, baseUrl, token, typeB, `PW EVG Beta Dois ${suffix}`),
     ]);
     createdAccountSlugs.push(
-      alphaOne.slug,
-      betaOne.slug,
-      alphaTwo.slug,
-      betaTwo.slug,
+      alphaOne.accountSlug,
+      betaOne.accountSlug,
+      alphaTwo.accountSlug,
+      betaTwo.accountSlug,
     );
     const host = await createPhysicalHost(api, baseUrl, token, suffix);
+    if (host.cleanupAccountSlug) {
+      createdAccountSlugs.push(host.cleanupAccountSlug);
+    }
+    if (host.cleanupProfileType) {
+      createdProfileTypes.push(host.cleanupProfileType);
+    }
     const eventType = await createEventType(api, baseUrl, token, suffix);
+    createdEventTypeIds.push(eventType?.id?.toString() || '');
 
     const groupedEvent = await createDiagnosticEvent(api, baseUrl, token, {
       title: `PW EVG Novo Customizado ${suffix}`,
@@ -1021,6 +992,18 @@ test('@mutation @diagnostic EVG-RUNTIME admin/public event groups honor saved gr
       token,
       legacyEvent.event_id,
     );
+    const inconsistentPlacement = await locateAdminEventListPlacement(
+      api,
+      baseUrl,
+      token,
+      inconsistentEvent.event_id,
+    );
+    const multiOccurrencePlacement = await locateAdminEventListPlacement(
+      api,
+      baseUrl,
+      token,
+      multiOccurrenceEvent.event_id,
+    );
     const adminRuntime = await createAuthenticatedTenantAdminPage(
       browser,
       adminSession,
@@ -1054,6 +1037,35 @@ test('@mutation @diagnostic EVG-RUNTIME admin/public event groups honor saved gr
           { label: typeBPlural, selectedCount: 1 },
         ],
       );
+
+      await openSeededEventFromAdminList(
+        adminRuntime.page,
+        baseUrl,
+        inconsistentEvent.title,
+        inconsistentPlacement,
+      );
+      await assertAdminGroupEditor(
+        adminRuntime.page,
+        [
+          { label: 'Historico Customizado', selectedCount: 1 },
+        ],
+      );
+      await expect(
+        adminRuntime.page.getByText(betaOne.displayName, { exact: true }),
+      ).toHaveCount(0);
+
+      await openSeededEventFromAdminList(
+        adminRuntime.page,
+        baseUrl,
+        multiOccurrenceEvent.title,
+        multiOccurrencePlacement,
+      );
+      await expect(
+        adminRuntime.page.getByText('Palco Sexta', { exact: true }),
+      ).toBeVisible({ timeout: appBootTimeoutMs });
+      await expect(
+        adminRuntime.page.getByText('Palco Sabado', { exact: true }),
+      ).toBeVisible({ timeout: appBootTimeoutMs });
     } finally {
       await adminRuntime.context.close();
       logDiagnosticStep('admin browser context closed');
@@ -1176,34 +1188,42 @@ test('@mutation @diagnostic EVG-RUNTIME admin/public event groups honor saved gr
       await context.close();
       logDiagnosticStep('public browser context closed');
     }
+  } catch (error) {
+    primaryError = error;
+    throw error;
   } finally {
-    const baseUrl = tenantUrl;
-    const cleanupApi = await createApiContext(baseUrl);
     try {
-      logDiagnosticStep('cleanup started');
-      const { token } = await loginTenantAdmin({
-        api: cleanupApi,
-        baseUrl,
-        deviceName: 'playwright-event-profile-groups-runtime-cleanup',
+      await runCleanupPreservingPrimaryError(primaryError, async () => {
+        const baseUrl = tenantUrl;
+        const cleanupApi = await createApiContext(baseUrl);
+        try {
+          logDiagnosticStep('cleanup started');
+          const { token } = await loginTenantAdmin({
+            api: cleanupApi,
+            baseUrl,
+            deviceName: 'playwright-event-profile-groups-runtime-cleanup',
+          });
+          for (const event of createdEvents.reverse()) {
+            await deleteEvent(cleanupApi, baseUrl, token, event);
+          }
+          await cleanupOnboardedAccounts(
+            cleanupApi,
+            baseUrl,
+            token,
+            createdAccountSlugs.reverse(),
+          );
+          for (const eventTypeId of createdEventTypeIds.reverse()) {
+            await deleteEventType(cleanupApi, baseUrl, token, eventTypeId);
+          }
+          for (const profileType of createdProfileTypes.reverse()) {
+            await deleteAccountProfileType(cleanupApi, baseUrl, token, profileType);
+          }
+          logDiagnosticStep('cleanup completed');
+        } finally {
+          await cleanupApi.dispose();
+        }
       });
-      for (const event of createdEvents.reverse()) {
-        await deleteEvent(cleanupApi, baseUrl, token, event);
-      }
-      await cleanupOnboardedAccounts(
-        cleanupApi,
-        baseUrl,
-        token,
-        createdAccountSlugs.reverse(),
-      );
-      for (const profileType of createdProfileTypes.reverse()) {
-        await deleteAccountProfileType(cleanupApi, baseUrl, token, profileType);
-      }
-      logDiagnosticStep('cleanup completed');
-    } catch (_) {
-      // Diagnostic cleanup is best effort; failing cleanup must not hide the validation result.
-      logDiagnosticStep('cleanup skipped after best-effort failure');
     } finally {
-      await cleanupApi.dispose();
       await api.dispose();
       logDiagnosticStep('api contexts disposed');
       await browser.close().catch(() => {});

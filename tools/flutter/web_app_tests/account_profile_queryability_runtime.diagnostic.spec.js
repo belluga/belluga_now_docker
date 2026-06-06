@@ -1,6 +1,4 @@
-const { execFileSync } = require('child_process');
 const crypto = require('crypto');
-const path = require('path');
 const { test, expect, request, chromium } = require('@playwright/test');
 const { loginTenantAdmin } = require('./support/tenant_admin_auth');
 const {
@@ -8,13 +6,32 @@ const {
 } = require('./support/tenant_admin_seeded_session');
 const {
   cleanupOnboardedAccounts,
+  runCleanupPreservingPrimaryError,
 } = require('./support/account_onboarding_cleanup');
+const {
+  executeLocalDockerArtisan,
+} = require('./support/local_docker_artisan');
 
 const tenantUrl = process.env.NAV_TENANT_URL;
 const appBootTimeoutMs = 90000;
 let anonymousIdentityToken = null;
 
 test.describe.configure({ timeout: 420000 });
+
+function diagnosticRunSuffix() {
+  const raw = (process.env.NAV_TEST_RUN_ID || '').toString().trim();
+  expect(raw, 'QRY-RUNTIME requires NAV_TEST_RUN_ID for deterministic fixture ids.').toBeTruthy();
+  const normalized = raw
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 48);
+  expect(
+    normalized,
+    'QRY-RUNTIME requires NAV_TEST_RUN_ID to normalize into a non-empty deterministic suffix.',
+  ).toBeTruthy();
+  return normalized;
+}
 
 function requireTenantUrl() {
   expect(
@@ -33,6 +50,13 @@ function authHeaders(token) {
     Authorization: `Bearer ${token}`,
     Accept: 'application/json',
   };
+}
+
+function expectDeleteSucceeded(response, label) {
+  expect(
+    [200, 202, 204, 404],
+    `${label} cleanup must succeed or already be absent.`,
+  ).toContain(response.status());
 }
 
 function escapeRegExp(value) {
@@ -239,7 +263,7 @@ async function createAccountProfileType(
           has_nested_profile_groups: false,
           ...capabilities,
         },
-        poi_visual: {
+        visual: {
           mode: 'icon',
           icon: 'place',
           color,
@@ -257,7 +281,7 @@ async function deleteAccountProfileType(api, baseUrl, token, type) {
   if (!type) {
     return;
   }
-  await api.delete(
+  const response = await api.delete(
     buildUrl(baseUrl, `/admin/api/v1/account_profile_types/${encodeURIComponent(type)}`),
     {
       headers: authHeaders(token),
@@ -265,6 +289,7 @@ async function deleteAccountProfileType(api, baseUrl, token, type) {
       timeout: 15000,
     },
   );
+  expectDeleteSucceeded(response, `Account profile type ${type}`);
 }
 
 async function createAccountProfile(api, baseUrl, token, profileType, name) {
@@ -316,15 +341,28 @@ async function createEventType(api, baseUrl, token, suffix) {
   return payload?.data || {};
 }
 
-async function deleteEvent(api, baseUrl, token, eventId) {
-  if (!eventId) {
+async function deleteEventType(api, baseUrl, token, eventTypeId) {
+  if (!eventTypeId) {
     return;
   }
-  await api.delete(buildUrl(baseUrl, `/admin/api/v1/events/${eventId}`), {
+  const response = await api.delete(buildUrl(baseUrl, `/admin/api/v1/event_types/${eventTypeId}`), {
     headers: authHeaders(token),
     failOnStatusCode: false,
     timeout: 15000,
   });
+  expectDeleteSucceeded(response, `Event type ${eventTypeId}`);
+}
+
+async function deleteEvent(api, baseUrl, token, eventId) {
+  if (!eventId) {
+    return;
+  }
+  const response = await api.delete(buildUrl(baseUrl, `/admin/api/v1/events/${eventId}`), {
+    headers: authHeaders(token),
+    failOnStatusCode: false,
+    timeout: 15000,
+  });
+  expectDeleteSucceeded(response, `Event ${eventId}`);
 }
 
 function futureWindow(daysFromNow, hourOffset = 0) {
@@ -533,18 +571,14 @@ async function clickTab(page, label) {
   const roleTab = page.getByRole('button', {
     name: new RegExp(`^${escapeRegExp(label)}$`, 'i'),
   }).first();
-  if (await roleTab.isVisible().catch(() => false)) {
-    await roleTab.click({ timeout: appBootTimeoutMs });
-    logStep(`tab ${label} clicked via role button`);
-    return;
-  }
-
-  const textTab = page.getByText(new RegExp(`^${escapeRegExp(label)}$`, 'i')).first();
-  await expect(textTab, `Tab ${label} must be visible.`).toBeVisible({
+  await expect(
+    roleTab,
+    `Tab ${label} must expose a semantic button surface; raw text fallback is not allowed in this diagnostic.`,
+  ).toBeVisible({
     timeout: appBootTimeoutMs,
   });
-  await textTab.click({ timeout: appBootTimeoutMs });
-  logStep(`tab ${label} clicked via text`);
+  await roleTab.click({ timeout: appBootTimeoutMs });
+  logStep(`tab ${label} clicked via role button`);
 }
 
 async function fillFlutterTextFieldByLocator(page, field, value, label) {
@@ -605,81 +639,9 @@ function mutateEventWithStaleProfileReference({
   staleProfileId,
 }) {
   staleMutationGuard();
-  const script = `
-    $tenant = \\\\App\\\\Models\\\\Landlord\\\\Tenant::query()
-      ->where('_id', '${tenantId}')
-      ->firstOrFail();
-    $tenant->makeCurrent();
-    $event = \\\\Belluga\\\\Events\\\\Models\\\\Tenants\\\\Event::query()
-      ->where('_id', '${eventId}')
-      ->firstOrFail();
-
-    $eventParties = $event->event_parties ?? [];
-    if ($eventParties instanceof \\\\MongoDB\\\\Model\\\\BSONArray || $eventParties instanceof \\\\MongoDB\\\\Model\\\\BSONDocument) {
-      $eventParties = $eventParties->getArrayCopy();
-    }
-    $eventParties = array_values(array_map(static function ($row) {
-      if ($row instanceof \\\\MongoDB\\\\Model\\\\BSONArray || $row instanceof \\\\MongoDB\\\\Model\\\\BSONDocument) {
-        $row = $row->getArrayCopy();
-      }
-      return is_array($row) ? $row : [];
-    }, is_array($eventParties) ? $eventParties : []));
-    $hasParty = false;
-    foreach ($eventParties as $row) {
-      if (($row['party_ref_id'] ?? null) === '${staleProfileId}') {
-        $hasParty = true;
-        break;
-      }
-    }
-    if (!$hasParty) {
-      $eventParties[] = ['party_ref_id' => '${staleProfileId}'];
-    }
-    $event->event_parties = $eventParties;
-
-    $groups = $event->profile_groups ?? [];
-    if ($groups instanceof \\\\MongoDB\\\\Model\\\\BSONArray || $groups instanceof \\\\MongoDB\\\\Model\\\\BSONDocument) {
-      $groups = $groups->getArrayCopy();
-    }
-    $groups = array_values(array_map(static function ($group) {
-      if ($group instanceof \\\\MongoDB\\\\Model\\\\BSONArray || $group instanceof \\\\MongoDB\\\\Model\\\\BSONDocument) {
-        $group = $group->getArrayCopy();
-      }
-      return is_array($group) ? $group : [];
-    }, is_array($groups) ? $groups : []));
-    if (!isset($groups[0])) {
-      throw new \\\\RuntimeException('Missing first profile group for stale-reference mutation.');
-    }
-    $memberIds = $groups[0]['account_profile_ids'] ?? [];
-    if ($memberIds instanceof \\\\MongoDB\\\\Model\\\\BSONArray || $memberIds instanceof \\\\MongoDB\\\\Model\\\\BSONDocument) {
-      $memberIds = $memberIds->getArrayCopy();
-    }
-    $memberIds = array_values(is_array($memberIds) ? $memberIds : []);
-    if (!in_array('${staleProfileId}', $memberIds, true)) {
-      $memberIds[] = '${staleProfileId}';
-    }
-    $groups[0]['account_profile_ids'] = $memberIds;
-    $event->profile_groups = $groups;
-    $event->save();
-  `;
-  const encoded = Buffer.from(script).toString('base64');
-  const repoRoot = path.resolve(__dirname, '..', '..');
-  execFileSync(
-    'docker',
-    [
-      'exec',
-      'belluga_now_docker-app-1',
-      'php',
-      'artisan',
-      'tinker',
-      '--execute',
-      `eval(base64_decode('${encoded}'));`,
-    ],
-    {
-      cwd: repoRoot,
-      encoding: 'utf8',
-      stdio: 'ignore',
-      timeout: 30000,
-    },
+  executeLocalDockerArtisan(
+    'events:diagnostic:append-profile-group-member',
+    [tenantId, eventId, staleProfileId, '--with-event-party'],
   );
 }
 
@@ -717,14 +679,9 @@ async function openSelectorAndAssertHiddenAbsent(page, {
     name: /\d+\s+perfil\(is\) selecionado\(s\)|perfil\(is\) selecionado\(s\)|Selecionar perfis/i,
   }).first();
   if (!(await selectorButton.isVisible().catch(() => false))) {
-    logStep('role-based selector button not visible; falling back to text lookup');
-    const globalSelectorText = page.getByText(
-      /\d+\s+perfil\(is\) selecionado\(s\)|perfil\(is\) selecionado\(s\)|Selecionar perfis/i,
+    throw new Error(
+      `Group ${groupLabel} did not expose a semantic profile selector button. Release-trust diagnostics must fail closed here.`,
     );
-    logStep(
-      `global selector text count: ${await globalSelectorText.count().catch(() => 0)}`,
-    );
-    selectorButton = globalSelectorText.first();
   }
   await expect(selectorButton).toBeVisible({ timeout: appBootTimeoutMs });
   if (typeof expectedSelectedCount === 'number') {
@@ -764,16 +721,22 @@ async function openSelectorAndAssertHiddenAbsent(page, {
   logStep(`selector for group ${groupLabel} excluded hidden profile`);
 }
 
-test('@mutation @diagnostic QRY-RUNTIME admin/public queryability and navigation contract holds', async () => {
+test('@diagnostic QRY-RUNTIME admin/public queryability and navigation contract holds', async () => {
+  expect(
+    process.env.NAV_RUNTIME_DB_MUTATION_ALLOWED,
+    'QRY-RUNTIME requires NAV_RUNTIME_DB_MUTATION_ALLOWED=1.',
+  ).toBe('1');
   const baseUrl = requireTenantUrl();
   const api = await createApiContext(baseUrl);
   const createdAccountSlugs = [];
   const createdEventIds = [];
+  const createdEventTypeIds = [];
   const createdProfileTypes = [];
   const browser = await chromium.launch({
     headless: true,
     executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || undefined,
   });
+  let primaryError = null;
 
   try {
     const environmentResponse = await api.get(buildUrl(baseUrl, '/api/v1/environment'));
@@ -788,7 +751,7 @@ test('@mutation @diagnostic QRY-RUNTIME admin/public queryability and navigation
       deviceName: 'playwright-account-profile-queryability-runtime',
     });
     const { token } = adminSession;
-    const suffix = Date.now().toString();
+    const suffix = diagnosticRunSuffix();
     logStep(`seeding runtime data ${suffix}`);
 
     const visibleType = await createAccountProfileType(api, baseUrl, token, {
@@ -896,6 +859,7 @@ test('@mutation @diagnostic QRY-RUNTIME admin/public queryability and navigation
     );
 
     const eventType = await createEventType(api, baseUrl, token, suffix);
+    createdEventTypeIds.push(eventType.id?.toString() || '');
     const publicEvent = await createDiagnosticEvent(api, baseUrl, token, {
       title: `PW QRY Public Event ${suffix}`,
       eventType,
@@ -1033,44 +997,82 @@ test('@mutation @diagnostic QRY-RUNTIME admin/public queryability and navigation
       await enableAccessibilityIfNeeded(publicPage);
       logStep('event detail restored after back');
       await clickTab(publicPage, 'Outro Grupo');
-      const participantCardText = publicPage
-        .getByText(new RegExp(escapeRegExp(participantProfile.displayName), 'i'))
-        .first();
+      const participantPattern = new RegExp(
+        escapeRegExp(participantProfile.displayName),
+        'i',
+      );
+      const participantCardText = publicPage.getByText(participantPattern).first();
       await expect(participantCardText).toBeVisible({ timeout: appBootTimeoutMs });
-      logStep('assert non-navigable participant remains on event detail');
-      expect(publicPage.url()).toBe(eventUrl);
+      await expect(
+        publicPage.getByRole('button', { name: participantPattern }),
+        'Non-navigable participant must not be exposed as a button control.',
+      ).toHaveCount(0);
+      await expect(
+        publicPage.getByRole('link', { name: participantPattern }),
+        'Non-navigable participant must not be exposed as a link control.',
+      ).toHaveCount(0);
+      logStep('attempt interaction on non-navigable participant surface');
+      let participantInteractionError = null;
+      try {
+        await participantCardText.click({ timeout: 3000 });
+      } catch (error) {
+        participantInteractionError = error;
+        expect(
+          error?.message || '',
+          'Non-navigable participant interaction may fail actionability, but must do so without navigating.',
+        ).toMatch(/Timeout|intercepts pointer events|not receive pointer events/i);
+      }
+      await publicPage.waitForTimeout(500);
+      logStep('assert non-navigable participant remains on event detail after interaction');
+      await expect(publicPage).toHaveURL(eventUrl, { timeout: appBootTimeoutMs });
       await expect(publicPage.getByText('Algo deu errado')).toHaveCount(0);
+      await expect(publicPage.getByText(/Convide pessoas pelo app/i)).toHaveCount(0);
+      await expect(publicPage.getByText(/Escolha seus favoritos pelo app/i)).toHaveCount(0);
+      if (participantInteractionError) {
+        logStep('participant interaction remained non-actionable without navigation');
+      } else {
+        logStep('participant interaction was accepted but still remained on event detail');
+      }
       logStep('public browser assertions passed');
     } finally {
       await publicContext.close();
       logStep('public browser context closed');
     }
+  } catch (error) {
+    primaryError = error;
+    throw error;
   } finally {
-    const cleanupApi = await createApiContext(baseUrl);
     try {
-      logStep('cleanup started');
-      const { token } = await loginTenantAdmin({
-        api: cleanupApi,
-        baseUrl,
-        deviceName: 'playwright-account-profile-queryability-runtime-cleanup',
+      await runCleanupPreservingPrimaryError(primaryError, async () => {
+        const cleanupApi = await createApiContext(baseUrl);
+        try {
+          logStep('cleanup started');
+          const { token } = await loginTenantAdmin({
+            api: cleanupApi,
+            baseUrl,
+            deviceName: 'playwright-account-profile-queryability-runtime-cleanup',
+          });
+          for (const eventId of createdEventIds.reverse()) {
+            await deleteEvent(cleanupApi, baseUrl, token, eventId);
+          }
+          await cleanupOnboardedAccounts(
+            cleanupApi,
+            baseUrl,
+            token,
+            createdAccountSlugs.reverse(),
+          );
+          for (const eventTypeId of createdEventTypeIds.reverse()) {
+            await deleteEventType(cleanupApi, baseUrl, token, eventTypeId);
+          }
+          for (const profileType of createdProfileTypes.reverse()) {
+            await deleteAccountProfileType(cleanupApi, baseUrl, token, profileType);
+          }
+          logStep('cleanup completed');
+        } finally {
+          await cleanupApi.dispose();
+        }
       });
-      for (const eventId of createdEventIds.reverse()) {
-        await deleteEvent(cleanupApi, baseUrl, token, eventId);
-      }
-      await cleanupOnboardedAccounts(
-        cleanupApi,
-        baseUrl,
-        token,
-        createdAccountSlugs.reverse(),
-      );
-      for (const profileType of createdProfileTypes.reverse()) {
-        await deleteAccountProfileType(cleanupApi, baseUrl, token, profileType);
-      }
-      logStep('cleanup completed');
-    } catch (_) {
-      logStep('cleanup skipped after best-effort failure');
     } finally {
-      await cleanupApi.dispose();
       await api.dispose();
       await browser.close();
       logStep('runtime contexts disposed');
