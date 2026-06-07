@@ -500,21 +500,6 @@ function assertFixtureBootstrapRequiresExplicitRunIdOnStage() {
   );
 }
 
-function assertRuntimeDiscoveryFollowupRequiresExplicitMutationContract() {
-  assertScriptStartupGuard(
-    path.join('tools', 'flutter', 'web_app_tests', 'runtime_discovery_filters_followup.cjs'),
-    {
-      NAV_DEPLOY_LANE: 'local',
-      NAV_TENANT_URL: 'https://guarappari.belluga.space',
-      NAV_REQUEST_BASE_URL: 'https://guarappari.belluga.space',
-      NAV_REQUEST_HOST_HEADER: 'guarappari.belluga.space',
-      NAV_ADMIN_EMAIL: 'policy@example.test',
-      NAV_ADMIN_PASSWORD: 'policy-secret',
-    },
-    /requires explicit NAV_RUNTIME_DB_MUTATION_ALLOWED=1/,
-  );
-}
-
 function listWebNavigationSources(dir) {
   const entries = fs.readdirSync(dir, { withFileTypes: true });
   return entries.flatMap((entry) => {
@@ -1567,7 +1552,6 @@ assertDirectPlaywrightReadonlyRejectsGrepSubset();
 assertDirectPlaywrightReadonlyRejectsGrepInvertSuiteTrim();
 assertFixtureBootstrapRequiresExplicitMutationContract();
 assertFixtureBootstrapRequiresExplicitRunIdOnStage();
-assertRuntimeDiscoveryFollowupRequiresExplicitMutationContract();
 assertStageFixtureOwnedFiltersUseCanonicalKeysOnly();
 assertStageFixtureRunIdIsolation();
 assertStageFixturePaginationHelperIsExhaustive();

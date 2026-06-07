@@ -1638,6 +1638,7 @@ test('@mutation Home filters honor Event Type taxonomy compatibility, hide zero-
   let typeAId = null;
   let typeBId = null;
   let typeCId = null;
+  let typeDId = null;
   let taxonomyAId = null;
   let taxonomyBId = null;
   const createdEventIds = [];
@@ -1649,12 +1650,14 @@ test('@mutation Home filters honor Event Type taxonomy compatibility, hide zero-
     const typeALabel = `AAA HD10 Show ${unique}`;
     const typeBLabel = `AAB HD10 Talk ${unique}`;
     const typeCLabel = `AAC HD10 Empty ${unique}`;
+    const typeDLabel = `AAD HD10 No Results ${unique}`;
     const taxonomyA = await createTaxonomy(api, baseUrl, session.token, {
       slug: `hd10-music-${unique}`,
       name: `Genero Musical ${unique}`,
       appliesTo: ['event'],
       terms: [
         { slug: `rock-${unique}`, name: `Rock ${unique}` },
+        { slug: `blues-${unique}`, name: `Blues ${unique}` },
       ],
     });
     taxonomyAId = taxonomyA.taxonomyId;
@@ -1692,6 +1695,14 @@ test('@mutation Home filters honor Event Type taxonomy compatibility, hide zero-
       color: '#555555',
     });
     typeCId = typeC?.data?.id?.toString() || null;
+    const typeD = await createEventType(api, baseUrl, session.token, {
+      name: typeDLabel,
+      slug: `hd10-no-results-${unique}`,
+      allowedTaxonomies: [taxonomyA.slug],
+      icon: 'hide_source',
+      color: '#4A4A4A',
+    });
+    typeDId = typeD?.data?.id?.toString() || null;
 
     const catalog = await fetchDiscoveryCatalog(page, baseUrl, 'home.events');
     const filterKeys = normalizeList(catalog.filters).map((filter) => filter.key);
@@ -1699,6 +1710,7 @@ test('@mutation Home filters honor Event Type taxonomy compatibility, hide zero-
       `hd10-show-${unique}`,
       `hd10-talk-${unique}`,
       `hd10-empty-${unique}`,
+      `hd10-no-results-${unique}`,
     ]));
 
     physicalHost = await createNearbyAccountProfile(
@@ -1764,9 +1776,15 @@ test('@mutation Home filters honor Event Type taxonomy compatibility, hide zero-
       .toBeVisible({ timeout: appBootTimeoutMs });
     await expect(filterOption(panel, typeCLabel))
       .toBeVisible({ timeout: appBootTimeoutMs });
+    await expect(
+      filterOption(panel, typeDLabel),
+      'Home runtime facets must hide event types with zero eligible events in the current universe.',
+    ).toHaveCount(0, { timeout: appBootTimeoutMs });
     await expectAccessibleGroupNotContains(panel, taxonomyA.name);
     await expectAccessibleGroupNotContains(panel, taxonomyB.name);
     await expect(filterOption(panel, `Rock ${unique}`))
+      .toHaveCount(0, { timeout: 5000 });
+    await expect(filterOption(panel, `Blues ${unique}`))
       .toHaveCount(0, { timeout: 5000 });
     await expect(filterOption(panel, `Chef ${unique}`))
       .toHaveCount(0, { timeout: 5000 });
@@ -1791,6 +1809,10 @@ test('@mutation Home filters honor Event Type taxonomy compatibility, hide zero-
     await expectAccessibleGroupContains(panel, taxonomyA.name);
     await expect(filterOption(panel, `Rock ${unique}`))
       .toBeVisible({ timeout: appBootTimeoutMs });
+    await expect(
+      filterOption(panel, `Blues ${unique}`),
+      'Home runtime taxonomy facets must hide terms with zero eligible events under the selected type universe.',
+    ).toHaveCount(0, { timeout: appBootTimeoutMs });
     await expectAccessibleGroupNotContains(panel, taxonomyB.name, appBootTimeoutMs);
     await filterAction.click();
     await expect(panel).toHaveCount(0, { timeout: appBootTimeoutMs });
@@ -1844,6 +1866,8 @@ test('@mutation Home filters honor Event Type taxonomy compatibility, hide zero-
     await expectAccessibleGroupNotContains(panel, taxonomyB.name, appBootTimeoutMs);
     await expect(filterOption(panel, `Rock ${unique}`))
       .toHaveCount(0, { timeout: appBootTimeoutMs });
+    await expect(filterOption(panel, `Blues ${unique}`))
+      .toHaveCount(0, { timeout: appBootTimeoutMs });
     await expect(filterOption(panel, `Chef ${unique}`))
       .toHaveCount(0, { timeout: appBootTimeoutMs });
     await filterAction.click();
@@ -1871,6 +1895,7 @@ test('@mutation Home filters honor Event Type taxonomy compatibility, hide zero-
         await deleteEventType(api, baseUrl, session?.token, typeCId);
         await deleteEventType(api, baseUrl, session?.token, typeBId);
         await deleteEventType(api, baseUrl, session?.token, typeAId);
+        await deleteEventType(api, baseUrl, session?.token, typeDId);
         await deleteTaxonomy(api, baseUrl, session?.token, taxonomyBId);
         await deleteTaxonomy(api, baseUrl, session?.token, taxonomyAId);
       } finally {
@@ -1888,6 +1913,7 @@ test('@mutation Profile Discovery hides non-publicly-discoverable types and keep
   const collectors = installFailureCollectors(page);
   let session = null;
   let visibleType = null;
+  let visibleEmptyType = null;
   let hiddenType = null;
   let taxonomyId = null;
   let visibleProfile = null;
@@ -1898,6 +1924,7 @@ test('@mutation Profile Discovery hides non-publicly-discoverable types and keep
     session = await loginTenantAdmin(api, baseUrl);
     const unique = Date.now();
     const visibleTypeLabel = `AAA HD12 Visivel ${unique}`;
+    const visibleEmptyTypeLabel = `AAB HD12 Sem Perfis ${unique}`;
     const hiddenTypeLabel = `ZZZ HD12 Oculto ${unique}`;
     const taxonomy = await createTaxonomy(api, baseUrl, session.token, {
       slug: `hd12-cuisine-${unique}`,
@@ -1905,6 +1932,7 @@ test('@mutation Profile Discovery hides non-publicly-discoverable types and keep
       appliesTo: ['account_profile'],
       terms: [
         { slug: `japanese-${unique}`, name: `Japonesa ${unique}` },
+        { slug: `thai-${unique}`, name: `Tailandesa ${unique}` },
       ],
     });
     taxonomyId = taxonomy.taxonomyId;
@@ -1917,6 +1945,19 @@ test('@mutation Profile Discovery hides non-publicly-discoverable types and keep
       icon: 'restaurant',
       color: '#A94A00',
     });
+    visibleEmptyType = await createAccountProfileType(
+      api,
+      baseUrl,
+      session.token,
+      {
+        type: `hd12-empty-${unique}`,
+        label: visibleEmptyTypeLabel,
+        allowedTaxonomies: [taxonomy.slug],
+        isFavoritable: false,
+        icon: 'storefront',
+        color: '#6A4C93',
+      },
+    );
     hiddenType = await createAccountProfileType(api, baseUrl, session.token, {
       type: `hd12-hidden-${unique}`,
       label: hiddenTypeLabel,
@@ -1934,9 +1975,11 @@ test('@mutation Profile Discovery hides non-publicly-discoverable types and keep
     );
     const filters = normalizeList(catalog.filters);
     expect(filters.map((filter) => filter.key)).toContain(`hd12-visible-${unique}`);
+    expect(filters.map((filter) => filter.key)).toContain(`hd12-empty-${unique}`);
     expect(filters.map((filter) => filter.key)).not.toContain(`hd12-hidden-${unique}`);
     const typeOptions = normalizeList(catalog?.type_options?.account_profile);
     expect(typeOptions.map((option) => option.value)).toContain(`hd12-visible-${unique}`);
+    expect(typeOptions.map((option) => option.value)).toContain(`hd12-empty-${unique}`);
     expect(typeOptions.map((option) => option.value)).not.toContain(`hd12-hidden-${unique}`);
     await waitForPublicEnvironmentProfileType(page, baseUrl, {
       type: `hd12-visible-${unique}`,
@@ -2003,10 +2046,16 @@ test('@mutation Profile Discovery hides non-publicly-discoverable types and keep
     await expectFilterChipShowsVisibleLabel(filterOption(panel, visibleTypeLabel));
     await expect(filterOption(panel, visibleTypeLabel))
       .toBeVisible({ timeout: appBootTimeoutMs });
+    await expect(
+      filterOption(panel, visibleEmptyTypeLabel),
+      'Discovery runtime facets must hide publicly discoverable types with zero eligible public profiles.',
+    ).toHaveCount(0, { timeout: 5000 });
     await expect(filterOption(panel, hiddenTypeLabel))
       .toHaveCount(0, { timeout: 5000 });
     await expectAccessibleGroupNotContains(panel, taxonomy.name);
     await expect(filterOption(panel, `Japonesa ${unique}`))
+      .toHaveCount(0, { timeout: 5000 });
+    await expect(filterOption(panel, `Tailandesa ${unique}`))
       .toHaveCount(0, { timeout: 5000 });
 
     const discoveryTracker = trackFilteredRequests(
@@ -2030,6 +2079,10 @@ test('@mutation Profile Discovery hides non-publicly-discoverable types and keep
     await expectAccessibleGroupContains(panel, taxonomy.name);
     await expect(filterOption(panel, `Japonesa ${unique}`))
       .toBeVisible({ timeout: appBootTimeoutMs });
+    await expect(
+      filterOption(panel, `Tailandesa ${unique}`),
+      'Discovery runtime taxonomy facets must hide terms with zero eligible public profiles.',
+    ).toHaveCount(0, { timeout: 5000 });
     await expect(filterOption(panel, hiddenTypeLabel))
       .toHaveCount(0, { timeout: 5000 });
     await filterAction.click();
@@ -2058,6 +2111,12 @@ test('@mutation Profile Discovery hides non-publicly-discoverable types and keep
           baseUrl,
           session?.token,
           hiddenType?.data?.type?.toString() || '',
+        );
+        await deleteAccountProfileType(
+          api,
+          baseUrl,
+          session?.token,
+          visibleEmptyType?.data?.type?.toString() || '',
         );
         await deleteAccountProfileType(
           api,
