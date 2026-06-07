@@ -259,9 +259,50 @@ async function clickBackAffordance(page) {
     await namedBack.click({ timeout: appBootTimeoutMs });
     return;
   }
-  const firstButton = page.getByRole('button').first();
-  await expect(firstButton).toBeVisible({ timeout: appBootTimeoutMs });
-  await firstButton.click({ timeout: appBootTimeoutMs });
+
+  const semanticBack = page.locator('[aria-label*="Voltar"], [aria-label*="Back"]').first();
+  if (await semanticBack.isVisible().catch(() => false)) {
+    await semanticBack.click({ timeout: appBootTimeoutMs });
+    return;
+  }
+
+  const buttons = page.getByRole('button');
+  const topLeftIndex = await buttons.evaluateAll((nodes) =>
+    nodes.findIndex((node) => {
+      if (!(node instanceof HTMLElement)) {
+        return false;
+      }
+      const style = window.getComputedStyle(node);
+      if (style.visibility === 'hidden' || style.display === 'none') {
+        return false;
+      }
+      const rect = node.getBoundingClientRect();
+      return rect.width >= 32
+        && rect.height >= 32
+        && rect.top >= 0
+        && rect.left >= 0
+        && rect.top <= 120
+        && rect.left <= 120;
+    }),
+  );
+  if (topLeftIndex >= 0) {
+    const topLeftButton = buttons.nth(topLeftIndex);
+    await expect(topLeftButton).toBeVisible({ timeout: appBootTimeoutMs });
+    await topLeftButton.click({ timeout: appBootTimeoutMs });
+    return;
+  }
+
+  const beforeUrl = page.url();
+  await page.goBack({ waitUntil: 'domcontentloaded' }).catch(() => {});
+  await expect
+    .poll(
+      () => page.url(),
+      {
+        timeout: 5000,
+        message: 'Browser history fallback must navigate away from the account detail route.',
+      },
+    )
+    .not.toBe(beforeUrl);
 }
 
 async function clickAccountHeroFavorite(page) {

@@ -5,6 +5,7 @@ const {
 } = require('./support/tenant_admin_auth');
 const {
   cleanupOnboardedAccounts,
+  runCleanupPreservingPrimaryError,
 } = require('./support/account_onboarding_cleanup');
 const {
   androidBrowserContextOptions,
@@ -14,6 +15,7 @@ const {
 const tenantUrl = process.env.NAV_TENANT_URL;
 const appBootTimeoutMs = 90000;
 const seedTitle = 'PW Invite Session Context Store Release';
+const navigationRunId = (process.env.NAV_TEST_RUN_ID || 'local').trim();
 
 test.describe.configure({ timeout: 300000 });
 
@@ -61,10 +63,18 @@ function visibleTextPattern(value) {
   );
 }
 
+function normalizeVisibleText(value) {
+  return value
+    .toString()
+    .trim()
+    .replace(/\s+/g, ' ')
+    .toLowerCase();
+}
+
 function anonymousFingerprintHash(baseUrl, label) {
   return crypto
     .createHash('sha256')
-    .update(`invite-session-context:${baseUrl}:${label}:${Date.now()}`)
+    .update(`invite-session-context:${baseUrl}:${label}:${navigationRunId}`)
     .digest('hex');
 }
 
@@ -76,6 +86,13 @@ async function createApiContext(baseUrl) {
     },
     ignoreHTTPSErrors: true,
   });
+}
+
+function expectDeleteSucceeded(response, label) {
+  expect(
+    [200, 202, 204, 404],
+    `${label} cleanup must succeed or be already absent. Status ${response.status()}.`,
+  ).toContain(response.status());
 }
 
 async function loginTenantAdmin(api, baseUrl) {
@@ -177,7 +194,8 @@ async function enableAccessibilityIfNeeded(page) {
 
 async function installInviteFallbackFlashRecorder(context) {
   await context.addInitScript(() => {
-    const fallbackPattern = /Aceite convites pelo app/i;
+    const fallbackPattern =
+      /Aceite convites pelo app|B[oó]ra pro App|Baixe o App para Confirmar|Baixe para continuar|Escolha sua loja/i;
     const flashes = [];
     Object.defineProperty(window, '__bellugaInviteFallbackFlash', {
       configurable: false,
@@ -225,6 +243,26 @@ async function assertNoInviteFallbackFlash(page) {
   ).toEqual([]);
 }
 
+async function expectInviteAccessibilitySummary(page, expectedTexts, timeoutMs) {
+  const normalizedExpected = expectedTexts
+    .map((text) => normalizeVisibleText(text))
+    .filter(Boolean);
+
+  await page.waitForFunction(
+    ({ expected }) => {
+      const corpus = Array.from(document.querySelectorAll('[aria-label]'))
+        .map((element) => element.getAttribute('aria-label') || '')
+        .map((value) => value.trim().replace(/\s+/g, ' ').toLowerCase())
+        .filter(Boolean)
+        .join(' ');
+
+      return expected.every((text) => corpus.includes(text));
+    },
+    { expected: normalizedExpected },
+    { timeout: timeoutMs },
+  );
+}
+
 function recordInviteAcceptRequests(page, code) {
   const requests = [];
   page.on('request', (candidate) => {
@@ -243,7 +281,14 @@ function recordInviteAcceptRequests(page, code) {
   return requests;
 }
 
-async function openInvitePreview({ page, baseUrl, code, eventTitle }) {
+async function openInvitePreview({
+  page,
+  baseUrl,
+  code,
+  eventTitle,
+  expectedVisibleTexts = [],
+}) {
+  const eventTitlePattern = visibleTextPattern(eventTitle);
   await page.goto(buildUrl(baseUrl, `/invite?code=${encodeURIComponent(code)}`), {
     waitUntil: 'domcontentloaded',
   });
@@ -253,7 +298,32 @@ async function openInvitePreview({ page, baseUrl, code, eventTitle }) {
     timeout: appBootTimeoutMs,
   });
   await assertNoInviteFallbackFlash(page);
-  return visibleTextPattern(eventTitle);
+  await expect(
+    page.getByText(eventTitlePattern).first(),
+    'Invite preview must render the invited event title visibly on screen.',
+  ).toBeVisible({
+    timeout: appBootTimeoutMs,
+  });
+  await expect(
+    page.getByRole('button', { name: /Ver detalhes do evento/i }),
+    'Invite preview must expose the primary details CTA before proceeding.',
+  ).toBeVisible({
+    timeout: appBootTimeoutMs,
+  });
+  await expectInviteAccessibilitySummary(
+    page,
+    [eventTitle, ...expectedVisibleTexts],
+    appBootTimeoutMs,
+  );
+  for (const expectedText of expectedVisibleTexts) {
+    await expect(
+      page.getByText(visibleTextPattern(expectedText)).first(),
+      `Invite preview must render visible text for "${expectedText}".`,
+    ).toBeVisible({
+      timeout: appBootTimeoutMs,
+    });
+  }
+  return eventTitlePattern;
 }
 
 async function openEventDetailFromInvite({
@@ -346,7 +416,10 @@ async function resolvePoiCapableProfileType(api, baseUrl, token) {
       row?.capabilities?.is_reference_location_enabled === true,
   );
   if (selected?.type) {
-    return selected.type;
+    return {
+      profileType: selected.type,
+      createdProfileType: '',
+    };
   }
 
   const type = `pw-invite-host-${Date.now()}`;
@@ -364,6 +437,8 @@ async function resolvePoiCapableProfileType(api, baseUrl, token) {
           icon_color: '#FFFFFF',
         },
         capabilities: {
+          is_queryable: true,
+          is_publicly_navigable: true,
           is_favoritable: true,
           is_poi_enabled: true,
           is_reference_location_enabled: true,
@@ -382,11 +457,13 @@ async function resolvePoiCapableProfileType(api, baseUrl, token) {
     createResponse.status(),
     'Fallback invite host profile type must be created.',
   ).toBe(201);
-  return type;
+  return {
+    profileType: type,
+    createdProfileType: type,
+  };
 }
 
-async function createPhysicalHost(api, baseUrl, token, name) {
-  const profileType = await resolvePoiCapableProfileType(api, baseUrl, token);
+async function createPhysicalHost(api, baseUrl, token, name, profileType) {
   return createOnboardedProfile(api, baseUrl, token, {
     name,
     profileType,
@@ -435,11 +512,48 @@ async function deleteEvent(api, baseUrl, token, eventId) {
   if (!eventId) {
     return;
   }
-  await api.delete(buildUrl(baseUrl, `/admin/api/v1/events/${eventId}`), {
+
+  const response = await api.delete(buildUrl(baseUrl, `/admin/api/v1/events/${eventId}`), {
     headers: authHeaders(token),
     failOnStatusCode: false,
     timeout: 15000,
   });
+  expectDeleteSucceeded(response, `Event ${eventId}`);
+}
+
+async function deleteEventType(api, baseUrl, token, eventTypeId) {
+  if (!eventTypeId) {
+    return;
+  }
+
+  const response = await api.delete(
+    buildUrl(baseUrl, `/admin/api/v1/event_types/${eventTypeId}`),
+    {
+      headers: authHeaders(token),
+      failOnStatusCode: false,
+      timeout: 15000,
+    },
+  );
+  expectDeleteSucceeded(response, `Event type ${eventTypeId}`);
+}
+
+async function deleteAccountProfileType(api, baseUrl, token, profileType) {
+  if (!profileType) {
+    return;
+  }
+
+  const response = await api.delete(
+    buildUrl(
+      baseUrl,
+      `/admin/api/v1/account_profile_types/${encodeURIComponent(profileType)}`,
+    ),
+    {
+      headers: authHeaders(token),
+      failOnStatusCode: false,
+      timeout: 15000,
+    },
+  );
+  expectDeleteSucceeded(response, `Account profile type ${profileType}`);
 }
 
 async function findExistingSeedEvent(api, baseUrl, token) {
@@ -481,148 +595,224 @@ async function fetchAdminEvent(api, baseUrl, token, eventId) {
 
 async function createSeedEvent(api, baseUrl, token) {
   const uniqueSuffix = Date.now().toString();
-  const eventType = await createEventType(api, baseUrl, token, uniqueSuffix);
-  const hostCandidates = await fetchPhysicalHostCandidates(api, baseUrl, token);
-  const physicalHost =
-    hostCandidates[0] ||
-    (await createPhysicalHost(
-      api,
-      baseUrl,
-      token,
-      `PW Invite Session Host ${uniqueSuffix}`,
-    ));
-  const start = new Date(Date.now() + 10 * 24 * 60 * 60 * 1000);
-  const end = new Date(start.getTime() + 2 * 60 * 60 * 1000);
-  const response = await api.post(buildUrl(baseUrl, '/admin/api/v1/events'), {
-    data: {
-      title: seedTitle,
-      content:
-        '<p>Playwright invite session context event for Store Release validation.</p>',
-      type: {
-        id: eventType.id,
-        name: eventType.name,
-        slug: eventType.slug,
-        description: eventType.description || 'Playwright invite type',
-      },
-      location: {
-        mode: 'physical',
-      },
-      place_ref: {
-        type: 'account_profile',
-        id: physicalHost.id,
-      },
-      event_parties: [],
-      occurrences: [
-        {
-          date_time_start: start.toISOString(),
-          date_time_end: end.toISOString(),
+  const title = `${seedTitle} ${uniqueSuffix}`;
+  let eventId = '';
+  let eventTypeId = '';
+  let createdProfileType = '';
+  const cleanupAccountSlugs = [];
+
+  try {
+    const eventType = await createEventType(api, baseUrl, token, uniqueSuffix);
+    eventTypeId = eventType?.id?.toString() || '';
+    const { profileType, createdProfileType: fallbackProfileType } =
+      await resolvePoiCapableProfileType(api, baseUrl, token);
+    createdProfileType = fallbackProfileType;
+    const hostCandidates = await fetchPhysicalHostCandidates(api, baseUrl, token);
+    const physicalHost =
+      hostCandidates[0] ||
+      (await createPhysicalHost(
+        api,
+        baseUrl,
+        token,
+        `PW Invite Session Host ${uniqueSuffix}`,
+        profileType,
+      ));
+    if (!hostCandidates[0]?.id && physicalHost.account_slug) {
+      cleanupAccountSlugs.push(physicalHost.account_slug);
+    }
+
+    const start = new Date(Date.now() + 10 * 24 * 60 * 60 * 1000);
+    const end = new Date(start.getTime() + 2 * 60 * 60 * 1000);
+    const response = await api.post(buildUrl(baseUrl, '/admin/api/v1/events'), {
+      data: {
+        title,
+        content:
+          '<p>Playwright invite session context event for Store Release validation.</p>',
+        type: {
+          id: eventType.id,
+          name: eventType.name,
+          slug: eventType.slug,
+          description: eventType.description || 'Playwright invite type',
         },
-      ],
-      publication: {
-        status: 'published',
-        publish_at: new Date(Date.now() - 60 * 1000).toISOString(),
+        location: {
+          mode: 'physical',
+        },
+        place_ref: {
+          type: 'account_profile',
+          id: physicalHost.id,
+        },
+        event_parties: [],
+        occurrences: [
+          {
+            date_time_start: start.toISOString(),
+            date_time_end: end.toISOString(),
+          },
+        ],
+        publication: {
+          status: 'published',
+          publish_at: new Date(Date.now() - 60 * 1000).toISOString(),
+        },
       },
-    },
-    headers: authHeaders(token),
-  });
-  expect(response.status(), 'Invite session seed event must be created.').toBe(
-    201,
-  );
-  const payload = await response.json();
-  return payload?.data;
+      headers: authHeaders(token),
+    });
+    expect(response.status(), 'Invite session seed event must be created.').toBe(
+      201,
+    );
+    const payload = await response.json();
+    eventId = payload?.data?.event_id?.toString() || '';
+    return {
+      event: payload?.data,
+      title,
+      eventTypeId,
+      createdProfileType,
+      cleanupAccountSlugs,
+    };
+  } catch (error) {
+    await runCleanupPreservingPrimaryError(error, async () => {
+      await deleteEvent(api, baseUrl, token, eventId);
+      await cleanupOnboardedAccounts(
+        api,
+        baseUrl,
+        token,
+        cleanupAccountSlugs,
+      );
+      await deleteEventType(api, baseUrl, token, eventTypeId);
+      await deleteAccountProfileType(
+        api,
+        baseUrl,
+        token,
+        createdProfileType,
+      );
+    });
+    throw error;
+  }
 }
 
 async function createInvitePreviewSeedEvent(api, baseUrl, token) {
   const uniqueSuffix = Date.now().toString();
   const title = `${seedTitle} ${uniqueSuffix}`;
-  const eventType = await createEventType(api, baseUrl, token, uniqueSuffix);
-  const host = await createPhysicalHost(
-    api,
-    baseUrl,
-    token,
-    `PW Invite Session Host ${uniqueSuffix}`,
-  );
-  const band = await createPhysicalHost(
-    api,
-    baseUrl,
-    token,
-    `PW Invite Session Band ${uniqueSuffix}`,
-  );
-  const exhibitor = await createPhysicalHost(
-    api,
-    baseUrl,
-    token,
-    `PW Invite Session Exhibitor ${uniqueSuffix}`,
-  );
-  const start = new Date(Date.now() + 10 * 24 * 60 * 60 * 1000);
-  const end = new Date(start.getTime() + 2 * 60 * 60 * 1000);
-  const response = await api.post(buildUrl(baseUrl, '/admin/api/v1/events'), {
-    data: {
-      title,
-      content:
-        '<p>Playwright invite session context event for visible invite preview validation.</p>',
-      type: {
-        id: eventType.id,
-        name: eventType.name,
-        slug: eventType.slug,
-        description: eventType.description || 'Playwright invite type',
-      },
-      location: {
-        mode: 'physical',
-      },
-      place_ref: {
-        type: 'account_profile',
-        id: host.id,
-      },
-      event_parties: [band, exhibitor].map((profile) => ({
-        party_ref_id: profile.id,
-      })),
-      profile_groups: [
-        {
-          id: 'bandas',
-          label: 'Bandas',
-          order: 0,
-          account_profile_ids: [band.id],
-        },
-        {
-          id: 'expositores',
-          label: 'Expositores',
-          order: 1,
-          account_profile_ids: [exhibitor.id],
-        },
-      ],
-      occurrences: [
-        {
-          date_time_start: start.toISOString(),
-          date_time_end: end.toISOString(),
-        },
-      ],
-      publication: {
-        status: 'published',
-        publish_at: new Date(Date.now() - 60 * 1000).toISOString(),
-      },
-    },
-    headers: authHeaders(token),
-  });
-  expect(response.status(), 'Invite preview seed event must be created.').toBe(
-    201,
-  );
-  const payload = await response.json();
-  return {
-    event: payload?.data,
-    title,
-    hostLabel: host.display_name,
-    bandLabel: band.display_name,
-    exhibitorLabel: exhibitor.display_name,
-    cleanupAccountSlugs: [host.account_slug, band.account_slug, exhibitor.account_slug]
-      .map((slug) => slug?.toString().trim())
-      .filter(Boolean),
-  };
-}
+  let eventId = '';
+  let eventTypeId = '';
+  let createdProfileType = '';
+  const cleanupAccountSlugs = [];
 
-async function resolveSeedEvent(api, baseUrl, token) {
-  return (await findExistingSeedEvent(api, baseUrl, token)) ||
-    (await createSeedEvent(api, baseUrl, token));
+  try {
+    const eventType = await createEventType(api, baseUrl, token, uniqueSuffix);
+    eventTypeId = eventType?.id?.toString() || '';
+    const { profileType, createdProfileType: fallbackProfileType } =
+      await resolvePoiCapableProfileType(api, baseUrl, token);
+    createdProfileType = fallbackProfileType;
+    const host = await createPhysicalHost(
+      api,
+      baseUrl,
+      token,
+      `PW Invite Session Host ${uniqueSuffix}`,
+      profileType,
+    );
+    const band = await createPhysicalHost(
+      api,
+      baseUrl,
+      token,
+      `PW Invite Session Band ${uniqueSuffix}`,
+      profileType,
+    );
+    const exhibitor = await createPhysicalHost(
+      api,
+      baseUrl,
+      token,
+      `PW Invite Session Exhibitor ${uniqueSuffix}`,
+      profileType,
+    );
+    cleanupAccountSlugs.push(
+      ...[host.account_slug, band.account_slug, exhibitor.account_slug]
+        .map((slug) => slug?.toString().trim())
+        .filter(Boolean),
+    );
+
+    const start = new Date(Date.now() + 10 * 24 * 60 * 60 * 1000);
+    const end = new Date(start.getTime() + 2 * 60 * 60 * 1000);
+    const response = await api.post(buildUrl(baseUrl, '/admin/api/v1/events'), {
+      data: {
+        title,
+        content:
+          '<p>Playwright invite session context event for visible invite preview validation.</p>',
+        type: {
+          id: eventType.id,
+          name: eventType.name,
+          slug: eventType.slug,
+          description: eventType.description || 'Playwright invite type',
+        },
+        location: {
+          mode: 'physical',
+        },
+        place_ref: {
+          type: 'account_profile',
+          id: host.id,
+        },
+        event_parties: [band, exhibitor].map((profile) => ({
+          party_ref_id: profile.id,
+        })),
+        profile_groups: [
+          {
+            id: 'bandas',
+            label: 'Bandas',
+            order: 0,
+            account_profile_ids: [band.id],
+          },
+          {
+            id: 'expositores',
+            label: 'Expositores',
+            order: 1,
+            account_profile_ids: [exhibitor.id],
+          },
+        ],
+        occurrences: [
+          {
+            date_time_start: start.toISOString(),
+            date_time_end: end.toISOString(),
+          },
+        ],
+        publication: {
+          status: 'published',
+          publish_at: new Date(Date.now() - 60 * 1000).toISOString(),
+        },
+      },
+      headers: authHeaders(token),
+    });
+    expect(response.status(), 'Invite preview seed event must be created.').toBe(
+      201,
+    );
+    const payload = await response.json();
+    eventId = payload?.data?.event_id?.toString() || '';
+    return {
+      event: payload?.data,
+      title,
+      hostLabel: host.display_name,
+      bandLabel: band.display_name,
+      exhibitorLabel: exhibitor.display_name,
+      eventTypeId,
+      createdProfileType,
+      cleanupAccountSlugs,
+    };
+  } catch (error) {
+    await runCleanupPreservingPrimaryError(error, async () => {
+      await deleteEvent(api, baseUrl, token, eventId);
+      await cleanupOnboardedAccounts(
+        api,
+        baseUrl,
+        token,
+        cleanupAccountSlugs,
+      );
+      await deleteEventType(api, baseUrl, token, eventTypeId);
+      await deleteAccountProfileType(
+        api,
+        baseUrl,
+        token,
+        createdProfileType,
+      );
+    });
+    throw error;
+  }
 }
 
 function firstOccurrenceId(event) {
@@ -716,89 +906,103 @@ test('@mutation INVITE-SESSION-CONTEXT invite landing exposes dynamic share meta
 }) => {
   const baseUrl = requireTenantUrl();
   const api = await createApiContext(baseUrl);
-  const session = await loginTenantAdmin(api, baseUrl);
-  const seeded = await createInvitePreviewSeedEvent(api, baseUrl, session.token);
-  const event = seeded.event;
-  const eventId = event?.event_id?.toString() || '';
-  const eventTitle = seeded.title;
-  const occurrenceId = firstOccurrenceId(event);
-  const shareSenderToken = await createAnonymousIdentity(
-    api,
-    baseUrl,
-    'metadata-sender',
-  );
-  const { code } = await createShareCodeFromTarget(api, baseUrl, shareSenderToken, {
-    eventId,
-    occurrenceId,
-  });
-  const preview = await assertSharePreview(api, baseUrl, code, {
-    expectedEventName: eventTitle,
-    occurrenceId,
-  });
-  const invitePath = `/invite?code=${encodeURIComponent(code)}`;
-  const inviteUrl = buildUrl(baseUrl, invitePath);
+  let session = null;
+  let seeded = null;
+  let secondSeeded = null;
+  let shareSenderToken = null;
+  let primaryError = null;
 
   try {
-    const response = await page.goto(inviteUrl, {
-      waitUntil: 'domcontentloaded',
-    });
-    expect(response, 'Invite landing response should be available.').not.toBeNull();
-    expect(response.status()).toBeLessThan(400);
+    session = await loginTenantAdmin(api, baseUrl);
+    seeded = await createInvitePreviewSeedEvent(api, baseUrl, session.token);
+    secondSeeded = await createInvitePreviewSeedEvent(api, baseUrl, session.token);
+    shareSenderToken = await createAnonymousIdentity(api, baseUrl, 'metadata-sender');
+    await installInviteFallbackFlashRecorder(page.context());
+    const firstVisit = async (seed, expectedVisibleTexts) => {
+      const event = seed.event;
+      const eventId = event?.event_id?.toString() || '';
+      const eventTitle = seed.title;
+      const occurrenceId = firstOccurrenceId(event);
+      const { code } = await createShareCodeFromTarget(api, baseUrl, shareSenderToken, {
+        eventId,
+        occurrenceId,
+      });
+      const preview = await assertSharePreview(api, baseUrl, code, {
+        expectedEventName: eventTitle,
+        occurrenceId,
+      });
+      const invitePath = `/invite?code=${encodeURIComponent(code)}`;
+      const inviteUrl = buildUrl(baseUrl, invitePath);
+      const response = await page.goto(inviteUrl, {
+        waitUntil: 'domcontentloaded',
+      });
+      expect(response, 'Invite landing response should be available.').not.toBeNull();
+      expect(response.status()).toBeLessThan(400);
 
-    await expect(page).toHaveTitle(new RegExp(escapeRegExp(eventTitle), 'i'));
-    await expect(page.locator('head meta[property="og:title"]')).toHaveAttribute(
-      'content',
-      new RegExp(escapeRegExp(eventTitle), 'i'),
-    );
-    await expect(page.locator('head meta[name="twitter:title"]')).toHaveAttribute(
-      'content',
-      new RegExp(escapeRegExp(eventTitle), 'i'),
-    );
-    await expect(page.locator('head meta[property="og:description"]')).toHaveAttribute(
-      'content',
-      new RegExp(escapeRegExp(eventTitle), 'i'),
-    );
-    await expect(page.locator('head meta[property="og:url"]')).toHaveAttribute(
-      'content',
-      inviteUrl,
-    );
-    await expect(page.locator('head link[rel="canonical"]')).toHaveAttribute(
-      'href',
-      inviteUrl,
-    );
+      await expect(page).toHaveTitle(new RegExp(escapeRegExp(eventTitle), 'i'));
+      await expect(page.locator('head meta[property="og:title"]')).toHaveAttribute(
+        'content',
+        new RegExp(escapeRegExp(eventTitle), 'i'),
+      );
+      await expect(page.locator('head meta[name="twitter:title"]')).toHaveAttribute(
+        'content',
+        new RegExp(escapeRegExp(eventTitle), 'i'),
+      );
+      await expect(page.locator('head meta[property="og:description"]')).toHaveAttribute(
+        'content',
+        new RegExp(escapeRegExp(eventTitle), 'i'),
+      );
+      await expect(page.locator('head meta[property="og:url"]')).toHaveAttribute(
+        'content',
+        inviteUrl,
+      );
+      await expect(page.locator('head link[rel="canonical"]')).toHaveAttribute(
+        'href',
+        inviteUrl,
+      );
 
-    const expectedImage = textValue(preview?.invite?.event_image_url);
-    const ogImage = page.locator('head meta[property="og:image"]');
-    const twitterImage = page.locator('head meta[name="twitter:image"]');
-    if (expectedImage) {
-      await expect(ogImage).toHaveAttribute('content', expectedImage);
-      await expect(twitterImage).toHaveAttribute('content', expectedImage);
-    } else {
-      await expect(ogImage).toHaveAttribute('content', /.+/);
-      await expect(twitterImage).toHaveAttribute('content', /.+/);
-    }
+      const expectedImage = textValue(preview?.invite?.event_image_url);
+      const ogImage = page.locator('head meta[property="og:image"]');
+      const twitterImage = page.locator('head meta[name="twitter:image"]');
+      if (expectedImage) {
+        await expect(ogImage).toHaveAttribute('content', expectedImage);
+        await expect(twitterImage).toHaveAttribute('content', expectedImage);
+      } else {
+        await expect(ogImage).toHaveAttribute('content', /.+/);
+        await expect(twitterImage).toHaveAttribute('content', /.+/);
+      }
 
-    expect((preview?.invite?.profile_groups || []).map((group) => group.label)).toEqual([
+      expect((preview?.invite?.profile_groups || []).map((group) => group.label)).toEqual([
+        'Bandas',
+        'Expositores',
+      ]);
+      expect(
+        (preview?.invite?.linked_account_profiles || []).map((profile) =>
+          textValue(profile?.display_name, profile?.name),
+        ),
+      ).toEqual(expect.arrayContaining(expectedVisibleTexts.slice(-2)));
+
+      await openInvitePreview({
+        page,
+        baseUrl,
+        code,
+        eventTitle,
+        expectedVisibleTexts,
+      });
+      return {
+        code,
+        inviteUrl,
+        expectedImage,
+        title: eventTitle,
+      };
+    };
+
+    const firstMetadata = await firstVisit(seeded, [
       'Bandas',
       'Expositores',
+      seeded.bandLabel,
+      seeded.exhibitorLabel,
     ]);
-    expect(
-      (preview?.invite?.linked_account_profiles || []).map((profile) =>
-        textValue(profile?.display_name, profile?.name),
-      ),
-    ).toEqual(
-      expect.arrayContaining([
-        seeded.bandLabel,
-        seeded.exhibitorLabel,
-      ]),
-    );
-
-    await openInvitePreview({
-      page,
-      baseUrl,
-      code,
-      eventTitle,
-    });
     await expect(page.locator('flutter-view')).toHaveCount(1, {
       timeout: appBootTimeoutMs,
     });
@@ -816,15 +1020,63 @@ test('@mutation INVITE-SESSION-CONTEXT invite landing exposes dynamic share meta
       flutterViewCount: 1,
       semanticsPlaceholderCount: expect.any(Number),
     });
+
+    const secondMetadata = await firstVisit(secondSeeded, [
+      'Bandas',
+      'Expositores',
+      secondSeeded.bandLabel,
+      secondSeeded.exhibitorLabel,
+    ]);
+    expect(secondMetadata.code).not.toBe(firstMetadata.code);
+    expect(secondMetadata.inviteUrl).not.toBe(firstMetadata.inviteUrl);
+    expect(secondMetadata.title).not.toBe(firstMetadata.title);
+  } catch (error) {
+    primaryError = error;
+    throw error;
   } finally {
-    await deleteEvent(api, baseUrl, session.token, eventId);
-    await cleanupOnboardedAccounts(
-      api,
-      baseUrl,
-      session.token,
-      seeded.cleanupAccountSlugs,
-    );
-    await api.dispose();
+    await runCleanupPreservingPrimaryError(primaryError, async () => {
+      try {
+        if (session) {
+          await deleteEvent(
+            api,
+            baseUrl,
+            session.token,
+            seeded?.event?.event_id?.toString() || '',
+          );
+          await deleteEvent(
+            api,
+            baseUrl,
+            session.token,
+            secondSeeded?.event?.event_id?.toString() || '',
+          );
+          await cleanupOnboardedAccounts(
+            api,
+            baseUrl,
+            session.token,
+            [
+              ...(seeded?.cleanupAccountSlugs || []),
+              ...(secondSeeded?.cleanupAccountSlugs || []),
+            ],
+          );
+          await deleteEventType(api, baseUrl, session.token, seeded?.eventTypeId || '');
+          await deleteEventType(api, baseUrl, session.token, secondSeeded?.eventTypeId || '');
+          await deleteAccountProfileType(
+            api,
+            baseUrl,
+            session.token,
+            seeded?.createdProfileType || '',
+          );
+          await deleteAccountProfileType(
+            api,
+            baseUrl,
+            session.token,
+            secondSeeded?.createdProfileType || '',
+          );
+        }
+      } finally {
+        await api.dispose();
+      }
+    });
   }
 });
 
@@ -834,18 +1086,22 @@ test('@mutation INVITE-SESSION-CONTEXT Android direct invite and event links gen
   const baseUrl = requireTenantUrl();
   const api = await createApiContext(baseUrl);
   let androidContext = null;
+  let seeded = null;
+  let session = null;
+  let primaryError = null;
 
   try {
-    const session = await loginTenantAdmin(api, baseUrl);
+    session = await loginTenantAdmin(api, baseUrl);
     const shareSenderToken = await createAnonymousIdentity(
       api,
       baseUrl,
       'sender',
     );
-    const event = await resolveSeedEvent(api, baseUrl, session.token);
-    const eventTitle = textValue(event?.title, event?.name);
+    seeded = await createSeedEvent(api, baseUrl, session.token);
+    const event = seeded.event;
+    const eventTitle = seeded.title;
     const eventRouteRef = textValue(event?.event_id, event?.slug);
-    expect(eventTitle, 'Seed event must expose title.').toBe(seedTitle);
+    expect(eventTitle, 'Seed event must expose title.').toBeTruthy();
     expect(eventRouteRef, 'Seed event must expose event_id/slug route ref.')
       .toBeTruthy();
 
@@ -879,10 +1135,34 @@ test('@mutation INVITE-SESSION-CONTEXT Android direct invite and event links gen
         },
       });
     }
+  } catch (error) {
+    primaryError = error;
+    throw error;
   } finally {
-    if (androidContext) {
-      await androidContext.close();
-    }
-    await api.dispose();
+    await runCleanupPreservingPrimaryError(primaryError, async () => {
+      try {
+        if (androidContext) {
+          await androidContext.close();
+        }
+        if (seeded && session) {
+          await deleteEvent(api, baseUrl, session.token, seeded.event?.event_id?.toString() || '');
+          await cleanupOnboardedAccounts(
+            api,
+            baseUrl,
+            session.token,
+            seeded.cleanupAccountSlugs,
+          );
+          await deleteEventType(api, baseUrl, session.token, seeded.eventTypeId);
+          await deleteAccountProfileType(
+            api,
+            baseUrl,
+            session.token,
+            seeded.createdProfileType,
+          );
+        }
+      } finally {
+        await api.dispose();
+      }
+    });
   }
 });

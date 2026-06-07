@@ -125,8 +125,7 @@ async function gotoAllowingAndroidIntent(page, url) {
     const isExpectedIntentNavigationFailure =
       message.includes('ERR_UNKNOWN_URL_SCHEME') ||
       message.includes('net::ERR_ABORTED') ||
-      message.includes('intent://') ||
-      message.includes('Timeout 30000ms exceeded');
+      message.includes('intent://');
     if (!isExpectedIntentNavigationFailure) {
       throw error;
     }

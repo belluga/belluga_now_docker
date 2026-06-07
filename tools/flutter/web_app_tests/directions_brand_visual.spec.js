@@ -1,7 +1,13 @@
 const crypto = require('crypto');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
-const { test, expect } = require('@playwright/test');
+const { test, expect, request } = require('@playwright/test');
+const { loginTenantAdmin } = require('./support/tenant_admin_auth');
+const {
+  cleanupOnboardedAccount,
+  runCleanupPreservingPrimaryError,
+} = require('./support/account_onboarding_cleanup');
 
 const tenantUrl = process.env.NAV_TENANT_URL;
 const appBootTimeoutMs = 90000;
@@ -9,13 +15,7 @@ const publicListPageSize = 50;
 const publicListMaxPages = 5;
 const screenshotDir =
   process.env.NAV_DIRECTIONS_BRAND_SCREENSHOT_DIR ||
-  path.join(
-    __dirname,
-    '..',
-    'web_app_smoke_runner',
-    'test-results',
-    'directions-brand',
-  );
+  path.join(os.tmpdir(), 'belluga-web-navigation', 'directions-brand');
 
 test.describe.configure({ timeout: 300000 });
 
@@ -128,6 +128,33 @@ async function publicAuthHeaders(page, baseUrl) {
   };
 }
 
+function authHeaders(token) {
+  return {
+    Accept: 'application/json',
+    Authorization: `Bearer ${token}`,
+  };
+}
+
+async function createApiContext(baseUrl) {
+  return request.newContext({
+    baseURL: baseUrl,
+    extraHTTPHeaders: {
+      Accept: 'application/json',
+    },
+    ignoreHTTPSErrors: true,
+  });
+}
+
+async function loginTenantAdminToken(api, baseUrl) {
+  const session = await loginTenantAdmin({
+    api,
+    baseUrl,
+    buildUrl: (origin, pathName) => buildUrl(origin, pathName),
+    deviceName: 'playwright-directions-brand-visual',
+  });
+  return session.token;
+}
+
 async function fetchJson(page, baseUrl, pathName, description, searchParams = {}) {
   const response = await page.request.get(buildUrl(baseUrl, pathName, searchParams), {
     headers: await publicAuthHeaders(page, baseUrl),
@@ -167,8 +194,8 @@ function payloadRows(payload) {
     return payload.items;
   }
   if (Array.isArray(payload)) {
-    return payload;
-  }
+  return payload;
+}
   return [];
 }
 
@@ -206,11 +233,16 @@ async function resolveAccountProfileCandidate(page, baseUrl) {
     'Public account profiles list',
   );
   const selected = rows.find(
-    (row) => textValue(row?.slug) && locationPayload(row) != null,
+    (row) =>
+      textValue(row?.slug) &&
+      locationPayload(row) != null &&
+      row?.capabilities?.is_poi_enabled === true &&
+      row?.capabilities?.is_reference_location_enabled === true &&
+      row?.capabilities?.is_publicly_discoverable !== false,
   );
   expect(
     selected,
-    'Directions brand visual QA requires a public Account Profile with location.',
+    'Directions brand visual QA requires a public Account Profile with location and shared-directions capabilities.',
   ).toBeTruthy();
   return selected;
 }
@@ -234,6 +266,237 @@ async function resolveEventCandidate(page, baseUrl) {
     'Directions brand visual QA requires a public Event with map-capable location.',
   ).toBeTruthy();
   return selected;
+}
+
+async function deleteEvent(api, baseUrl, token, eventId) {
+  if (!eventId) {
+    return;
+  }
+  const response = await api.delete(buildUrl(baseUrl, `/admin/api/v1/events/${eventId}`), {
+    headers: authHeaders(token),
+    failOnStatusCode: false,
+  });
+  expect(
+    [404, 200, 204],
+    `Directions event cleanup must delete ${eventId} or observe it already missing.`,
+  ).toContain(response.status());
+}
+
+async function deleteEventType(api, baseUrl, token, eventTypeId) {
+  if (!eventTypeId) {
+    return;
+  }
+  const response = await api.delete(buildUrl(baseUrl, `/admin/api/v1/event_types/${eventTypeId}`), {
+    headers: authHeaders(token),
+    failOnStatusCode: false,
+  });
+  expect(
+    [404, 200, 204],
+    `Directions event type cleanup must delete ${eventTypeId} or observe it already missing.`,
+  ).toContain(response.status());
+}
+
+async function deleteAccountProfileType(api, baseUrl, token, profileType) {
+  if (!profileType) {
+    return;
+  }
+  const response = await api.delete(
+    buildUrl(
+      baseUrl,
+      `/admin/api/v1/account_profile_types/${encodeURIComponent(profileType)}`,
+    ),
+    {
+      headers: authHeaders(token),
+      failOnStatusCode: false,
+    },
+  );
+  expect(
+    [404, 200, 204],
+    `Directions profile type cleanup must delete ${profileType} or observe it already missing.`,
+  ).toContain(response.status());
+}
+
+async function createDirectionsProfileType(api, baseUrl, token) {
+  const unique = Date.now();
+  const type = `pw-directions-brand-${unique}`;
+  const response = await api.post(
+    buildUrl(baseUrl, '/admin/api/v1/account_profile_types'),
+    {
+      headers: authHeaders(token),
+      data: {
+        type,
+        label: `PW Directions ${unique}`,
+        labels: {
+          singular: `PW Directions ${unique}`,
+          plural: `PW Directions ${unique}s`,
+        },
+        allowed_taxonomies: [],
+        capabilities: {
+          is_queryable: true,
+          is_publicly_navigable: true,
+          is_favoritable: true,
+          is_publicly_discoverable: true,
+          is_poi_enabled: true,
+          is_reference_location_enabled: true,
+          has_taxonomies: false,
+          has_bio: false,
+          has_content: false,
+          has_avatar: false,
+          has_cover: false,
+          has_events: true,
+        },
+        visual: {
+          mode: 'icon',
+          icon: 'place',
+          color: '#0F766E',
+          icon_color: '#FFFFFF',
+        },
+      },
+    },
+  );
+  expect(response.status(), 'Directions profile type seed must succeed.').toBe(201);
+  return type;
+}
+
+async function createDirectionsProfile(api, baseUrl, token, profileType) {
+  const unique = Date.now();
+  const response = await api.post(
+    buildUrl(baseUrl, '/admin/api/v1/account_onboardings'),
+    {
+      headers: authHeaders(token),
+      data: {
+        name: `PW Directions Brand ${unique}`,
+        ownership_state: 'unmanaged',
+        profile_type: profileType,
+        location: {
+          lat: -20.671339,
+          lng: -40.495395,
+        },
+      },
+    },
+  );
+  expect(response.status(), 'Directions account onboarding must succeed.').toBe(201);
+  const payload = await response.json();
+  return {
+    accountSlug: textValue(payload?.data?.account?.slug),
+    profileId: textValue(payload?.data?.account_profile?.id),
+    profileSlug: textValue(
+      payload?.data?.account_profile?.slug,
+      payload?.data?.account?.slug,
+    ),
+  };
+}
+
+async function createDirectionsEventType(api, baseUrl, token) {
+  const unique = Date.now();
+  const response = await api.post(
+    buildUrl(baseUrl, '/admin/api/v1/event_types'),
+    {
+      headers: authHeaders(token),
+      data: {
+        name: `PW Directions Event ${unique}`,
+        slug: `pw-directions-event-${unique}`,
+        description: 'Directions brand visual event type',
+        visual: {
+          mode: 'icon',
+          icon: 'event',
+          color: '#7C3AED',
+          icon_color: '#FFFFFF',
+        },
+      },
+    },
+  );
+  expect(response.status(), 'Directions event type seed must succeed.').toBe(201);
+  return (await response.json())?.data || {};
+}
+
+async function createDirectionsEvent(
+  api,
+  baseUrl,
+  token,
+  { eventType, physicalHostId },
+) {
+  const unique = Date.now();
+  const start = new Date(Date.now() + 30 * 60 * 1000);
+  const end = new Date(start.getTime() + 60 * 60 * 1000);
+  const response = await api.post(
+    buildUrl(baseUrl, '/admin/api/v1/events'),
+    {
+      headers: authHeaders(token),
+      data: {
+        title: `PW Directions Brand Event ${unique}`,
+        content: '<p>Directions brand visual event.</p>',
+        type: {
+          id: textValue(eventType?.id),
+          name: textValue(eventType?.name),
+          slug: textValue(eventType?.slug),
+          description: textValue(eventType?.description),
+        },
+        location: {
+          mode: 'physical',
+        },
+        place_ref: {
+          type: 'account_profile',
+          id: physicalHostId,
+        },
+        event_parties: [],
+        occurrences: [
+          {
+            date_time_start: start.toISOString(),
+            date_time_end: end.toISOString(),
+          },
+        ],
+        publication: {
+          status: 'published',
+          publish_at: new Date(Date.now() - 60 * 1000).toISOString(),
+        },
+      },
+    },
+  );
+  expect(response.status(), 'Directions event seed must succeed.').toBe(201);
+  return (await response.json())?.data || {};
+}
+
+async function waitForPublicProfile(page, baseUrl, slug) {
+  await expect
+    .poll(
+      async () => {
+        const response = await page.request.get(
+          buildUrl(baseUrl, `/api/v1/account_profiles/${slug}`),
+          {
+            headers: await publicAuthHeaders(page, baseUrl),
+            failOnStatusCode: false,
+          },
+        );
+        return response.status();
+      },
+      {
+        timeout: appBootTimeoutMs,
+        message: `Public account profile ${slug} must hydrate before directions proof.`,
+      },
+    )
+    .toBe(200);
+}
+
+async function waitForPublicEvent(page, baseUrl, routeRef) {
+  await expect
+    .poll(
+      async () => {
+        const response = await page.request.get(
+          buildUrl(baseUrl, `/api/v1/events/${routeRef}`),
+          {
+            headers: await publicAuthHeaders(page, baseUrl),
+            failOnStatusCode: false,
+          },
+        );
+        return response.status();
+      },
+      {
+        timeout: appBootTimeoutMs,
+        message: `Public event ${routeRef} must hydrate before directions proof.`,
+      },
+    )
+    .toBe(200);
 }
 
 async function assertBrandAssetsServed(page, baseUrl) {
@@ -338,6 +601,23 @@ async function openDirectionsTab(page, contextLabel) {
   await visibleLabelLocator(page, 'Outros', `${contextLabel} directions`);
 }
 
+async function expectBrandAssetUsedByRuntime(page, assetFileName, description) {
+  await expect
+    .poll(
+      async () =>
+        page.evaluate((expectedAssetFileName) => {
+          return performance
+            .getEntriesByType('resource')
+            .some((entry) => entry.name.includes(expectedAssetFileName));
+        }, assetFileName),
+      {
+        timeout: appBootTimeoutMs,
+        message: `${description} must request the expected brand asset from the live runtime.`,
+      },
+    )
+    .toBe(true);
+}
+
 async function screenshot(page, filename) {
   fs.mkdirSync(screenshotDir, { recursive: true });
   await page.screenshot({
@@ -346,38 +626,125 @@ async function screenshot(page, filename) {
   });
 }
 
-test('@readonly NAV-DIR-BRAND-01 Waze and Uber brand controls render on shared directions surfaces', async ({
+test('@mutation NAV-DIR-BRAND-01 Waze and Uber brand controls render on shared directions surfaces', async ({
   page,
 }) => {
   const baseUrl = requireTenantUrl();
-  await assertBrandAssetsServed(page, baseUrl);
+  const api = await createApiContext(baseUrl);
+  let token = '';
+  let profileType = '';
+  let accountSlug = '';
+  let profileSlug = '';
+  let profileId = '';
+  let eventTypeId = '';
+  let eventSlug = '';
+  let eventId = '';
+  let occurrenceId = '';
+  let primaryError = null;
 
-  const accountProfile = await resolveAccountProfileCandidate(page, baseUrl);
-  const event = await resolveEventCandidate(page, baseUrl);
-  const eventPath = `/agenda/evento/${event.slug}?occurrence=${eventOccurrenceId(event)}`;
+  try {
+    token = await loginTenantAdminToken(api, baseUrl);
+    profileType = await createDirectionsProfileType(api, baseUrl, token);
+    const profile = await createDirectionsProfile(api, baseUrl, token, profileType);
+    accountSlug = profile.accountSlug;
+    profileSlug = profile.profileSlug;
+    profileId = profile.profileId;
 
-  await page.setViewportSize({ width: 390, height: 844 });
-  await openAppPath(page, baseUrl, `/parceiro/${accountProfile.slug}`);
-  await openDirectionsTab(page, 'Account Profile mobile');
-  await screenshot(page, 'account-mobile-directions.png');
+    const eventType = await createDirectionsEventType(api, baseUrl, token);
+    eventTypeId = textValue(eventType?.id);
+    const event = await createDirectionsEvent(api, baseUrl, token, {
+      eventType,
+      physicalHostId: profileId,
+    });
+    eventSlug = textValue(event?.slug);
+    eventId = textValue(event?.event_id, event?.id);
+    occurrenceId = eventOccurrenceId(event);
 
-  const otherButton = await visibleLabelLocator(
-    page,
-    'Outros',
-    'Account Profile mobile directions',
-  );
-  await otherButton.click();
-  await visibleLabelLocator(page, 'Fechar', 'Directions chooser sheet');
-  await page.waitForTimeout(1800);
-  await screenshot(page, 'account-mobile-other-sheet.png');
+    expect(profileSlug, 'Directions account fixture must expose a public slug.').toBeTruthy();
+    expect(occurrenceId, 'Directions event fixture must expose an occurrence id.').toBeTruthy();
+    await waitForPublicProfile(page, baseUrl, profileSlug);
+    await waitForPublicEvent(page, baseUrl, eventSlug);
+    await assertBrandAssetsServed(page, baseUrl);
+    const eventPath = `/agenda/evento/${eventSlug}?occurrence=${occurrenceId}`;
 
-  await page.setViewportSize({ width: 1440, height: 900 });
-  await openAppPath(page, baseUrl, `/parceiro/${accountProfile.slug}`);
-  await openDirectionsTab(page, 'Account Profile desktop');
-  await screenshot(page, 'account-desktop-directions.png');
+    await page.setViewportSize({ width: 390, height: 844 });
+    await openAppPath(page, baseUrl, `/parceiro/${profileSlug}`);
+    await openDirectionsTab(page, 'Account Profile mobile');
+    await expectBrandAssetUsedByRuntime(
+      page,
+      'waze_logo_2022.png',
+      'Account Profile mobile Waze control',
+    );
+    await expectBrandAssetUsedByRuntime(
+      page,
+      'uber_logotype.svg',
+      'Account Profile mobile Uber control',
+    );
+    await screenshot(page, 'account-mobile-directions.png');
 
-  await page.setViewportSize({ width: 390, height: 844 });
-  await openAppPath(page, baseUrl, eventPath);
-  await openDirectionsTab(page, 'Event mobile');
-  await screenshot(page, 'event-mobile-directions.png');
+    const otherButton = await visibleLabelLocator(
+      page,
+      'Outros',
+      'Account Profile mobile directions',
+    );
+    await otherButton.click();
+    await visibleLabelLocator(page, 'Fechar', 'Directions chooser sheet');
+    await visibleLabelLocator(page, 'Google Maps', 'Directions chooser sheet');
+    await visibleLabelLocator(page, '99', 'Directions chooser sheet');
+    await expectBrandAssetUsedByRuntime(
+      page,
+      'google_maps_icon_2020.svg',
+      'Directions chooser Google Maps control',
+    );
+    await expectBrandAssetUsedByRuntime(
+      page,
+      '99_logo_2023.png',
+      'Directions chooser 99 control',
+    );
+    await page.waitForTimeout(1800);
+    await screenshot(page, 'account-mobile-other-sheet.png');
+
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await openAppPath(page, baseUrl, `/parceiro/${profileSlug}`);
+    await openDirectionsTab(page, 'Account Profile desktop');
+    await expectBrandAssetUsedByRuntime(
+      page,
+      'waze_logo_2022.png',
+      'Account Profile desktop Waze control',
+    );
+    await expectBrandAssetUsedByRuntime(
+      page,
+      'uber_logotype.svg',
+      'Account Profile desktop Uber control',
+    );
+    await screenshot(page, 'account-desktop-directions.png');
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await openAppPath(page, baseUrl, eventPath);
+    await openDirectionsTab(page, 'Event mobile');
+    await expectBrandAssetUsedByRuntime(
+      page,
+      'waze_logo_2022.png',
+      'Event mobile Waze control',
+    );
+    await expectBrandAssetUsedByRuntime(
+      page,
+      'uber_logotype.svg',
+      'Event mobile Uber control',
+    );
+    await screenshot(page, 'event-mobile-directions.png');
+  } catch (error) {
+    primaryError = error;
+    throw error;
+  } finally {
+    await runCleanupPreservingPrimaryError(primaryError, async () => {
+      await deleteEvent(api, baseUrl, token, eventId);
+      if (accountSlug) {
+        await cleanupOnboardedAccount(api, baseUrl, token, accountSlug);
+      }
+      await deleteEventType(api, baseUrl, token, eventTypeId);
+      await deleteAccountProfileType(api, baseUrl, token, profileType);
+    });
+    await api.dispose();
+  }
 });

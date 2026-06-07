@@ -11,6 +11,7 @@ const {
 
 const tenantUrl = process.env.NAV_TENANT_URL;
 const appBootTimeoutMs = 90000;
+const navigationRunId = (process.env.NAV_TEST_RUN_ID || 'local').trim();
 let anonymousIdentityToken = null;
 
 test.describe.configure({ timeout: 300000 });
@@ -106,7 +107,7 @@ function formatAgendaOccurrenceMetaLabel(occurrence) {
 function anonymousFingerprintHash(baseUrl) {
   return crypto
     .createHash('sha256')
-    .update(`event-occurrences:${baseUrl}`)
+    .update(`event-occurrences:${baseUrl}:${navigationRunId}`)
     .digest('hex');
 }
 
@@ -722,6 +723,8 @@ async function resolvePoiCapableProfileType(
           icon_color: '#FFFFFF',
         },
         capabilities: {
+          is_queryable: true,
+          is_publicly_navigable: true,
           is_favoritable: true,
           is_poi_enabled: true,
           is_reference_location_enabled: true,

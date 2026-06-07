@@ -801,7 +801,7 @@ async function createAccountProfileType(
         },
         allowed_taxonomies: allowedTaxonomies,
         capabilities: resolvedCapabilities,
-        poi_visual: {
+        visual: {
           mode: 'icon',
           icon: 'place',
           color: markerColor,
@@ -859,7 +859,7 @@ async function createStaticProfileType(
           has_taxonomies: true,
           has_content: true,
         },
-        poi_visual: {
+        visual: {
           mode: 'icon',
           icon: 'place',
           color: markerColor,
@@ -998,8 +998,6 @@ async function createEventTypeWithTypeAsset(
         description,
         'visual[mode]': 'image',
         'visual[image_source]': 'type_asset',
-        'poi_visual[mode]': 'image',
-        'poi_visual[image_source]': 'type_asset',
         type_asset: {
           name: 'event-type-asset.png',
           mimeType: 'image/png',
@@ -1080,12 +1078,10 @@ test('@mutation tenant-admin account-profile cover upload persists and renders a
     });
 
     logStep('cover', 'confirm crop and wait for autosave');
-    await Promise.all([
+    const [saveResponse] = await Promise.all([
       saveResponsePromise,
       page.getByRole('button', { name: 'Usar' }).click(),
     ]);
-
-    const saveResponse = await saveResponsePromise;
     const savePayload = await saveResponse.json();
     const coverUrl = savePayload?.data?.cover_url?.toString() || '';
     logStep('cover', `autosave returned ${coverUrl}`);
@@ -1216,12 +1212,10 @@ test('@mutation tenant-admin account-profile avatar upload persists and renders 
     });
 
     logStep('avatar', 'confirm crop and wait for autosave');
-    await Promise.all([
+    const [saveResponse] = await Promise.all([
       saveResponsePromise,
       page.getByRole('button', { name: 'Usar' }).click(),
     ]);
-
-    const saveResponse = await saveResponsePromise;
     const savePayload = await saveResponse.json();
     const avatarUrl = savePayload?.data?.avatar_url?.toString() || '';
     logStep('avatar', `autosave returned ${avatarUrl}`);
@@ -2016,6 +2010,11 @@ test('@mutation tenant-admin profile-type editors preload and preserve allowed t
     await expect(page.getByText('Editar tipo de evento')).toBeVisible({
       timeout: appBootTimeoutMs,
     });
+    await scrollUntilVisible(
+      page,
+      page.getByText('Taxonomias permitidas').first(),
+      'Expected the Taxonomias permitidas section to appear after reopening the event type.',
+    );
     await expectSelectedToggleChip(page, eventTaxonomyA.name);
     await expectSelectedToggleChip(page, eventTaxonomyB.name);
     logStep('type-taxonomies', 'event type reopen preserved allowed taxonomies');
@@ -2135,7 +2134,7 @@ test('@mutation tenant-admin profile-type editors preload and preserve allowed t
     ]);
     expect(staticSavePayload?.data?.label).toBe(staticLabelUpdate);
     logStep('type-taxonomies', 'static type save preserved allowed taxonomies');
-    expect(staticSavePayload?.data?.poi_visual?.color).toBe('#1E6FB5');
+    expect(staticSavePayload?.data?.visual?.color).toBe('#1E6FB5');
 
     response = await page.goto(staticEditUrl, {
       waitUntil: 'domcontentloaded',

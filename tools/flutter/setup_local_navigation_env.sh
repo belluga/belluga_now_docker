@@ -4,9 +4,27 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 ENV_FILE="${NAV_LOCAL_ENV_FILE:-${REPO_ROOT}/.env.local.navigation}"
-GITHUB_REPO="${NAV_GITHUB_REPO:-belluga/belluga_now_docker}"
+REUSE_EXISTING_FILE_VALUES="${NAV_LOCAL_ENV_REUSE_EXISTING:-0}"
 
 read_existing_value() {
+  local key="$1"
+  local file="$2"
+  if [[ "${REUSE_EXISTING_FILE_VALUES}" != "1" ]] || [[ ! -f "${file}" ]]; then
+    return 0
+  fi
+
+  awk -F= -v key="${key}" '
+    $1 == key {
+      value = substr($0, index($0, "=") + 1)
+      gsub(/^"|"$/, "", value)
+      gsub(/^'\''|'\''$/, "", value)
+      print value
+      exit
+    }
+  ' "${file}"
+}
+
+read_existing_credential_value() {
   local key="$1"
   local file="$2"
   if [[ ! -f "${file}" ]]; then
@@ -24,27 +42,17 @@ read_existing_value() {
   ' "${file}"
 }
 
-github_variable() {
-  local name="$1"
-  if ! command -v gh >/dev/null 2>&1; then
-    return 1
-  fi
-
-  gh variable list --repo "${GITHUB_REPO}" --json name,value \
-    --jq ".[] | select(.name == \"${name}\") | .value" 2>/dev/null | head -n 1
-}
-
-landlord_url="${NAV_LANDLORD_URL:-$(github_variable STAGE_NAV_LANDLORD_URL || true)}"
-tenant_url="${NAV_TENANT_URL:-$(github_variable STAGE_NAV_TENANT_URL || true)}"
-landlord_url="${landlord_url:-https://belluga.space}"
-tenant_url="${tenant_url:-https://guarappari.belluga.space}"
+landlord_url="${NAV_LANDLORD_URL:-$(read_existing_value NAV_LANDLORD_URL "${ENV_FILE}")}"
+tenant_url="${NAV_TENANT_URL:-$(read_existing_value NAV_TENANT_URL "${ENV_FILE}")}"
+landlord_url="${landlord_url:-http://localhost}"
+tenant_url="${tenant_url:-http://localhost}"
 deploy_lane="${NAV_DEPLOY_LANE:-$(read_existing_value NAV_DEPLOY_LANE "${ENV_FILE}")}"
-deploy_lane="${deploy_lane:-dev}"
+deploy_lane="${deploy_lane:-local}"
 ignore_https="${PLAYWRIGHT_IGNORE_HTTPS_ERRORS:-$(read_existing_value PLAYWRIGHT_IGNORE_HTTPS_ERRORS "${ENV_FILE}")}"
 ignore_https="${ignore_https:-true}"
 
-admin_email="${NAV_ADMIN_EMAIL:-$(read_existing_value NAV_ADMIN_EMAIL "${ENV_FILE}")}"
-admin_password="${NAV_ADMIN_PASSWORD:-$(read_existing_value NAV_ADMIN_PASSWORD "${ENV_FILE}")}"
+admin_email="${NAV_ADMIN_EMAIL:-$(read_existing_credential_value NAV_ADMIN_EMAIL "${ENV_FILE}")}"
+admin_password="${NAV_ADMIN_PASSWORD:-$(read_existing_credential_value NAV_ADMIN_PASSWORD "${ENV_FILE}")}"
 
 tmp_file="$(mktemp)"
 cleanup() {
@@ -62,7 +70,7 @@ trap cleanup EXIT
   printf 'NAV_DEPLOY_LANE=%s\n' "${deploy_lane}"
   printf 'PLAYWRIGHT_IGNORE_HTTPS_ERRORS=%s\n' "${ignore_https}"
   echo
-  echo "# Required only for mutation navigation smoke."
+  echo "# Required for mutation and diagnostic navigation smoke."
   if [[ -n "${admin_email}" ]]; then
     printf 'NAV_ADMIN_EMAIL=%s\n' "${admin_email}"
   else
@@ -73,6 +81,7 @@ trap cleanup EXIT
   else
     echo "# NAV_ADMIN_PASSWORD="
   fi
+  echo "# NAV_RUNTIME_DB_MUTATION_ALLOWED=1"
 } > "${tmp_file}"
 
 install -m 600 "${tmp_file}" "${ENV_FILE}"
@@ -80,6 +89,11 @@ install -m 600 "${tmp_file}" "${ENV_FILE}"
 echo "Wrote ${ENV_FILE}"
 echo "Landlord URL: ${landlord_url}"
 echo "Tenant URL: ${tenant_url}"
+if [[ "${REUSE_EXISTING_FILE_VALUES}" == "1" ]]; then
+  echo "Existing file reuse: enabled"
+else
+  echo "Existing file reuse: disabled (set NAV_LOCAL_ENV_REUSE_EXISTING=1 to opt in)"
+fi
 if [[ -n "${admin_email}" && -n "${admin_password}" ]]; then
   echo "Mutation credentials: present"
 else

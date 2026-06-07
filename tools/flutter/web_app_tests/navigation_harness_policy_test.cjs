@@ -340,6 +340,15 @@ function assertStageMutationWorkflowSuppliesRuntimeCredentials() {
   );
 }
 
+function assertStageWorkflowIntentionallyOmitsDiagnosticSuite() {
+  const source = fs.readFileSync(orchestrationWorkflow, 'utf8');
+  assert.doesNotMatch(
+    source,
+    /run:\s*bash tools\/flutter\/run_web_navigation_smoke\.sh diagnostic/,
+    'stage workflow must not invoke the diagnostic suite because diagnostics are local-only by policy',
+  );
+}
+
 function assertLocalNavigationEnvAutomationIsSafe() {
   const gitignore = fs.readFileSync(path.join(repoRoot, '.gitignore'), 'utf8');
   assert.match(
@@ -1346,14 +1355,14 @@ function assertStageFixtureOwnedFiltersUseCanonicalKeysOnly() {
   ]);
   assert.deepStrictEqual(
     ownedEvents.map((row) => row.id).sort(),
-    ['owned-event-by-slug'],
-    'stage fixture cleanup must identify the current run by canonical event slug only.',
+    ['owned-event-by-slug', 'owned-event-by-title'],
+    'stage fixture cleanup must identify the current run by canonical event slug or title, but never by foreign type alone.',
   );
 
   const ownedProfiles = filterOwnedProfileRows([
     {
       id: 'foreign-display-name',
-      display_name: stageTaxonomyFixture.profileName,
+      display_name: `Foreign ${stageTaxonomyFixture.profileName}`,
       slug: 'foreign-display-name',
       profile_type: 'foreign_profile_type',
     },
@@ -1361,6 +1370,12 @@ function assertStageFixtureOwnedFiltersUseCanonicalKeysOnly() {
       id: 'owned-profile-by-slug',
       display_name: 'Another visible name',
       slug: stageTaxonomyFixture.profileSlug,
+      profile_type: 'foreign_profile_type',
+    },
+    {
+      id: 'owned-profile-by-display-name',
+      display_name: stageTaxonomyFixture.relatedProfileName,
+      slug: 'different-related-profile-slug',
       profile_type: 'foreign_profile_type',
     },
     {
@@ -1372,8 +1387,8 @@ function assertStageFixtureOwnedFiltersUseCanonicalKeysOnly() {
   ]);
   assert.deepStrictEqual(
     ownedProfiles.map((row) => row.id).sort(),
-    ['owned-profile-by-slug'],
-    'stage fixture cleanup must identify the current run by canonical profile slug only.',
+    ['owned-profile-by-display-name', 'owned-profile-by-slug'],
+    'stage fixture cleanup must identify the current run by canonical profile slug or display name, but never by profile type alone.',
   );
 }
 
@@ -1519,6 +1534,7 @@ function assertCheckedInManifestMatchesCurrentSpecTitles() {
 
 assertGuardPassesCleanFixture();
 assertStageMutationWorkflowSuppliesRuntimeCredentials();
+assertStageWorkflowIntentionallyOmitsDiagnosticSuite();
 assertLocalNavigationEnvAutomationIsSafe();
 assertReadonlyFavoriteSpecMessageMatchesSuite();
 assertRunnerAlwaysExecutesHarnessPolicyTest();

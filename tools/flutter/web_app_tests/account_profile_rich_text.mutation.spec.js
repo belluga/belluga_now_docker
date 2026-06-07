@@ -288,40 +288,6 @@ async function createAuthenticatedTenantAdminPage(browser, session) {
 }
 
 async function resolveRichTextProfileType(api, baseUrl, token) {
-  const response = await api.get(
-    buildUrl(baseUrl, '/admin/api/v1/account_profile_types'),
-    {
-      headers: authHeaders(token),
-    },
-  );
-  expect(response.status(), 'Account profile types must load.').toBe(200);
-  const payload = await response.json();
-  const rows = Array.isArray(payload?.data) ? payload.data : [];
-  const selected =
-    rows.find(
-      (row) =>
-        row?.capabilities?.has_bio === true &&
-        row?.capabilities?.has_content === true &&
-        row?.capabilities?.is_poi_enabled !== true &&
-        row?.capabilities?.is_favoritable === true &&
-        row?.capabilities?.is_publicly_discoverable === true,
-    ) ||
-    rows.find(
-      (row) =>
-        row?.capabilities?.has_bio === true &&
-        row?.capabilities?.has_content === true &&
-        row?.capabilities?.is_favoritable === true &&
-        row?.capabilities?.is_publicly_discoverable === true,
-    );
-
-  if (selected) {
-    return {
-      profileType: selected.type,
-      isPoiEnabled: selected?.capabilities?.is_poi_enabled === true,
-      createdType: null,
-    };
-  }
-
   const type = `playwright-rich-${Date.now()}`;
   const createResponse = await api.post(
     buildUrl(baseUrl, '/admin/api/v1/account_profile_types'),
@@ -337,6 +303,8 @@ async function resolveRichTextProfileType(api, baseUrl, token) {
           icon_color: '#FFFFFF',
         },
         capabilities: {
+          is_queryable: true,
+          is_publicly_navigable: true,
           is_favoritable: true,
           is_publicly_discoverable: true,
           is_poi_enabled: false,
@@ -356,7 +324,7 @@ async function resolveRichTextProfileType(api, baseUrl, token) {
     createResponse.status(),
     'Fallback rich-text profile type must be created when none exists.',
   ).toBe(201);
-  return { profileType: type, createdType: type };
+  return { profileType: type, createdType: type, isPoiEnabled: false };
 }
 
 async function createRichTextAccountProfile(
@@ -440,6 +408,25 @@ async function fetchAdminProfile(api, baseUrl, token, profileId) {
 
 async function fetchPublicProfile(api, baseUrl, profileSlug) {
   const anonymousToken = await resolveAnonymousIdentityToken(api, baseUrl);
+  await expect
+    .poll(
+      async () => {
+        const response = await api.get(
+          buildUrl(baseUrl, `/api/v1/account_profiles/${profileSlug}`),
+          {
+            headers: authHeaders(anonymousToken),
+            failOnStatusCode: false,
+          },
+        );
+        return response.status();
+      },
+      {
+        timeout: appBootTimeoutMs,
+        message: `Public account profile ${profileSlug} must hydrate before rich-text readback.`,
+      },
+    )
+    .toBe(200);
+
   const response = await api.get(
     buildUrl(baseUrl, `/api/v1/account_profiles/${profileSlug}`),
     {

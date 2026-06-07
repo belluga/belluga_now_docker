@@ -80,14 +80,22 @@ function shouldContinuePagedFetch({ payload, pageRows, pageNumber, pageSize }) {
 function filterOwnedEventRows(rows) {
   return rows.filter((row) => {
     const slug = row?.slug?.toString().trim();
-    return slug === fixture.eventSlug;
+    const title = row?.title?.toString().trim();
+    return slug === fixture.eventSlug || title === fixture.eventTitle;
   });
 }
 
 function filterOwnedProfileRows(rows) {
   return rows.filter((row) => {
     const slug = row?.slug?.toString().trim();
-    return slug === fixture.profileSlug || slug === fixture.relatedProfileSlug;
+    const displayName = row?.display_name?.toString().trim();
+    const name = row?.name?.toString().trim();
+    return slug === fixture.profileSlug
+      || slug === fixture.relatedProfileSlug
+      || displayName === fixture.profileName
+      || displayName === fixture.relatedProfileName
+      || name === fixture.profileName
+      || name === fixture.relatedProfileName;
   });
 }
 
