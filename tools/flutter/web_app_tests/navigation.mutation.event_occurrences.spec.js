@@ -104,6 +104,19 @@ function formatAgendaOccurrenceMetaLabel(occurrence) {
   return `${weekday}, ${day} • ${startTime} - ${endWeekday}, ${endDay} • ${endTime}`.toUpperCase();
 }
 
+function formatAdminOccurrenceDateTimeLabel(value) {
+  const date = new Date(value);
+  expect(
+    Number.isNaN(date.getTime()),
+    `Invalid admin occurrence datetime ${value}`,
+  ).toBe(false);
+  return `${String(date.getDate()).padStart(2, '0')}/${String(
+    date.getMonth() + 1,
+  ).padStart(2, '0')}/${date.getFullYear()} ${String(
+    date.getHours(),
+  ).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+}
+
 function anonymousFingerprintHash(baseUrl) {
   return crypto
     .createHash('sha256')
@@ -1611,6 +1624,135 @@ async function fillFlutterTextField(page, label, value) {
   );
 }
 
+function relatedProfileDisplayName(profile) {
+  return (
+    profile?.display_name?.toString?.() ||
+    profile?.displayName?.toString?.() ||
+    ''
+  ).trim();
+}
+
+async function addOccurrenceProfileGroup(page, { groupLabel, profileNames = [] }) {
+  logStep(
+    'evg-helper',
+    `addOccurrenceProfileGroup start label="${groupLabel}" profiles=${profileNames.join(' | ') || '<none>'}`,
+  );
+  await page.getByRole('button', { name: 'Adicionar grupo' }).click();
+  await fillFlutterTextField(page, 'Nome da aba', groupLabel);
+  logStep('evg-helper', `group label filled "${groupLabel}"`);
+
+  if (profileNames.length === 0) {
+    return;
+  }
+
+  const selectorButton = page.getByRole('button', {
+    name: /Selecionar perfis|perfil\(is\) selecionado\(s\)/i,
+  });
+  await selectorButton.click();
+  logStep('evg-helper', `group selector opened "${groupLabel}"`);
+
+  for (const profileName of profileNames) {
+    const checkbox = page.getByRole('checkbox', {
+      name: new RegExp(escapeRegExp(profileName)),
+    });
+    await expect(
+      checkbox,
+      `Occurrence profile selector must expose candidate ${profileName}.`,
+    ).toBeVisible({ timeout: appBootTimeoutMs });
+    if (!(await checkbox.isChecked())) {
+      await checkbox.check();
+    }
+    logStep('evg-helper', `selected group profile "${profileName}"`);
+  }
+
+  await page.keyboard.press('Escape').catch(() => {});
+  if (
+    await page
+      .getByRole('checkbox', {
+        name: new RegExp(escapeRegExp(profileNames[0])),
+      })
+      .first()
+      .isVisible()
+      .catch(() => false)
+  ) {
+    await selectorButton.click();
+  }
+  logStep('evg-helper', `group selector closed "${groupLabel}"`);
+  await expect(
+    page.getByRole('button', {
+      name: new RegExp(`${profileNames.length}\\s+perfil\\(is\\) selecionado\\(s\\)`),
+    }),
+    `Occurrence profile selector must report ${profileNames.length} selected profile(s).`,
+  ).toBeVisible({ timeout: appBootTimeoutMs });
+  logStep('evg-helper', `group selection count visible "${groupLabel}"`);
+}
+
+async function addOccurrenceProfilesViaProgramming(page, {
+  groupLabel,
+  programmingTitle,
+  time,
+  profileNames,
+}) {
+  logStep(
+    'evg-helper',
+    `addOccurrenceProfilesViaProgramming start group="${groupLabel}" title="${programmingTitle}" profiles=${profileNames.join(' | ')}`,
+  );
+  await page.getByRole('button', { name: 'Adicionar item de programação' }).click();
+  await expect(page.getByText('Adicionar item de programação')).toBeVisible({
+    timeout: appBootTimeoutMs,
+  });
+  await fillFlutterTextField(page, 'Horário', time);
+  await fillFlutterTextField(page, 'Título (opcional)', programmingTitle);
+  logStep('evg-helper', `programming item draft ready "${programmingTitle}"`);
+
+  for (const profileName of profileNames) {
+    await page.getByRole('button', { name: new RegExp(`^${escapeRegExp(groupLabel)}$`) }).click();
+    await expect(page.getByLabel('Buscar perfil relacionado')).toBeVisible({
+      timeout: appBootTimeoutMs,
+    });
+    await fillFlutterTextField(page, 'Buscar perfil relacionado', profileName);
+    await page.getByText(profileName, { exact: true }).click();
+    logStep('evg-helper', `programming flow added occurrence profile "${profileName}"`);
+  }
+
+  await page.getByRole('button', { name: 'Salvar item' }).click();
+  logStep('evg-helper', `programming item saved "${programmingTitle}"`);
+}
+
+async function openOccurrenceEditorForStart(
+  page,
+  startValue,
+  description = 'Occurrence card must open the occurrence editor.',
+) {
+  const label = formatAdminOccurrenceDateTimeLabel(startValue);
+  await scrollUntilTextInViewport(
+    page,
+    label,
+    `${description} Occurrence card start label must become visible before activation.`,
+  );
+  const candidates = [
+    page.getByRole('button', { name: new RegExp(escapeRegExp(label)) }).first(),
+    page.getByRole('group', { name: new RegExp(escapeRegExp(label)) }).first(),
+    page.getByText(label, { exact: true }).first(),
+  ];
+
+  for (const candidate of candidates) {
+    if (!(await candidate.isVisible().catch(() => false))) {
+      continue;
+    }
+    await candidate.click({ timeout: appBootTimeoutMs }).catch(() => {});
+    const opened = await page
+      .getByText('Editar data')
+      .isVisible({ timeout: 3000 })
+      .catch(() => false);
+    if (opened) {
+      return;
+    }
+  }
+
+  throw new Error(`${description} Start label: ${label}`);
+}
+
 async function assertTextDoesNotAppearBetween(
   page,
   text,
@@ -2003,13 +2145,122 @@ async function clickVisibleAddOccurrenceAffordance(page) {
 }
 
 async function closeOccurrenceEditorSheet(page) {
+  logStep('evg-helper', 'closeOccurrenceEditorSheet start');
   await expect(
     page.getByRole('button', { name: 'Salvar data' }),
     'Occurrence editor must not expose the superseded per-occurrence save boundary.',
   ).toHaveCount(0);
-  const closeButton = page.getByRole('button', { name: 'Fechar' }).last();
-  await expect(closeButton).toBeVisible({ timeout: appBootTimeoutMs });
-  await closeButton.click({ timeout: appBootTimeoutMs });
+  const closeButtons = page.getByRole('button', { name: 'Fechar' });
+  let headerCloseButton = null;
+  let headerCloseHandle = null;
+  let bestX = Number.NEGATIVE_INFINITY;
+  let bestY = Number.POSITIVE_INFINITY;
+  const closeButtonCount = await closeButtons.count();
+
+  for (let index = 0; index < closeButtonCount; index += 1) {
+    const candidate = closeButtons.nth(index);
+    if (!(await candidate.isVisible().catch(() => false))) {
+      continue;
+    }
+    const box = await candidate.boundingBox().catch(() => null);
+    if (
+      box &&
+      (box.x > bestX || (box.x === bestX && box.y < bestY))
+    ) {
+      headerCloseButton = candidate;
+      headerCloseHandle = await candidate.elementHandle();
+      bestX = box.x;
+      bestY = box.y;
+    }
+  }
+
+  if (headerCloseButton) {
+    logStep(
+      'evg-helper',
+      `closeOccurrenceEditorSheet header close selected at x=${bestX}, y=${bestY}`,
+    );
+    await headerCloseButton.click({ timeout: appBootTimeoutMs });
+    await expect
+      .poll(
+        async () => {
+          if (!headerCloseHandle) {
+            return false;
+          }
+          try {
+            return await headerCloseHandle.evaluate((element) => {
+              if (!element.isConnected) {
+                return false;
+              }
+              const node = element;
+              if (!(node instanceof HTMLElement)) {
+                return true;
+              }
+              const style = window.getComputedStyle(node);
+              const hiddenByStyle =
+                style.display === 'none' ||
+                style.visibility === 'hidden' ||
+                style.opacity === '0';
+              return !hiddenByStyle && node.getClientRects().length > 0;
+            });
+          } catch (_error) {
+            return false;
+          }
+        },
+        {
+          timeout: appBootTimeoutMs,
+          message:
+            'Closing the occurrence editor must dismiss the sheet-specific Fechar button that was clicked.',
+        },
+      )
+      .toBe(false);
+    logStep('evg-helper', 'closeOccurrenceEditorSheet header close dismissed');
+  } else {
+    logStep('evg-helper', 'closeOccurrenceEditorSheet fallback escape path');
+    await page.keyboard.press('Escape');
+    await expect
+      .poll(
+        async () => {
+          return page
+            .getByRole('button', { name: 'Remover data' })
+            .count()
+            .catch(() => 0);
+        },
+        {
+          timeout: appBootTimeoutMs,
+          message:
+            'Escaping the occurrence editor must restore the event-level occurrence list.',
+        },
+      )
+      .toBeGreaterThan(0);
+    logStep('evg-helper', 'closeOccurrenceEditorSheet escape fallback dismissed');
+  }
+}
+
+async function countVisibleMatches(locator) {
+  return locator
+    .evaluateAll((elements) =>
+      elements.filter((element) => {
+        if (!(element instanceof HTMLElement)) {
+          return false;
+        }
+        const style = window.getComputedStyle(element);
+        const hiddenByStyle =
+          style.display === 'none' ||
+          style.visibility === 'hidden' ||
+          style.opacity === '0';
+        return !hiddenByStyle && element.getClientRects().length > 0;
+      }).length,
+    )
+    .catch(() => 0);
+}
+
+async function expectAnyVisibleMatch(locator, message) {
+  await expect
+    .poll(async () => countVisibleMatches(locator), {
+      timeout: appBootTimeoutMs,
+      message,
+    })
+    .toBeGreaterThan(0);
 }
 
 async function openPublicAgendaCardAndReturn(
@@ -3756,6 +4007,403 @@ test('@mutation repeated public event detail GET/hydration keeps programming pay
       for (const profileType of createdSeedProfileTypes) {
         await deleteAccountProfileType(api, baseUrl, session.token, profileType);
       }
+    }
+    await api.dispose();
+  }
+});
+
+test('@mutation admin-authored occurrence profile groups persist full chip readback and public aggregation', async ({
+  browser,
+}) => {
+  const baseUrl = requireTenantUrl();
+  const api = await createApiContext(baseUrl);
+  const uniqueSuffix = `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+  let browserContext;
+  let publicContext;
+  let session = null;
+  let eventTypeId = null;
+  let eventId = null;
+  const createdSeedAccountSlugs = [];
+  const createdSeedProfileTypes = new Set();
+
+  try {
+    session = await loginTenantAdmin(api, baseUrl);
+    await deleteStaleOccurrenceSeedEvents(api, baseUrl, session.token);
+
+    const eventType = await createEventType(
+      api,
+      baseUrl,
+      session.token,
+      `${uniqueSuffix}-groups`,
+    );
+    eventTypeId = eventType?.id?.toString() || null;
+
+    const physicalHostSeed = await ensurePhysicalHostCandidates(
+      api,
+      baseUrl,
+      session.token,
+      1,
+    );
+    createdSeedAccountSlugs.push(...physicalHostSeed.createdAccountSlugs);
+    if (physicalHostSeed.createdType) {
+      createdSeedProfileTypes.add(physicalHostSeed.createdType);
+    }
+    const physicalHost = physicalHostSeed.candidates[0];
+
+    const relatedProfileSeed = await fetchRelatedAccountProfileCandidates(
+      api,
+      baseUrl,
+      session.token,
+      {
+        minimum: 4,
+        excludeIds: [physicalHost.id],
+      },
+    );
+    createdSeedAccountSlugs.push(...relatedProfileSeed.createdAccountSlugs);
+    if (relatedProfileSeed.createdType) {
+      createdSeedProfileTypes.add(relatedProfileSeed.createdType);
+    }
+    const [bandLead, bandSupport, guestOne, guestTwo] =
+      relatedProfileSeed.candidates;
+    const bandLeadName = relatedProfileDisplayName(bandLead);
+    const bandSupportName = relatedProfileDisplayName(bandSupport);
+    const guestOneName = relatedProfileDisplayName(guestOne);
+    const guestTwoName = relatedProfileDisplayName(guestTwo);
+    expect(
+      [bandLeadName, bandSupportName, guestOneName, guestTwoName].every(Boolean),
+      'Occurrence profile group mutation proof requires four displayable related profile candidates.',
+    ).toBe(true);
+
+    const seededEvent = await createSingleOccurrenceEvent(
+      api,
+      baseUrl,
+      session.token,
+      {
+        eventType,
+        physicalHost,
+        uniqueSuffix: `${uniqueSuffix}-groups`,
+      },
+    );
+    eventId = seededEvent?.event_id?.toString() || null;
+    const uniqueTitle = seededEvent?.title?.toString() || '';
+    expect(eventId, 'Seeded event must return event_id.').toBeTruthy();
+    expect(uniqueTitle, 'Seeded event must return title.').toBeTruthy();
+
+    const seededListLocation = await locateAdminEventListPage(
+      api,
+      baseUrl,
+      session.token,
+      eventId,
+    );
+
+    const adminBundle = await createAuthenticatedTenantAdminPage(
+      browser,
+      session,
+    );
+    browserContext = adminBundle.context;
+    const page = adminBundle.page;
+    const collectors = installFailureCollectors(page);
+
+    await openSeededEventFromAdminList(
+      page,
+      baseUrl,
+      uniqueTitle,
+      seededListLocation.page,
+    );
+    logStep('evg-admin', 'seeded event opened in admin list');
+
+    const editPrimaryOccurrenceButton = page.getByRole('button', {
+      name: 'Editar ocorrência principal',
+    });
+    await scrollUntilVisible(
+      page,
+      editPrimaryOccurrenceButton,
+      'Single-occurrence event must expose the primary occurrence editor entrypoint.',
+    );
+    await editPrimaryOccurrenceButton.click();
+    await expect(page.getByText('Editar ocorrência principal')).toBeVisible({
+      timeout: appBootTimeoutMs,
+    });
+    logStep('evg-admin', 'primary occurrence editor opened');
+    await scrollUntilVisible(
+      page,
+      page.getByText('Abas de perfis próprios da ocorrência').first(),
+      'Occurrence group editor must be visible in the first occurrence sheet.',
+    );
+    await addOccurrenceProfileGroup(page, {
+      groupLabel: 'Bandas',
+      profileNames: [bandLeadName, bandSupportName],
+    });
+    logStep('evg-admin', 'first occurrence group authored');
+    await closeOccurrenceEditorSheet(page);
+    logStep('evg-admin', 'first occurrence editor closed');
+
+    await clickVisibleAddOccurrenceAffordance(page);
+    logStep('evg-admin', 'second occurrence draft opened');
+    await scrollUntilVisible(
+      page,
+      page.getByText('Abas de perfis próprios da ocorrência').first(),
+      'Occurrence group editor must be visible in the second occurrence sheet.',
+    );
+    await addOccurrenceProfileGroup(page, {
+      groupLabel: 'Outro Grupo',
+      profileNames: [
+        guestOneName,
+        guestTwoName,
+        bandLeadName,
+        bandSupportName,
+      ],
+    });
+    logStep('evg-admin', 'second occurrence four-profile group authored');
+    await closeOccurrenceEditorSheet(page);
+    logStep('evg-admin', 'second occurrence editor closed before root save');
+
+    const updateResponsePromise = page.waitForResponse((candidate) => {
+      const method = candidate.request().method().toUpperCase();
+      return (
+        method === 'PATCH' &&
+        candidate.url().includes(`/admin/api/v1/events/${eventId}`) &&
+        candidate.status() < 400
+      );
+    });
+    const submitButton = page.getByRole('button', {
+      name: 'Salvar alterações',
+    });
+    await submitButton.scrollIntoViewIfNeeded();
+    await Promise.all([updateResponsePromise, submitButton.click()]);
+    await updateResponsePromise;
+    logStep('evg-admin', 'root event save completed');
+
+    const updatedEvent = await fetchAdminEvent(api, baseUrl, session.token, eventId);
+    const firstOccurrence = updatedEvent?.occurrences?.[0] || null;
+    const secondOccurrence = updatedEvent?.occurrences?.[1] || null;
+    const firstOccurrenceId =
+      firstOccurrence?.occurrence_id?.toString() || '';
+    const secondOccurrenceId =
+      secondOccurrence?.occurrence_id?.toString() || '';
+    expect(
+      updatedEvent?.occurrences || [],
+      'Profile-group authoring proof must persist two occurrences.',
+    ).toHaveLength(2);
+    expect(
+      firstOccurrenceId,
+      'First occurrence must persist occurrence_id for aggregate event assertions.',
+    ).toBeTruthy();
+    expect(
+      secondOccurrenceId,
+      'Second occurrence must persist occurrence_id for aggregate event assertions.',
+    ).toBeTruthy();
+    expect(
+      secondOccurrence?.profile_groups?.[0]?.label,
+      'Second occurrence admin readback must keep the custom occurrence group label.',
+    ).toBe('Outro Grupo');
+    expect(
+      (secondOccurrence?.profile_groups?.[0]?.account_profile_ids || [])
+        .map(String)
+        .sort(),
+      'Second occurrence admin readback must keep all four selected member ids.',
+    ).toEqual(
+      [bandLead.id, bandSupport.id, guestOne.id, guestTwo.id]
+        .map(String)
+        .sort(),
+    );
+    expect(
+      (secondOccurrence?.own_linked_account_profiles || [])
+        .map((profile) => profile?.id?.toString() || '')
+        .filter(Boolean)
+        .sort(),
+      'Second occurrence admin readback must hydrate every linked profile, not only a partial chip subset.',
+    ).toEqual(
+      [bandLead.id, bandSupport.id, guestOne.id, guestTwo.id]
+        .map(String)
+        .sort(),
+    );
+
+    const updatedListLocation = await locateAdminEventListPage(
+      api,
+      baseUrl,
+      session.token,
+      eventId,
+    );
+    await openSeededEventFromAdminList(
+      page,
+      baseUrl,
+      uniqueTitle,
+      updatedListLocation.page,
+    );
+    logStep('evg-admin', 'reopened event after save');
+    const reopenedSecondOccurrenceCard = page.getByRole('group', {
+      name: /4 perfis próprios/i,
+    }).first();
+    await scrollUntilVisible(
+      page,
+      reopenedSecondOccurrenceCard,
+      'Saved second occurrence card must expose the four-profile summary chip before readback assertions.',
+    );
+    await reopenedSecondOccurrenceCard.click();
+    await expect(page.getByText('Editar data')).toBeVisible({
+      timeout: appBootTimeoutMs,
+    });
+    logStep('evg-admin', 'reopened second occurrence editor after save');
+    await expect(
+      page.getByRole('button', {
+        name: /4 perfil\(is\) selecionado\(s\)/i,
+      }),
+      'Reopened second occurrence group must keep the full selected count.',
+    ).toBeVisible({ timeout: appBootTimeoutMs });
+    logStep('evg-admin', 'reopened selected-count button confirmed');
+    for (const profileName of [
+      bandLeadName,
+      bandSupportName,
+      guestOneName,
+      guestTwoName,
+    ]) {
+      const chipLocator = page.getByLabel(
+        new RegExp(`Perfil selecionado\\s+${escapeRegExp(profileName)}`),
+      );
+      const visibleMatches = await countVisibleMatches(
+        chipLocator,
+      );
+      logStep(
+        'evg-admin',
+        `reopened visible match count for "${profileName}": ${visibleMatches}`,
+      );
+      await expectAnyVisibleMatch(
+        chipLocator,
+        `Reopened second occurrence group must keep chip ${profileName}.`,
+      );
+      logStep('evg-admin', `reopened chip confirmed "${profileName}"`);
+    }
+    logStep('evg-admin', 'reopened second occurrence chips fully confirmed');
+    await closeOccurrenceEditorSheet(page);
+    logStep('evg-admin', 'reopened second occurrence editor closed');
+
+    const eventRef = updatedEvent?.slug || eventId;
+    const firstPublicDetail = await fetchPublicEvent(
+      api,
+      baseUrl,
+      eventRef,
+      firstOccurrenceId,
+    );
+    const secondPublicDetail = await fetchPublicEvent(
+      api,
+      baseUrl,
+      eventRef,
+      secondOccurrenceId,
+    );
+    for (const [label, detail] of [
+      ['first', firstPublicDetail],
+      ['second', secondPublicDetail],
+    ]) {
+      expect(
+        (detail?.profile_groups || []).map((group) => group?.label),
+        `Public ${label} selected occurrence must expose the event-wide aggregated profile-group tabs.`,
+      ).toEqual(['Bandas', 'Outro Grupo']);
+      expect(
+        (detail?.profile_groups?.[0]?.profiles || [])
+          .map((profile) => profile?.id?.toString() || '')
+          .filter(Boolean)
+          .sort(),
+        `Public ${label} selected occurrence must keep the first-occurrence group members.`,
+      ).toEqual([bandLead.id, bandSupport.id].map(String).sort());
+      expect(
+        (detail?.profile_groups?.[1]?.profiles || [])
+          .map((profile) => profile?.id?.toString() || '')
+          .filter(Boolean)
+          .sort(),
+        `Public ${label} selected occurrence must keep every member from the second-occurrence custom group.`,
+      ).toEqual(
+        [bandLead.id, bandSupport.id, guestOne.id, guestTwo.id]
+          .map(String)
+          .sort(),
+      );
+      logStep('evg-public', `public API aggregate detail confirmed for ${label} occurrence`);
+    }
+    logStep('evg-public', 'public API aggregation assertions passed');
+
+    publicContext = await browser.newContext({
+      ignoreHTTPSErrors: true,
+      geolocation: { latitude: -20.671339, longitude: -40.495395 },
+      permissions: ['geolocation'],
+    });
+    await seedFlutterSecureStorageEntries(publicContext, {
+      user_token: await resolveAnonymousIdentityToken(api, baseUrl),
+    });
+    const publicPage = await publicContext.newPage();
+    const publicCollectors = installFailureCollectors(publicPage);
+    const publicPath =
+      `/agenda/evento/${eventRef}?occurrence=${secondOccurrenceId}`;
+    await gotoPublicEventDetailAndWaitForHydration(
+      publicPage,
+      baseUrl,
+      publicPath,
+      {
+        eventRef,
+        occurrenceId: secondOccurrenceId,
+        title: uniqueTitle,
+        description: 'Occurrence profile-group aggregate public detail',
+      },
+    );
+    logStep('evg-public', 'public detail opened on second occurrence');
+    await expect(
+      publicPage.getByText('Bandas').first(),
+      'Public event detail must expose the first aggregated group tab.',
+    ).toBeVisible({ timeout: appBootTimeoutMs });
+    await expect(
+      publicPage.getByText('Outro Grupo').first(),
+      'Public event detail must expose the second aggregated group tab.',
+    ).toBeVisible({ timeout: appBootTimeoutMs });
+    await clickImmersiveTab(publicPage, 'Bandas');
+    logStep('evg-public', 'Bandas tab opened');
+    await expectAnyVisibleMatch(
+      publicPage.getByText(new RegExp(escapeRegExp(bandLeadName))),
+      `Aggregated public tab Bandas must render ${bandLeadName}.`,
+    );
+    logStep('evg-public', `public Bandas member confirmed "${bandLeadName}"`);
+    await expectAnyVisibleMatch(
+      publicPage.getByText(new RegExp(escapeRegExp(bandSupportName))),
+      `Aggregated public tab Bandas must render ${bandSupportName}.`,
+    );
+    logStep('evg-public', `public Bandas member confirmed "${bandSupportName}"`);
+    await clickImmersiveTab(publicPage, 'Outro Grupo');
+    logStep('evg-public', 'Outro Grupo tab opened');
+    for (const profileName of [
+      bandLeadName,
+      bandSupportName,
+      guestOneName,
+      guestTwoName,
+    ]) {
+      const chipLocator = publicPage.getByText(
+        new RegExp(escapeRegExp(profileName)),
+      );
+      await expectAnyVisibleMatch(
+        chipLocator,
+        `Aggregated public tab Outro Grupo must render ${profileName}.`,
+      );
+      logStep('evg-public', `public Outro Grupo member confirmed "${profileName}"`);
+    }
+
+    await assertNoBrowserFailures(collectors);
+    await assertNoBrowserFailures(publicCollectors);
+  } finally {
+    if (session?.token) {
+      await deleteEvent(api, baseUrl, session.token, eventId);
+      await deleteEventType(api, baseUrl, session.token, eventTypeId);
+      await cleanupOnboardedAccounts(
+        api,
+        baseUrl,
+        session.token,
+        createdSeedAccountSlugs,
+      );
+      for (const profileType of createdSeedProfileTypes) {
+        await deleteAccountProfileType(api, baseUrl, session.token, profileType);
+      }
+    }
+    if (publicContext) {
+      await publicContext.close().catch(() => {});
+    }
+    if (browserContext) {
+      await browserContext.close().catch(() => {});
     }
     await api.dispose();
   }
