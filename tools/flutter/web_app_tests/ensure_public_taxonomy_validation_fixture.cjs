@@ -202,15 +202,54 @@ async function listAdminEvents(api, baseUrl, token) {
   );
 }
 
-async function deleteLegacyProfileBestEffort(api, baseUrl, token, profileId) {
-  if (!profileId) {
-    return;
+async function fetchAdminAccountProfileDetail(api, baseUrl, token, profileId) {
+  const response = await api.get(
+    buildUrl(baseUrl, `/admin/api/v1/account_profiles/${profileId}`),
+    {
+      headers: authHeaders(token),
+      failOnStatusCode: false,
+    },
+  );
+  expect(
+    response.status(),
+    `Admin account profile detail ${profileId} must be readable for deterministic fixture cleanup.`,
+  ).toBe(200);
+  const payload = await response.json();
+  return payload?.data || payload;
+}
+
+function readCanonicalAccountSlugFromProfileDetail(detail) {
+  return (
+    detail?.account_slug?.toString().trim()
+    || detail?.account?.slug?.toString().trim()
+    || detail?.account_profile?.account_slug?.toString().trim()
+    || detail?.account_profile?.account?.slug?.toString().trim()
+    || ''
+  );
+}
+
+async function resolveCanonicalAccountSlugForCleanup(api, baseUrl, token, row) {
+  const directSlug =
+    row?.account_slug?.toString().trim()
+    || row?.account?.slug?.toString().trim()
+    || '';
+  if (directSlug) {
+    return directSlug;
   }
 
-  await api.delete(buildUrl(baseUrl, `/admin/api/v1/account_profiles/${profileId}`), {
-    headers: authHeaders(token),
-    failOnStatusCode: false,
-  });
+  const profileId = row?.id?.toString().trim() || '';
+  expect(
+    profileId,
+    `Owned taxonomy fixture cleanup row ${rowFingerprint(row)} must expose an id when account_slug is absent.`,
+  ).toBeTruthy();
+
+  const detail = await fetchAdminAccountProfileDetail(api, baseUrl, token, profileId);
+  const resolvedSlug = readCanonicalAccountSlugFromProfileDetail(detail);
+  expect(
+    resolvedSlug,
+    `Owned taxonomy fixture profile ${profileId} must expose canonical account.slug on admin readback for strict cleanup. Row: ${rowFingerprint(row)}`,
+  ).toBeTruthy();
+  return resolvedSlug;
 }
 
 async function deleteWithSuccessExpectation(response, label) {
@@ -661,22 +700,10 @@ async function resetOwnedFixtureArtifacts(api, baseUrl, token) {
   const adminProfiles = await listAdminAccountProfiles(api, baseUrl, token);
   const ownedProfiles = filterOwnedProfileRows(adminProfiles);
   const ownedAccountSlugs = [];
-  const ownedProfileIdsWithoutAccountSlug = [];
   for (const row of ownedProfiles) {
-    const accountSlug =
-      row?.account_slug?.toString().trim()
-      || row?.account?.slug?.toString().trim()
-      || row?.slug?.toString().trim()
-      || '';
-    if (accountSlug) {
-      ownedAccountSlugs.push(accountSlug);
-      continue;
-    }
-
-    const profileId = row?.id?.toString().trim() || '';
-    if (profileId) {
-      ownedProfileIdsWithoutAccountSlug.push(profileId);
-    }
+    ownedAccountSlugs.push(
+      await resolveCanonicalAccountSlugForCleanup(api, baseUrl, token, row),
+    );
   }
 
   await cleanupOnboardedAccounts(
@@ -688,9 +715,6 @@ async function resetOwnedFixtureArtifacts(api, baseUrl, token) {
       strict: true,
     },
   );
-  for (const profileId of ownedProfileIdsWithoutAccountSlug) {
-    await deleteLegacyProfileBestEffort(api, baseUrl, token, profileId);
-  }
 
   const eventTypes = await listEventTypes(api, baseUrl, token);
   const fixtureEventTypes = eventTypes.filter(

@@ -14,6 +14,10 @@ const publicListMaxPages = 25;
 const managedFixtureRun = managedFixtureEnabled;
 
 test.describe.configure({ timeout: 300000 });
+test.skip(
+  !managedFixtureRun,
+  'Managed taxonomy fixture proof is required; ambient public taxonomy data is not valid deterministic evidence.',
+);
 
 function requireTenantUrl() {
   expect(
@@ -469,17 +473,6 @@ function taxonomySnapshotDebug(rows) {
   return samples;
 }
 
-function findAccountProfileCandidate(rows) {
-  for (const profile of rows) {
-    const snapshot = findDisplaySnapshot(profile?.taxonomy_terms);
-    const slug = normalizeText(profile?.slug);
-    if (slug && snapshot) {
-      return { profile, snapshot, slug };
-    }
-  }
-  return null;
-}
-
 function findManagedAccountProfileCandidate(rows) {
   const ownedRows = filterOwnedProfileRows(rows);
   for (const profile of ownedRows) {
@@ -487,28 +480,6 @@ function findManagedAccountProfileCandidate(rows) {
     const slug = normalizeText(profile?.slug);
     if (slug && snapshot) {
       return { profile, snapshot, slug };
-    }
-  }
-  return null;
-}
-
-function findEventCandidate(rows) {
-  for (const event of rows) {
-    const snapshot = findDisplaySnapshotInEventRelatedProfiles(event);
-    const slug = normalizeText(event?.slug);
-    if (slug && snapshot) {
-      return { event, snapshot, slug };
-    }
-  }
-  return null;
-}
-
-function findEventTaxonomyLeakCandidate(rows) {
-  for (const event of rows) {
-    const snapshot = findDisplaySnapshot(event?.taxonomy_terms);
-    const slug = normalizeText(event?.slug);
-    if (slug && snapshot) {
-      return { event, snapshot, slug };
     }
   }
   return null;
@@ -598,16 +569,12 @@ test('@readonly taxonomy display snapshots render labels instead of slugs on pub
     '/api/v1/account_profiles',
     'Public account profiles list',
   );
-  const accountCandidate = managedFixtureRun
-    ? findManagedAccountProfileCandidate(accountProfilesPayload.rows)
-    : findAccountProfileCandidate(accountProfilesPayload.rows);
+  const accountCandidate = findManagedAccountProfileCandidate(
+    accountProfilesPayload.rows,
+  );
   expect(
     accountCandidate,
-    managedFixtureRun
-      ? `Managed taxonomy fixture ${fixture.profileSlug} must be visible with canonical taxonomy display snapshot. Pages scanned: ${JSON.stringify(accountProfilesPayload.pageSummaries)}. Snapshot samples: ${JSON.stringify(taxonomySnapshotDebug(accountProfilesPayload.rows))}`
-      : 'Seed/backfill at least one public account profile taxonomy snapshot where name/label differs from value. ' +
-          `Pages scanned: ${JSON.stringify(accountProfilesPayload.pageSummaries)}. ` +
-          `Snapshot samples: ${JSON.stringify(taxonomySnapshotDebug(accountProfilesPayload.rows))}`,
+    `Managed taxonomy fixture ${fixture.profileSlug} must be visible with canonical taxonomy display snapshot. Pages scanned: ${JSON.stringify(accountProfilesPayload.pageSummaries)}. Snapshot samples: ${JSON.stringify(taxonomySnapshotDebug(accountProfilesPayload.rows))}`,
   ).toBeTruthy();
 
   const accountDetailPayload = await fetchJson(
@@ -636,23 +603,17 @@ test('@readonly taxonomy display snapshots render labels instead of slugs on pub
     '/api/v1/events',
     'Public events list',
   );
-  const eventDisplayCandidate = managedFixtureRun
-    ? null
-    : findEventCandidate(eventsPayload.rows);
+  const eventDisplayCandidate = null;
   // Event-owned taxonomy terms are API snapshots; the public detail UI does not
   // render them as chips in every layout, so the slug-leak assertion must target
   // the same route under test instead of borrowing display assertions from a
   // different event record.
-  const eventTaxonomyLeakCandidate = managedFixtureRun
-    ? findManagedEventTaxonomyLeakCandidate(eventsPayload.rows)
-    : findEventTaxonomyLeakCandidate(eventsPayload.rows);
+  const eventTaxonomyLeakCandidate = findManagedEventTaxonomyLeakCandidate(
+    eventsPayload.rows,
+  );
   expect(
     eventTaxonomyLeakCandidate,
-    managedFixtureRun
-      ? `Managed taxonomy event fixture ${fixture.eventTitle} must be visible with canonical taxonomy display snapshot. Pages scanned: ${JSON.stringify(eventsPayload.pageSummaries)}. Snapshot samples: ${JSON.stringify(taxonomySnapshotDebug(eventsPayload.rows))}`
-      : 'Seed/backfill at least one public event taxonomy snapshot where name/label differs from value. ' +
-          `Pages scanned: ${JSON.stringify(eventsPayload.pageSummaries)}. ` +
-          `Snapshot samples: ${JSON.stringify(taxonomySnapshotDebug(eventsPayload.rows))}`,
+    `Managed taxonomy event fixture ${fixture.eventTitle} must be visible with canonical taxonomy display snapshot. Pages scanned: ${JSON.stringify(eventsPayload.pageSummaries)}. Snapshot samples: ${JSON.stringify(taxonomySnapshotDebug(eventsPayload.rows))}`,
   ).toBeTruthy();
 
   if (eventDisplayCandidate) {
@@ -678,25 +639,23 @@ test('@readonly taxonomy display snapshots render labels instead of slugs on pub
     await assertAppBooted(page);
     await enableAccessibilityIfNeeded(page);
   }
-  if (managedFixtureRun) {
-    const managedEventDetail = await fetchPublicEventDetail(
-      page,
-      eventTaxonomyLeakCandidate.slug,
-    );
-    const managedEventDisplaySnapshot = findDisplaySnapshotInEventRelatedProfiles(
-      managedEventDetail,
-    );
-    expect(
-      managedEventDisplaySnapshot,
-      `Managed taxonomy event fixture ${eventTaxonomyLeakCandidate.slug} must expose a positive related-profile taxonomy display snapshot on the event detail payload.`,
-    ).toBeTruthy();
-    await assertVisibleDisplayLabel(
-      page,
-      managedEventDisplaySnapshot.display,
-      managedEventDisplaySnapshot.value,
-      'Public event detail route',
-    );
-  }
+  const managedEventDetail = await fetchPublicEventDetail(
+    page,
+    eventTaxonomyLeakCandidate.slug,
+  );
+  const managedEventDisplaySnapshot = findDisplaySnapshotInEventRelatedProfiles(
+    managedEventDetail,
+  );
+  expect(
+    managedEventDisplaySnapshot,
+    `Managed taxonomy event fixture ${eventTaxonomyLeakCandidate.slug} must expose a positive related-profile taxonomy display snapshot on the event detail payload.`,
+  ).toBeTruthy();
+  await assertVisibleDisplayLabel(
+    page,
+    managedEventDisplaySnapshot.display,
+    managedEventDisplaySnapshot.value,
+    'Public event detail route',
+  );
   await assertRawTaxonomyValueNotRendered(
     page,
     eventTaxonomyLeakCandidate.snapshot.value,

@@ -292,17 +292,9 @@ async function clickBackAffordance(page) {
     return;
   }
 
-  const beforeUrl = page.url();
-  await page.goBack({ waitUntil: 'domcontentloaded' }).catch(() => {});
-  await expect
-    .poll(
-      () => page.url(),
-      {
-        timeout: 5000,
-        message: 'Browser history fallback must navigate away from the account detail route.',
-      },
-    )
-    .not.toBe(beforeUrl);
+  throw new Error(
+    'Account detail favorite gate runtime proof requires an app-level back affordance; browser history fallback is forbidden.',
+  );
 }
 
 async function clickAccountHeroFavorite(page) {

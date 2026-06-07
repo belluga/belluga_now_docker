@@ -13,7 +13,8 @@ const managedFixtureEnabled =
 const deployLane = (process.env.NAV_DEPLOY_LANE || '').toString().trim().toLowerCase();
 const requiresExplicitRunId = managedFixtureEnabled || deployLane === 'stage';
 const runKey = sanitizeRunId(process.env.NAV_TEST_RUN_ID);
-if (requiresExplicitRunId && runKey === 'default') {
+const isPlaywrightListProbe = process.argv.includes('--list');
+if (requiresExplicitRunId && runKey === 'default' && !isPlaywrightListProbe) {
   throw new Error(
     'Managed public taxonomy fixtures on stage require explicit NAV_TEST_RUN_ID; the default run key is forbidden.',
   );
@@ -74,28 +75,27 @@ function shouldContinuePagedFetch({ payload, pageRows, pageNumber, pageSize }) {
     return true;
   }
 
+  if (Array.isArray(pageRows) && pageRows.length >= pageSize) {
+    throw new Error(
+      `Canonical pagination metadata is missing on a full page (${pageNumber}) for the managed public taxonomy fixture contract.`,
+    );
+  }
+
   return false;
 }
 
 function filterOwnedEventRows(rows) {
   return rows.filter((row) => {
     const slug = row?.slug?.toString().trim();
-    const title = row?.title?.toString().trim();
-    return slug === fixture.eventSlug || title === fixture.eventTitle;
+    return slug === fixture.eventSlug;
   });
 }
 
 function filterOwnedProfileRows(rows) {
   return rows.filter((row) => {
     const slug = row?.slug?.toString().trim();
-    const displayName = row?.display_name?.toString().trim();
-    const name = row?.name?.toString().trim();
     return slug === fixture.profileSlug
-      || slug === fixture.relatedProfileSlug
-      || displayName === fixture.profileName
-      || displayName === fixture.relatedProfileName
-      || name === fixture.profileName
-      || name === fixture.relatedProfileName;
+      || slug === fixture.relatedProfileSlug;
   });
 }
 

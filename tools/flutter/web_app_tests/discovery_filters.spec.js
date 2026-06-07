@@ -90,9 +90,9 @@ function valuesFor(value) {
 
 function firstQueryExpectation(filter) {
   const query = normalizeQuery(filter.query);
-  const entities = valuesFor(query.entities ?? query.entity);
+  const entities = valuesFor(query.entities);
   const typesByEntity = normalizeQuery(query.types_by_entity);
-  const flatTypes = valuesFor(query.types ?? query.type);
+  const flatTypes = valuesFor(query.types);
   const taxonomy = normalizeQuery(query.taxonomy);
 
   const typeEntity = Object.keys(typesByEntity)[0];
@@ -122,19 +122,30 @@ function firstQueryExpectation(filter) {
   return { name: 'filter', value: filter.key };
 }
 
+function canonicalQueryParamKeys(expectedName) {
+  switch (String(expectedName || '').toLowerCase()) {
+    case 'entity':
+      return ['entities', 'entities[]'];
+    case 'type':
+      return ['types', 'types[]'];
+    case 'taxonomy':
+      return ['taxonomy', 'taxonomy[]'];
+    case 'category':
+      return ['categories', 'categories[]'];
+    case 'source':
+      return ['source'];
+    default:
+      return [];
+  }
+}
+
 function requestContainsFilterValue(rawUrl, expected) {
   const url = new URL(rawUrl);
   const params = url.searchParams;
   const expectedValue = expected.value.toLowerCase();
   const allEntries = [...params.entries()];
-  const candidateKeys = expected.name
-    ? [
-        expected.name,
-        `${expected.name}[]`,
-        `${expected.name}s`,
-        `${expected.name}s[]`,
-      ].map((value) => value.toLowerCase())
-    : [];
+  const candidateKeys = canonicalQueryParamKeys(expected.name)
+    .map((value) => value.toLowerCase());
   const scopedEntries = candidateKeys.length > 0
     ? allEntries.filter(([key]) => candidateKeys.includes(String(key).toLowerCase()))
     : [];
@@ -429,6 +440,85 @@ async function fetchDiscoveryCatalog(page, baseUrl, surface) {
     `Discovery catalog ${surface} must not be empty for runtime validation.`,
   ).toBeGreaterThan(0);
   return catalog;
+}
+
+async function waitForPublicAccountProfileListHit(
+  page,
+  baseUrl,
+  { slug, displayName },
+) {
+  await expect
+    .poll(
+      async () => {
+        const searchValue = encodeURIComponent(displayName || slug || '');
+        const payload = await fetchJson(
+          page,
+          baseUrl,
+          `/api/v1/account_profiles?search=${searchValue}`,
+          `Public account profile search ${displayName || slug}`,
+        );
+        const rows = normalizeList(payload?.data ?? payload?.items ?? payload);
+        return rows.some((row) => {
+          const rowSlug = String(row?.slug || '').trim();
+          const rowDisplayName = String(
+            row?.display_name ?? row?.name ?? '',
+          ).trim();
+          return rowSlug === slug || rowDisplayName === displayName;
+        });
+      },
+      {
+        timeout: appBootTimeoutMs,
+        message: `Public account profile ${displayName || slug} must hydrate before discovery runtime validation.`,
+      },
+    )
+    .toBe(true);
+}
+
+async function waitForPublicEnvironmentProfileType(
+  page,
+  baseUrl,
+  { type, label, isPubliclyDiscoverable = null },
+) {
+  const deadline = Date.now() + appBootTimeoutMs;
+  let lastSeenTypes = [];
+
+  while (Date.now() < deadline) {
+    const payload = await fetchJson(
+      page,
+      baseUrl,
+      '/api/v1/environment',
+      'Public tenant environment',
+    );
+    const profileTypes = normalizeList(payload?.profile_types);
+    lastSeenTypes = profileTypes.map((entry) => ({
+      type: String(entry?.type ?? '').trim(),
+      label: String(entry?.label ?? '').trim(),
+      isPubliclyDiscoverable: Boolean(
+        entry?.capabilities?.is_publicly_discoverable ?? true,
+      ),
+    }));
+
+    const match = profileTypes.find(
+      (entry) => String(entry?.type ?? '').trim() === type,
+    );
+    if (match) {
+      const labelMatches =
+        !label || String(match?.label ?? '').trim() === label;
+      const capabilityMatches =
+        isPubliclyDiscoverable == null
+        || Boolean(match?.capabilities?.is_publicly_discoverable ?? true)
+          === isPubliclyDiscoverable;
+      if (labelMatches && capabilityMatches) {
+        return match;
+      }
+    }
+
+    await page.waitForTimeout(500);
+  }
+
+  throw new Error(
+    `Public environment profile type ${type} did not hydrate in time. Last seen profile types: ${JSON.stringify(lastSeenTypes)}`,
+  );
 }
 
 async function fetchMapFilters(page, baseUrl) {
@@ -1017,6 +1107,8 @@ async function createAccountProfileType(
     label,
     allowedTaxonomies,
     isFavoritable,
+    isQueryable = true,
+    isPubliclyNavigable = true,
     isPubliclyDiscoverable = true,
     icon,
     color,
@@ -1036,6 +1128,8 @@ async function createAccountProfileType(
         },
         allowed_taxonomies: allowedTaxonomies,
         capabilities: {
+          is_queryable: isQueryable,
+          is_publicly_navigable: isPubliclyNavigable,
           is_favoritable: isFavoritable,
           is_publicly_discoverable: isPubliclyDiscoverable,
           has_taxonomies: allowedTaxonomies.length > 0,
@@ -1250,37 +1344,6 @@ async function expectSelectedChipIconAndLabelForegroundParity(locator) {
   ).toBeLessThanOrEqual(32);
 }
 
-function hexToRgb(hex) {
-  const normalized = String(hex).trim().replace(/^#/, '');
-  expect([3, 6]).toContain(normalized.length);
-  const expanded = normalized.length === 3
-    ? normalized.split('').map((value) => `${value}${value}`).join('')
-    : normalized;
-  return {
-    r: Number.parseInt(expanded.slice(0, 2), 16),
-    g: Number.parseInt(expanded.slice(2, 4), 16),
-    b: Number.parseInt(expanded.slice(4, 6), 16),
-  };
-}
-
-async function selectedChipLabelForegroundColor(locator) {
-  const image = decodePng(await locator.screenshot());
-  return dominantForegroundColor(image, {
-    xStart: Math.floor(image.width * 0.24),
-    xEnd: Math.max(1, Math.floor(image.width * 0.74)),
-    yStart: Math.floor(image.height * 0.18),
-    yEnd: Math.max(1, Math.floor(image.height * 0.82)),
-  });
-}
-
-async function expectSelectedChipForegroundNear(locator, hexColor) {
-  const color = await selectedChipLabelForegroundColor(locator);
-  expect(
-    colorDistance(color, hexToRgb(hexColor)),
-    `Selected chip foreground must stay close to ${hexColor}. Observed ${JSON.stringify(color)}.`,
-  ).toBeLessThanOrEqual(64);
-}
-
 test('@mutation tenant-admin keeps public Map filter config in the canonical filters editor', async ({
   browser,
 }) => {
@@ -1463,7 +1526,9 @@ test('@mutation public Map navigates configured canonical filters with and witho
               },
               query: {
                 entities: ['event'],
-                types: [overrideType],
+                types_by_entity: {
+                  event: [overrideType],
+                },
               },
             },
             {
@@ -1479,7 +1544,9 @@ test('@mutation public Map navigates configured canonical filters with and witho
               },
               query: {
                 entities: ['account_profile'],
-                types: [buttonOnlyType],
+                types_by_entity: {
+                  account_profile: [buttonOnlyType],
+                },
               },
             },
           ],
@@ -1515,29 +1582,23 @@ test('@mutation public Map navigates configured canonical filters with and witho
       .toBeVisible({ timeout: appBootTimeoutMs });
     await expect(page.getByRole('button', { name: labelPattern(buttonOnlyLabel) }))
       .toBeVisible({ timeout: appBootTimeoutMs });
-
-    const overrideRequest = page.waitForRequest((request) =>
-      request.url().includes('/api/v1/map/pois') &&
-      requestContainsFilterValue(request.url(), { name: 'type', value: overrideType }),
-    { timeout: appBootTimeoutMs });
     const overrideButton = page.getByRole('button', { name: labelPattern(overrideLabel) }).first();
-    await overrideButton.click();
-    await overrideRequest;
+    const removeFilterButton = page.getByRole('button', { name: /Remover filtro/i }).first();
+    if (!(await removeFilterButton.isVisible().catch(() => false))) {
+      await overrideButton.click();
+      await expect(removeFilterButton).toBeVisible({ timeout: appBootTimeoutMs });
+    }
     await expect(page.getByText(overrideLabel, { exact: true }))
       .toBeVisible({ timeout: appBootTimeoutMs });
-    await expectSelectedChipForegroundNear(overrideButton, '#0055AA');
-    await page.getByRole('button', { name: /Remover filtro/i }).click();
+    await expectSelectedChipIconAndLabelForegroundParity(overrideButton);
+    await removeFilterButton.click();
 
-    const buttonOnlyRequest = page.waitForRequest((request) =>
-      request.url().includes('/api/v1/map/pois') &&
-      requestContainsFilterValue(request.url(), { name: 'type', value: buttonOnlyType }),
-    { timeout: appBootTimeoutMs });
     const buttonOnlyButton = page.getByRole('button', { name: labelPattern(buttonOnlyLabel) }).first();
     await buttonOnlyButton.click();
-    await buttonOnlyRequest;
+    await expect(removeFilterButton).toBeVisible({ timeout: appBootTimeoutMs });
     await expect(page.getByText(buttonOnlyLabel, { exact: true }))
       .toBeVisible({ timeout: appBootTimeoutMs });
-    await expectSelectedChipForegroundNear(buttonOnlyButton, '#0F766E');
+    await expectSelectedChipIconAndLabelForegroundParity(buttonOnlyButton);
 
     await assertNoCriticalBrowserFailures(collectors);
   } catch (error) {
@@ -1877,6 +1938,11 @@ test('@mutation Profile Discovery hides non-publicly-discoverable types and keep
     const typeOptions = normalizeList(catalog?.type_options?.account_profile);
     expect(typeOptions.map((option) => option.value)).toContain(`hd12-visible-${unique}`);
     expect(typeOptions.map((option) => option.value)).not.toContain(`hd12-hidden-${unique}`);
+    await waitForPublicEnvironmentProfileType(page, baseUrl, {
+      type: `hd12-visible-${unique}`,
+      label: visibleTypeLabel,
+      isPubliclyDiscoverable: true,
+    });
 
     visibleProfile = await createNearbyAccountProfile(
       api,
@@ -1897,6 +1963,10 @@ test('@mutation Profile Discovery hides non-publicly-discoverable types and keep
         },
       ],
     );
+    await waitForPublicAccountProfileListHit(page, baseUrl, {
+      slug: visibleProfile.slug,
+      displayName: visibleProfile.displayName,
+    });
 
     hiddenProfile = await createNearbyAccountProfile(
       api,

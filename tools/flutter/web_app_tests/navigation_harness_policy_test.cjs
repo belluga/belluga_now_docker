@@ -1355,8 +1355,8 @@ function assertStageFixtureOwnedFiltersUseCanonicalKeysOnly() {
   ]);
   assert.deepStrictEqual(
     ownedEvents.map((row) => row.id).sort(),
-    ['owned-event-by-slug', 'owned-event-by-title'],
-    'stage fixture cleanup must identify the current run by canonical event slug or title, but never by foreign type alone.',
+    ['owned-event-by-slug'],
+    'stage fixture cleanup must identify the current run by canonical event slug only, never by mutable title or foreign type.',
   );
 
   const ownedProfiles = filterOwnedProfileRows([
@@ -1387,8 +1387,8 @@ function assertStageFixtureOwnedFiltersUseCanonicalKeysOnly() {
   ]);
   assert.deepStrictEqual(
     ownedProfiles.map((row) => row.id).sort(),
-    ['owned-profile-by-display-name', 'owned-profile-by-slug'],
-    'stage fixture cleanup must identify the current run by canonical profile slug or display name, but never by profile type alone.',
+    ['owned-profile-by-slug'],
+    'stage fixture cleanup must identify the current run by canonical profile slug only, never by mutable display name or profile type.',
   );
 }
 
@@ -1449,15 +1449,15 @@ function assertStageFixturePaginationHelperIsExhaustive() {
     true,
     'pagination helper must continue when next_page_url exists',
   );
-  assert.strictEqual(
-    shouldContinuePagedFetch({
+  assert.throws(
+    () => shouldContinuePagedFetch({
       payload: {},
       pageRows: new Array(50).fill({ id: 1 }),
       pageNumber: 1,
       pageSize: 50,
     }),
-    false,
-    'pagination helper must fail closed when canonical pagination metadata is absent',
+    /Canonical pagination metadata is missing/,
+    'pagination helper must throw when canonical pagination metadata is absent on a full page',
   );
   assert.strictEqual(
     shouldContinuePagedFetch({
