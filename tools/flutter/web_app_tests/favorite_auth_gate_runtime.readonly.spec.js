@@ -266,32 +266,6 @@ async function clickBackAffordance(page) {
     return;
   }
 
-  const buttons = page.getByRole('button');
-  const topLeftIndex = await buttons.evaluateAll((nodes) =>
-    nodes.findIndex((node) => {
-      if (!(node instanceof HTMLElement)) {
-        return false;
-      }
-      const style = window.getComputedStyle(node);
-      if (style.visibility === 'hidden' || style.display === 'none') {
-        return false;
-      }
-      const rect = node.getBoundingClientRect();
-      return rect.width >= 32
-        && rect.height >= 32
-        && rect.top >= 0
-        && rect.left >= 0
-        && rect.top <= 120
-        && rect.left <= 120;
-    }),
-  );
-  if (topLeftIndex >= 0) {
-    const topLeftButton = buttons.nth(topLeftIndex);
-    await expect(topLeftButton).toBeVisible({ timeout: appBootTimeoutMs });
-    await topLeftButton.click({ timeout: appBootTimeoutMs });
-    return;
-  }
-
   throw new Error(
     'Account detail favorite gate runtime proof requires an app-level back affordance; browser history fallback is forbidden.',
   );

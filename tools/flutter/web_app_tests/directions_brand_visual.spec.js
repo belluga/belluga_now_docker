@@ -618,6 +618,53 @@ async function expectBrandAssetUsedByRuntime(page, assetFileName, description) {
     .toBe(true);
 }
 
+async function expectBrandControlRendered(locator, assetFileName, description) {
+  await expect(locator).toBeVisible({ timeout: appBootTimeoutMs });
+  await expect
+    .poll(
+      async () =>
+        locator.evaluate((node, expectedAssetFileName) => {
+          if (!(node instanceof HTMLElement)) {
+            return false;
+          }
+          const normalizedExpected = String(
+            expectedAssetFileName || '',
+          ).toLowerCase();
+          const html = node.innerHTML.toLowerCase();
+          if (normalizedExpected && html.includes(normalizedExpected)) {
+            return true;
+          }
+          if (normalizedExpected.endsWith('.svg')) {
+            return node.querySelector('svg, img') != null;
+          }
+          if (normalizedExpected.endsWith('.png')) {
+            return node.querySelector('img') != null;
+          }
+          return false;
+        }, assetFileName),
+      {
+        timeout: appBootTimeoutMs,
+        message: `${description} must render the branded asset on the visible control, not only fetch it.`,
+      },
+    )
+    .toBe(true);
+  await expect
+    .poll(
+      async () =>
+        locator.evaluate((node) => {
+          if (!(node instanceof HTMLElement)) {
+            return '';
+          }
+          return (node.innerText || '').trim();
+        }),
+      {
+        timeout: appBootTimeoutMs,
+        message: `${description} must not degrade into a text-only fallback.`,
+      },
+    )
+    .toBe('');
+}
+
 async function screenshot(page, filename) {
   fs.mkdirSync(screenshotDir, { recursive: true });
   await page.screenshot({
@@ -670,13 +717,33 @@ test('@mutation NAV-DIR-BRAND-01 Waze and Uber brand controls render on shared d
     await page.setViewportSize({ width: 390, height: 844 });
     await openAppPath(page, baseUrl, `/parceiro/${profileSlug}`);
     await openDirectionsTab(page, 'Account Profile mobile');
+    const accountMobileWazeButton = await visibleLabelLocator(
+      page,
+      'Waze',
+      'Account Profile mobile directions',
+    );
+    const accountMobileUberButton = await visibleLabelLocator(
+      page,
+      'Uber',
+      'Account Profile mobile directions',
+    );
     await expectBrandAssetUsedByRuntime(
       page,
       'waze_logo_2022.png',
       'Account Profile mobile Waze control',
     );
+    await expectBrandControlRendered(
+      accountMobileWazeButton,
+      'waze_logo_2022.png',
+      'Account Profile mobile Waze control',
+    );
     await expectBrandAssetUsedByRuntime(
       page,
+      'uber_logotype.svg',
+      'Account Profile mobile Uber control',
+    );
+    await expectBrandControlRendered(
+      accountMobileUberButton,
       'uber_logotype.svg',
       'Account Profile mobile Uber control',
     );
@@ -689,15 +756,33 @@ test('@mutation NAV-DIR-BRAND-01 Waze and Uber brand controls render on shared d
     );
     await otherButton.click();
     await visibleLabelLocator(page, 'Fechar', 'Directions chooser sheet');
-    await visibleLabelLocator(page, 'Google Maps', 'Directions chooser sheet');
-    await visibleLabelLocator(page, '99', 'Directions chooser sheet');
+    const googleMapsButton = await visibleLabelLocator(
+      page,
+      'Google Maps',
+      'Directions chooser sheet',
+    );
+    const ninetyNineButton = await visibleLabelLocator(
+      page,
+      '99',
+      'Directions chooser sheet',
+    );
     await expectBrandAssetUsedByRuntime(
       page,
       'google_maps_icon_2020.svg',
       'Directions chooser Google Maps control',
     );
+    await expectBrandControlRendered(
+      googleMapsButton,
+      'google_maps_icon_2020.svg',
+      'Directions chooser Google Maps control',
+    );
     await expectBrandAssetUsedByRuntime(
       page,
+      '99_logo_2023.png',
+      'Directions chooser 99 control',
+    );
+    await expectBrandControlRendered(
+      ninetyNineButton,
       '99_logo_2023.png',
       'Directions chooser 99 control',
     );
@@ -707,8 +792,23 @@ test('@mutation NAV-DIR-BRAND-01 Waze and Uber brand controls render on shared d
     await page.setViewportSize({ width: 1440, height: 900 });
     await openAppPath(page, baseUrl, `/parceiro/${profileSlug}`);
     await openDirectionsTab(page, 'Account Profile desktop');
+    const accountDesktopWazeButton = await visibleLabelLocator(
+      page,
+      'Waze',
+      'Account Profile desktop directions',
+    );
+    const accountDesktopUberButton = await visibleLabelLocator(
+      page,
+      'Uber',
+      'Account Profile desktop directions',
+    );
     await expectBrandAssetUsedByRuntime(
       page,
+      'waze_logo_2022.png',
+      'Account Profile desktop Waze control',
+    );
+    await expectBrandControlRendered(
+      accountDesktopWazeButton,
       'waze_logo_2022.png',
       'Account Profile desktop Waze control',
     );
@@ -717,18 +817,43 @@ test('@mutation NAV-DIR-BRAND-01 Waze and Uber brand controls render on shared d
       'uber_logotype.svg',
       'Account Profile desktop Uber control',
     );
+    await expectBrandControlRendered(
+      accountDesktopUberButton,
+      'uber_logotype.svg',
+      'Account Profile desktop Uber control',
+    );
     await screenshot(page, 'account-desktop-directions.png');
 
     await page.setViewportSize({ width: 390, height: 844 });
     await openAppPath(page, baseUrl, eventPath);
     await openDirectionsTab(page, 'Event mobile');
+    const eventMobileWazeButton = await visibleLabelLocator(
+      page,
+      'Waze',
+      'Event mobile directions',
+    );
+    const eventMobileUberButton = await visibleLabelLocator(
+      page,
+      'Uber',
+      'Event mobile directions',
+    );
     await expectBrandAssetUsedByRuntime(
       page,
       'waze_logo_2022.png',
       'Event mobile Waze control',
     );
+    await expectBrandControlRendered(
+      eventMobileWazeButton,
+      'waze_logo_2022.png',
+      'Event mobile Waze control',
+    );
     await expectBrandAssetUsedByRuntime(
       page,
+      'uber_logotype.svg',
+      'Event mobile Uber control',
+    );
+    await expectBrandControlRendered(
+      eventMobileUberButton,
       'uber_logotype.svg',
       'Event mobile Uber control',
     );
