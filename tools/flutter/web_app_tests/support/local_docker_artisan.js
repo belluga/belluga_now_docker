@@ -19,15 +19,18 @@ function requireLocalDiagnosticContract() {
 
   const allowedHosts = (
     process.env.NAV_DIAGNOSTIC_LOCAL_ALLOWED_TENANT_HOSTS
+    || process.env.NAV_WEB_LOCAL_MUTATION_ALLOWED_HOSTS
     || 'localhost,127.0.0.1,::1'
   )
     .split(',')
     .map((value) => value.trim().toLowerCase())
     .filter(Boolean);
+  const allowNonLocal =
+    process.env.NAV_WEB_ALLOW_NONLOCAL_MUTATION_HOSTS?.toString().trim() === '1';
   const tenantHost = new URL(tenantUrl).hostname.toLowerCase().replace(/^\[|\]$/g, '');
-  if (!allowedHosts.includes(tenantHost)) {
+  if (!allowedHosts.includes(tenantHost) && !allowNonLocal) {
     throw new Error(
-      `Local docker artisan refuses NAV_TENANT_URL host "${tenantHost}". Allowed: ${allowedHosts.join(', ')}`,
+      `Local docker artisan refuses NAV_TENANT_URL host "${tenantHost}" without explicit local allowlist or NAV_WEB_ALLOW_NONLOCAL_MUTATION_HOSTS=1. Allowed: ${allowedHosts.join(', ')}`,
     );
   }
 }
@@ -61,4 +64,5 @@ function executeLocalDockerArtisan(command, args = []) {
 
 module.exports = {
   executeLocalDockerArtisan,
+  requireLocalDiagnosticContract,
 };

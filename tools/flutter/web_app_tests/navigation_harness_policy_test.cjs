@@ -458,6 +458,73 @@ function assertLocalDiagnosticMutationHelperUsesExplicitArtisanCommand() {
   );
 }
 
+function withEnv(overrides, callback) {
+  const previous = new Map();
+  for (const [key, value] of Object.entries(overrides)) {
+    previous.set(key, process.env[key]);
+    if (value == null) {
+      delete process.env[key];
+      continue;
+    }
+    process.env[key] = value;
+  }
+
+  try {
+    callback();
+  } finally {
+    for (const [key, value] of previous.entries()) {
+      if (value == null) {
+        delete process.env[key];
+        continue;
+      }
+      process.env[key] = value;
+    }
+  }
+}
+
+function assertLocalDiagnosticMutationHelperRequiresExplicitNonLocalOptIn() {
+  const helperPath = path.join(__dirname, 'support', 'local_docker_artisan.js');
+  delete require.cache[require.resolve(helperPath)];
+  const helper = require(helperPath);
+
+  withEnv(
+    {
+      NAV_WEB_TEST_TYPE: 'diagnostic',
+      NAV_DEPLOY_LANE: 'local',
+      NAV_RUNTIME_DB_MUTATION_ALLOWED: '1',
+      NAV_TENANT_URL: 'https://guarappari.belluga.space',
+      NAV_DIAGNOSTIC_LOCAL_ALLOWED_TENANT_HOSTS: null,
+      NAV_WEB_LOCAL_MUTATION_ALLOWED_HOSTS: null,
+      NAV_WEB_ALLOW_NONLOCAL_MUTATION_HOSTS: null,
+    },
+    () => {
+      assert.throws(
+        () => helper.requireLocalDiagnosticContract(),
+        /without explicit local allowlist or NAV_WEB_ALLOW_NONLOCAL_MUTATION_HOSTS=1/,
+        'diagnostic local docker helper must fail closed for non-local hosts without explicit opt-in',
+      );
+    },
+  );
+
+  withEnv(
+    {
+      NAV_WEB_TEST_TYPE: 'diagnostic',
+      NAV_DEPLOY_LANE: 'local',
+      NAV_RUNTIME_DB_MUTATION_ALLOWED: '1',
+      NAV_TENANT_URL: 'https://guarappari.belluga.space',
+      NAV_DIAGNOSTIC_LOCAL_ALLOWED_TENANT_HOSTS: null,
+      NAV_WEB_LOCAL_MUTATION_ALLOWED_HOSTS: null,
+      NAV_WEB_ALLOW_NONLOCAL_MUTATION_HOSTS: '1',
+    },
+    () => {
+      assert.doesNotThrow(
+        () => helper.requireLocalDiagnosticContract(),
+        'diagnostic local docker helper must accept explicit non-local mutation opt-in for local belluga-space runtimes',
+      );
+    },
+  );
+}
+
 function assertScriptStartupGuard(scriptRelativePath, env, expectedMessage) {
   const result = spawnSync(
     'node',
@@ -1552,6 +1619,7 @@ assertDirectPlaywrightReadonlyRejectsGrepSubset();
 assertDirectPlaywrightReadonlyRejectsGrepInvertSuiteTrim();
 assertFixtureBootstrapRequiresExplicitMutationContract();
 assertFixtureBootstrapRequiresExplicitRunIdOnStage();
+assertLocalDiagnosticMutationHelperRequiresExplicitNonLocalOptIn();
 assertStageFixtureOwnedFiltersUseCanonicalKeysOnly();
 assertStageFixtureRunIdIsolation();
 assertStageFixturePaginationHelperIsExhaustive();
