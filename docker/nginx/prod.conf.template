@@ -111,63 +111,7 @@ server {
     location ^~ /admin/api/ {
         try_files $uri /index.php?$query_string;
     }
-    location ^~ /account-profiles/ {
-        try_files $uri /index.php?$query_string;
-    }
-    location ^~ /parceiro/ {
-        try_files $uri /index.php?$query_string;
-    }
-    location ^~ /agenda/evento/ {
-        try_files $uri /index.php?$query_string;
-    }
-    location ^~ /static/ {
-        try_files $uri /index.php?$query_string;
-    }
-    location = /open-app {
-        try_files $uri /index.php?$query_string;
-    }
-    location ^~ /account-profile-types/ {
-        try_files $uri /index.php?$query_string;
-    }
-    location ^~ /static-assets/ {
-        try_files $uri /index.php?$query_string;
-    }
-    location ^~ /event-types/ {
-        try_files $uri /index.php?$query_string;
-    }
-    location ^~ /static-profile-types/ {
-        try_files $uri /index.php?$query_string;
-    }
-    location ^~ /events/ {
-        try_files $uri /index.php?$query_string;
-    }
-    location ^~ /map-filters/ {
-        try_files $uri /index.php?$query_string;
-    }
-    location = /descobrir {
-        try_files /__tenant_public_shell__ /index.php?$query_string;
-    }
-    location = /privacy-policy {
-        try_files /__tenant_public_shell__ /index.php?$query_string;
-    }
-    location = /mapa {
-        try_files /__tenant_public_shell__ /index.php?$query_string;
-    }
-    location = /mapa/poi {
-        try_files /__tenant_public_shell__ /index.php?$query_string;
-    }
-    location = /invite {
-        try_files /__tenant_public_shell__ /index.php?$query_string;
-    }
-    location = /convites {
-        try_files /__tenant_public_shell__ /index.php?$query_string;
-    }
-    location = /location/permission {
-        try_files /__tenant_public_shell__ /index.php?$query_string;
-    }
-    location = /baixe-o-app {
-        try_files /__tenant_public_shell__ /index.php?$query_string;
-    }
+    include /etc/nginx/project/*.conf;
     location = /admin {
         root /var/www/flutter;
         try_files /index.html =404;
