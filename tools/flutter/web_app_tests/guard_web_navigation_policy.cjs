@@ -66,14 +66,177 @@ const forcedClickViolations = [];
 const evaluatedClickViolations = [];
 const nonSemanticDropdownViolations = [];
 const localDropdownHelperViolations = [];
-const evaluatedClickExpressionPattern =
-  /\.evaluate\s*\(\s*(?:async\s+)?(?:\(\s*[^)]*\s*\)|[A-Za-z_$][\w$]*)\s*=>\s*[^)\n]{0,120}?\.\s*click\s*\(\s*\)\s*\)/m;
-const evaluatedClickBlockPattern =
-  /\.evaluate\s*\(\s*(?:async\s+)?(?:\(\s*[^)]*\s*\)|[A-Za-z_$][\w$]*)\s*=>\s*\{[\s\S]{0,120}?\.\s*click\s*\(\s*\)[\s\S]{0,120}?\}\s*\)/m;
-const evaluatedClickFunctionPattern =
-  /\.evaluate\s*\(\s*(?:async\s+)?function(?:\s+[A-Za-z_$][\w$]*)?\s*\([^)]*\)\s*\{[\s\S]{0,160}?\.\s*click\s*\(\s*\)[\s\S]{0,160}?\}\s*\)/m;
 const localDropdownHelperPattern =
   /\b(?:async\s+)?function\s+selectDropdownOption\b|\b(?:const|let|var)\s+selectDropdownOption\s*=|\b(?:module\.)?exports\.selectDropdownOption\s*=/m;
+
+function findMatchingParenthesis(source, openIndex) {
+  let depth = 0;
+  let quote = null;
+  let escaped = false;
+  let inLineComment = false;
+  let inBlockComment = false;
+
+  for (let index = openIndex; index < source.length; index += 1) {
+    const current = source[index];
+    const next = source[index + 1];
+
+    if (inLineComment) {
+      if (current === '\n') {
+        inLineComment = false;
+      }
+      continue;
+    }
+
+    if (inBlockComment) {
+      if (current === '*' && next === '/') {
+        inBlockComment = false;
+        index += 1;
+      }
+      continue;
+    }
+
+    if (quote) {
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (current === '\\') {
+        escaped = true;
+        continue;
+      }
+      if (current === quote) {
+        quote = null;
+      }
+      continue;
+    }
+
+    if (current === '/' && next === '/') {
+      inLineComment = true;
+      index += 1;
+      continue;
+    }
+
+    if (current === '/' && next === '*') {
+      inBlockComment = true;
+      index += 1;
+      continue;
+    }
+
+    if (current === '"' || current === '\'' || current === '`') {
+      quote = current;
+      continue;
+    }
+
+    if (current === '(') {
+      depth += 1;
+      continue;
+    }
+
+    if (current === ')') {
+      depth -= 1;
+      if (depth === 0) {
+        return index;
+      }
+    }
+  }
+
+  return -1;
+}
+
+function findNextEvaluateCall(source, startIndex) {
+  let quote = null;
+  let escaped = false;
+  let inLineComment = false;
+  let inBlockComment = false;
+
+  for (let index = startIndex; index < source.length; index += 1) {
+    const current = source[index];
+    const next = source[index + 1];
+
+    if (inLineComment) {
+      if (current === '\n') {
+        inLineComment = false;
+      }
+      continue;
+    }
+
+    if (inBlockComment) {
+      if (current === '*' && next === '/') {
+        inBlockComment = false;
+        index += 1;
+      }
+      continue;
+    }
+
+    if (quote) {
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (current === '\\') {
+        escaped = true;
+        continue;
+      }
+      if (current === quote) {
+        quote = null;
+      }
+      continue;
+    }
+
+    if (current === '/' && next === '/') {
+      inLineComment = true;
+      index += 1;
+      continue;
+    }
+
+    if (current === '/' && next === '*') {
+      inBlockComment = true;
+      index += 1;
+      continue;
+    }
+
+    if (current === '"' || current === '\'' || current === '`') {
+      quote = current;
+      continue;
+    }
+
+    if (source.startsWith('.evaluate(', index)) {
+      return index;
+    }
+  }
+
+  return -1;
+}
+
+function containsEvaluateClickBypass(source) {
+  let searchIndex = 0;
+  while (searchIndex < source.length) {
+    const evaluateIndex = findNextEvaluateCall(source, searchIndex);
+    if (evaluateIndex === -1) {
+      return false;
+    }
+
+    const openIndex = source.indexOf('(', evaluateIndex);
+    if (openIndex === -1) {
+      return false;
+    }
+
+    const closeIndex = findMatchingParenthesis(source, openIndex);
+    if (closeIndex === -1) {
+      return false;
+    }
+
+    const evaluateArgs = source.slice(openIndex + 1, closeIndex);
+    if (/(?:=>|function\b)[\s\S]*?\.\s*click\s*\(/m.test(evaluateArgs)) {
+      return true;
+    }
+
+    searchIndex = closeIndex + 1;
+  }
+
+  return false;
+}
+
 function scanTestFiles(dir) {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     const filePath = path.join(dir, entry.name);
@@ -84,7 +247,10 @@ function scanTestFiles(dir) {
     if (!entry.isFile() || !/\.(?:js|cjs)$/.test(entry.name)) {
       continue;
     }
-    if (filePath === __filename) {
+    if (
+      filePath === __filename ||
+      entry.name === 'navigation_harness_policy_test.cjs'
+    ) {
       continue;
     }
     const source = fs.readFileSync(filePath, 'utf8');
@@ -104,11 +270,7 @@ function scanTestFiles(dir) {
     if (/\.click\s*\(\s*\{[^}]*force\s*:\s*true/m.test(source)) {
       forcedClickViolations.push(relativePath);
     }
-    if (
-      evaluatedClickExpressionPattern.test(source) ||
-      evaluatedClickBlockPattern.test(source) ||
-      evaluatedClickFunctionPattern.test(source)
-    ) {
+    if (containsEvaluateClickBypass(source)) {
       evaluatedClickViolations.push(relativePath);
     }
     if (

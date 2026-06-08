@@ -431,6 +431,7 @@ jobs:
       - name: Ensure stage public taxonomy validation fixture
         id: stage_public_taxonomy_validation_fixture
         if: steps.stage_initialize_preflight.outputs.initialized == 'true' && steps.stage_untrusted_initialized_bootstrap_block.outcome != 'failure' && steps.stage_runtime_web_sha_check.outcome != 'failure' && steps.stage_public_edge_environment_probe.outcome != 'failure' && steps.stage_provenance_check.outcome != 'failure'
+        timeout-minutes: 10
         env:
           NAV_DEPLOY_LANE: stage
           NAV_TEST_RUN_ID: stage-${{ github.run_id }}-${{ github.run_attempt }}
@@ -487,6 +488,7 @@ jobs:
         id: stage_public_taxonomy_validation_fixture_cleanup
         if: ${{ always() && steps.stage_initialize_preflight.outputs.initialized == 'true' && steps.stage_public_taxonomy_validation_fixture.outcome != 'skipped' }}
         continue-on-error: true
+        timeout-minutes: 10
         env:
           NAV_DEPLOY_LANE: stage
           NAV_PUBLIC_TAXONOMY_FIXTURE_ACTION: cleanup
@@ -758,6 +760,7 @@ jobs:
       - name: Ensure restored stage public taxonomy validation fixture
         id: stage_rollback_public_taxonomy_validation_fixture
         if: ${{ always() && steps.stage_rollback_proof_plan.outputs.run == 'true' && steps.stage_rollback_initialize_preflight.outcome != 'failure' && steps.stage_rollback_public_edge_environment_probe.outcome != 'failure' && steps.stage_rollback_provenance_check.outcome != 'failure' }}
+        timeout-minutes: 10
         env:
           NAV_DEPLOY_LANE: stage
           NAV_TEST_RUN_ID: stage-${{ github.run_id }}-${{ github.run_attempt }}
@@ -814,6 +817,7 @@ jobs:
         id: stage_rollback_public_taxonomy_validation_fixture_cleanup
         if: ${{ always() && steps.stage_rollback_proof_plan.outputs.run == 'true' && steps.stage_rollback_public_taxonomy_validation_fixture.outcome != 'skipped' }}
         continue-on-error: true
+        timeout-minutes: 10
         env:
           NAV_DEPLOY_LANE: stage
           NAV_PUBLIC_TAXONOMY_FIXTURE_ACTION: cleanup

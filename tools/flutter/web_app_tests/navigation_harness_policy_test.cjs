@@ -1705,6 +1705,25 @@ assertFailsForSource(
   /locator\.evaluate\(\.\.\.click\(\)\)/,
 );
 
+assertFailsForSource(
+  'evaluated-click-long-body',
+  [
+    'async function bad(button) {',
+    '  await button.evaluate(async (node) => {',
+    '    const payload = {',
+    "      alpha: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',",
+    "      beta: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',",
+    "      gamma: 'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',",
+    '    };',
+    '    await Promise.resolve(payload);',
+    '    node' + '.click();',
+    '  });',
+    '}',
+    '',
+  ].join('\n'),
+  /locator\.evaluate\(\.\.\.click\(\)\)/,
+);
+
 const manifest = {
   mutation: {
     shards: {
