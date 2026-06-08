@@ -693,7 +693,8 @@ async function listAccountProfileCandidates(api, baseUrl, token, type) {
 }
 
 function matchesPoiCapableProfileType(row, { requireEvents = false } = {}) {
-  return row?.capabilities?.is_poi_enabled === true
+  return row?.capabilities?.is_queryable === true
+    && row?.capabilities?.is_poi_enabled === true
     && row?.capabilities?.is_reference_location_enabled === true
     && (!requireEvents || row?.capabilities?.has_events === true);
 }
@@ -704,23 +705,6 @@ async function resolvePoiCapableProfileType(
   token,
   { requireEvents = false } = {},
 ) {
-  const response = await api.get(
-    buildApiUrl(baseUrl, '/admin/api/v1/account_profile_types'),
-    {
-      headers: authHeaders(token),
-    },
-  );
-  expect(response.status(), 'Account profile types must load.').toBe(200);
-
-  const payload = await response.json();
-  const rows = Array.isArray(payload?.data) ? payload.data : [];
-  const selected = rows.find((row) =>
-    matchesPoiCapableProfileType(row, { requireEvents }),
-  );
-  if (selected?.type) {
-    return { profileType: selected.type, createdType: null };
-  }
-
   const type = `pw-srd-host-${Date.now()}`;
   const createResponse = await api.post(
     buildApiUrl(baseUrl, '/admin/api/v1/account_profile_types'),
@@ -728,6 +712,10 @@ async function resolvePoiCapableProfileType(
       data: {
         type,
         label: 'PW SR-D Host',
+        labels: {
+          singular: 'PW SR-D Host',
+          plural: 'PW SR-D Hosts',
+        },
         allowed_taxonomies: [],
         visual: {
           mode: 'icon',
@@ -967,10 +955,13 @@ async function createSingleOccurrenceEvent(
       headers: authHeaders(token),
     },
   );
-  expect(response.status(), 'Single-occurrence event seed must succeed.').toBe(
-    201,
-  );
-  const payload = await response.json();
+  const payload = await response.json().catch(async () => ({
+    raw: await response.text().catch(() => ''),
+  }));
+  expect(
+    response.status(),
+    `Single-occurrence event seed must succeed. Response: ${JSON.stringify(payload)}`,
+  ).toBe(201);
   return payload?.data;
 }
 

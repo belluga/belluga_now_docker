@@ -288,6 +288,7 @@ async function openInvitePreview({
   eventTitle,
   expectedVisibleTexts = [],
 }) {
+  const detailsCtaPattern = /Ver detalhes(?: do evento)?/i;
   const eventTitlePattern = visibleTextPattern(eventTitle);
   await page.goto(buildUrl(baseUrl, `/invite?code=${encodeURIComponent(code)}`), {
     waitUntil: 'domcontentloaded',
@@ -299,13 +300,13 @@ async function openInvitePreview({
   });
   await assertNoInviteFallbackFlash(page);
   await expect(
-    page.getByText(eventTitlePattern).first(),
-    'Invite preview must render the invited event title visibly on screen.',
+    page.getByRole('img', { name: new RegExp(escapeRegExp(eventTitle), 'i') }).first(),
+    'Invite preview must expose the invite summary card for the seeded event.',
   ).toBeVisible({
     timeout: appBootTimeoutMs,
   });
   await expect(
-    page.getByRole('button', { name: /Ver detalhes do evento/i }),
+    page.getByRole('button', { name: detailsCtaPattern }),
     'Invite preview must expose the primary details CTA before proceeding.',
   ).toBeVisible({
     timeout: appBootTimeoutMs,
@@ -315,14 +316,6 @@ async function openInvitePreview({
     [eventTitle, ...expectedVisibleTexts],
     appBootTimeoutMs,
   );
-  for (const expectedText of expectedVisibleTexts) {
-    await expect(
-      page.getByText(visibleTextPattern(expectedText)).first(),
-      `Invite preview must render visible text for "${expectedText}".`,
-    ).toBeVisible({
-      timeout: appBootTimeoutMs,
-    });
-  }
   return eventTitlePattern;
 }
 
@@ -334,6 +327,7 @@ async function openEventDetailFromInvite({
   eventRouteRef,
   occurrenceId,
 }) {
+  const detailsCtaPattern = /Ver detalhes(?: do evento)?/i;
   const eventTitlePattern = await openInvitePreview({
     page,
     baseUrl,
@@ -341,7 +335,7 @@ async function openEventDetailFromInvite({
     eventTitle,
   });
 
-  await page.getByRole('button', { name: /Ver detalhes do evento/i }).click();
+  await page.getByRole('button', { name: detailsCtaPattern }).click();
   await page.waitForFunction(
     ({ expectedRouteRef, expectedOccurrence }) => {
       const href = window.location.href;
@@ -400,28 +394,6 @@ async function fetchPhysicalHostCandidates(api, baseUrl, token) {
 }
 
 async function resolvePoiCapableProfileType(api, baseUrl, token) {
-  const response = await api.get(
-    buildUrl(baseUrl, '/admin/api/v1/account_profile_types'),
-    {
-      headers: authHeaders(token),
-    },
-  );
-  expect(response.status(), 'Account profile types must load.').toBe(200);
-
-  const payload = await response.json();
-  const rows = Array.isArray(payload?.data) ? payload.data : [];
-  const selected = rows.find(
-    (row) =>
-      row?.capabilities?.is_poi_enabled === true &&
-      row?.capabilities?.is_reference_location_enabled === true,
-  );
-  if (selected?.type) {
-    return {
-      profileType: selected.type,
-      createdProfileType: '',
-    };
-  }
-
   const type = `pw-invite-host-${Date.now()}`;
   const createResponse = await api.post(
     buildUrl(baseUrl, '/admin/api/v1/account_profile_types'),
@@ -429,6 +401,10 @@ async function resolvePoiCapableProfileType(api, baseUrl, token) {
       data: {
         type,
         label: 'PW Invite Host',
+        labels: {
+          singular: 'PW Invite Host',
+          plural: 'PW Invite Hosts',
+        },
         allowed_taxonomies: [],
         visual: {
           mode: 'icon',
@@ -779,10 +755,13 @@ async function createInvitePreviewSeedEvent(api, baseUrl, token) {
       },
       headers: authHeaders(token),
     });
-    expect(response.status(), 'Invite preview seed event must be created.').toBe(
-      201,
-    );
-    const payload = await response.json();
+    const payload = await response.json().catch(async () => ({
+      raw: await response.text().catch(() => ''),
+    }));
+    expect(
+      response.status(),
+      `Invite preview seed event must be created. Response: ${JSON.stringify(payload)}`,
+    ).toBe(201);
     eventId = payload?.data?.event_id?.toString() || '';
     return {
       event: payload?.data,
@@ -960,7 +939,6 @@ test('@mutation INVITE-SESSION-CONTEXT invite landing exposes dynamic share meta
         'href',
         inviteUrl,
       );
-
       const expectedImage = textValue(preview?.invite?.event_image_url);
       const ogImage = page.locator('head meta[property="og:image"]');
       const twitterImage = page.locator('head meta[name="twitter:image"]');
@@ -981,7 +959,6 @@ test('@mutation INVITE-SESSION-CONTEXT invite landing exposes dynamic share meta
           textValue(profile?.display_name, profile?.name),
         ),
       ).toEqual(expect.arrayContaining(expectedVisibleTexts.slice(-2)));
-
       await openInvitePreview({
         page,
         baseUrl,

@@ -2,6 +2,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const zlib = require('zlib');
 const { test, expect, request } = require('@playwright/test');
 const { loginTenantAdmin } = require('./support/tenant_admin_auth');
 const {
@@ -16,6 +17,17 @@ const publicListMaxPages = 5;
 const screenshotDir =
   process.env.NAV_DIRECTIONS_BRAND_SCREENSHOT_DIR ||
   path.join(os.tmpdir(), 'belluga-web-navigation', 'directions-brand');
+const labeledTileBrandAnalysis = {
+  analysisBounds: {
+    xStartRatio: 0.02,
+    xEndRatio: 0.28,
+    yStartRatio: 0.15,
+    yEndRatio: 0.85,
+  },
+  minForegroundPixels: 90,
+  minHorizontalSpanRatio: 0.18,
+  minVerticalSpanRatio: 0.28,
+};
 
 test.describe.configure({ timeout: 300000 });
 
@@ -618,51 +630,237 @@ async function expectBrandAssetUsedByRuntime(page, assetFileName, description) {
     .toBe(true);
 }
 
-async function expectBrandControlRendered(locator, assetFileName, description) {
+function decodePng(buffer) {
+  const signature = '89504e470d0a1a0a';
+  expect(buffer.subarray(0, 8).toString('hex')).toBe(signature);
+
+  let offset = 8;
+  let width = 0;
+  let height = 0;
+  let bitDepth = 0;
+  let colorType = 0;
+  const idatChunks = [];
+
+  while (offset < buffer.length) {
+    const length = buffer.readUInt32BE(offset);
+    offset += 4;
+    const type = buffer.subarray(offset, offset + 4).toString('ascii');
+    offset += 4;
+    const data = buffer.subarray(offset, offset + length);
+    offset += length;
+    offset += 4;
+
+    if (type === 'IHDR') {
+      width = data.readUInt32BE(0);
+      height = data.readUInt32BE(4);
+      bitDepth = data.readUInt8(8);
+      colorType = data.readUInt8(9);
+    } else if (type === 'IDAT') {
+      idatChunks.push(data);
+    } else if (type === 'IEND') {
+      break;
+    }
+  }
+
+  expect(width, 'PNG width must be available.').toBeGreaterThan(0);
+  expect(height, 'PNG height must be available.').toBeGreaterThan(0);
+  expect(bitDepth, 'PNG screenshots must be 8-bit.').toBe(8);
+  expect([2, 6], `Unsupported PNG color type ${colorType}.`).toContain(colorType);
+
+  const bytesPerPixel = colorType === 6 ? 4 : 3;
+  const stride = width * bytesPerPixel;
+  const inflated = zlib.inflateSync(Buffer.concat(idatChunks));
+  const reconstructed = Buffer.alloc(height * stride);
+
+  let sourceOffset = 0;
+  for (let row = 0; row < height; row += 1) {
+    const filterType = inflated[sourceOffset];
+    sourceOffset += 1;
+    const rowStart = row * stride;
+
+    for (let column = 0; column < stride; column += 1) {
+      const raw = inflated[sourceOffset + column];
+      const left =
+        column >= bytesPerPixel
+          ? reconstructed[rowStart + column - bytesPerPixel]
+          : 0;
+      const up = row > 0 ? reconstructed[rowStart - stride + column] : 0;
+      const upLeft =
+        row > 0 && column >= bytesPerPixel
+          ? reconstructed[rowStart - stride + column - bytesPerPixel]
+          : 0;
+
+      let value = raw;
+      if (filterType === 1) {
+        value = (raw + left) & 0xff;
+      } else if (filterType === 2) {
+        value = (raw + up) & 0xff;
+      } else if (filterType === 3) {
+        value = (raw + Math.floor((left + up) / 2)) & 0xff;
+      } else if (filterType === 4) {
+        value = (raw + paethPredictor(left, up, upLeft)) & 0xff;
+      } else {
+        expect(filterType, 'PNG filter type must be 0-4.').toBe(0);
+      }
+
+      reconstructed[rowStart + column] = value;
+    }
+
+    sourceOffset += stride;
+  }
+
+  const rgba = Buffer.alloc(width * height * 4);
+  for (let index = 0; index < width * height; index += 1) {
+    const sourceIndex = index * bytesPerPixel;
+    const targetIndex = index * 4;
+    rgba[targetIndex] = reconstructed[sourceIndex];
+    rgba[targetIndex + 1] = reconstructed[sourceIndex + 1];
+    rgba[targetIndex + 2] = reconstructed[sourceIndex + 2];
+    rgba[targetIndex + 3] = bytesPerPixel === 4 ? reconstructed[sourceIndex + 3] : 255;
+  }
+
+  return { width, height, rgba };
+}
+
+function paethPredictor(left, up, upLeft) {
+  const base = left + up - upLeft;
+  const leftDistance = Math.abs(base - left);
+  const upDistance = Math.abs(base - up);
+  const upLeftDistance = Math.abs(base - upLeft);
+  if (leftDistance <= upDistance && leftDistance <= upLeftDistance) {
+    return left;
+  }
+  if (upDistance <= upLeftDistance) {
+    return up;
+  }
+  return upLeft;
+}
+
+function readPixel(png, x, y) {
+  const clampedX = Math.max(0, Math.min(png.width - 1, x));
+  const clampedY = Math.max(0, Math.min(png.height - 1, y));
+  const index = (clampedY * png.width + clampedX) * 4;
+  return {
+    r: png.rgba[index],
+    g: png.rgba[index + 1],
+    b: png.rgba[index + 2],
+    a: png.rgba[index + 3],
+  };
+}
+
+function colorDistance(a, b) {
+  return Math.abs(a.r - b.r) + Math.abs(a.g - b.g) + Math.abs(a.b - b.b);
+}
+
+function resolveAnalysisBounds(png, analysisBounds = {}) {
+  const xStart = Math.max(
+    0,
+    Math.min(
+      png.width - 1,
+      Math.floor((analysisBounds.xStartRatio ?? 0) * png.width),
+    ),
+  );
+  const xEnd = Math.max(
+    xStart + 1,
+    Math.min(
+      png.width,
+      Math.ceil((analysisBounds.xEndRatio ?? 1) * png.width),
+    ),
+  );
+  const yStart = Math.max(
+    0,
+    Math.min(
+      png.height - 1,
+      Math.floor((analysisBounds.yStartRatio ?? 0) * png.height),
+    ),
+  );
+  const yEnd = Math.max(
+    yStart + 1,
+    Math.min(
+      png.height,
+      Math.ceil((analysisBounds.yEndRatio ?? 1) * png.height),
+    ),
+  );
+  return { xStart, xEnd, yStart, yEnd };
+}
+
+function measureForegroundFootprint(png, analysisBounds = {}) {
+  const bounds = resolveAnalysisBounds(png, analysisBounds);
+  const sampleY = Math.min(bounds.yEnd - 1, Math.max(bounds.yStart, Math.floor((bounds.yStart + bounds.yEnd) / 2)));
+  const background = readPixel(png, Math.min(bounds.xEnd - 1, bounds.xStart + 2), sampleY);
+  const regionWidth = Math.max(1, bounds.xEnd - bounds.xStart);
+  const regionHeight = Math.max(1, bounds.yEnd - bounds.yStart);
+
+  let foregroundPixels = 0;
+  let minX = bounds.xEnd;
+  let maxX = bounds.xStart;
+  let minY = bounds.yEnd;
+  let maxY = bounds.yStart;
+
+  for (let y = bounds.yStart; y < bounds.yEnd; y += 1) {
+    for (let x = bounds.xStart; x < bounds.xEnd; x += 1) {
+      const pixel = readPixel(png, x, y);
+      if (pixel.a < 200) {
+        continue;
+      }
+      if (colorDistance(pixel, background) < 64) {
+        continue;
+      }
+
+      foregroundPixels += 1;
+      minX = Math.min(minX, x);
+      maxX = Math.max(maxX, x);
+      minY = Math.min(minY, y);
+      maxY = Math.max(maxY, y);
+    }
+  }
+
+  if (foregroundPixels === 0) {
+    return {
+      foregroundPixels: 0,
+      horizontalSpanRatio: 0,
+      verticalSpanRatio: 0,
+    };
+  }
+
+  return {
+    foregroundPixels,
+    horizontalSpanRatio: (maxX - minX + 1) / regionWidth,
+    verticalSpanRatio: (maxY - minY + 1) / regionHeight,
+  };
+}
+
+async function expectBrandControlRendered(
+  locator,
+  assetFileName,
+  description,
+  options = {},
+) {
+  const {
+    analysisBounds,
+    minForegroundPixels = 140,
+    minHorizontalSpanRatio = 0.48,
+    minVerticalSpanRatio = 0.2,
+  } = options;
+
   await expect(locator).toBeVisible({ timeout: appBootTimeoutMs });
   await expect
     .poll(
-      async () =>
-        locator.evaluate((node, expectedAssetFileName) => {
-          if (!(node instanceof HTMLElement)) {
-            return false;
-          }
-          const normalizedExpected = String(
-            expectedAssetFileName || '',
-          ).toLowerCase();
-          const html = node.innerHTML.toLowerCase();
-          if (normalizedExpected && html.includes(normalizedExpected)) {
-            return true;
-          }
-          if (normalizedExpected.endsWith('.svg')) {
-            return node.querySelector('svg, img') != null;
-          }
-          if (normalizedExpected.endsWith('.png')) {
-            return node.querySelector('img') != null;
-          }
-          return false;
-        }, assetFileName),
+      async () => {
+        const png = decodePng(await locator.screenshot());
+        const footprint = measureForegroundFootprint(png, analysisBounds);
+        return (
+          footprint.foregroundPixels >= minForegroundPixels &&
+          footprint.horizontalSpanRatio >= minHorizontalSpanRatio &&
+          footprint.verticalSpanRatio >= minVerticalSpanRatio
+        );
+      },
       {
         timeout: appBootTimeoutMs,
-        message: `${description} must render the branded asset on the visible control, not only fetch it.`,
+        message: `${description} must render the branded asset footprint on the visible control, not only fetch ${assetFileName}.`,
       },
     )
     .toBe(true);
-  await expect
-    .poll(
-      async () =>
-        locator.evaluate((node) => {
-          if (!(node instanceof HTMLElement)) {
-            return '';
-          }
-          return (node.innerText || '').trim();
-        }),
-      {
-        timeout: appBootTimeoutMs,
-        message: `${description} must not degrade into a text-only fallback.`,
-      },
-    )
-    .toBe('');
 }
 
 async function screenshot(page, filename) {
@@ -775,6 +973,7 @@ test('@mutation NAV-DIR-BRAND-01 Waze and Uber brand controls render on shared d
       googleMapsButton,
       'google_maps_icon_2020.svg',
       'Directions chooser Google Maps control',
+      labeledTileBrandAnalysis,
     );
     await expectBrandAssetUsedByRuntime(
       page,
@@ -785,6 +984,7 @@ test('@mutation NAV-DIR-BRAND-01 Waze and Uber brand controls render on shared d
       ninetyNineButton,
       '99_logo_2023.png',
       'Directions chooser 99 control',
+      labeledTileBrandAnalysis,
     );
     await page.waitForTimeout(1800);
     await screenshot(page, 'account-mobile-other-sheet.png');

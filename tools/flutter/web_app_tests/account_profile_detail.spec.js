@@ -285,7 +285,8 @@ function matchesPoiCapableProfileType(row, { requireEvents = false } = {}) {
   const capabilities = row?.capabilities || {};
   const isPubliclyDiscoverable =
     capabilities.is_publicly_discoverable !== false;
-  return capabilities.is_poi_enabled === true
+  return capabilities.is_queryable === true
+    && capabilities.is_poi_enabled === true
     && capabilities.is_reference_location_enabled === true
     && capabilities.is_favoritable === true
     && isPubliclyDiscoverable

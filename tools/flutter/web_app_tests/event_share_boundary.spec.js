@@ -188,6 +188,7 @@ async function resolvePoiCapableProfileType(api, baseUrl, token) {
   const rows = Array.isArray(payload?.data) ? payload.data : [];
   const selected = rows.find(
     (row) =>
+      row?.capabilities?.is_queryable === true &&
       row?.capabilities?.is_poi_enabled === true &&
       row?.capabilities?.is_reference_location_enabled === true,
   );
