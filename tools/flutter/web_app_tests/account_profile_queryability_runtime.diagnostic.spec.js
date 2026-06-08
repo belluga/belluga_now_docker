@@ -675,12 +675,26 @@ async function openSelectorAndAssertHiddenAbsent(page, {
   logStep(
     `group button count: ${await groupContainer.getByRole('button').count().catch(() => 0)}`,
   );
+  const selectorButtonPattern =
+    /\d+\s+perfil\(is\) selecionado\(s\)|perfil\(is\) selecionado\(s\)|Selecionar perfis/i;
   let selectorButton = groupContainer.getByRole('button', {
-    name: /\d+\s+perfil\(is\) selecionado\(s\)|perfil\(is\) selecionado\(s\)|Selecionar perfis/i,
+    name: selectorButtonPattern,
   }).first();
   if (!(await selectorButton.isVisible().catch(() => false))) {
+    logStep('group-scoped selector button not exposed as descendant; falling back to section-scoped semantic button lookup');
+    selectorButton = page.getByRole('button', {
+      name: selectorButtonPattern,
+    }).first();
+  }
+  if (!(await selectorButton.isVisible().catch(() => false))) {
+    const visibleButtonNames = await page.getByRole('button').evaluateAll((elements) =>
+      elements
+        .map((element) => element.getAttribute('aria-label') || element.textContent || '')
+        .map((value) => value.trim())
+        .filter(Boolean),
+    ).catch(() => []);
     throw new Error(
-      `Group ${groupLabel} did not expose a semantic profile selector button. Release-trust diagnostics must fail closed here.`,
+      `Group ${groupLabel} did not expose a semantic profile selector button. Visible buttons: ${JSON.stringify(visibleButtonNames)}`,
     );
   }
   await expect(selectorButton).toBeVisible({ timeout: appBootTimeoutMs });

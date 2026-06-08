@@ -404,6 +404,100 @@ async function scrollUntilVisible(page, locator, description) {
   throw new Error(description);
 }
 
+async function openOccurrenceEditorByIndex(page, occurrenceIndex, description) {
+  const occurrenceCard = page.getByRole('group', {
+    name: /perfis?\s+próprios/i,
+  }).nth(occurrenceIndex);
+  await scrollUntilVisible(page, occurrenceCard, description);
+  await occurrenceCard.click({ timeout: appBootTimeoutMs });
+  await expect(page.getByText('Editar data')).toBeVisible({
+    timeout: appBootTimeoutMs,
+  });
+}
+
+async function closeOccurrenceEditorSheet(page) {
+  const closeButtons = page.getByRole('button', { name: 'Fechar' });
+  const closeButtonCount = await closeButtons.count();
+  let headerCloseButton = null;
+  let headerCloseHandle = null;
+  let bestX = Number.NEGATIVE_INFINITY;
+  let bestY = Number.POSITIVE_INFINITY;
+
+  for (let index = 0; index < closeButtonCount; index += 1) {
+    const candidate = closeButtons.nth(index);
+    if (!(await candidate.isVisible().catch(() => false))) {
+      continue;
+    }
+
+    const box = await candidate.boundingBox().catch(() => null);
+    if (!box) {
+      continue;
+    }
+
+    if (box.x > bestX || (box.x === bestX && box.y < bestY)) {
+      headerCloseButton = candidate;
+      headerCloseHandle = await candidate.elementHandle();
+      bestX = box.x;
+      bestY = box.y;
+    }
+  }
+
+  if (headerCloseButton) {
+    await headerCloseButton.click({ timeout: appBootTimeoutMs });
+    await expect
+      .poll(
+        async () => {
+          if (!headerCloseHandle) {
+            return false;
+          }
+          try {
+            return await headerCloseHandle.evaluate((element) => {
+              if (!element.isConnected) {
+                return false;
+              }
+              const node = element;
+              if (!(node instanceof HTMLElement)) {
+                return true;
+              }
+              const style = window.getComputedStyle(node);
+              const hiddenByStyle =
+                style.display === 'none' ||
+                style.visibility === 'hidden' ||
+                style.opacity === '0';
+              return !hiddenByStyle && node.getClientRects().length > 0;
+            });
+          } catch (_error) {
+            return false;
+          }
+        },
+        {
+          timeout: appBootTimeoutMs,
+          message:
+            'Closing the occurrence editor must dismiss the sheet-specific Fechar button that was clicked.',
+        },
+      )
+      .toBe(false);
+    return;
+  }
+
+  await page.keyboard.press('Escape');
+  await expect
+    .poll(
+      async () => {
+        return page
+          .getByRole('button', { name: 'Remover data' })
+          .count()
+          .catch(() => 0);
+      },
+      {
+        timeout: appBootTimeoutMs,
+        message:
+          'Escaping the occurrence editor must restore the event-level occurrence list.',
+      },
+    )
+    .toBeGreaterThan(0);
+}
+
 async function assertAdminGroupEditor(page, expectedGroups) {
   await scrollUntilVisible(
     page,
@@ -428,6 +522,50 @@ async function assertAdminGroupEditor(page, expectedGroups) {
     );
     await expect(groupSemantic).toBeVisible({ timeout: appBootTimeoutMs });
   }
+}
+
+function adminGroupSemanticLocator(page, group) {
+  return page
+    .getByLabel(
+      new RegExp(
+        `Grupo ${escapeRegExp(group.label)}; ${group.selectedCount} item\\(s\\) selecionado\\(s\\)`,
+        'i',
+      ),
+    )
+    .first();
+}
+
+async function expectVisibleAdminGroup(page, group, description) {
+  const locator = adminGroupSemanticLocator(page, group);
+  await scrollUntilVisible(page, locator, description);
+  await expect(locator).toBeVisible({ timeout: appBootTimeoutMs });
+}
+
+async function expectAdminGroupAbsent(page, group, description) {
+  await expect
+    .poll(
+      async () => {
+        const locator = page.getByLabel(
+          new RegExp(
+            `Grupo ${escapeRegExp(group.label)}; ${group.selectedCount} item\\(s\\) selecionado\\(s\\)`,
+            'i',
+          ),
+        );
+        const count = await locator.count().catch(() => 0);
+        let visibleCount = 0;
+        for (let index = 0; index < count; index += 1) {
+          if (await locator.nth(index).isVisible().catch(() => false)) {
+            visibleCount += 1;
+          }
+        }
+        return visibleCount;
+      },
+      {
+        timeout: appBootTimeoutMs,
+        message: description,
+      },
+    )
+    .toBe(0);
 }
 
 async function createPoiCapableProfileType(api, baseUrl, token, suffix) {
@@ -1060,12 +1198,48 @@ test('@diagnostic EVG-RUNTIME admin/public event groups honor saved groups, lega
         multiOccurrenceEvent.title,
         multiOccurrencePlacement,
       );
-      await expect(
-        adminRuntime.page.getByText('Palco Sexta', { exact: true }),
-      ).toBeVisible({ timeout: appBootTimeoutMs });
-      await expect(
-        adminRuntime.page.getByText('Palco Sabado', { exact: true }),
-      ).toBeVisible({ timeout: appBootTimeoutMs });
+      logDiagnosticStep('admin multi-occurrence event opened');
+      await openOccurrenceEditorByIndex(
+        adminRuntime.page,
+        0,
+        'First occurrence card must open the occurrence editor.',
+      );
+      logDiagnosticStep('admin first occurrence editor opened');
+      await expectVisibleAdminGroup(
+        adminRuntime.page,
+        { label: 'Palco Sexta', selectedCount: 2 },
+        'First occurrence editor must expose the Palco Sexta group.',
+      );
+      logDiagnosticStep('admin first occurrence primary group visible');
+      await expectAdminGroupAbsent(
+        adminRuntime.page,
+        { label: 'Palco Sabado', selectedCount: 2 },
+        'First occurrence editor must not expose the Palco Sabado group.',
+      );
+      logDiagnosticStep('admin first occurrence foreign group absent');
+      await closeOccurrenceEditorSheet(adminRuntime.page);
+      logDiagnosticStep('admin first occurrence editor closed');
+
+      await openOccurrenceEditorByIndex(
+        adminRuntime.page,
+        1,
+        'Second occurrence card must open the occurrence editor.',
+      );
+      logDiagnosticStep('admin second occurrence editor opened');
+      await expectVisibleAdminGroup(
+        adminRuntime.page,
+        { label: 'Palco Sabado', selectedCount: 2 },
+        'Second occurrence editor must expose the Palco Sabado group.',
+      );
+      logDiagnosticStep('admin second occurrence primary group visible');
+      await expectAdminGroupAbsent(
+        adminRuntime.page,
+        { label: 'Palco Sexta', selectedCount: 2 },
+        'Second occurrence editor must not expose the Palco Sexta group.',
+      );
+      logDiagnosticStep('admin second occurrence foreign group absent');
+      await closeOccurrenceEditorSheet(adminRuntime.page);
+      logDiagnosticStep('admin second occurrence editor closed');
     } finally {
       await adminRuntime.context.close();
       logDiagnosticStep('admin browser context closed');
