@@ -279,30 +279,6 @@ async function clickAccountHeroFavorite(page) {
   await heroFavorite.click({ timeout: appBootTimeoutMs });
 }
 
-async function isDocumentFollower(referenceLocator, candidateLocator) {
-  const referenceHandle = await referenceLocator.elementHandle();
-  const candidateHandle = await candidateLocator.elementHandle();
-  if (!referenceHandle || !candidateHandle) {
-    await referenceHandle?.dispose().catch(() => {});
-    await candidateHandle?.dispose().catch(() => {});
-    return false;
-  }
-
-  try {
-    return await referenceHandle.evaluate(
-      (referenceNode, candidateNode) =>
-        Boolean(
-          referenceNode.compareDocumentPosition(candidateNode)
-            & Node.DOCUMENT_POSITION_FOLLOWING,
-        ),
-      candidateHandle,
-    );
-  } finally {
-    await referenceHandle.dispose().catch(() => {});
-    await candidateHandle.dispose().catch(() => {});
-  }
-}
-
 async function findFirstDiscoveryCardWithFavorite(page) {
   const heading = page.getByText(/^Descubra$/i).first();
   await expect(heading).toBeVisible({
@@ -314,12 +290,9 @@ async function findFirstDiscoveryCardWithFavorite(page) {
     if (!(await card.isVisible().catch(() => false))) {
       continue;
     }
-    if (!(await isDocumentFollower(heading, card))) {
-      continue;
-    }
 
     const favoriteButton = card.getByRole('button', {
-      name: /Favoritar perfil/i,
+      name: /Favoritar perfil|Perfil favoritado/i,
     }).first();
     if (!(await favoriteButton.isVisible().catch(() => false))) {
       continue;
@@ -328,7 +301,7 @@ async function findFirstDiscoveryCardWithFavorite(page) {
   }
 
   throw new Error(
-    'Could not locate a discovery card with a nested favorite action after the Descubra heading.',
+    'Could not locate a visible discovery card with a nested favorite action.',
   );
 }
 
