@@ -876,12 +876,12 @@ jobs:
             echo "ERROR: stage rollback via ${{ steps.stage_rollback_proof_plan.outputs.executor }} executor completed, but the restored public-edge environment probe failed; terminal state is explicit degraded/incident." >&2
           elif [[ "${{ steps.stage_rollback_provenance_check.outcome }}" == "failure" ]]; then
             echo "ERROR: stage rollback via ${{ steps.stage_rollback_proof_plan.outputs.executor }} executor completed, but restored provenance proof failed; terminal state is explicit degraded/incident." >&2
+          elif [[ "${{ steps.stage_rollback_public_taxonomy_validation_fixture.outcome }}" == "failure" ]]; then
+            echo "ERROR: stage rollback via ${{ steps.stage_rollback_proof_plan.outputs.executor }} executor completed, but public taxonomy validation fixture bootstrap failed; terminal state is explicit degraded/incident." >&2
           elif [[ "${{ steps.stage_rollback_public_taxonomy_validation_fixture_cleanup.outcome }}" == "failure" ]]; then
             echo "ERROR: stage rollback proof completed, but managed public taxonomy fixture cleanup failed; terminal state is explicit degraded/incident." >&2
           elif [[ "${{ steps.stage_public_taxonomy_validation_fixture_cleanup.outcome }}" == "failure" ]]; then
             echo "ERROR: stage deploy validation passed, but managed public taxonomy fixture cleanup failed before trust stamping; terminal state is explicit degraded/incident." >&2
-          elif [[ "${{ steps.stage_rollback_public_taxonomy_validation_fixture.outcome }}" == "failure" ]]; then
-            echo "ERROR: stage rollback via ${{ steps.stage_rollback_proof_plan.outputs.executor }} executor completed, but public taxonomy validation fixture bootstrap failed; terminal state is explicit degraded/incident." >&2
           elif [[ "${{ steps.stage_rollback_navigation_mutation_smoke.outcome }}" == "failure" ]]; then
             echo "ERROR: stage rollback via ${{ steps.stage_rollback_proof_plan.outputs.executor }} executor completed, but restored mutation smoke failed; terminal state is explicit degraded/incident." >&2
           elif [[ "${{ steps.stage_rollback_navigation_smoke.outcome }}" == "failure" ]]; then
