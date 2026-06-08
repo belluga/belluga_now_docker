@@ -259,6 +259,15 @@ function assertStageMutationWorkflowSuppliesRuntimeCredentials() {
     'stage public taxonomy fixture must opt into non-local mutation hosts explicitly',
   );
 
+  const cleanupStepMatch = source.match(
+    /- name: Clean up stage public taxonomy validation fixture[\s\S]*?run: node \.\.\/web_app_tests\/ensure_public_taxonomy_validation_fixture\.cjs/,
+  );
+  assert.ok(cleanupStepMatch, 'stage public taxonomy validation fixture cleanup step should exist');
+  assertStageRunIdIsolation(
+    cleanupStepMatch[0],
+    'stage public taxonomy fixture cleanup',
+  );
+
   const stepMatch = source.match(
     /- name: Run stage mutation navigation smoke[\s\S]*?run: bash tools\/flutter\/run_web_navigation_smoke\.sh mutation/,
   );
@@ -337,6 +346,18 @@ function assertStageMutationWorkflowSuppliesRuntimeCredentials() {
   assertStageRunIdIsolation(
     rollbackMutationStepMatch[0],
     'restored stage mutation smoke',
+  );
+
+  const rollbackCleanupStepMatch = source.match(
+    /- name: Clean up restored stage public taxonomy validation fixture[\s\S]*?run: node \.\.\/web_app_tests\/ensure_public_taxonomy_validation_fixture\.cjs/,
+  );
+  assert.ok(
+    rollbackCleanupStepMatch,
+    'restored stage public taxonomy validation fixture cleanup step should exist',
+  );
+  assertStageRunIdIsolation(
+    rollbackCleanupStepMatch[0],
+    'restored stage public taxonomy fixture cleanup',
   );
 }
 
@@ -1425,6 +1446,12 @@ function assertStageFixtureOwnedFiltersUseCanonicalKeysOnly() {
       profile_type: 'foreign_profile_type',
     },
     {
+      id: 'owned-profile-by-related-slug',
+      display_name: 'Another visible name',
+      slug: stageTaxonomyFixture.relatedProfileSlug,
+      profile_type: 'foreign_profile_type',
+    },
+    {
       id: 'owned-profile-by-display-name',
       display_name: stageTaxonomyFixture.relatedProfileName,
       slug: 'different-related-profile-slug',
@@ -1439,7 +1466,7 @@ function assertStageFixtureOwnedFiltersUseCanonicalKeysOnly() {
   ]);
   assert.deepStrictEqual(
     ownedProfiles.map((row) => row.id).sort(),
-    ['owned-profile-by-slug'],
+    ['owned-profile-by-related-slug', 'owned-profile-by-slug'],
     'stage fixture cleanup must identify the current run by canonical profile slug only, never by mutable display name or profile type.',
   );
 }

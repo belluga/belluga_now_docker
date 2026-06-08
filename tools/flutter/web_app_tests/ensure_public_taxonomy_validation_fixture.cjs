@@ -12,7 +12,6 @@ const {
   filterOwnedEventRows,
   filterOwnedProfileRows,
   paginationLastPage,
-  paginationNextPageUrl,
   rowFingerprint,
   runKey,
   shouldContinuePagedFetch,
