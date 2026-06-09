@@ -61,7 +61,7 @@ if [[ ${#remaining_args[@]} -gt 0 && "${remaining_args[0]}" != --* ]]; then
 fi
 
 if [[ -n "${FLUTTER_DART_DEFINE_FILE:-}" ]]; then
-  exec bash "${CANONICAL_SCRIPT}" "${output_arg}" "${remaining_args[@]}"
+  exec bash "${CANONICAL_SCRIPT}" "${output_arg}" dev "${remaining_args[@]}"
 fi
 
 if ! legacy_lane="$(resolve_legacy_lane)"; then
