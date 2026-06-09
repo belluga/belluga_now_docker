@@ -60,10 +60,15 @@ if [[ ${#remaining_args[@]} -gt 0 && "${remaining_args[0]}" != --* ]]; then
   exec bash "${CANONICAL_SCRIPT}" "${output_arg}" "${remaining_args[@]}"
 fi
 
+if [[ -n "${FLUTTER_DART_DEFINE_FILE:-}" ]]; then
+  exec bash "${CANONICAL_SCRIPT}" "${output_arg}" "${remaining_args[@]}"
+fi
+
 if ! legacy_lane="$(resolve_legacy_lane)"; then
   cat >&2 <<'EOF'
 ERROR: build_web_bundle.sh could not resolve the target lane.
-Provide the lane explicitly as the second positional argument or set one of:
+Provide the lane explicitly as the second positional argument, set FLUTTER_DART_DEFINE_FILE,
+or set one of:
   FLUTTER_WEB_LANE
   DEPLOY_LANE
   TARGET_BRANCH
@@ -71,6 +76,7 @@ Provide the lane explicitly as the second positional argument or set one of:
 
 Examples:
   ./tools/flutter/build_web_bundle.sh ./web-app dev
+  FLUTTER_DART_DEFINE_FILE=/abs/path/to/defines.json ./tools/flutter/build_web_bundle.sh
   FLUTTER_WEB_LANE=dev ./tools/flutter/build_web_bundle.sh
 EOF
   exit 64
