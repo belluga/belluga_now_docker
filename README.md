@@ -389,7 +389,7 @@ O Docker **não** executa o build do Flutter automaticamente. O NGINX serve apen
 
 1. Gere o bundle localmente (ou em CI) com o script auxiliar:
    ```bash
-   ./tools/flutter/build_web_bundle.sh       # saída padrão: ./web-app
+   FLUTTER_WEB_LANE=dev ./tools/flutter/build_web_bundle.sh       # saída padrão: ./web-app
    ```
    O helper do root é um wrapper fino sobre o script canônico do Delphi:
    ```bash

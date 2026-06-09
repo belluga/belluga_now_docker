@@ -42,8 +42,7 @@ resolve_legacy_lane() {
         ;;
     esac
   done
-
-  printf 'dev\n'
+  return 1
 }
 
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
@@ -61,5 +60,19 @@ if [[ ${#remaining_args[@]} -gt 0 && "${remaining_args[0]}" != --* ]]; then
   exec bash "${CANONICAL_SCRIPT}" "${output_arg}" "${remaining_args[@]}"
 fi
 
-legacy_lane="$(resolve_legacy_lane)"
+if ! legacy_lane="$(resolve_legacy_lane)"; then
+  cat >&2 <<'EOF'
+ERROR: build_web_bundle.sh could not resolve the target lane.
+Provide the lane explicitly as the second positional argument or set one of:
+  FLUTTER_WEB_LANE
+  DEPLOY_LANE
+  TARGET_BRANCH
+  GITHUB_REF_NAME
+
+Examples:
+  ./tools/flutter/build_web_bundle.sh ./web-app dev
+  FLUTTER_WEB_LANE=dev ./tools/flutter/build_web_bundle.sh
+EOF
+  exit 64
+fi
 exec bash "${CANONICAL_SCRIPT}" "${output_arg}" "${legacy_lane}" "${remaining_args[@]}"
