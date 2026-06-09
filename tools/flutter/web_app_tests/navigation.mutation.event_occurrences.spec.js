@@ -3608,6 +3608,14 @@ test('@mutation tenant-admin event occurrence FAB persists second occurrence and
     });
     await navStep('NAV-02', async () => {
       const firstProgrammedOccurrence = programmedEvent?.occurrences?.[0];
+      const warmSwitchMarker = await publicPage.evaluate(() => {
+        if (!window.__occurrenceWarmSwitchMarker) {
+          window.__occurrenceWarmSwitchMarker = Math.random()
+            .toString(36)
+            .slice(2);
+        }
+        return window.__occurrenceWarmSwitchMarker;
+      });
       await expect(
         legacyOccurrenceDateChipLocator(publicPage, firstProgrammedOccurrence),
         'Programação date selector must not use the superseded date+time chip contract.',
@@ -3621,6 +3629,19 @@ test('@mutation tenant-admin event occurrence FAB persists second occurrence and
         new RegExp(`occurrence=${firstProgrammedOccurrenceId}`),
         { timeout: appBootTimeoutMs },
       );
+      await expect
+        .poll(
+          async () =>
+            publicPage.evaluate(
+              () => window.__occurrenceWarmSwitchMarker ?? null,
+            ),
+          {
+            timeout: appBootTimeoutMs,
+            message:
+              'Programação occurrence switching must stay inside the warm SPA/runtime flow and must not hard reload the page.',
+          },
+        )
+        .toBe(warmSwitchMarker);
       await expect(
         legacyOccurrenceDateChipLocator(publicPage, firstProgrammedOccurrence, {
           selected: true,

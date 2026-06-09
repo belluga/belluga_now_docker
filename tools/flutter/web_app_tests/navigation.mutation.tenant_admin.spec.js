@@ -6,6 +6,7 @@ const { test, expect, request } = require('@playwright/test');
 const {
   loginTenantAdmin: loginTenantAdminWithRequiredCredentials,
 } = require('./support/tenant_admin_auth');
+const { selectDropdownOption } = require('./support/semantic_dropdown');
 const {
   cleanupOnboardedAccount,
 } = require('./support/account_onboarding_cleanup');
@@ -937,45 +938,72 @@ async function expectSelectedToggleChip(page, label) {
     name: new RegExp(escaped, 'i'),
   });
   const textFallbackChip = page.getByText(label, { exact: true }).first();
-  let chip;
-  if ((await switchChip.count()) > 0) {
-    chip = switchChip.first();
-  } else if ((await checkboxChip.count()) > 0) {
-    chip = checkboxChip.first();
-  } else if ((await namedButtonChip.count()) > 0) {
-    chip = namedButtonChip.first();
-  } else {
-    chip = textFallbackChip;
+
+  async function expectLocatorState(locator, message) {
+    await expect
+      .poll(
+        async () => {
+          return locator
+            .first()
+            .evaluate((element) => {
+              let current = element;
+              for (let depth = 0; depth < 8 && current; depth += 1) {
+                const state =
+                  current.getAttribute('aria-pressed') ||
+                  current.getAttribute('aria-selected') ||
+                  current.getAttribute('aria-checked') ||
+                  current.getAttribute('data-selected') ||
+                  '';
+                if (state === 'true') {
+                  return state;
+                }
+                current = current.parentElement;
+              }
+              return '';
+            })
+            .catch(() => '');
+        },
+        {
+          timeout: appBootTimeoutMs,
+          message,
+        },
+      )
+      .toBe('true');
   }
+
+  if ((await switchChip.count()) > 0) {
+    await expectLocatorState(
+      switchChip,
+      `Expected taxonomy switch chip "${label}" to reopen selected.`,
+    );
+    return;
+  }
+
+  if ((await checkboxChip.count()) > 0) {
+    await expectLocatorState(
+      checkboxChip,
+      `Expected taxonomy checkbox chip "${label}" to reopen selected.`,
+    );
+    return;
+  }
+
+  if ((await namedButtonChip.count()) > 0) {
+    await expectLocatorState(
+      namedButtonChip,
+      `Expected taxonomy button chip "${label}" to reopen selected.`,
+    );
+    return;
+  }
+
   await scrollUntilVisible(
     page,
-    chip,
+    textFallbackChip,
     `Expected taxonomy chip "${label}" to appear before asserting selected state.`,
   );
-  const stateChip = chip
-    .locator(
-      'xpath=ancestor-or-self::*[@aria-pressed or @aria-selected or @aria-checked or @data-selected][1]',
-    )
-    .first();
-  const hasStateChip = (await stateChip.count().catch(() => 0)) > 0;
-  const target = hasStateChip ? stateChip : chip;
-  await expect
-    .poll(
-      async () => {
-        return (
-          (await target.getAttribute('aria-pressed').catch(() => null)) ||
-          (await target.getAttribute('aria-selected').catch(() => null)) ||
-          (await target.getAttribute('aria-checked').catch(() => null)) ||
-          (await target.getAttribute('data-selected').catch(() => null)) ||
-          ''
-        );
-      },
-      {
-        timeout: appBootTimeoutMs,
-        message: `Expected taxonomy chip "${label}" to reopen selected.`,
-      },
-    )
-    .toBe('true');
+  await expectLocatorState(
+    textFallbackChip,
+    `Expected taxonomy chip "${label}" to reopen selected.`,
+  );
 }
 
 async function createEventTypeWithTypeAsset(
@@ -1395,6 +1423,61 @@ test('@mutation tenant-admin account profile nested tabs obey profile type capab
       page,
       page.getByText('Abas de contas vinculadas'),
       'Expected nested account tabs section for a capability-enabled profile type.',
+    );
+    await expect(page.getByText('Abas de contas vinculadas')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Adicionar grupo' })).toBeVisible();
+
+    const profileTypesLoaded = page.waitForResponse((candidate) => {
+      if (!candidate.url().includes('/admin/api/v1/account_profile_types')) {
+        return false;
+      }
+      return candidate.status() === 200;
+    });
+
+    response = await page.goto(
+      buildApiUrl(baseUrl, '/admin/accounts/create'),
+      { waitUntil: 'domcontentloaded' },
+    );
+    expect(response, 'Account onboarding create response should be available.').not.toBeNull();
+    expect(response.status()).toBeLessThan(400);
+    await assertAppBooted(page);
+    await enableAccessibilityIfNeeded(page);
+    const profileTypesPayload = await (await profileTypesLoaded).json();
+    const loadedTypes = Array.isArray(profileTypesPayload?.data)
+      ? profileTypesPayload.data
+      : [];
+    expect(
+      loadedTypes.some((entry) => entry?.type === disabledTypeKey),
+      `Expected disabled profile type ${disabledTypeKey} in account onboarding type payload.`,
+    ).toBe(true);
+    expect(
+      loadedTypes.some((entry) => entry?.type === enabledTypeKey),
+      `Expected enabled profile type ${enabledTypeKey} in account onboarding type payload.`,
+    ).toBe(true);
+    await expect(page.getByText('Criar Conta')).toBeVisible({
+      timeout: appBootTimeoutMs,
+    });
+
+    await selectDropdownOption(page, {
+      flow: 'nested-tabs',
+      fieldLabel: 'Tipo de perfil',
+      optionText: disabledType.label,
+      logStep,
+    });
+    await page.waitForTimeout(250);
+    await expect(page.getByText('Abas de contas vinculadas')).toHaveCount(0);
+
+    await selectDropdownOption(page, {
+      flow: 'nested-tabs',
+      fieldLabel: 'Tipo de perfil',
+      optionText: enabledType.label,
+      logStep,
+    });
+    await page.waitForTimeout(250);
+    await scrollUntilVisible(
+      page,
+      page.getByText('Abas de contas vinculadas'),
+      'Expected nested account tabs section in canonical account onboarding create flow.',
     );
     await expect(page.getByText('Abas de contas vinculadas')).toBeVisible();
     await expect(page.getByRole('button', { name: 'Adicionar grupo' })).toBeVisible();

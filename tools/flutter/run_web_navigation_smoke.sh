@@ -76,6 +76,42 @@ load_optional_local_navigation_env() {
 
 load_optional_local_navigation_env
 
+resolve_local_playwright_browser() {
+  if [[ -n "${PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH:-}" ]]; then
+    return 0
+  fi
+
+  local candidate=""
+  for candidate in \
+    /usr/bin/google-chrome \
+    /usr/bin/google-chrome-stable \
+    /usr/bin/chromium-browser \
+    /usr/bin/chromium
+  do
+    if [[ -x "${candidate}" ]]; then
+      export PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH="${candidate}"
+      echo "INFO: using local Chromium executable for Playwright -> ${candidate}"
+      return 0
+    fi
+  done
+
+  local command_candidate=""
+  for command_candidate in \
+    google-chrome \
+    google-chrome-stable \
+    chromium-browser \
+    chromium
+  do
+    if command -v "${command_candidate}" >/dev/null 2>&1; then
+      export PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH="$(command -v "${command_candidate}")"
+      echo "INFO: using local Chromium executable for Playwright -> ${PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH}"
+      return 0
+    fi
+  done
+}
+
+resolve_local_playwright_browser
+
 require_explicit_nonlocal_mutation_opt_in() {
   local suite="$1"
   if [[ "${suite}" != "mutation" && "${suite}" != "diagnostic" ]]; then

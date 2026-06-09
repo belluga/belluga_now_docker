@@ -13,13 +13,19 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function accountStillExists(api, baseUrl, token, accountSlug) {
+async function accountStillExists(
+  api,
+  baseUrl,
+  token,
+  accountSlug,
+  { requestTimeoutMs = 30000 } = {},
+) {
   const response = await api.get(
     buildUrl(baseUrl, `/admin/api/v1/accounts/${encodeURIComponent(accountSlug)}`),
     {
       headers: authHeaders(token),
       failOnStatusCode: false,
-      timeout: 15000,
+      timeout: requestTimeoutMs,
     },
   );
 
@@ -44,6 +50,9 @@ async function cleanupOnboardedAccount(
     strict = true,
     maxAttempts = Number(process.env.NAV_ACCOUNT_CLEANUP_MAX_ATTEMPTS || 5),
     baseDelayMs = Number(process.env.NAV_ACCOUNT_CLEANUP_BASE_DELAY_MS || 500),
+    requestTimeoutMs = Number(
+      process.env.NAV_ACCOUNT_CLEANUP_REQUEST_TIMEOUT_MS || 30000,
+    ),
   } = {},
 ) {
   const slug = accountSlug?.toString().trim();
@@ -62,16 +71,31 @@ async function cleanupOnboardedAccount(
   const boundedBaseDelayMs = Number.isFinite(baseDelayMs) && baseDelayMs >= 0
     ? Math.floor(baseDelayMs)
     : 500;
+  const boundedRequestTimeoutMs =
+    Number.isFinite(requestTimeoutMs) && requestTimeoutMs > 0
+      ? Math.floor(requestTimeoutMs)
+      : 30000;
+  let lastProbeError = null;
+  let confirmedStillExists = false;
 
   for (let attempt = 1; attempt <= boundedAttempts; attempt += 1) {
-    const response = await api.delete(
-      buildUrl(baseUrl, `/admin/api/v1/accounts/${encodeURIComponent(slug)}`),
-      {
-        headers: authHeaders(token),
-        failOnStatusCode: false,
-        timeout: 15000,
-      },
-    );
+    let response;
+    try {
+      response = await api.delete(
+        buildUrl(baseUrl, `/admin/api/v1/accounts/${encodeURIComponent(slug)}`),
+        {
+          headers: authHeaders(token),
+          failOnStatusCode: false,
+          timeout: boundedRequestTimeoutMs,
+        },
+      );
+    } catch (error) {
+      console.warn(
+        `[cleanupOnboardedAccount] delete attempt ${attempt} for ${slug} threw ${error}.`,
+      );
+      await sleep(boundedBaseDelayMs * attempt);
+      continue;
+    }
     const status = response.status();
     if (status === 404) {
       return;
@@ -82,11 +106,31 @@ async function cleanupOnboardedAccount(
       );
     }
 
-    if (!(await accountStillExists(api, baseUrl, token, slug))) {
+    let stillExists = true;
+    try {
+      stillExists = await accountStillExists(api, baseUrl, token, slug, {
+        requestTimeoutMs: boundedRequestTimeoutMs,
+      });
+      lastProbeError = null;
+    } catch (error) {
+      lastProbeError = error;
+      console.warn(
+        `[cleanupOnboardedAccount] probe attempt ${attempt} for ${slug} threw ${error}.`,
+      );
+      await sleep(boundedBaseDelayMs * attempt);
+      continue;
+    }
+
+    if (!stillExists) {
       return;
     }
 
+    confirmedStillExists = true;
     await sleep(boundedBaseDelayMs * attempt);
+  }
+
+  if (!confirmedStillExists && lastProbeError != null) {
+    throw lastProbeError;
   }
 
   const message = `Cleanup did not remove onboarded account ${slug}.`;
