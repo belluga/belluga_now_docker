@@ -768,6 +768,9 @@ test('@readonly NAV-APD-12 mobile breakpoint keeps title and taxonomy chips read
     .toBeTruthy();
 
   const profileName = textValue(profile.display_name, profile.name, profile.title);
+  // NAV-APD-12 verifies mobile readability, not cold-route bootstrap.
+  // Direct profile-route boot is already exercised by the other readonly detail tests.
+  await openTenantPath(page, baseUrl, '/');
   await openTenantPath(page, baseUrl, `/parceiro/${profile.slug}`);
   await assertVisibleTextOrSemanticLabel(page, profileName, 'Mobile Account Profile hero');
 
@@ -1137,6 +1140,118 @@ test('@mutation NAV-APD-13 map reference point action opens confirmation modal',
         name: /Usar como Ponto de Referência/i,
       }).first(),
     ).toBeVisible({ timeout: appBootTimeoutMs });
+  } catch (error) {
+    primaryError = error;
+    throw error;
+  } finally {
+    await runCleanupPreservingPrimaryError(primaryError, async () => {
+      try {
+        await cleanupCreatedPoiAccountProfile(api, baseUrl, sessionToken, {
+          accountSlug: createdAccountSlug,
+          profileId: createdProfileId,
+        });
+        await deleteAccountProfileType(
+          api,
+          baseUrl,
+          sessionToken,
+          createdProfileType,
+        );
+      } finally {
+        await api.dispose();
+      }
+    });
+  }
+});
+
+test('@mutation NAV-APD-14 map route action reuses the shared route chooser after reference-point prompt', async ({
+  page,
+}) => {
+  const baseUrl = requireTenantUrl();
+  const api = await createApiContext(baseUrl);
+  let sessionToken = null;
+  let createdAccountSlug = null;
+  let createdProfileId = null;
+  let createdProfileType = null;
+  let primaryError = null;
+
+  try {
+    await page.context().grantPermissions(['geolocation'], { origin: baseUrl });
+    await page
+      .context()
+      .setGeolocation({ latitude: -20.671339, longitude: -40.495395 });
+
+    sessionToken = await loginTenantAdmin(api, baseUrl);
+    const profileTypeSeed = await resolvePoiCapableProfileType(
+      api,
+      baseUrl,
+      sessionToken,
+      { preferDedicatedType: true },
+    );
+    createdProfileType = profileTypeSeed.createdType;
+    const createdProfile = await createPoiAccountProfile(
+      api,
+      baseUrl,
+      sessionToken,
+      profileTypeSeed.profileType,
+    );
+    createdAccountSlug = createdProfile.accountSlug;
+    createdProfileId = createdProfile.profileId;
+
+    await gotoPublicProfileDetailAndWaitForHydration(
+      page,
+      baseUrl,
+      createdProfile.profileSlug,
+    );
+    await expect(page.getByText(/Como Chegar/i).first()).toBeVisible({
+      timeout: appBootTimeoutMs,
+    });
+    await page.getByText(/Ver no mapa/i).first().click();
+    await continueWithoutLocationIfPrompted(page);
+    await expect(page).toHaveURL(/\/mapa.*poi=account_profile/i, {
+      timeout: appBootTimeoutMs,
+    });
+
+    const referencePointButton = page.getByRole('button', {
+      name: /Usar como ponto de referência/i,
+    }).first();
+    await clickLocatorCenter(
+      page,
+      referencePointButton,
+      'Focused Account Profile map card must expose the reference-point CTA before route selection.',
+    );
+    await page.getByRole('button', {
+      name: /Usar como Ponto de Referência/i,
+    }).first().click();
+    await expect(
+      page.getByRole('button', {
+        name: /Ponto de referência/i,
+      }).first(),
+    ).toBeVisible({ timeout: appBootTimeoutMs });
+
+    const routeButton = page.getByRole('button', {
+      name: /^Traçar rota$/i,
+    }).first();
+    await clickLocatorCenter(
+      page,
+      routeButton,
+      'Map card route CTA must open the canonical route-start prompt.',
+    );
+
+    await expect(
+      page.getByText('Qual PONTO DE PARTIDA quer usar?', { exact: true }),
+    ).toBeVisible({ timeout: appBootTimeoutMs });
+    await expect(
+      page.getByText(labelPattern(createdProfile.displayName)).first(),
+    ).toBeVisible({ timeout: appBootTimeoutMs });
+
+    await page.getByText(/O ponto de referência selecionado/i).first().click();
+    await page.getByRole('button', { name: /^Continuar$/i }).click();
+
+    await expect(
+      page.getByText(/Selecione seu aplicativo de preferência/i).first(),
+    ).toBeVisible({ timeout: appBootTimeoutMs });
+    await expect(page.getByText(/Google Maps|99|Waze|Uber/i).first())
+      .toBeVisible({ timeout: appBootTimeoutMs });
   } catch (error) {
     primaryError = error;
     throw error;

@@ -2,13 +2,14 @@
   "mutation": {
     "shards": {
       "apd": {
-        "grep_extra": "(?:account-profile rich text|NAV-APD-07|NAV-APD-09|NAV-APD-11|NAV-APD-13|NAV-DIR-BRAND-01)",
+        "grep_extra": "(?:account-profile rich text|NAV-APD-07|NAV-APD-09|NAV-APD-11|NAV-APD-13|NAV-APD-14|NAV-DIR-BRAND-01)",
         "expected_titles": [
           "@mutation tenant-admin account-profile rich text persists and renders on admin and public surfaces",
           "@mutation NAV-APD-07..08 agenda is occurrence-first and cards navigate to event detail",
           "@mutation NAV-APD-09 Como Chegar opens focused map and shared route chooser",
           "@mutation NAV-APD-11 reference point action opens confirmation modal",
           "@mutation NAV-APD-13 map reference point action opens confirmation modal",
+          "@mutation NAV-APD-14 map route action reuses the shared route chooser after reference-point prompt",
           "@mutation NAV-DIR-BRAND-01 Waze and Uber brand controls render on shared directions surfaces"
         ]
       },
@@ -90,9 +91,12 @@
       "@readonly tenant open-app generates Android handoff redirects for pre-Guard action targets",
       "@readonly tenant Android direct public links request open-app handoff redirects",
       "@readonly FAV-GATE-RUNTIME web anonymous account and discovery favorite actions show app promotion modal",
+      "@readonly MAP-LOC-GRANT-01 first warm geolocation-granted map entry loads POIs from a resolved origin without public error state",
+      "@readonly MAP-LOC-GRANT-02 permission-gated grant keeps the first map entry warm and loads POIs without public error state",
       "@readonly MAP-NAV-REENTRY-01 tenant home can reopen map after returning from a warm permission-gated entry",
       "@readonly MAP-WEB-WIDTH-01 tenant map route is full width while framed tenant routes remain constrained",
       "@readonly landlord domain bootstraps as landlord and navigates",
+      "@readonly STARTUP-PUBLIC-BOOTSTRAP-01 anonymous tenant home cold start keeps the public surface and completes anonymous bootstrap",
       "@readonly tenant domain bootstraps as tenant and navigates to tenant routes",
       "@readonly OTP-WEB-BOUNDARY-01 tenant-public web auth remains app promotion boundary",
       "@readonly taxonomy display snapshots render labels instead of slugs on public runtime routes"
