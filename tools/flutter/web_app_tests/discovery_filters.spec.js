@@ -911,6 +911,18 @@ async function requiredHorizontalViewportAdjustment(locator, panel) {
 
 async function expectFilterChipShowsVisibleLabel(locator, minWidth = 96) {
   await expect(locator).toBeVisible({ timeout: appBootTimeoutMs });
+  await expect
+    .poll(
+      async () => {
+        const bounds = await locator.boundingBox().catch(() => null);
+        return Math.round(bounds?.width || 0);
+      },
+      {
+        timeout: appBootTimeoutMs,
+        message: `Expected filter chip to keep its visible label width (>= ${minWidth}px).`,
+      },
+    )
+    .toBeGreaterThanOrEqual(minWidth);
 }
 
 async function expectAccessibleButtonByName(page, namePattern) {

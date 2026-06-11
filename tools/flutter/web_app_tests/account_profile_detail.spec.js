@@ -473,18 +473,16 @@ async function gotoPublicProfileDetailAndWaitForHydration(
   slug,
   { readPayload = true } = {},
 ) {
-  const responsePromise = readPayload
-    ? page.waitForResponse(
-        (candidate) => {
-          if (candidate.request().method().toUpperCase() !== 'GET') {
-            return false;
-          }
-          const url = new URL(candidate.url());
-          return url.pathname === `/api/v1/account_profiles/${slug}`;
-        },
-        { timeout: appBootTimeoutMs },
-      )
-    : null;
+  const responsePromise = page.waitForResponse(
+    (candidate) => {
+      if (candidate.request().method().toUpperCase() !== 'GET') {
+        return false;
+      }
+      const url = new URL(candidate.url());
+      return url.pathname === `/api/v1/account_profiles/${slug}`;
+    },
+    { timeout: appBootTimeoutMs },
+  );
 
   const response = await page.goto(buildUrl(baseUrl, `/parceiro/${slug}`), {
     waitUntil: 'domcontentloaded',
@@ -496,13 +494,13 @@ async function gotoPublicProfileDetailAndWaitForHydration(
 
   await assertAppBooted(page);
   await enableAccessibilityIfNeeded(page);
-  if (!readPayload) {
-    return null;
-  }
 
   const hydratedResponse = await responsePromise;
   expect(hydratedResponse.status(), 'Profile detail API must load.')
     .toBeLessThan(400);
+  if (!readPayload) {
+    return null;
+  }
   let payload;
   try {
     payload = await hydratedResponse.json();
