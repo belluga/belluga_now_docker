@@ -216,23 +216,26 @@ function assertCanonicalBootstrapOrder(snapshot, contextLabel) {
       && (entry.status === 200 || entry.status === 201),
   );
   const firstProtectedMapResponse = snapshot.responseTimeline.find(
-    (entry) =>
-      (entry.kind === 'map_filters' || entry.kind === 'map_pois')
-      && entry.status < 400,
+    (entry) => entry.kind === 'map_filters' || entry.kind === 'map_pois',
   );
 
   expect(
     firstAnonymousBootstrap,
-    `${contextLabel} must record a successful anonymous bootstrap response before protected map reads.`,
+    `${contextLabel} must record a successful anonymous bootstrap response before any protected map response.`,
   ).toBeTruthy();
   expect(
     firstProtectedMapResponse,
-    `${contextLabel} must record a successful protected map response.`,
+    `${contextLabel} must record a protected map response.`,
   ).toBeTruthy();
   expect(
     firstAnonymousBootstrap.seq,
     `${contextLabel} must bootstrap anonymous identity before protected map reads. Timeline:\n${JSON.stringify(snapshot.responseTimeline, null, 2)}`,
   ).toBeLessThan(firstProtectedMapResponse.seq);
+  expect(
+    firstProtectedMapResponse.status,
+    `${contextLabel} first protected map response must be successful, not a failed warm-up hidden by retries. Timeline:\n${JSON.stringify(snapshot.responseTimeline, null, 2)}`,
+  ).toBeGreaterThanOrEqual(200);
+  expect(firstProtectedMapResponse.status).toBeLessThan(400);
 }
 
 function assertCanonicalMapSnapshot(snapshot, contextLabel) {
@@ -286,6 +289,27 @@ function assertCanonicalMapSnapshot(snapshot, contextLabel) {
   expect(Number(originLng), 'First POI request origin_lng must be numeric.').not.toBeNaN();
 }
 
+async function waitForCanonicalMapResponses(mapCapture, contextLabel) {
+  await expect
+    .poll(
+      async () => {
+        const snapshot = await mapCapture.snapshot();
+        const hasSuccessfulFilters = snapshot.filterResponses.some(
+          (entry) => entry.status >= 200 && entry.status < 300,
+        );
+        const hasSuccessfulPois = snapshot.poiResponses.some(
+          (entry) => entry.status >= 200 && entry.status < 300,
+        );
+        return hasSuccessfulFilters && hasSuccessfulPois;
+      },
+      {
+        timeout: appBootTimeoutMs,
+        message: `${contextLabel} must observe successful map filters and POI responses before snapshotting.`,
+      },
+    )
+    .toBe(true);
+}
+
 test('@readonly MAP-LOC-GRANT-01 first warm geolocation-granted map entry loads POIs from a resolved origin without public error state', async ({
   browser,
 }) => {
@@ -315,17 +339,10 @@ test('@readonly MAP-LOC-GRANT-01 first warm geolocation-granted map entry loads 
   await page.getByRole('tab', { name: /^Mapa$/i }).click();
   await waitForTenantPath(page, ['/mapa']);
 
-  await expect
-    .poll(
-      async () => (await mapCapture.snapshot()).poiResponses.length,
-      {
-        timeout: appBootTimeoutMs,
-        message: 'Warm geolocation-granted map entry must issue at least one POI response.',
-      },
-    )
-    .toBeGreaterThan(0);
-
-  await page.waitForTimeout(2000);
+  await waitForCanonicalMapResponses(
+    mapCapture,
+    'Warm geolocation-granted map entry',
+  );
 
   await expect(
     page.getByText(/Não foi possível carregar os pontos de interesse/i),
@@ -378,18 +395,10 @@ test('@readonly MAP-LOC-GRANT-02 permission-gated grant keeps the first map entr
   await allowLocationButton.click();
   await waitForTenantPath(page, ['/mapa']);
 
-  await expect
-    .poll(
-      async () => (await mapCapture.snapshot()).poiResponses.length,
-      {
-        timeout: appBootTimeoutMs,
-        message:
-          'Permission-gated grant must issue at least one POI response on the first map entry.',
-      },
-    )
-    .toBeGreaterThan(0);
-
-  await page.waitForTimeout(2000);
+  await waitForCanonicalMapResponses(
+    mapCapture,
+    'Permission-gated grant first entry',
+  );
 
   await expect(
     page.getByText(/Não foi possível carregar os pontos de interesse/i),

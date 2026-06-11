@@ -285,9 +285,7 @@ async function run() {
       (entry) => entry.status === 200 || entry.status === 201,
     );
     const firstProtectedMapResponse = responseTimeline.find(
-      (entry) =>
-        (entry.kind === 'map_filters' || entry.kind === 'map_pois')
-        && entry.status < 400,
+      (entry) => entry.kind === 'map_filters' || entry.kind === 'map_pois',
     );
     const successfulPoiResponse = resolvedPoiResponses.find(
       (entry) => entry.status >= 200 && entry.status < 300,
@@ -326,6 +324,8 @@ async function run() {
       successfulAnonymousBootstrap &&
       firstProtectedMapResponse &&
       successfulAnonymousBootstrap.seq < firstProtectedMapResponse.seq &&
+      firstProtectedMapResponse.status >= 200 &&
+      firstProtectedMapResponse.status < 400 &&
       successfulFilterResponse &&
       successfulFilterResponse.parseError == null &&
       firstPoiRequest &&

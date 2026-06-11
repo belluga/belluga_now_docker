@@ -1,5 +1,5 @@
 const crypto = require('crypto');
-const { test, expect } = require('@playwright/test');
+const { test, expect, request } = require('@playwright/test');
 
 const tenantUrl = process.env.NAV_TENANT_URL;
 const appBootTimeoutMs = 120000;
@@ -16,6 +16,15 @@ function requireTenantUrl() {
 
 function buildUrl(baseUrl, pathName) {
   return new URL(pathName, baseUrl).toString();
+}
+
+function buildApiRequestContext() {
+  return request.newContext({
+    ignoreHTTPSErrors: true,
+    extraHTTPHeaders: {
+      Accept: 'application/json',
+    },
+  });
 }
 
 function escapeRegExp(value) {
@@ -115,35 +124,84 @@ async function waitForTenantPath(page, allowedPrefixes) {
   );
 }
 
-function attachStartupCapture(page) {
-  const anonymousIdentityStatuses = [];
+function exactPathMatcher(pathname, label = pathname) {
+  return {
+    label,
+    matches(url) {
+      const parsed = new URL(url);
+      return parsed.pathname === pathname;
+    },
+  };
+}
+
+function eventDetailMatcher(eventRef, occurrenceId = null) {
+  return {
+    label: 'event_detail',
+    matches(url) {
+      const parsed = new URL(url);
+      if (parsed.pathname !== `/api/v1/events/${eventRef}`) {
+        return false;
+      }
+      return !occurrenceId || parsed.searchParams.get('occurrence') === occurrenceId;
+    },
+  };
+}
+
+function defaultProtectedReadMatchers() {
+  return [
+    exactPathMatcher('/api/v1/agenda', 'agenda'),
+    exactPathMatcher('/api/v1/map/filters', 'map_filters'),
+    exactPathMatcher('/api/v1/map/pois', 'map_pois'),
+    exactPathMatcher('/api/v1/invites/settings', 'invites_settings'),
+    exactPathMatcher('/api/v1/invites', 'invites_feed'),
+  ];
+}
+
+function attachStartupCapture(page, { protectedReadMatchers = defaultProtectedReadMatchers() } = {}) {
+  const anonymousIdentityResponses = [];
+  const protectedReadResponses = [];
   const protectedReadFailures = [];
   const openAppUrls = [];
   const popupUrls = [];
   const consoleErrors = [];
   const pageErrors = [];
-
-  const protectedReadPrefixes = [
-    '/api/v1/agenda',
-    '/api/v1/map/filters',
-    '/api/v1/map/pois',
-    '/api/v1/invites/settings',
-    '/api/v1/invites',
-  ];
+  const responseTimeline = [];
+  let responseSequence = 0;
 
   page.on('response', (response) => {
     const url = response.url();
+    const seq = responseSequence += 1;
+
     if (url.includes('/api/v1/anonymous/identities')) {
-      anonymousIdentityStatuses.push(response.status());
+      const entry = {
+        seq,
+        status: response.status(),
+        url,
+      };
+      anonymousIdentityResponses.push(entry);
+      responseTimeline.push({
+        ...entry,
+        kind: 'anonymous_identity',
+      });
       return;
     }
 
-    const pathname = new URL(url).pathname;
-    if (
-      protectedReadPrefixes.includes(pathname) &&
-      response.status() >= 400
-    ) {
-      protectedReadFailures.push(`${response.status()} ${url}`);
+    const matchedRead = protectedReadMatchers.find((matcher) => matcher.matches(url));
+    if (matchedRead) {
+      const entry = {
+        seq,
+        label: matchedRead.label,
+        status: response.status(),
+        url,
+      };
+      protectedReadResponses.push(entry);
+      responseTimeline.push({
+        ...entry,
+        kind: 'protected_read',
+      });
+      if (response.status() >= 400) {
+        protectedReadFailures.push(`${matchedRead.label}: ${response.status()} ${url}`);
+      }
     }
   });
 
@@ -174,53 +232,23 @@ function attachStartupCapture(page) {
 
   return {
     snapshot: () => ({
-      anonymousIdentityStatuses: [...anonymousIdentityStatuses],
+      anonymousIdentityResponses: [...anonymousIdentityResponses],
+      protectedReadResponses: [...protectedReadResponses],
       protectedReadFailures: [...protectedReadFailures],
       openAppUrls: [...openAppUrls],
       popupUrls: [...popupUrls],
       consoleErrors: [...consoleErrors],
       pageErrors: [...pageErrors],
+      responseTimeline: [...responseTimeline],
     }),
   };
 }
-
-let anonymousIdentityToken = null;
 
 function anonymousFingerprintHash(baseUrl) {
   return crypto
     .createHash('sha256')
     .update(`startup-public-bootstrap:${baseUrl}`)
     .digest('hex');
-}
-
-async function resolveAnonymousIdentityToken(page) {
-  if (anonymousIdentityToken) {
-    return anonymousIdentityToken;
-  }
-
-  const baseUrl = requireTenantUrl();
-  const response = await page.request.post(
-    buildUrl(baseUrl, '/api/v1/anonymous/identities'),
-    {
-      headers: { Accept: 'application/json' },
-      data: {
-        device_name: 'playwright-startup-public-bootstrap',
-        fingerprint: {
-          hash: anonymousFingerprintHash(baseUrl),
-          user_agent: 'playwright-startup-public-bootstrap',
-          locale: 'pt-BR',
-        },
-        metadata: {
-          source: 'web_navigation_startup_public_bootstrap',
-        },
-      },
-    },
-  );
-  expect([200, 201]).toContain(response.status());
-  const payload = await response.json();
-  anonymousIdentityToken = payload?.data?.token?.toString().trim() || '';
-  expect(anonymousIdentityToken).toBeTruthy();
-  return anonymousIdentityToken;
 }
 
 function payloadRows(payload) {
@@ -236,22 +264,58 @@ function payloadRows(payload) {
   return [];
 }
 
-async function fetchJson(page, pathName, label) {
+async function createReadonlyPublicApiClient() {
   const baseUrl = requireTenantUrl();
-  const token = await resolveAnonymousIdentityToken(page);
-  const response = await page.request.get(buildUrl(baseUrl, pathName), {
-    headers: {
-      Accept: 'application/json',
-      Authorization: `Bearer ${token}`,
+  const api = await buildApiRequestContext();
+  let anonymousIdentityToken = null;
+
+  async function resolveAnonymousIdentityToken() {
+    if (anonymousIdentityToken) {
+      return anonymousIdentityToken;
+    }
+
+    const response = await api.post(
+      buildUrl(baseUrl, '/api/v1/anonymous/identities'),
+      {
+        data: {
+          device_name: 'playwright-startup-public-bootstrap',
+          fingerprint: {
+            hash: anonymousFingerprintHash(baseUrl),
+            user_agent: 'playwright-startup-public-bootstrap',
+            locale: 'pt-BR',
+          },
+          metadata: {
+            source: 'web_navigation_startup_public_bootstrap',
+          },
+        },
+      },
+    );
+    expect([200, 201]).toContain(response.status());
+    const payload = await response.json();
+    anonymousIdentityToken = payload?.data?.token?.toString().trim() || '';
+    expect(anonymousIdentityToken).toBeTruthy();
+    return anonymousIdentityToken;
+  }
+
+  return {
+    async fetchJson(pathName, label) {
+      const token = await resolveAnonymousIdentityToken();
+      const response = await api.get(buildUrl(baseUrl, pathName), {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      expect(response.status(), `${label} must load from ${pathName}.`).toBeLessThan(400);
+      return response.json();
     },
-  });
-  expect(response.status(), `${label} must load from ${pathName}.`).toBeLessThan(400);
-  return response.json();
+    async dispose() {
+      await api.dispose();
+    },
+  };
 }
 
-async function fetchPublicAccountCandidate(page) {
-  const payload = await fetchJson(
-    page,
+async function fetchPublicAccountCandidate(apiClient) {
+  const payload = await apiClient.fetchJson(
     '/api/v1/account_profiles?per_page=50',
     'Public account profiles list',
   );
@@ -265,11 +329,10 @@ async function fetchPublicAccountCandidate(page) {
   return candidate;
 }
 
-async function fetchPublicEventCandidate(page) {
-  const payload = await fetchJson(
-    page,
-    '/api/v1/events?page=1&page_size=50',
-    'Public events list',
+async function fetchPublicEventCandidate(apiClient) {
+  const payload = await apiClient.fetchJson(
+    '/api/v1/agenda?page=1&page_size=50',
+    'Public agenda list',
   );
   const candidate = payloadRows(payload).find((row) => {
     const routeRef = row?.slug?.toString().trim() || row?.event_id?.toString().trim();
@@ -280,24 +343,72 @@ async function fetchPublicEventCandidate(page) {
   return candidate;
 }
 
-async function assertStartupSnapshotGreen(page, startupCapture, contextLabel) {
+async function assertNoPromotionUiVisible(page, contextLabel) {
+  await expect(
+    page.getByText(/fica melhor no app|continue no app|baixe para continuar|escolha sua loja|app em preparação/i),
+    `${contextLabel} must not auto-open the app-promotion surface.`,
+  ).toHaveCount(0);
+}
+
+function hasSuccessfulAnonymousBootstrap(snapshot) {
+  return snapshot.anonymousIdentityResponses.some(
+    (entry) => entry.status === 200 || entry.status === 201,
+  );
+}
+
+function hasSuccessfulProtectedRead(snapshot, label) {
+  return snapshot.protectedReadResponses.some(
+    (entry) => entry.label === label && entry.status >= 200 && entry.status < 400,
+  );
+}
+
+function assertBootstrapPrecedesProtectedReads(snapshot, contextLabel) {
+  const firstSuccessfulAnonymousBootstrap = snapshot.anonymousIdentityResponses.find(
+    (entry) => entry.status === 200 || entry.status === 201,
+  );
+  expect(
+    firstSuccessfulAnonymousBootstrap,
+    `${contextLabel} must issue the canonical anonymous identity bootstrap before protected reads.`,
+  ).toBeTruthy();
+
+  const protectedReadsBeforeBootstrap = snapshot.protectedReadResponses.filter(
+    (entry) => entry.seq < firstSuccessfulAnonymousBootstrap.seq,
+  );
+  expect(
+    protectedReadsBeforeBootstrap,
+    `${contextLabel} must not issue protected reads before anonymous bootstrap. Timeline:\n${JSON.stringify(snapshot.responseTimeline, null, 2)}`,
+  ).toEqual([]);
+}
+
+async function assertStartupSnapshotGreen(page, startupCapture, contextLabel, {
+  requiredProtectedLabels = [],
+} = {}) {
   await expect
     .poll(
-      async () => startupCapture.snapshot().anonymousIdentityStatuses.length,
+      async () => {
+        const snapshot = startupCapture.snapshot();
+        return hasSuccessfulAnonymousBootstrap(snapshot)
+          && requiredProtectedLabels.every((label) => hasSuccessfulProtectedRead(snapshot, label));
+      },
       {
         timeout: appBootTimeoutMs,
-        message: `${contextLabel} must issue the canonical anonymous identity bootstrap.`,
+        message: `${contextLabel} must complete anonymous bootstrap and required protected reads.`,
       },
     )
-    .toBeGreaterThan(0);
-
-  await page.waitForTimeout(4000);
+    .toBe(true);
 
   const snapshot = startupCapture.snapshot();
+  assertBootstrapPrecedesProtectedReads(snapshot, contextLabel);
   expect(
-    snapshot.anonymousIdentityStatuses.every((status) => status === 200 || status === 201),
-    `${contextLabel} must keep anonymous identity bootstrap idempotent-success. Observed: ${snapshot.anonymousIdentityStatuses.join(', ')}`,
+    snapshot.anonymousIdentityResponses.every((entry) => entry.status === 200 || entry.status === 201),
+    `${contextLabel} must keep anonymous identity bootstrap idempotent-success. Observed: ${snapshot.anonymousIdentityResponses.map((entry) => entry.status).join(', ')}`,
   ).toBeTruthy();
+  for (const label of requiredProtectedLabels) {
+    expect(
+      hasSuccessfulProtectedRead(snapshot, label),
+      `${contextLabel} must successfully load protected read "${label}". Reads:\n${JSON.stringify(snapshot.protectedReadResponses, null, 2)}`,
+    ).toBeTruthy();
+  }
   expect(
     snapshot.protectedReadFailures,
     `${contextLabel} must not fail protected reads during bootstrap:\n${snapshot.protectedReadFailures.join('\n')}`,
@@ -308,6 +419,7 @@ async function assertStartupSnapshotGreen(page, startupCapture, contextLabel) {
   ).toBe(false);
   expect(snapshot.openAppUrls).toEqual([]);
   expect(snapshot.popupUrls).toEqual([]);
+  await assertNoPromotionUiVisible(page, contextLabel);
   expect(
     snapshot.pageErrors,
     `Unexpected page errors during ${contextLabel}:\n${snapshot.pageErrors.join('\n')}`,
@@ -318,9 +430,12 @@ async function assertStartupSnapshotGreen(page, startupCapture, contextLabel) {
   ).toEqual([]);
 }
 
-async function assertDirectPublicStartup(page, path, visibleLabel, contextLabel) {
+async function assertDirectPublicStartup(page, path, visibleLabel, contextLabel, {
+  protectedReadMatchers = defaultProtectedReadMatchers(),
+  requiredProtectedLabels = [],
+} = {}) {
   const baseUrl = requireTenantUrl();
-  const startupCapture = attachStartupCapture(page);
+  const startupCapture = attachStartupCapture(page, { protectedReadMatchers });
   const response = await page.goto(buildUrl(baseUrl, path), {
     waitUntil: 'domcontentloaded',
   });
@@ -330,12 +445,16 @@ async function assertDirectPublicStartup(page, path, visibleLabel, contextLabel)
   await assertAppBooted(page);
   await enableAccessibilityIfNeeded(page);
   await waitForTenantPath(page, [new URL(path, baseUrl).pathname]);
-  await assertStartupSnapshotGreen(page, startupCapture, contextLabel);
-  await assertVisibleTextOrSemanticLabel(
-    page,
-    visibleLabel,
-    `${contextLabel} primary label`,
-  );
+  await assertStartupSnapshotGreen(page, startupCapture, contextLabel, {
+    requiredProtectedLabels,
+  });
+  if (visibleLabel) {
+    await assertVisibleTextOrSemanticLabel(
+      page,
+      visibleLabel,
+      `${contextLabel} primary label`,
+    );
+  }
 }
 
 function currentPathIndicatesPromotion(page) {
@@ -367,21 +486,20 @@ test('@readonly STARTUP-PUBLIC-BOOTSTRAP-01 anonymous tenant home cold start kee
 
   await expect
     .poll(
-      async () => startupCapture.snapshot().anonymousIdentityStatuses.length,
+      async () => hasSuccessfulAnonymousBootstrap(startupCapture.snapshot()),
       {
         timeout: appBootTimeoutMs,
         message:
           'Anonymous tenant home startup must issue the canonical anonymous identity bootstrap.',
       },
     )
-    .toBeGreaterThan(0);
-
-  await page.waitForTimeout(4000);
+    .toBe(true);
 
   const snapshot = startupCapture.snapshot();
+  assertBootstrapPrecedesProtectedReads(snapshot, 'Anonymous home startup');
   expect(
-    snapshot.anonymousIdentityStatuses.every((status) => status === 200 || status === 201),
-    `Anonymous identity bootstrap must be idempotent-success (200/201). Observed: ${snapshot.anonymousIdentityStatuses.join(', ')}`,
+    snapshot.anonymousIdentityResponses.every((entry) => entry.status === 200 || entry.status === 201),
+    `Anonymous identity bootstrap must be idempotent-success (200/201). Observed: ${snapshot.anonymousIdentityResponses.map((entry) => entry.status).join(', ')}`,
   ).toBeTruthy();
 
   expect(
@@ -403,10 +521,7 @@ test('@readonly STARTUP-PUBLIC-BOOTSTRAP-01 anonymous tenant home cold start kee
     `Anonymous home startup must not open promotion popups automatically:\n${snapshot.popupUrls.join('\n')}`,
   ).toEqual([]);
 
-  await expect(
-    page.getByText(/fica melhor no app|continue no app|baixe para continuar|escolha sua loja|app em preparação/i),
-    'Anonymous home startup must not auto-open the app-promotion surface.',
-  ).toHaveCount(0);
+  await assertNoPromotionUiVisible(page, 'Anonymous home startup');
 
   await expect(
     page.getByText(/^Agenda$/i).first(),
@@ -430,11 +545,18 @@ test('@readonly STARTUP-PUBLIC-BOOTSTRAP-01 anonymous tenant home cold start kee
 test('@readonly STARTUP-PUBLIC-BOOTSTRAP-02 anonymous account-profile direct entry keeps the public surface and completes anonymous bootstrap', async ({
   browser,
 }) => {
+  const apiClient = await createReadonlyPublicApiClient();
+  let candidate;
+  try {
+    candidate = await fetchPublicAccountCandidate(apiClient);
+  } finally {
+    await apiClient.dispose();
+  }
+
   const context = await browser.newContext({
     ignoreHTTPSErrors: true,
   });
   const page = await context.newPage();
-  const candidate = await fetchPublicAccountCandidate(page);
   const slug = candidate.slug.toString().trim();
   const visibleLabel = candidate.display_name?.toString().trim()
     || candidate.account_name?.toString().trim();
@@ -444,6 +566,13 @@ test('@readonly STARTUP-PUBLIC-BOOTSTRAP-02 anonymous account-profile direct ent
     `/parceiro/${slug}`,
     visibleLabel,
     'Anonymous account-profile direct entry',
+    {
+      protectedReadMatchers: [
+        ...defaultProtectedReadMatchers(),
+        exactPathMatcher(`/api/v1/account_profiles/${slug}`, 'account_detail'),
+      ],
+      requiredProtectedLabels: ['account_detail'],
+    },
   );
 
   await context.close();
@@ -452,20 +581,38 @@ test('@readonly STARTUP-PUBLIC-BOOTSTRAP-02 anonymous account-profile direct ent
 test('@readonly STARTUP-PUBLIC-BOOTSTRAP-03 anonymous event-detail direct entry keeps the public surface and completes anonymous bootstrap', async ({
   browser,
 }) => {
+  const apiClient = await createReadonlyPublicApiClient();
+  let candidate;
+  try {
+    candidate = await fetchPublicEventCandidate(apiClient);
+  } finally {
+    await apiClient.dispose();
+  }
+
   const context = await browser.newContext({
     ignoreHTTPSErrors: true,
   });
   const page = await context.newPage();
-  const candidate = await fetchPublicEventCandidate(page);
   const routeRef = candidate.slug?.toString().trim()
     || candidate.event_id?.toString().trim();
+  const occurrenceId = candidate.occurrence_id?.toString().trim() || null;
   const visibleLabel = candidate.title?.toString().trim();
+  const path = occurrenceId
+    ? `/agenda/evento/${routeRef}?occurrence=${encodeURIComponent(occurrenceId)}`
+    : `/agenda/evento/${routeRef}`;
 
   await assertDirectPublicStartup(
     page,
-    `/agenda/evento/${routeRef}`,
+    path,
     visibleLabel,
     'Anonymous event-detail direct entry',
+    {
+      protectedReadMatchers: [
+        ...defaultProtectedReadMatchers(),
+        eventDetailMatcher(routeRef, occurrenceId),
+      ],
+      requiredProtectedLabels: ['event_detail'],
+    },
   );
 
   await context.close();

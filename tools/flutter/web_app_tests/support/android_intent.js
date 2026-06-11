@@ -183,6 +183,31 @@ function waitForOpenAppResponse(page, baseUrl, timeoutMs) {
   );
 }
 
+function startOpenAppResponseCollector(page, baseUrl) {
+  const expectedOrigin = new URL(baseUrl).origin;
+  const responses = [];
+  const listener = (response) => {
+    const url = new URL(response.url());
+    if (url.origin !== expectedOrigin || url.pathname !== '/open-app') {
+      return;
+    }
+    responses.push({
+      status: response.status(),
+      location: response.headers().location || '',
+      url: response.url(),
+    });
+  };
+
+  page.on('response', listener);
+
+  return {
+    responses,
+    stop() {
+      page.off('response', listener);
+    },
+  };
+}
+
 async function expectAndroidOpenAppIntent({
   page,
   baseUrl,
@@ -238,33 +263,25 @@ async function expectAndroidDirectPublicHandoff({
   action,
   timeoutMs,
 }) {
+  const collector = startOpenAppResponseCollector(page, baseUrl);
   const responsePromise = waitForOpenAppResponse(
     page,
     baseUrl,
     timeoutMs,
   );
 
-  await action();
-  const response = await responsePromise;
-  expect(response.status(), '/open-app must return a redirect response.')
-    .toBe(302);
-  const location = response.headers().location || '';
-  assertAndroidDirectPublicHandoffLocation(
-    location,
-    baseUrl,
-    expectedTargetPath,
-  );
-
-  let repeatedOpenAppLocation = null;
-  const openAppListener = (followUpResponse) => {
-    const url = new URL(followUpResponse.url());
-    if (url.origin !== new URL(baseUrl).origin || url.pathname !== '/open-app') {
-      return;
-    }
-    repeatedOpenAppLocation = followUpResponse.headers().location || followUpResponse.url();
-  };
-  page.on('response', openAppListener);
   try {
+    await action();
+    const response = await responsePromise;
+    expect(response.status(), '/open-app must return a redirect response.')
+      .toBe(302);
+    const location = response.headers().location || '';
+    assertAndroidDirectPublicHandoffLocation(
+      location,
+      baseUrl,
+      expectedTargetPath,
+    );
+
     if (location.startsWith('intent://')) {
       const fallbackUrl = androidDirectBrowserFallbackUrl(location, baseUrl);
       const fallbackResponse = await page.goto(fallbackUrl, {
@@ -290,11 +307,11 @@ async function expectAndroidDirectPublicHandoff({
     const currentTarget = current.pathname + current.search;
     expect(currentTarget).toBe(expectedTargetPath);
     expect(
-      repeatedOpenAppLocation,
-      `Browser fallback must not loop back through /open-app for ${expectedTargetPath}.`,
-    ).toBeNull();
+      collector.responses,
+      `Direct-public handoff must traverse /open-app exactly once for ${expectedTargetPath}. Responses:\n${JSON.stringify(collector.responses, null, 2)}`,
+    ).toHaveLength(1);
   } finally {
-    page.off('response', openAppListener);
+    collector.stop();
   }
 }
 
