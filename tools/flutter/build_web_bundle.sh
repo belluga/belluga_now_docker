@@ -76,6 +76,15 @@ if [[ ${#remaining_args[@]} -gt 0 && "${remaining_args[0]}" != --* ]]; then
 fi
 
 if [[ -n "${FLUTTER_DART_DEFINE_FILE:-}" ]]; then
+  if [[ ! -f "${FLUTTER_DART_DEFINE_FILE}" ]]; then
+    echo "Explicit define file not found: ${FLUTTER_DART_DEFINE_FILE}" >&2
+    exit 64
+  fi
+  # Keep the explicit define-file environment authoritative for the canonical
+  # builder. The basename lane only preserves the canonical positional shape so
+  # downstream option parsing still works when callers pass --clean-output or
+  # --no-preserve through this wrapper.
+  export FLUTTER_DART_DEFINE_FILE
   define_lane="$(basename "${FLUTTER_DART_DEFINE_FILE}")"
   define_lane="${define_lane%.json}"
   exec bash "${CANONICAL_SCRIPT}" "${output_arg}" "${define_lane}" "${remaining_args[@]}"
