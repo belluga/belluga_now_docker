@@ -9,7 +9,7 @@ const {
 } = require('./support/account_onboarding_cleanup');
 const {
   androidBrowserContextOptions,
-  expectAndroidOpenAppHandoff,
+  expectAndroidDirectPublicHandoff,
 } = require('./support/android_intent');
 
 const tenantUrl = process.env.NAV_TENANT_URL;
@@ -1099,7 +1099,7 @@ test('@mutation INVITE-SESSION-CONTEXT Android direct invite and event links gen
     androidContext = await browser.newContext(androidBrowserContextOptions);
     const androidPage = await androidContext.newPage();
     for (const targetPath of [inviteTargetPath, eventTargetPath]) {
-      await expectAndroidOpenAppHandoff({
+      await expectAndroidDirectPublicHandoff({
         page: androidPage,
         baseUrl,
         expectedTargetPath: targetPath,

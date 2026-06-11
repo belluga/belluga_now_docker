@@ -50,6 +50,19 @@ function assertAndroidPromotionFallbackLocation(location, baseUrl, expectedTarge
   expect(fallback.searchParams.get('redirect')).toBe(expectedTargetPath);
 }
 
+function assertAndroidTargetFallbackLocation(location, baseUrl, expectedTargetPath) {
+  expect(location, `Expected Android target fallback for ${expectedTargetPath}`)
+    .toBeTruthy();
+
+  const base = new URL(baseUrl);
+  const fallback = new URL(location, base.origin);
+  expect(fallback.origin).toBe(base.origin);
+
+  const fallbackTarget = fallback.pathname
+    + (fallback.search ? fallback.search : '');
+  expect(fallbackTarget).toBe(expectedTargetPath);
+}
+
 function assertAndroidOpenAppHandoffLocation(location, baseUrl, expectedTargetPath) {
   if (location.startsWith('intent://')) {
     assertAndroidIntentLocation(location, baseUrl, expectedTargetPath);
@@ -57,6 +70,38 @@ function assertAndroidOpenAppHandoffLocation(location, baseUrl, expectedTargetPa
   }
 
   assertAndroidPromotionFallbackLocation(location, baseUrl, expectedTargetPath);
+}
+
+function assertAndroidDirectPublicHandoffLocation(location, baseUrl, expectedTargetPath) {
+  if (location.startsWith('intent://')) {
+    expect(location, `Expected Android intent redirect for ${expectedTargetPath}`)
+      .toBeTruthy();
+    expect(location).toContain('intent://');
+    expect(location).toContain(';scheme=https;');
+    expect(location).toContain(';package=');
+    expect(location).toContain(';S.browser_fallback_url=');
+    expect(location).toContain(';end');
+
+    const base = new URL(baseUrl);
+    const expectedIntentPrefix = `intent://${base.host}${expectedTargetPath}`;
+    expect(
+      location.startsWith(expectedIntentPrefix),
+      `Intent must target the current tenant host. Expected prefix ${expectedIntentPrefix}, got ${location}`,
+    ).toBeTruthy();
+
+    const fallbackMatch = location.match(/;S\.browser_fallback_url=([^;]+);end$/);
+    expect(fallbackMatch, `Intent must include browser fallback URL: ${location}`)
+      .toBeTruthy();
+    const fallbackUrl = decodeURIComponent(fallbackMatch[1]);
+    assertAndroidTargetFallbackLocation(
+      fallbackUrl,
+      baseUrl,
+      expectedTargetPath,
+    );
+    return;
+  }
+
+  assertAndroidTargetFallbackLocation(location, baseUrl, expectedTargetPath);
 }
 
 async function fetchAndroidIntentRedirect(request, baseUrl, params) {
@@ -142,11 +187,37 @@ async function expectAndroidOpenAppHandoff({
   );
 }
 
+async function expectAndroidDirectPublicHandoff({
+  page,
+  baseUrl,
+  expectedTargetPath,
+  action,
+  timeoutMs,
+}) {
+  const responsePromise = waitForOpenAppResponse(
+    page,
+    baseUrl,
+    timeoutMs,
+  );
+
+  await action();
+  const response = await responsePromise;
+  expect(response.status(), '/open-app must return a redirect response.')
+    .toBe(302);
+  assertAndroidDirectPublicHandoffLocation(
+    response.headers().location || '',
+    baseUrl,
+    expectedTargetPath,
+  );
+}
+
 module.exports = {
   androidBrowserContextOptions,
+  assertAndroidDirectPublicHandoffLocation,
   assertAndroidOpenAppHandoffLocation,
   assertAndroidIntentLocation,
   assertAndroidPromotionFallbackLocation,
+  expectAndroidDirectPublicHandoff,
   expectAndroidOpenAppHandoff,
   expectAndroidOpenAppIntent,
   fetchAndroidIntentRedirect,

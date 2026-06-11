@@ -1,7 +1,9 @@
 const { test, expect } = require('@playwright/test');
 const {
   androidBrowserContextOptions,
+  assertAndroidDirectPublicHandoffLocation,
   assertAndroidOpenAppHandoffLocation,
+  expectAndroidDirectPublicHandoff,
   expectAndroidOpenAppHandoff,
   fetchAndroidIntentRedirect,
 } = require('./support/android_intent');
@@ -268,7 +270,7 @@ test('@readonly tenant Android direct public links request open-app handoff redi
 
   try {
     for (const testCase of cases) {
-      await expectAndroidOpenAppHandoff({
+      await expectAndroidDirectPublicHandoff({
         page,
         baseUrl: tenantUrl,
         expectedTargetPath: testCase.expectedTargetPath,
