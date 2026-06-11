@@ -286,10 +286,6 @@ async function run() {
     });
 
     await allowButton.click();
-    await page.waitForURL(
-      (url) => new URL(url).pathname === '/mapa',
-      { timeout: GRANT_FLOW_TIMEOUT_MS },
-    );
     await waitForTenantPath(page, ['/mapa']);
 
     const requestDeadline = Date.now() + GRANT_FLOW_TIMEOUT_MS;

@@ -538,49 +538,11 @@ test('@readonly STARTUP-PUBLIC-BOOTSTRAP-01 anonymous tenant home cold start kee
   await assertAppBooted(page);
   await enableAccessibilityIfNeeded(page);
   await waitForTenantPath(page, ['/']);
-
-  await expect
-    .poll(
-      async () => hasSuccessfulAnonymousBootstrap(startupCapture.snapshot()),
-      {
-        timeout: appBootTimeoutMs,
-        message:
-          'Anonymous tenant home startup must issue the canonical anonymous identity bootstrap.',
-      },
-    )
-    .toBe(true);
+  await assertStartupSnapshotGreen(page, startupCapture, 'Anonymous home startup', {
+    requiredProtectedLabels: ['agenda'],
+  });
 
   const snapshot = startupCapture.snapshot();
-  assertBootstrapPrecedesProtectedReads(snapshot, 'Anonymous home startup');
-  expect(
-    snapshot.anonymousIdentityResponses.every((entry) => entry.status === 200 || entry.status === 201),
-    `Anonymous identity bootstrap must be idempotent-success (200/201). Observed: ${snapshot.anonymousIdentityResponses.map((entry) => entry.status).join(', ')}`,
-  ).toBeTruthy();
-
-  expect(
-    snapshot.protectedReadFailures,
-    `Startup protected reads must not fail during anonymous home bootstrap:\n${snapshot.protectedReadFailures.join('\n')}`,
-  ).toEqual([]);
-
-  expect(
-    currentPathIndicatesPromotion(page),
-    `Anonymous home startup must stay on the public surface. Current URL: ${page.url()}`,
-  ).toBe(false);
-
-  expect(
-    snapshot.openAppUrls,
-    `Anonymous home startup must not request /open-app automatically:\n${snapshot.openAppUrls.join('\n')}`,
-  ).toEqual([]);
-  expect(
-    snapshot.popupUrls,
-    `Anonymous home startup must not open promotion popups automatically:\n${snapshot.popupUrls.join('\n')}`,
-  ).toEqual([]);
-
-  await assertNoPromotionUiVisible(page, 'Anonymous home startup');
-  expect(
-    hasSuccessfulProtectedRead(snapshot, 'agenda'),
-    `Anonymous home startup must hydrate at least one canonical agenda read. Reads:\n${JSON.stringify(snapshot.protectedReadResponses, null, 2)}`,
-  ).toBeTruthy();
 
   await expect(
     page.getByText(/^Agenda$/i).first(),

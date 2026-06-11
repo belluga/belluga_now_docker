@@ -115,21 +115,40 @@ function androidDirectBrowserFallbackUrl(location, baseUrl) {
   return new URL(location, baseUrl).toString();
 }
 
+function resolvePublicTargetPath(input) {
+  const current = input instanceof URL ? input : new URL(input);
+  const pathnameWithSearch = current.pathname + current.search;
+  if (pathnameWithSearch !== '/' || !current.hash) {
+    return pathnameWithSearch;
+  }
+
+  if (current.hash === '#' || current.hash === '#/') {
+    return '/';
+  }
+
+  if (current.hash.startsWith('#/')) {
+    return current.hash.slice(1);
+  }
+
+  return pathnameWithSearch;
+}
+
 async function waitForPublicRouteToSettle(page, expectedTargetPath, timeoutMs) {
   await page.waitForFunction(
     (targetPath) => {
-      const current = window.location.pathname + window.location.search;
+      const currentPath = window.location.pathname + window.location.search;
       const hash = window.location.hash || '';
-      const atExpectedTarget =
-        current === targetPath
-        || (
-          targetPath === '/'
-            ? (hash === '#' || hash === '#/')
-            : (
-              hash === `#${targetPath}`
-              || hash.startsWith(`#${targetPath}?`)
-            )
-        );
+      const resolvedTarget =
+        currentPath !== '/' || !hash
+          ? currentPath
+          : (
+            hash === '#' || hash === '#/'
+              ? '/'
+              : hash.startsWith('#/')
+                ? hash.slice(1)
+                : currentPath
+          );
+      const atExpectedTarget = resolvedTarget === targetPath;
       if (!atExpectedTarget) {
         return false;
       }
@@ -326,8 +345,7 @@ async function expectAndroidDirectPublicHandoff({
       expectedTargetPath,
       timeoutMs,
     );
-    const current = new URL(page.url());
-    const currentTarget = current.pathname + current.search;
+    const currentTarget = resolvePublicTargetPath(page.url());
     expect(currentTarget).toBe(expectedTargetPath);
     expect(
       collector.responses,
