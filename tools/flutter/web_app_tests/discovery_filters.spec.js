@@ -1265,32 +1265,6 @@ async function listTenantAdminEvents(api, baseUrl, token) {
   return rows;
 }
 
-async function cleanupLegacyHd10Diagnostics(api, baseUrl, token) {
-  const legacyEvents = (await listTenantAdminEvents(api, baseUrl, token))
-    .filter((row) => String(row?.title || '').startsWith('HD10 Event '))
-    .map((row) => row?.event_id?.toString() || '')
-    .filter(Boolean);
-  for (const eventId of legacyEvents) {
-    await deleteEvent(api, baseUrl, token, eventId);
-  }
-
-  const legacyEventTypes = (await listTenantAdminEventTypes(api, baseUrl, token))
-    .filter((row) => String(row?.slug || '').startsWith('hd10-'))
-    .map((row) => row?.id?.toString() || '')
-    .filter(Boolean);
-  for (const eventTypeId of legacyEventTypes) {
-    await deleteEventType(api, baseUrl, token, eventTypeId);
-  }
-
-  const legacyTaxonomies = (await listTenantAdminTaxonomies(api, baseUrl, token))
-    .filter((row) => String(row?.slug || '').startsWith('hd10-'))
-    .map((row) => row?.id?.toString() || '')
-    .filter(Boolean);
-  for (const taxonomyId of legacyTaxonomies) {
-    await deleteTaxonomy(api, baseUrl, token, taxonomyId);
-  }
-}
-
 async function createAccountProfileType(
   api,
   baseUrl,
@@ -1836,7 +1810,6 @@ test('@mutation Home filters honor Event Type taxonomy compatibility, hide zero-
 
   try {
     session = await loginTenantAdmin(api, baseUrl);
-    await cleanupLegacyHd10Diagnostics(api, baseUrl, session.token);
     const unique = Date.now();
     const typeALabel = `AAA HD10 Show ${unique}`;
     const typeBLabel = `AAB HD10 Talk ${unique}`;

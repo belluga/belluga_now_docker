@@ -97,6 +97,8 @@
       "@readonly MAP-WEB-WIDTH-01 tenant map route is full width while framed tenant routes remain constrained",
       "@readonly landlord domain bootstraps as landlord and navigates",
       "@readonly STARTUP-PUBLIC-BOOTSTRAP-01 anonymous tenant home cold start keeps the public surface and completes anonymous bootstrap",
+      "@readonly STARTUP-PUBLIC-BOOTSTRAP-02 anonymous account-profile direct entry keeps the public surface and completes anonymous bootstrap",
+      "@readonly STARTUP-PUBLIC-BOOTSTRAP-03 anonymous event-detail direct entry keeps the public surface and completes anonymous bootstrap",
       "@readonly tenant domain bootstraps as tenant and navigates to tenant routes",
       "@readonly OTP-WEB-BOUNDARY-01 tenant-public web auth remains app promotion boundary",
       "@readonly taxonomy display snapshots render labels instead of slugs on public runtime routes"

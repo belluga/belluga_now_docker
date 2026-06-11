@@ -97,40 +97,100 @@ async function run() {
   });
   const page = await context.newPage();
 
+  const anonymousIdentityResponses = [];
+  const filterRequests = [];
+  const filterResponses = [];
   const poiRequests = [];
   const poiResponses = [];
   const failedRequests = [];
   const pageErrors = [];
   const consoleErrors = [];
+  const responseTimeline = [];
+  let responseSequence = 0;
+
+  const classifyPath = (url) => {
+    const pathname = new URL(url).pathname;
+    if (pathname === '/api/v1/anonymous/identities') {
+      return 'anonymous_identity';
+    }
+    if (pathname === '/api/v1/map/filters') {
+      return 'map_filters';
+    }
+    if (pathname === '/api/v1/map/pois') {
+      return 'map_pois';
+    }
+    return null;
+  };
 
   page.on('request', (request) => {
-    if (request.url().includes('/api/v1/map/pois')) {
+    const kind = classifyPath(request.url());
+    if (kind === 'map_filters') {
+      filterRequests.push(request.url());
+    }
+    if (kind === 'map_pois') {
       poiRequests.push(request.url());
     }
   });
 
   page.on('response', (response) => {
-    if (!response.url().includes('/api/v1/map/pois')) {
+    const kind = classifyPath(response.url());
+    if (kind == null) {
       return;
     }
 
-    poiResponses.push(
+    const sequence = responseSequence += 1;
+    responseTimeline.push({
+      seq: sequence,
+      kind,
+      status: response.status(),
+      url: response.url(),
+    });
+
+    if (kind === 'anonymous_identity') {
+      anonymousIdentityResponses.push(
+        Promise.resolve({
+          seq: sequence,
+          status: response.status(),
+          url: response.url(),
+        }),
+      );
+      return;
+    }
+
+    const targetResponses = kind === 'map_filters'
+      ? filterResponses
+      : poiResponses;
+    targetResponses.push(
       (async () => {
         let bodyText = '';
-        let stackCount = null;
         let parseError = null;
+        let stackCount = null;
+        let itemCount = null;
         try {
           bodyText = await response.text();
           const parsed = JSON.parse(bodyText);
-          stackCount = Array.isArray(parsed?.stacks) ? parsed.stacks.length : null;
+          if (kind === 'map_pois') {
+            stackCount = Array.isArray(parsed?.stacks) ? parsed.stacks.length : null;
+          }
+          if (kind === 'map_filters') {
+            const normalized = parsed?.data ?? parsed;
+            if (Array.isArray(normalized)) {
+              itemCount = normalized.length;
+            } else if (Array.isArray(normalized?.items)) {
+              itemCount = normalized.items.length;
+            }
+          }
         } catch (error) {
           parseError = String(error);
         }
 
         return {
+          seq: sequence,
+          kind,
           status: response.status(),
           url: response.url(),
           stackCount,
+          itemCount,
           parseError,
           bodyPreview: bodyText.slice(0, 800),
         };
@@ -207,22 +267,32 @@ async function run() {
     await waitForTenantPath(page, ['/mapa']);
 
     const requestDeadline = Date.now() + GRANT_FLOW_TIMEOUT_MS;
-    while (poiResponses.length === 0 && Date.now() < requestDeadline) {
+    while ((poiResponses.length === 0 || filterResponses.length === 0) && Date.now() < requestDeadline) {
       await page.waitForTimeout(250);
     }
 
     await page.waitForTimeout(PROBE_WAIT_AFTER_POI_MS);
 
+    const resolvedAnonymousIdentityResponses = await Promise.all(anonymousIdentityResponses);
+    const resolvedFilterResponses = await Promise.all(filterResponses);
     const resolvedPoiResponses = await Promise.all(poiResponses);
-    const filteredConsoleErrors = consoleErrors.filter(
-      (entry) => !entry.includes('status of 401'),
-    );
     const errorBannerCount = await page
       .getByText(/Não foi possível carregar os pontos de interesse/i)
       .count();
     const firstPoiRequest = poiRequests[0] ? new URL(poiRequests[0]) : null;
     const firstPoiResponse = resolvedPoiResponses[0] || null;
+    const successfulAnonymousBootstrap = resolvedAnonymousIdentityResponses.find(
+      (entry) => entry.status === 200 || entry.status === 201,
+    );
+    const firstProtectedMapResponse = responseTimeline.find(
+      (entry) =>
+        (entry.kind === 'map_filters' || entry.kind === 'map_pois')
+        && entry.status < 400,
+    );
     const successfulPoiResponse = resolvedPoiResponses.find(
+      (entry) => entry.status >= 200 && entry.status < 300,
+    );
+    const successfulFilterResponse = resolvedFilterResponses.find(
       (entry) => entry.status >= 200 && entry.status < 300,
     );
 
@@ -231,11 +301,15 @@ async function run() {
       buildSha,
       mainScriptSrc,
       bootstrapScriptSrc,
+      anonymousIdentityResponses: resolvedAnonymousIdentityResponses,
+      filterRequests: [...filterRequests],
+      filterResponses: resolvedFilterResponses,
       poiRequests: [...poiRequests],
       poiResponses: resolvedPoiResponses,
       failedRequests: [...failedRequests],
       pageErrors: [...pageErrors],
-      consoleErrors: filteredConsoleErrors,
+      consoleErrors: [...consoleErrors],
+      responseTimeline: [...responseTimeline],
       errorBannerCount,
       firstPoiOriginLat: firstPoiRequest?.searchParams.get('origin_lat') ?? null,
       firstPoiOriginLng: firstPoiRequest?.searchParams.get('origin_lng') ?? null,
@@ -249,6 +323,11 @@ async function run() {
       result.failedRequests.length === 0 &&
       result.pageErrors.length === 0 &&
       result.consoleErrors.length === 0 &&
+      successfulAnonymousBootstrap &&
+      firstProtectedMapResponse &&
+      successfulAnonymousBootstrap.seq < firstProtectedMapResponse.seq &&
+      successfulFilterResponse &&
+      successfulFilterResponse.parseError == null &&
       firstPoiRequest &&
       result.firstPoiOriginLat &&
       result.firstPoiOriginLng &&

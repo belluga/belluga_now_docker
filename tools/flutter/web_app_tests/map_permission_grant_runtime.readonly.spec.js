@@ -75,42 +75,105 @@ async function waitForTenantPath(page, allowedPrefixes) {
 }
 
 function attachMapRequestCapture(page) {
+  const anonymousIdentityResponses = [];
+  const filterRequests = [];
+  const filterResponses = [];
   const poiRequests = [];
   const poiResponses = [];
   const failedRequests = [];
   const consoleErrors = [];
   const pageErrors = [];
+  const responseTimeline = [];
+  let responseSequence = 0;
+
+  const classifyPath = (url) => {
+    const pathname = new URL(url).pathname;
+    if (pathname === '/api/v1/anonymous/identities') {
+      return 'anonymous_identity';
+    }
+    if (pathname === '/api/v1/map/filters') {
+      return 'map_filters';
+    }
+    if (pathname === '/api/v1/map/pois') {
+      return 'map_pois';
+    }
+    return null;
+  };
 
   page.on('request', (request) => {
-    if (request.url().includes('/api/v1/map/pois')) {
+    const kind = classifyPath(request.url());
+    if (kind === 'map_filters') {
+      filterRequests.push(request.url());
+    }
+    if (kind === 'map_pois') {
       poiRequests.push(request.url());
     }
   });
 
   page.on('response', (response) => {
-    if (response.url().includes('/api/v1/map/pois')) {
-      poiResponses.push(
-        (async () => {
-          let bodyText = '';
-          let stackCount = null;
-          let parseError = null;
-          try {
-            bodyText = await response.text();
-            const parsed = JSON.parse(bodyText);
-            stackCount = Array.isArray(parsed?.stacks) ? parsed.stacks.length : null;
-          } catch (error) {
-            parseError = String(error);
-          }
-          return {
-            status: response.status(),
-            url: response.url(),
-            stackCount,
-            parseError,
-            bodyPreview: bodyText.slice(0, 1000),
-          };
-        })(),
-      );
+    const kind = classifyPath(response.url());
+    if (kind == null) {
+      return;
     }
+
+    const sequence = responseSequence += 1;
+    responseTimeline.push({
+      seq: sequence,
+      kind,
+      status: response.status(),
+      url: response.url(),
+    });
+
+    if (kind === 'anonymous_identity') {
+      anonymousIdentityResponses.push(
+        Promise.resolve({
+          seq: sequence,
+          status: response.status(),
+          url: response.url(),
+        }),
+      );
+      return;
+    }
+
+    const targetResponses =
+      kind === 'map_filters'
+        ? filterResponses
+        : poiResponses;
+    targetResponses.push(
+      (async () => {
+        let bodyText = '';
+        let parseError = null;
+        let stackCount = null;
+        let itemCount = null;
+        try {
+          bodyText = await response.text();
+          const parsed = JSON.parse(bodyText);
+          if (kind === 'map_pois') {
+            stackCount = Array.isArray(parsed?.stacks) ? parsed.stacks.length : null;
+          }
+          if (kind === 'map_filters') {
+            const normalized = parsed?.data ?? parsed;
+            if (Array.isArray(normalized)) {
+              itemCount = normalized.length;
+            } else if (Array.isArray(normalized?.items)) {
+              itemCount = normalized.items.length;
+            }
+          }
+        } catch (error) {
+          parseError = String(error);
+        }
+        return {
+          seq: sequence,
+          kind,
+          status: response.status(),
+          url: response.url(),
+          stackCount,
+          itemCount,
+          parseError,
+          bodyPreview: bodyText.slice(0, 1000),
+        };
+      })(),
+    );
   });
 
   page.on('requestfailed', (request) => {
@@ -133,13 +196,94 @@ function attachMapRequestCapture(page) {
 
   return {
     snapshot: async () => ({
+      anonymousIdentityResponses: await Promise.all(anonymousIdentityResponses),
+      filterRequests: [...filterRequests],
+      filterResponses: await Promise.all(filterResponses),
       poiRequests: [...poiRequests],
       poiResponses: await Promise.all(poiResponses),
       failedRequests: [...failedRequests],
       consoleErrors: [...consoleErrors],
       pageErrors: [...pageErrors],
+      responseTimeline: [...responseTimeline],
     }),
   };
+}
+
+function assertCanonicalBootstrapOrder(snapshot, contextLabel) {
+  const firstAnonymousBootstrap = snapshot.responseTimeline.find(
+    (entry) =>
+      entry.kind === 'anonymous_identity'
+      && (entry.status === 200 || entry.status === 201),
+  );
+  const firstProtectedMapResponse = snapshot.responseTimeline.find(
+    (entry) =>
+      (entry.kind === 'map_filters' || entry.kind === 'map_pois')
+      && entry.status < 400,
+  );
+
+  expect(
+    firstAnonymousBootstrap,
+    `${contextLabel} must record a successful anonymous bootstrap response before protected map reads.`,
+  ).toBeTruthy();
+  expect(
+    firstProtectedMapResponse,
+    `${contextLabel} must record a successful protected map response.`,
+  ).toBeTruthy();
+  expect(
+    firstAnonymousBootstrap.seq,
+    `${contextLabel} must bootstrap anonymous identity before protected map reads. Timeline:\n${JSON.stringify(snapshot.responseTimeline, null, 2)}`,
+  ).toBeLessThan(firstProtectedMapResponse.seq);
+}
+
+function assertCanonicalMapSnapshot(snapshot, contextLabel) {
+  expect(
+    snapshot.failedRequests,
+    `Unexpected failed requests during ${contextLabel}:\n${snapshot.failedRequests.join('\n')}`,
+  ).toEqual([]);
+  expect(
+    snapshot.pageErrors,
+    `Unexpected page errors during ${contextLabel}:\n${snapshot.pageErrors.join('\n')}`,
+  ).toEqual([]);
+  expect(
+    snapshot.consoleErrors,
+    `Unexpected console errors during ${contextLabel}:\n${snapshot.consoleErrors.join('\n')}`,
+  ).toEqual([]);
+
+  assertCanonicalBootstrapOrder(snapshot, contextLabel);
+
+  const successfulFilterResponse = snapshot.filterResponses.find(
+    (entry) => entry.status >= 200 && entry.status < 300,
+  );
+  expect(
+    successfulFilterResponse,
+    `${contextLabel} must produce a successful map filters response. Responses:\n${JSON.stringify(snapshot.filterResponses, null, 2)}`,
+  ).toBeTruthy();
+  expect(
+    successfulFilterResponse.parseError,
+    `${contextLabel} must keep the first successful map filters response JSON-decodable. Response:\n${JSON.stringify(successfulFilterResponse, null, 2)}`,
+  ).toBeNull();
+
+  const successfulPoiResponse = snapshot.poiResponses.find(
+    (entry) => entry.status >= 200 && entry.status < 300,
+  );
+  expect(
+    successfulPoiResponse,
+    `${contextLabel} must produce a successful POI response. Responses:\n${JSON.stringify(snapshot.poiResponses, null, 2)}`,
+  ).toBeTruthy();
+
+  const firstPoiRequest = snapshot.poiRequests[0];
+  expect(
+    firstPoiRequest,
+    `${contextLabel} must issue a POI request.`,
+  ).toBeTruthy();
+
+  const firstPoiRequestUrl = new URL(firstPoiRequest);
+  const originLat = firstPoiRequestUrl.searchParams.get('origin_lat');
+  const originLng = firstPoiRequestUrl.searchParams.get('origin_lng');
+  expect(originLat, `First POI request must include origin_lat. URL: ${firstPoiRequest}`).toBeTruthy();
+  expect(originLng, `First POI request must include origin_lng. URL: ${firstPoiRequest}`).toBeTruthy();
+  expect(Number(originLat), 'First POI request origin_lat must be numeric.').not.toBeNaN();
+  expect(Number(originLng), 'First POI request origin_lng must be numeric.').not.toBeNaN();
 }
 
 test('@readonly MAP-LOC-GRANT-01 first warm geolocation-granted map entry loads POIs from a resolved origin without public error state', async ({
@@ -189,41 +333,10 @@ test('@readonly MAP-LOC-GRANT-01 first warm geolocation-granted map entry loads 
   ).toHaveCount(0);
 
   const snapshot = await mapCapture.snapshot();
-  expect(
-    snapshot.failedRequests,
-    `Unexpected failed requests:\n${snapshot.failedRequests.join('\n')}`,
-  ).toEqual([]);
-  expect(
-    snapshot.pageErrors,
-    `Unexpected page errors:\n${snapshot.pageErrors.join('\n')}`,
-  ).toEqual([]);
-  expect(
-    snapshot.consoleErrors.filter((entry) => !entry.includes('status of 401')),
-    `Unexpected console errors:\n${snapshot.consoleErrors.join('\n')}`,
-  ).toEqual([]);
-
-  const successfulPoiResponse = snapshot.poiResponses.find(
-    (entry) => entry.status >= 200 && entry.status < 300,
+  assertCanonicalMapSnapshot(
+    snapshot,
+    'warm geolocation-granted map entry',
   );
-  expect(
-    successfulPoiResponse,
-    `Warm geolocation-granted map entry must produce a successful POI response. Responses:\n${JSON.stringify(snapshot.poiResponses, null, 2)}`,
-  ).toBeTruthy();
-
-  const firstPoiRequest = snapshot.poiRequests[0];
-  expect(
-    firstPoiRequest,
-    'Permission-granted map entry must issue a POI request.',
-  ).toBeTruthy();
-
-  const firstPoiRequestUrl = new URL(firstPoiRequest);
-  const originLat = firstPoiRequestUrl.searchParams.get('origin_lat');
-  const originLng = firstPoiRequestUrl.searchParams.get('origin_lng');
-  expect(originLat, `First POI request must include origin_lat. URL: ${firstPoiRequest}`).toBeTruthy();
-  expect(originLng, `First POI request must include origin_lng. URL: ${firstPoiRequest}`).toBeTruthy();
-
-  expect(Number(originLat), 'First POI request origin_lat must be numeric.').not.toBeNaN();
-  expect(Number(originLng), 'First POI request origin_lng must be numeric.').not.toBeNaN();
 
   await context.close();
 });
@@ -284,47 +397,10 @@ test('@readonly MAP-LOC-GRANT-02 permission-gated grant keeps the first map entr
   ).toHaveCount(0);
 
   const snapshot = await mapCapture.snapshot();
-  expect(
-    snapshot.failedRequests,
-    `Unexpected failed requests:\n${snapshot.failedRequests.join('\n')}`,
-  ).toEqual([]);
-  expect(
-    snapshot.pageErrors,
-    `Unexpected page errors:\n${snapshot.pageErrors.join('\n')}`,
-  ).toEqual([]);
-  expect(
-    snapshot.consoleErrors.filter((entry) => !entry.includes('status of 401')),
-    `Unexpected console errors:\n${snapshot.consoleErrors.join('\n')}`,
-  ).toEqual([]);
-
-  const successfulPoiResponse = snapshot.poiResponses.find(
-    (entry) => entry.status >= 200 && entry.status < 300,
+  assertCanonicalMapSnapshot(
+    snapshot,
+    'permission-gated map grant first entry',
   );
-  expect(
-    successfulPoiResponse,
-    `Permission-gated grant must produce a successful POI response. Responses:\n${JSON.stringify(snapshot.poiResponses, null, 2)}`,
-  ).toBeTruthy();
-
-  const firstPoiRequest = snapshot.poiRequests[0];
-  expect(
-    firstPoiRequest,
-    'Permission-gated grant must issue a POI request.',
-  ).toBeTruthy();
-
-  const firstPoiRequestUrl = new URL(firstPoiRequest);
-  const originLat = firstPoiRequestUrl.searchParams.get('origin_lat');
-  const originLng = firstPoiRequestUrl.searchParams.get('origin_lng');
-  expect(
-    originLat,
-    `First POI request must include origin_lat. URL: ${firstPoiRequest}`,
-  ).toBeTruthy();
-  expect(
-    originLng,
-    `First POI request must include origin_lng. URL: ${firstPoiRequest}`,
-  ).toBeTruthy();
-
-  expect(Number(originLat), 'First POI request origin_lat must be numeric.').not.toBeNaN();
-  expect(Number(originLng), 'First POI request origin_lng must be numeric.').not.toBeNaN();
 
   const firstPoiResponse = snapshot.poiResponses[0];
   expect(
