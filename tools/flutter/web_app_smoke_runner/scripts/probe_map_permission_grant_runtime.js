@@ -98,6 +98,7 @@ async function run() {
   const page = await context.newPage();
 
   const anonymousIdentityResponses = [];
+  const requestTimeline = [];
   const filterRequests = [];
   const filterResponses = [];
   const poiRequests = [];
@@ -106,7 +107,8 @@ async function run() {
   const pageErrors = [];
   const consoleErrors = [];
   const responseTimeline = [];
-  let responseSequence = 0;
+  const eventTimeline = [];
+  let timelineSequence = 0;
 
   const classifyPath = (url) => {
     const pathname = new URL(url).pathname;
@@ -124,6 +126,23 @@ async function run() {
 
   page.on('request', (request) => {
     const kind = classifyPath(request.url());
+    if (kind == null) {
+      return;
+    }
+
+    const sequence = timelineSequence += 1;
+    requestTimeline.push({
+      seq: sequence,
+      kind,
+      url: request.url(),
+    });
+    eventTimeline.push({
+      seq: sequence,
+      phase: 'request',
+      kind,
+      url: request.url(),
+    });
+
     if (kind === 'map_filters') {
       filterRequests.push(request.url());
     }
@@ -138,9 +157,16 @@ async function run() {
       return;
     }
 
-    const sequence = responseSequence += 1;
+    const sequence = timelineSequence += 1;
     responseTimeline.push({
       seq: sequence,
+      kind,
+      status: response.status(),
+      url: response.url(),
+    });
+    eventTimeline.push({
+      seq: sequence,
+      phase: 'response',
       kind,
       status: response.status(),
       url: response.url(),
@@ -287,6 +313,12 @@ async function run() {
     const firstProtectedMapResponse = responseTimeline.find(
       (entry) => entry.kind === 'map_filters' || entry.kind === 'map_pois',
     );
+    const protectedRequestsBeforeBootstrap = requestTimeline.filter(
+      (entry) =>
+        (entry.kind === 'map_filters' || entry.kind === 'map_pois')
+        && successfulAnonymousBootstrap
+        && entry.seq < successfulAnonymousBootstrap.seq,
+    );
     const successfulPoiResponse = resolvedPoiResponses.find(
       (entry) => entry.status >= 200 && entry.status < 300,
     );
@@ -300,6 +332,7 @@ async function run() {
       mainScriptSrc,
       bootstrapScriptSrc,
       anonymousIdentityResponses: resolvedAnonymousIdentityResponses,
+      requestTimeline: [...requestTimeline],
       filterRequests: [...filterRequests],
       filterResponses: resolvedFilterResponses,
       poiRequests: [...poiRequests],
@@ -308,6 +341,7 @@ async function run() {
       pageErrors: [...pageErrors],
       consoleErrors: [...consoleErrors],
       responseTimeline: [...responseTimeline],
+      eventTimeline: [...eventTimeline],
       errorBannerCount,
       firstPoiOriginLat: firstPoiRequest?.searchParams.get('origin_lat') ?? null,
       firstPoiOriginLng: firstPoiRequest?.searchParams.get('origin_lng') ?? null,
@@ -323,7 +357,7 @@ async function run() {
       result.consoleErrors.length === 0 &&
       successfulAnonymousBootstrap &&
       firstProtectedMapResponse &&
-      successfulAnonymousBootstrap.seq < firstProtectedMapResponse.seq &&
+      protectedRequestsBeforeBootstrap.length === 0 &&
       firstProtectedMapResponse.status >= 200 &&
       firstProtectedMapResponse.status < 400 &&
       successfulFilterResponse &&

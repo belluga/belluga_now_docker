@@ -92,7 +92,7 @@
       "@readonly tenant Android direct public links request open-app handoff redirects",
       "@readonly FAV-GATE-RUNTIME web anonymous account and discovery favorite actions show app promotion modal",
       "@readonly MAP-LOC-GRANT-01 first warm geolocation-granted map entry loads POIs from a resolved origin without public error state",
-      "@readonly MAP-LOC-GRANT-02 permission-gated grant keeps the first map entry warm and loads POIs without public error state",
+      "@readonly MAP-LOC-GRANT-02 location-permission CTA continuation loads canonical map data once browser geolocation is granted",
       "@readonly MAP-NAV-REENTRY-01 tenant home can reopen map after returning from a warm permission-gated entry",
       "@readonly MAP-WEB-WIDTH-01 tenant map route is full width while framed tenant routes remain constrained",
       "@readonly landlord domain bootstraps as landlord and navigates",

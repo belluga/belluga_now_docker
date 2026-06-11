@@ -159,6 +159,7 @@ function defaultProtectedReadMatchers() {
 
 function attachStartupCapture(page, { protectedReadMatchers = defaultProtectedReadMatchers() } = {}) {
   const anonymousIdentityResponses = [];
+  const requestTimeline = [];
   const protectedReadResponses = [];
   const protectedReadFailures = [];
   const openAppUrls = [];
@@ -166,11 +167,51 @@ function attachStartupCapture(page, { protectedReadMatchers = defaultProtectedRe
   const consoleErrors = [];
   const pageErrors = [];
   const responseTimeline = [];
-  let responseSequence = 0;
+  const eventTimeline = [];
+  let timelineSequence = 0;
+
+  const matchedProtectedRead = (url) =>
+    protectedReadMatchers.find((matcher) => matcher.matches(url));
+
+  page.on('request', (request) => {
+    const url = request.url();
+    if (url.includes('/api/v1/anonymous/identities')) {
+      const seq = timelineSequence += 1;
+      const entry = {
+        seq,
+        kind: 'anonymous_identity',
+        url,
+      };
+      requestTimeline.push(entry);
+      eventTimeline.push({
+        ...entry,
+        phase: 'request',
+      });
+      return;
+    }
+
+    const protectedRead = matchedProtectedRead(url);
+    if (!protectedRead) {
+      return;
+    }
+
+    const seq = timelineSequence += 1;
+    const entry = {
+      seq,
+      kind: 'protected_read',
+      label: protectedRead.label,
+      url,
+    };
+    requestTimeline.push(entry);
+    eventTimeline.push({
+      ...entry,
+      phase: 'request',
+    });
+  });
 
   page.on('response', (response) => {
     const url = response.url();
-    const seq = responseSequence += 1;
+    const seq = timelineSequence += 1;
 
     if (url.includes('/api/v1/anonymous/identities')) {
       const entry = {
@@ -183,10 +224,15 @@ function attachStartupCapture(page, { protectedReadMatchers = defaultProtectedRe
         ...entry,
         kind: 'anonymous_identity',
       });
+      eventTimeline.push({
+        ...entry,
+        phase: 'response',
+        kind: 'anonymous_identity',
+      });
       return;
     }
 
-    const matchedRead = protectedReadMatchers.find((matcher) => matcher.matches(url));
+    const matchedRead = matchedProtectedRead(url);
     if (matchedRead) {
       const entry = {
         seq,
@@ -197,6 +243,11 @@ function attachStartupCapture(page, { protectedReadMatchers = defaultProtectedRe
       protectedReadResponses.push(entry);
       responseTimeline.push({
         ...entry,
+        kind: 'protected_read',
+      });
+      eventTimeline.push({
+        ...entry,
+        phase: 'response',
         kind: 'protected_read',
       });
       if (response.status() >= 400) {
@@ -233,6 +284,7 @@ function attachStartupCapture(page, { protectedReadMatchers = defaultProtectedRe
   return {
     snapshot: () => ({
       anonymousIdentityResponses: [...anonymousIdentityResponses],
+      requestTimeline: [...requestTimeline],
       protectedReadResponses: [...protectedReadResponses],
       protectedReadFailures: [...protectedReadFailures],
       openAppUrls: [...openAppUrls],
@@ -240,6 +292,7 @@ function attachStartupCapture(page, { protectedReadMatchers = defaultProtectedRe
       consoleErrors: [...consoleErrors],
       pageErrors: [...pageErrors],
       responseTimeline: [...responseTimeline],
+      eventTimeline: [...eventTimeline],
     }),
   };
 }
@@ -371,12 +424,14 @@ function assertBootstrapPrecedesProtectedReads(snapshot, contextLabel) {
     `${contextLabel} must issue the canonical anonymous identity bootstrap before protected reads.`,
   ).toBeTruthy();
 
-  const protectedReadsBeforeBootstrap = snapshot.protectedReadResponses.filter(
-    (entry) => entry.seq < firstSuccessfulAnonymousBootstrap.seq,
+  const protectedReadsBeforeBootstrap = snapshot.requestTimeline.filter(
+    (entry) =>
+      entry.kind === 'protected_read'
+      && entry.seq < firstSuccessfulAnonymousBootstrap.seq,
   );
   expect(
     protectedReadsBeforeBootstrap,
-    `${contextLabel} must not issue protected reads before anonymous bootstrap. Timeline:\n${JSON.stringify(snapshot.responseTimeline, null, 2)}`,
+    `${contextLabel} must not issue protected reads before anonymous bootstrap. Event timeline:\n${JSON.stringify(snapshot.eventTimeline, null, 2)}`,
   ).toEqual([]);
 }
 
@@ -522,6 +577,10 @@ test('@readonly STARTUP-PUBLIC-BOOTSTRAP-01 anonymous tenant home cold start kee
   ).toEqual([]);
 
   await assertNoPromotionUiVisible(page, 'Anonymous home startup');
+  expect(
+    hasSuccessfulProtectedRead(snapshot, 'agenda'),
+    `Anonymous home startup must hydrate at least one canonical agenda read. Reads:\n${JSON.stringify(snapshot.protectedReadResponses, null, 2)}`,
+  ).toBeTruthy();
 
   await expect(
     page.getByText(/^Agenda$/i).first(),

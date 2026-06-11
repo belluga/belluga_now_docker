@@ -93,12 +93,17 @@ function currentPathIndicatesPromotion(url) {
 }
 
 function attachStartupCapture(page) {
-  const anonymousIdentityStatuses = [];
+  const anonymousIdentityResponses = [];
+  const requestTimeline = [];
+  const protectedReadResponses = [];
   const protectedReadFailures = [];
   const openAppUrls = [];
   const popupUrls = [];
   const consoleErrors = [];
   const pageErrors = [];
+  const responseTimeline = [];
+  const eventTimeline = [];
+  let timelineSequence = 0;
 
   const protectedReadPrefixes = [
     '/api/v1/agenda',
@@ -108,25 +113,94 @@ function attachStartupCapture(page) {
     '/api/v1/invites',
   ];
 
-  page.on('response', (response) => {
-    const url = response.url();
+  const matchedProtectedRead = (url) => {
+    const pathname = new URL(url).pathname;
+    return protectedReadPrefixes.includes(pathname) ? pathname : null;
+  };
+
+  page.on('request', (request) => {
+    const url = request.url();
+    if (url.includes('/open-app')) {
+      openAppUrls.push(url);
+    }
+
     if (url.includes('/api/v1/anonymous/identities')) {
-      anonymousIdentityStatuses.push(response.status());
+      const seq = timelineSequence += 1;
+      const entry = {
+        seq,
+        kind: 'anonymous_identity',
+        url,
+      };
+      requestTimeline.push(entry);
+      eventTimeline.push({
+        ...entry,
+        phase: 'request',
+      });
       return;
     }
 
-    const pathname = new URL(url).pathname;
-    if (
-      protectedReadPrefixes.includes(pathname) &&
-      response.status() >= 400
-    ) {
-      protectedReadFailures.push(`${response.status()} ${url}`);
+    const protectedRead = matchedProtectedRead(url);
+    if (!protectedRead) {
+      return;
     }
+
+    const seq = timelineSequence += 1;
+    const entry = {
+      seq,
+      kind: 'protected_read',
+      label: protectedRead,
+      url,
+    };
+    requestTimeline.push(entry);
+    eventTimeline.push({
+      ...entry,
+      phase: 'request',
+    });
+
   });
 
-  page.on('request', (request) => {
-    if (request.url().includes('/open-app')) {
-      openAppUrls.push(request.url());
+  page.on('response', (response) => {
+    const url = response.url();
+    const seq = timelineSequence += 1;
+    if (url.includes('/api/v1/anonymous/identities')) {
+      const entry = {
+        seq,
+        status: response.status(),
+        url,
+      };
+      anonymousIdentityResponses.push(entry);
+      responseTimeline.push({
+        ...entry,
+        kind: 'anonymous_identity',
+      });
+      eventTimeline.push({
+        ...entry,
+        phase: 'response',
+        kind: 'anonymous_identity',
+      });
+      return;
+    }
+
+    const protectedRead = matchedProtectedRead(url);
+    if (!protectedRead) {
+      return;
+    }
+
+    const entry = {
+      seq,
+      kind: 'protected_read',
+      label: protectedRead,
+      status: response.status(),
+      url,
+    };
+    protectedReadResponses.push(entry);
+    responseTimeline.push(entry);
+    eventTimeline.push({
+      ...entry,
+      phase: 'response',
+    });
+    if (response.status() >= 400) {
+      protectedReadFailures.push(`${response.status()} ${url}`);
     }
   });
 
@@ -151,12 +225,16 @@ function attachStartupCapture(page) {
 
   return {
     snapshot: () => ({
-      anonymousIdentityStatuses: [...anonymousIdentityStatuses],
+      anonymousIdentityResponses: [...anonymousIdentityResponses],
+      requestTimeline: [...requestTimeline],
+      protectedReadResponses: [...protectedReadResponses],
       protectedReadFailures: [...protectedReadFailures],
       openAppUrls: [...openAppUrls],
       popupUrls: [...popupUrls],
       consoleErrors: [...consoleErrors],
       pageErrors: [...pageErrors],
+      responseTimeline: [...responseTimeline],
+      eventTimeline: [...eventTimeline],
     }),
   };
 }
@@ -344,7 +422,9 @@ async function run() {
         bootstrapScriptSrc,
         home: {
           finalUrl: homeFinalUrl,
-          anonymousIdentityStatuses: homeSnapshot.anonymousIdentityStatuses,
+          anonymousIdentityResponses: homeSnapshot.anonymousIdentityResponses,
+          requestTimeline: homeSnapshot.requestTimeline,
+          protectedReadResponses: homeSnapshot.protectedReadResponses,
           protectedReadFailures: homeSnapshot.protectedReadFailures,
           openAppUrls: homeSnapshot.openAppUrls,
           popupUrls: homeSnapshot.popupUrls,
@@ -367,9 +447,20 @@ async function run() {
       console.log(JSON.stringify(result, null, 2));
 
       const homeHealthy =
-        homeSnapshot.anonymousIdentityStatuses.length > 0 &&
-        homeSnapshot.anonymousIdentityStatuses.every(
-          (status) => status === 200 || status === 201,
+        homeSnapshot.anonymousIdentityResponses.length > 0 &&
+        homeSnapshot.anonymousIdentityResponses.every(
+          (entry) => entry.status === 200 || entry.status === 201,
+        ) &&
+        homeSnapshot.requestTimeline.filter(
+          (entry) =>
+            entry.kind === 'protected_read'
+            && entry.seq
+              < (homeSnapshot.anonymousIdentityResponses.find(
+                (candidate) => candidate.status === 200 || candidate.status === 201,
+              )?.seq ?? Number.POSITIVE_INFINITY),
+        ).length === 0 &&
+        homeSnapshot.protectedReadResponses.some(
+          (entry) => entry.label === '/api/v1/agenda' && entry.status >= 200 && entry.status < 400,
         ) &&
         homeSnapshot.protectedReadFailures.length === 0 &&
         homeSnapshot.openAppUrls.length === 0 &&

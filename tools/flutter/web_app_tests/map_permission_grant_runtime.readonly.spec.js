@@ -76,6 +76,7 @@ async function waitForTenantPath(page, allowedPrefixes) {
 
 function attachMapRequestCapture(page) {
   const anonymousIdentityResponses = [];
+  const requestTimeline = [];
   const filterRequests = [];
   const filterResponses = [];
   const poiRequests = [];
@@ -84,7 +85,8 @@ function attachMapRequestCapture(page) {
   const consoleErrors = [];
   const pageErrors = [];
   const responseTimeline = [];
-  let responseSequence = 0;
+  const eventTimeline = [];
+  let timelineSequence = 0;
 
   const classifyPath = (url) => {
     const pathname = new URL(url).pathname;
@@ -102,6 +104,23 @@ function attachMapRequestCapture(page) {
 
   page.on('request', (request) => {
     const kind = classifyPath(request.url());
+    if (kind == null) {
+      return;
+    }
+
+    const sequence = timelineSequence += 1;
+    requestTimeline.push({
+      seq: sequence,
+      kind,
+      url: request.url(),
+    });
+    eventTimeline.push({
+      seq: sequence,
+      phase: 'request',
+      kind,
+      url: request.url(),
+    });
+
     if (kind === 'map_filters') {
       filterRequests.push(request.url());
     }
@@ -116,9 +135,16 @@ function attachMapRequestCapture(page) {
       return;
     }
 
-    const sequence = responseSequence += 1;
+    const sequence = timelineSequence += 1;
     responseTimeline.push({
       seq: sequence,
+      kind,
+      status: response.status(),
+      url: response.url(),
+    });
+    eventTimeline.push({
+      seq: sequence,
+      phase: 'response',
       kind,
       status: response.status(),
       url: response.url(),
@@ -197,6 +223,7 @@ function attachMapRequestCapture(page) {
   return {
     snapshot: async () => ({
       anonymousIdentityResponses: await Promise.all(anonymousIdentityResponses),
+      requestTimeline: [...requestTimeline],
       filterRequests: [...filterRequests],
       filterResponses: await Promise.all(filterResponses),
       poiRequests: [...poiRequests],
@@ -205,35 +232,47 @@ function attachMapRequestCapture(page) {
       consoleErrors: [...consoleErrors],
       pageErrors: [...pageErrors],
       responseTimeline: [...responseTimeline],
+      eventTimeline: [...eventTimeline],
     }),
   };
 }
 
 function assertCanonicalBootstrapOrder(snapshot, contextLabel) {
-  const firstAnonymousBootstrap = snapshot.responseTimeline.find(
+  const successfulAnonymousBootstrap = snapshot.responseTimeline.find(
     (entry) =>
       entry.kind === 'anonymous_identity'
       && (entry.status === 200 || entry.status === 201),
+  );
+  const firstProtectedMapRequest = snapshot.requestTimeline.find(
+    (entry) => entry.kind === 'map_filters' || entry.kind === 'map_pois',
   );
   const firstProtectedMapResponse = snapshot.responseTimeline.find(
     (entry) => entry.kind === 'map_filters' || entry.kind === 'map_pois',
   );
 
   expect(
-    firstAnonymousBootstrap,
+    successfulAnonymousBootstrap,
     `${contextLabel} must record a successful anonymous bootstrap response before any protected map response.`,
+  ).toBeTruthy();
+  expect(
+    firstProtectedMapRequest,
+    `${contextLabel} must record a protected map request.`,
   ).toBeTruthy();
   expect(
     firstProtectedMapResponse,
     `${contextLabel} must record a protected map response.`,
   ).toBeTruthy();
   expect(
-    firstAnonymousBootstrap.seq,
-    `${contextLabel} must bootstrap anonymous identity before protected map reads. Timeline:\n${JSON.stringify(snapshot.responseTimeline, null, 2)}`,
-  ).toBeLessThan(firstProtectedMapResponse.seq);
+    snapshot.requestTimeline.filter(
+      (entry) =>
+        (entry.kind === 'map_filters' || entry.kind === 'map_pois')
+        && entry.seq < successfulAnonymousBootstrap.seq,
+    ),
+    `${contextLabel} must not issue protected map requests before anonymous bootstrap succeeds. Event timeline:\n${JSON.stringify(snapshot.eventTimeline, null, 2)}`,
+  ).toEqual([]);
   expect(
     firstProtectedMapResponse.status,
-    `${contextLabel} first protected map response must be successful, not a failed warm-up hidden by retries. Timeline:\n${JSON.stringify(snapshot.responseTimeline, null, 2)}`,
+    `${contextLabel} first protected map response must be successful, not a failed warm-up hidden by retries. Event timeline:\n${JSON.stringify(snapshot.eventTimeline, null, 2)}`,
   ).toBeGreaterThanOrEqual(200);
   expect(firstProtectedMapResponse.status).toBeLessThan(400);
 }
@@ -358,7 +397,7 @@ test('@readonly MAP-LOC-GRANT-01 first warm geolocation-granted map entry loads 
   await context.close();
 });
 
-test('@readonly MAP-LOC-GRANT-02 permission-gated grant keeps the first map entry warm and loads POIs without public error state', async ({
+test('@readonly MAP-LOC-GRANT-02 location-permission CTA continuation loads canonical map data once browser geolocation is granted', async ({
   browser,
 }) => {
   const baseUrl = requireTenantUrl();

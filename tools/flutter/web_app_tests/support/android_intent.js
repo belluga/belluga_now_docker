@@ -148,6 +148,29 @@ async function waitForPublicRouteToSettle(page, expectedTargetPath, timeoutMs) {
   );
 }
 
+async function assertNoPromotionSurface(page, expectedTargetPath) {
+  const promotionHints = [
+    'fica melhor no app',
+    'continue no app',
+    'baixe para continuar',
+    'escolha sua loja',
+    'app em preparação',
+    'aceite convites pelo app',
+  ];
+  const corpus = await page.evaluate(() => {
+    const bodyText = (document.body?.innerText || '').trim();
+    const semanticText = Array.from(document.querySelectorAll('[aria-label]'))
+      .map((element) => element.getAttribute('aria-label') || '')
+      .join(' ');
+    return `${bodyText} ${semanticText}`.toLowerCase();
+  });
+  const matchedPromotionHint = promotionHints.find((hint) => corpus.includes(hint));
+  expect(
+    matchedPromotionHint,
+    `Direct-public fallback for ${expectedTargetPath} must not render promotion UI before interaction. Corpus excerpt: ${corpus.slice(0, 500)}`,
+  ).toBeUndefined();
+}
+
 async function fetchAndroidIntentRedirect(request, baseUrl, params) {
   const endpoint = new URL('/open-app', baseUrl);
   endpoint.searchParams.set('store_channel', 'web');
@@ -310,6 +333,7 @@ async function expectAndroidDirectPublicHandoff({
       collector.responses,
       `Direct-public handoff must traverse /open-app exactly once for ${expectedTargetPath}. Responses:\n${JSON.stringify(collector.responses, null, 2)}`,
     ).toHaveLength(1);
+    await assertNoPromotionSurface(page, expectedTargetPath);
   } finally {
     collector.stop();
   }
