@@ -6,6 +6,7 @@ const {
 
 const tenantUrl = process.env.NAV_TENANT_URL;
 const appBootTimeoutMs = 90000;
+const apiRequestTimeoutMs = 30000;
 
 test.describe.configure({ timeout: 300000 });
 
@@ -344,6 +345,7 @@ async function deleteEventType(api, baseUrl, token, eventTypeId) {
   await api.delete(buildUrl(baseUrl, `/admin/api/v1/event_types/${eventTypeId}`), {
     headers: authHeaders(token),
     failOnStatusCode: false,
+    timeout: apiRequestTimeoutMs,
   });
 }
 
@@ -440,6 +442,7 @@ async function deleteEvent(api, baseUrl, token, eventId) {
   await api.delete(buildUrl(baseUrl, `/admin/api/v1/events/${eventId}`), {
     headers: authHeaders(token),
     failOnStatusCode: false,
+    timeout: apiRequestTimeoutMs,
   });
 }
 

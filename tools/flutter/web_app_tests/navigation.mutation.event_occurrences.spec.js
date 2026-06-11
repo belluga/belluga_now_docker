@@ -11,6 +11,7 @@ const {
 
 const tenantUrl = process.env.NAV_TENANT_URL;
 const appBootTimeoutMs = 90000;
+const apiRequestTimeoutMs = 30000;
 const navigationRunId = (process.env.NAV_TEST_RUN_ID || 'local').trim();
 let anonymousIdentityToken = null;
 
@@ -654,6 +655,7 @@ async function deleteEventType(api, baseUrl, token, eventTypeId) {
     {
       headers: authHeaders(token),
       failOnStatusCode: false,
+      timeout: apiRequestTimeoutMs,
     },
   );
 }
@@ -846,6 +848,7 @@ async function deleteAccountProfileType(api, baseUrl, token, profileType) {
     {
       headers: authHeaders(token),
       failOnStatusCode: false,
+      timeout: apiRequestTimeoutMs,
     },
   );
 }
@@ -1469,6 +1472,7 @@ async function deleteEvent(api, baseUrl, token, eventId) {
   await api.delete(buildApiUrl(baseUrl, `/admin/api/v1/events/${eventId}`), {
     headers: authHeaders(token),
     failOnStatusCode: false,
+    timeout: apiRequestTimeoutMs,
   });
 }
 

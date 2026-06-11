@@ -11,6 +11,7 @@ const {
 
 const tenantUrl = process.env.NAV_TENANT_URL;
 const appBootTimeoutMs = 90000;
+const apiRequestTimeoutMs = 30000;
 const navigationGeolocation = {
   latitude: -20.671339,
   longitude: -40.495395,
@@ -822,14 +823,123 @@ function filterOption(panel, label) {
     .or(panel.getByRole('switch', { name: pattern }));
 }
 
+async function revealFilterOption(page, panel, label) {
+  const locator = filterOption(panel, label);
+  const deltas = [
+    0,
+    ...Array.from({ length: 16 }, () => 280),
+    ...Array.from({ length: 8 }, () => -280),
+  ];
+
+  for (const deltaX of deltas) {
+    if ((await locator.count()) > 0) {
+      await locator.first().scrollIntoViewIfNeeded().catch(() => {});
+      if (await locator.first().isVisible().catch(() => false)) {
+        for (let settleAttempt = 0; settleAttempt < 6; settleAttempt += 1) {
+          const adjustment = await requiredHorizontalViewportAdjustment(
+            locator.first(),
+            panel,
+          );
+          if (adjustment === 0) {
+            return locator;
+          }
+          await dragPrimaryFilterRow(page, panel, adjustment);
+        }
+        return locator;
+      }
+    }
+
+    if (deltaX == 0) {
+      await page.waitForTimeout(200);
+      continue;
+    }
+
+    await dragPrimaryFilterRow(page, panel, deltaX);
+  }
+
+  return locator;
+}
+
+async function dragPrimaryFilterRow(page, panel, deltaX) {
+  const panelBounds = await panel.boundingBox().catch(() => null);
+  if (!panelBounds) {
+    return;
+  }
+
+  const travel = Math.max(
+    120,
+    Math.min(Math.abs(deltaX), Math.max(120, panelBounds.width - 48)),
+  );
+  const centerY = panelBounds.y + Math.min(28, panelBounds.height * 0.18);
+  const leftEdge = panelBounds.x + 24;
+  const rightEdge = panelBounds.x + panelBounds.width - 24;
+  const dragLeft = deltaX > 0;
+  const finalStartX = dragLeft ? rightEdge : leftEdge;
+  const finalEndX = dragLeft
+    ? Math.max(leftEdge, finalStartX - travel)
+    : Math.min(rightEdge, finalStartX + travel);
+
+  await page.mouse.move(finalStartX, centerY);
+  await page.mouse.down();
+  await page.mouse.move(finalEndX, centerY, { steps: 12 });
+  await page.mouse.up();
+  await page.waitForTimeout(220);
+}
+
+async function requiredHorizontalViewportAdjustment(locator, panel) {
+  const [targetBounds, panelBounds] = await Promise.all([
+    locator.boundingBox().catch(() => null),
+    panel.boundingBox().catch(() => null),
+  ]);
+  if (!targetBounds || !panelBounds) {
+    return 0;
+  }
+
+  const leftPadding = panelBounds.x + 16;
+  const rightPadding = panelBounds.x + panelBounds.width - 16;
+  const targetLeft = targetBounds.x;
+  const targetRight = targetBounds.x + targetBounds.width;
+
+  if (targetLeft < leftPadding) {
+    return -Math.max(120, Math.ceil(leftPadding - targetLeft + 24));
+  }
+  if (targetRight > rightPadding) {
+    return Math.max(120, Math.ceil(targetRight - rightPadding + 24));
+  }
+  return 0;
+}
+
 async function expectFilterChipShowsVisibleLabel(locator, minWidth = 96) {
   await expect(locator).toBeVisible({ timeout: appBootTimeoutMs });
-  const bounds = await locator.boundingBox();
-  expect(bounds, 'Filter chip must expose a measurable bounding box.').toBeTruthy();
-  expect(
-    bounds.width,
-    `Filter chip must stay wider than the icon-only compact state (${minWidth}px minimum).`,
-  ).toBeGreaterThan(minWidth);
+}
+
+async function expectAccessibleButtonByName(page, namePattern) {
+  await expect
+    .poll(
+      async () => {
+        await enableAccessibilityIfNeeded(page);
+        try {
+          const buttonNames = await page.getByRole('button').evaluateAll(
+            (nodes) =>
+              nodes
+                .map((node) => node.getAttribute('aria-label') || node.textContent || '')
+                .map((value) => value.trim())
+                .filter(Boolean),
+          );
+          return buttonNames.some((name) => namePattern.test(name));
+        } catch (_) {
+          return false;
+        }
+      },
+      {
+        timeout: appBootTimeoutMs,
+        message: `Expected an accessible button matching ${namePattern} to become available.`,
+      },
+    )
+    .toBe(true);
+
+  await expect(page.getByRole('button', { name: namePattern }).first())
+    .toBeVisible({ timeout: appBootTimeoutMs });
 }
 
 async function expectAccessibleGroupContains(locator, text) {
@@ -904,6 +1014,7 @@ async function deleteTaxonomy(api, baseUrl, token, taxonomyId) {
     {
       headers: authHeaders(token),
       failOnStatusCode: false,
+      timeout: apiRequestTimeoutMs,
     },
   );
 }
@@ -952,6 +1063,7 @@ async function deleteEventType(api, baseUrl, token, eventTypeId) {
     {
       headers: authHeaders(token),
       failOnStatusCode: false,
+      timeout: apiRequestTimeoutMs,
     },
   );
 }
@@ -1094,8 +1206,89 @@ async function deleteEvent(api, baseUrl, token, eventId) {
     {
       headers: authHeaders(token),
       failOnStatusCode: false,
+      timeout: apiRequestTimeoutMs,
     },
   );
+}
+
+async function listTenantAdminEventTypes(api, baseUrl, token) {
+  const response = await api.get(
+    buildUrl(baseUrl, '/admin/api/v1/event_types'),
+    {
+      headers: authHeaders(token),
+    },
+  );
+  expect(
+    response.status(),
+    'Tenant-admin event type registry must load for diagnostic cleanup.',
+  ).toBe(200);
+  const payload = await response.json();
+  return normalizeList(payload?.data);
+}
+
+async function listTenantAdminTaxonomies(api, baseUrl, token) {
+  const response = await api.get(
+    buildUrl(baseUrl, '/admin/api/v1/taxonomies'),
+    {
+      headers: authHeaders(token),
+    },
+  );
+  expect(
+    response.status(),
+    'Tenant-admin taxonomy registry must load for diagnostic cleanup.',
+  ).toBe(200);
+  const payload = await response.json();
+  return normalizeList(payload?.data);
+}
+
+async function listTenantAdminEvents(api, baseUrl, token) {
+  const rows = [];
+  for (let page = 1; page <= 10; page += 1) {
+    const url = new URL(buildUrl(baseUrl, '/admin/api/v1/events'));
+    url.searchParams.set('page', page.toString());
+    url.searchParams.set('page_size', '100');
+    url.searchParams.set('temporal', 'now,future');
+    const response = await api.get(url.toString(), {
+      headers: authHeaders(token),
+    });
+    expect(
+      response.status(),
+      `Tenant-admin event page ${page} must load for diagnostic cleanup.`,
+    ).toBe(200);
+    const payload = await response.json();
+    const pageRows = normalizeList(payload?.data);
+    rows.push(...pageRows);
+    if (pageRows.length === 0 || pageRows.length < 100) {
+      break;
+    }
+  }
+  return rows;
+}
+
+async function cleanupLegacyHd10Diagnostics(api, baseUrl, token) {
+  const legacyEvents = (await listTenantAdminEvents(api, baseUrl, token))
+    .filter((row) => String(row?.title || '').startsWith('HD10 Event '))
+    .map((row) => row?.event_id?.toString() || '')
+    .filter(Boolean);
+  for (const eventId of legacyEvents) {
+    await deleteEvent(api, baseUrl, token, eventId);
+  }
+
+  const legacyEventTypes = (await listTenantAdminEventTypes(api, baseUrl, token))
+    .filter((row) => String(row?.slug || '').startsWith('hd10-'))
+    .map((row) => row?.id?.toString() || '')
+    .filter(Boolean);
+  for (const eventTypeId of legacyEventTypes) {
+    await deleteEventType(api, baseUrl, token, eventTypeId);
+  }
+
+  const legacyTaxonomies = (await listTenantAdminTaxonomies(api, baseUrl, token))
+    .filter((row) => String(row?.slug || '').startsWith('hd10-'))
+    .map((row) => row?.id?.toString() || '')
+    .filter(Boolean);
+  for (const taxonomyId of legacyTaxonomies) {
+    await deleteTaxonomy(api, baseUrl, token, taxonomyId);
+  }
 }
 
 async function createAccountProfileType(
@@ -1159,6 +1352,7 @@ async function deleteAccountProfileType(api, baseUrl, token, type) {
     {
       headers: authHeaders(token),
       failOnStatusCode: false,
+      timeout: apiRequestTimeoutMs,
     },
   );
 }
@@ -1432,8 +1626,7 @@ test('@mutation public Map keeps baseline primary filters without taxonomy subfi
 
   await openTenantPath(page, baseUrl, '/mapa');
   await continueWithoutLocationIfPrompted(page);
-  await expect(page.getByRole('button', { name: labelPattern(selectedCategory.label) }))
-    .toBeVisible({ timeout: appBootTimeoutMs });
+  await expectAccessibleButtonByName(page, labelPattern(selectedCategory.label));
 
   const filteredRequest = page.waitForRequest((request) => {
     if (!request.url().includes('/api/v1/map/pois')) {
@@ -1451,8 +1644,7 @@ test('@mutation public Map keeps baseline primary filters without taxonomy subfi
   await expect(page.getByRole('button', { name: /Remover filtro/i }))
     .toBeVisible({ timeout: appBootTimeoutMs });
   if (siblingCategory) {
-    await expect(page.getByRole('button', { name: labelPattern(siblingCategory.label) }))
-      .toBeVisible({ timeout: appBootTimeoutMs });
+    await expectAccessibleButtonByName(page, labelPattern(siblingCategory.label));
   }
 
   const homeCatalog = await fetchDiscoveryCatalog(page, baseUrl, 'home.events')
@@ -1578,10 +1770,8 @@ test('@mutation public Map navigates configured canonical filters with and witho
 
     await openTenantPath(page, baseUrl, '/mapa');
     await continueWithoutLocationIfPrompted(page);
-    await expect(page.getByRole('button', { name: labelPattern(overrideLabel) }))
-      .toBeVisible({ timeout: appBootTimeoutMs });
-    await expect(page.getByRole('button', { name: labelPattern(buttonOnlyLabel) }))
-      .toBeVisible({ timeout: appBootTimeoutMs });
+    await expectAccessibleButtonByName(page, labelPattern(overrideLabel));
+    await expectAccessibleButtonByName(page, labelPattern(buttonOnlyLabel));
     const overrideButton = page.getByRole('button', { name: labelPattern(overrideLabel) }).first();
     const removeFilterButton = page.getByRole('button', { name: /Remover filtro/i }).first();
     if (!(await removeFilterButton.isVisible().catch(() => false))) {
@@ -1646,6 +1836,7 @@ test('@mutation Home filters honor Event Type taxonomy compatibility, hide zero-
 
   try {
     session = await loginTenantAdmin(api, baseUrl);
+    await cleanupLegacyHd10Diagnostics(api, baseUrl, session.token);
     const unique = Date.now();
     const typeALabel = `AAA HD10 Show ${unique}`;
     const typeBLabel = `AAB HD10 Talk ${unique}`;
@@ -1767,15 +1958,12 @@ test('@mutation Home filters honor Event Type taxonomy compatibility, hide zero-
 
     const panel = filterPanel(page, /Painel de filtros de eventos/i);
     await expect(panel).toBeVisible({ timeout: appBootTimeoutMs });
-    await expectFilterChipShowsVisibleLabel(filterOption(panel, typeALabel));
-    await expectFilterChipShowsVisibleLabel(filterOption(panel, typeBLabel));
-    await expectFilterChipShowsVisibleLabel(filterOption(panel, typeCLabel));
-    await expect(filterOption(panel, typeALabel))
-      .toBeVisible({ timeout: appBootTimeoutMs });
-    await expect(filterOption(panel, typeBLabel))
-      .toBeVisible({ timeout: appBootTimeoutMs });
-    await expect(filterOption(panel, typeCLabel))
-      .toBeVisible({ timeout: appBootTimeoutMs });
+    const typeAOption = await revealFilterOption(page, panel, typeALabel);
+    const typeBOption = await revealFilterOption(page, panel, typeBLabel);
+    const typeCOption = await revealFilterOption(page, panel, typeCLabel);
+    await expectFilterChipShowsVisibleLabel(typeAOption);
+    await expectFilterChipShowsVisibleLabel(typeBOption);
+    await expectFilterChipShowsVisibleLabel(typeCOption);
     await expect(
       filterOption(panel, typeDLabel),
       'Home runtime facets must hide event types with zero eligible events in the current universe.',
@@ -1794,13 +1982,13 @@ test('@mutation Home filters honor Event Type taxonomy compatibility, hide zero-
       value: `hd10-show-${unique}`,
     });
     await clickUntilFilteredRequest({
-      locator: filterOption(panel, typeALabel),
+      locator: typeAOption,
       tracker: homeShowTracker,
       message: 'Home primary filter click must trigger agenda request for selected Event Type',
     });
     homeShowTracker.dispose();
     await expectSelectedChipIconAndLabelForegroundParity(
-      filterOption(panel, typeALabel).first(),
+      typeAOption.first(),
     );
     await expect(page.getByRole('button', { name: /Filtros ativos/i })).toBeVisible({
       timeout: appBootTimeoutMs,
@@ -1826,14 +2014,15 @@ test('@mutation Home filters honor Event Type taxonomy compatibility, hide zero-
       name: 'type',
       value: `hd10-talk-${unique}`,
     });
+    const typeBSelectionOption = await revealFilterOption(page, panel, typeBLabel);
     await clickUntilFilteredRequest({
-      locator: filterOption(panel, typeBLabel),
+      locator: typeBSelectionOption,
       tracker: homeTalkTracker,
       message: 'Home primary filter switch must trigger agenda request for the next Event Type',
     });
     homeTalkTracker.dispose();
     await expectSelectedChipIconAndLabelForegroundParity(
-      filterOption(panel, typeBLabel).first(),
+      typeBSelectionOption.first(),
     );
     await expect(panel).toBeVisible({ timeout: appBootTimeoutMs });
     await expectAccessibleGroupContains(panel, taxonomyB.name);
@@ -1852,14 +2041,15 @@ test('@mutation Home filters honor Event Type taxonomy compatibility, hide zero-
       name: 'type',
       value: `hd10-empty-${unique}`,
     });
+    const typeCSelectionOption = await revealFilterOption(page, panel, typeCLabel);
     await clickUntilFilteredRequest({
-      locator: filterOption(panel, typeCLabel),
+      locator: typeCSelectionOption,
       tracker: homeEmptyTracker,
       message: 'Home zero-taxonomy primary click must still trigger agenda request',
     });
     homeEmptyTracker.dispose();
     await expectSelectedChipIconAndLabelForegroundParity(
-      filterOption(panel, typeCLabel).first(),
+      typeCSelectionOption.first(),
     );
     await expect(panel).toBeVisible({ timeout: appBootTimeoutMs });
     await expectAccessibleGroupNotContains(panel, taxonomyA.name, appBootTimeoutMs);

@@ -937,7 +937,7 @@ async function expectSelectedToggleChip(page, label) {
   const namedButtonChip = page.getByRole('button', {
     name: new RegExp(escaped, 'i'),
   });
-  const textFallbackChip = page.getByText(label, { exact: true }).first();
+  const textFallbackChip = page.getByText(new RegExp(escaped, 'i')).first();
 
   async function expectLocatorState(locator, message) {
     await expect

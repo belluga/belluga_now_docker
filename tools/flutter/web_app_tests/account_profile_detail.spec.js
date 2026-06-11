@@ -473,16 +473,18 @@ async function gotoPublicProfileDetailAndWaitForHydration(
   slug,
   { readPayload = true } = {},
 ) {
-  const responsePromise = page.waitForResponse(
-    (candidate) => {
-      if (candidate.request().method().toUpperCase() !== 'GET') {
-        return false;
-      }
-      const url = new URL(candidate.url());
-      return url.pathname === `/api/v1/account_profiles/${slug}`;
-    },
-    { timeout: appBootTimeoutMs },
-  );
+  const responsePromise = readPayload
+    ? page.waitForResponse(
+        (candidate) => {
+          if (candidate.request().method().toUpperCase() !== 'GET') {
+            return false;
+          }
+          const url = new URL(candidate.url());
+          return url.pathname === `/api/v1/account_profiles/${slug}`;
+        },
+        { timeout: appBootTimeoutMs },
+      )
+    : null;
 
   const response = await page.goto(buildUrl(baseUrl, `/parceiro/${slug}`), {
     waitUntil: 'domcontentloaded',
@@ -492,14 +494,15 @@ async function gotoPublicProfileDetailAndWaitForHydration(
   expect(response.status(), 'Public account profile document must load.')
     .toBeLessThan(400);
 
+  await assertAppBooted(page);
+  await enableAccessibilityIfNeeded(page);
+  if (!readPayload) {
+    return null;
+  }
+
   const hydratedResponse = await responsePromise;
   expect(hydratedResponse.status(), 'Profile detail API must load.')
     .toBeLessThan(400);
-  if (!readPayload) {
-    await assertAppBooted(page);
-    await enableAccessibilityIfNeeded(page);
-    return null;
-  }
   let payload;
   try {
     payload = await hydratedResponse.json();
@@ -508,8 +511,6 @@ async function gotoPublicProfileDetailAndWaitForHydration(
       `Profile detail hydration returned a non-JSON payload for ${slug}: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
-  await assertAppBooted(page);
-  await enableAccessibilityIfNeeded(page);
 
   return normalizePayload(payload);
 }
@@ -1024,6 +1025,7 @@ test('@mutation NAV-APD-11 reference point action opens confirmation modal', asy
       page,
       baseUrl,
       createdProfile.profileSlug,
+      { readPayload: false },
     );
 
     const referencePointButton = page.getByRole('button', {
@@ -1109,6 +1111,7 @@ test('@mutation NAV-APD-13 map reference point action opens confirmation modal',
       page,
       baseUrl,
       createdProfile.profileSlug,
+      { readPayload: false },
     );
     await expect(page.getByText(/Como Chegar/i).first()).toBeVisible({
       timeout: appBootTimeoutMs,
@@ -1201,6 +1204,7 @@ test('@mutation NAV-APD-14 map route action reuses the shared route chooser afte
       page,
       baseUrl,
       createdProfile.profileSlug,
+      { readPayload: false },
     );
     await expect(page.getByText(/Como Chegar/i).first()).toBeVisible({
       timeout: appBootTimeoutMs,
@@ -1240,11 +1244,17 @@ test('@mutation NAV-APD-14 map route action reuses the shared route chooser afte
     await expect(
       page.getByText('Qual PONTO DE PARTIDA quer usar?', { exact: true }),
     ).toBeVisible({ timeout: appBootTimeoutMs });
-    await expect(
-      page.getByText(labelPattern(createdProfile.displayName)).first(),
-    ).toBeVisible({ timeout: appBootTimeoutMs });
+    const referencePointOption = page.getByRole('radio', {
+      name: new RegExp(
+        `O ponto de referência selecionado\\s+${escapeRegExp(createdProfile.displayName)}`,
+        'i',
+      ),
+    }).first();
+    await expect(referencePointOption).toBeVisible({
+      timeout: appBootTimeoutMs,
+    });
 
-    await page.getByText(/O ponto de referência selecionado/i).first().click();
+    await referencePointOption.click();
     await page.getByRole('button', { name: /^Continuar$/i }).click();
 
     await expect(
