@@ -54,7 +54,6 @@ server {
     # Tenant-aware branding assets are backend-owned even though they look file-like.
     location = /manifest.json {
         try_files /__backend_owned_branding__ /index.php?$query_string;
-        add_header Cache-Control "no-cache" always;
     }
     location = /favicon.ico {
         try_files /__backend_owned_branding__ /index.php?$query_string;
