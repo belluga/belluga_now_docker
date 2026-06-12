@@ -99,6 +99,8 @@
       "@readonly STARTUP-PUBLIC-BOOTSTRAP-01 anonymous tenant home cold start keeps the public surface and completes anonymous bootstrap",
       "@readonly STARTUP-PUBLIC-BOOTSTRAP-02 anonymous account-profile direct entry keeps the public surface and completes anonymous bootstrap",
       "@readonly STARTUP-PUBLIC-BOOTSTRAP-03 anonymous event-detail direct entry keeps the public surface and completes anonymous bootstrap",
+      "@readonly invite not-found with canonical fallback query lands on the target event",
+      "@readonly invite not-found without recoverable fallback lands safely on home",
       "@readonly tenant domain bootstraps as tenant and navigates to tenant routes",
       "@readonly OTP-WEB-BOUNDARY-01 tenant-public web auth remains app promotion boundary",
       "@readonly taxonomy display snapshots render labels instead of slugs on public runtime routes"
