@@ -317,7 +317,11 @@ PRECHECK_TIMEOUT_SECONDS="${NAV_WEB_PRECHECK_TIMEOUT_SECONDS:-180}"
 SUITE_TIMEOUT_SECONDS="${NAV_WEB_SUITE_TIMEOUT_SECONDS:-}"
 if [[ -z "${SUITE_TIMEOUT_SECONDS}" ]]; then
   if [[ "${SUITE}" == "mutation" ]]; then
-    SUITE_TIMEOUT_SECONDS=1500
+    # The authoritative mutation packet now spans 30 real-browser flows.
+    # Keep the wrapper deadline above current suite runtime so false reds come
+    # from assertions, not from the shell timeout terminating an otherwise
+    # progressing canonical run.
+    SUITE_TIMEOUT_SECONDS=2700
   elif [[ "${SUITE}" == "diagnostic" ]]; then
     SUITE_TIMEOUT_SECONDS=1200
   else

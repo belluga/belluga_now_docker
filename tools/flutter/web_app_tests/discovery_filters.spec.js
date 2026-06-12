@@ -672,7 +672,12 @@ async function seedFlutterSecureStorage(context, session) {
       }
 
       const publicKey = 'FlutterSecureStorage';
-      const storage = window.localStorage;
+      let storage;
+      try {
+        storage = window.localStorage;
+      } catch (_) {
+        return;
+      }
       const algorithm = { name: 'AES-GCM', length: 256 };
 
       const bytesToBase64 = (bytes) => {

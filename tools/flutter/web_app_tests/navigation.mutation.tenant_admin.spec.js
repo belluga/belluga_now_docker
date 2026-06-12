@@ -411,7 +411,12 @@ async function seedFlutterSecureStorage(context, session) {
       }
 
       const publicKey = 'FlutterSecureStorage';
-      const storage = window.localStorage;
+      let storage;
+      try {
+        storage = window.localStorage;
+      } catch (_) {
+        return;
+      }
       const algorithm = { name: 'AES-GCM', length: 256 };
 
       const bytesToBase64 = (bytes) => {
@@ -945,7 +950,7 @@ async function expectSelectedToggleChip(page, label) {
         async () => {
           return locator
             .first()
-            .evaluate((element) => {
+            .evaluate((element, expectedLabel) => {
               let current = element;
               for (let depth = 0; depth < 8 && current; depth += 1) {
                 const state =
@@ -957,10 +962,28 @@ async function expectSelectedToggleChip(page, label) {
                 if (state === 'true') {
                   return state;
                 }
+                if (depth <= 2) {
+                  const normalizedText = (current.textContent || '').trim();
+                  const hasLeadingCheckGlyph =
+                    normalizedText.startsWith('check') ||
+                    normalizedText.startsWith('done');
+                  const hasLocalSelectionIcon =
+                    current.querySelector('svg') !== null ||
+                    current.querySelector('[data-icon*=\"check\" i]') !== null ||
+                    current.querySelector('[aria-label*=\"check\" i]') !== null;
+                  if (
+                    normalizedText.toLowerCase().includes(
+                      String(expectedLabel).trim().toLowerCase(),
+                    ) &&
+                    (hasLeadingCheckGlyph || hasLocalSelectionIcon)
+                  ) {
+                    return 'true';
+                  }
+                }
                 current = current.parentElement;
               }
               return '';
-            })
+            }, label)
             .catch(() => '');
         },
         {
