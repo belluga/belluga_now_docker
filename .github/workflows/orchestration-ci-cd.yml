@@ -403,10 +403,9 @@ jobs:
         run: npm ci
         working-directory: tools/flutter/web_app_smoke_runner
 
-      - name: Install Playwright browser
+      - name: Verify Playwright browser availability
         if: steps.stage_initialize_preflight.outputs.initialized == 'true' && steps.stage_untrusted_initialized_bootstrap_block.outcome != 'failure' && steps.stage_runtime_web_sha_check.outcome != 'failure' && steps.stage_public_edge_environment_probe.outcome != 'failure'
-        run: npx playwright install --with-deps chromium
-        working-directory: tools/flutter/web_app_smoke_runner
+        run: bash tools/flutter/resolve_playwright_browser.sh
 
       - name: Warm up stage environment endpoints
         if: steps.stage_initialize_preflight.outputs.initialized == 'true' && steps.stage_untrusted_initialized_bootstrap_block.outcome != 'failure' && steps.stage_runtime_web_sha_check.outcome != 'failure' && steps.stage_public_edge_environment_probe.outcome != 'failure'
@@ -731,10 +730,9 @@ jobs:
         run: npm ci
         working-directory: tools/flutter/web_app_smoke_runner
 
-      - name: Install Playwright browser after stage rollback
+      - name: Verify Playwright browser availability after stage rollback
         if: ${{ always() && steps.stage_rollback_proof_plan.outputs.run == 'true' && steps.stage_rollback_initialize_preflight.outcome != 'failure' && steps.stage_rollback_public_edge_environment_probe.outcome != 'failure' }}
-        run: npx playwright install --with-deps chromium
-        working-directory: tools/flutter/web_app_smoke_runner
+        run: bash tools/flutter/resolve_playwright_browser.sh
 
       - name: Warm up stage environment endpoints after rollback
         if: ${{ always() && steps.stage_rollback_proof_plan.outputs.run == 'true' && steps.stage_rollback_initialize_preflight.outcome != 'failure' && steps.stage_rollback_public_edge_environment_probe.outcome != 'failure' }}
@@ -1191,10 +1189,9 @@ jobs:
         run: npm ci
         working-directory: tools/flutter/web_app_smoke_runner
 
-      - name: Install Playwright browser
+      - name: Verify Playwright browser availability
         if: steps.main_initialize_preflight.outputs.initialized == 'true' && steps.main_untrusted_initialized_bootstrap_block.outcome != 'failure' && steps.main_runtime_web_sha_check.outcome != 'failure' && steps.main_public_edge_environment_probe.outcome != 'failure'
-        run: npx playwright install --with-deps chromium
-        working-directory: tools/flutter/web_app_smoke_runner
+        run: bash tools/flutter/resolve_playwright_browser.sh
 
       - name: Warm up production environment endpoints
         if: steps.main_initialize_preflight.outputs.initialized == 'true' && steps.main_untrusted_initialized_bootstrap_block.outcome != 'failure' && steps.main_runtime_web_sha_check.outcome != 'failure' && steps.main_public_edge_environment_probe.outcome != 'failure'
@@ -1498,10 +1495,9 @@ jobs:
         run: npm ci
         working-directory: tools/flutter/web_app_smoke_runner
 
-      - name: Install Playwright browser after production rollback
+      - name: Verify Playwright browser availability after production rollback
         if: ${{ always() && steps.main_rollback_proof_plan.outputs.run == 'true' && steps.main_rollback_initialize_preflight.outcome != 'failure' && steps.main_rollback_public_edge_environment_probe.outcome != 'failure' }}
-        run: npx playwright install --with-deps chromium
-        working-directory: tools/flutter/web_app_smoke_runner
+        run: bash tools/flutter/resolve_playwright_browser.sh
 
       - name: Warm up production environment endpoints after rollback
         if: ${{ always() && steps.main_rollback_proof_plan.outputs.run == 'true' && steps.main_rollback_initialize_preflight.outcome != 'failure' && steps.main_rollback_public_edge_environment_probe.outcome != 'failure' }}

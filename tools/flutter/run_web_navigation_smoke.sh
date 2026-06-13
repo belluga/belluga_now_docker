@@ -4,6 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 RUNNER_DIR="${SCRIPT_DIR}/web_app_smoke_runner"
+source "${SCRIPT_DIR}/resolve_playwright_browser.sh"
 ORIGINAL_NAV_DEPLOY_LANE_SET=0
 if [[ -v NAV_DEPLOY_LANE ]]; then
   if [[ -n "${NAV_DEPLOY_LANE//[[:space:]]/}" ]]; then
@@ -76,41 +77,7 @@ load_optional_local_navigation_env() {
 
 load_optional_local_navigation_env
 
-resolve_local_playwright_browser() {
-  if [[ -n "${PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH:-}" ]]; then
-    return 0
-  fi
-
-  local candidate=""
-  for candidate in \
-    /usr/bin/google-chrome \
-    /usr/bin/google-chrome-stable \
-    /usr/bin/chromium-browser \
-    /usr/bin/chromium
-  do
-    if [[ -x "${candidate}" ]]; then
-      export PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH="${candidate}"
-      echo "INFO: using local Chromium executable for Playwright -> ${candidate}"
-      return 0
-    fi
-  done
-
-  local command_candidate=""
-  for command_candidate in \
-    google-chrome \
-    google-chrome-stable \
-    chromium-browser \
-    chromium
-  do
-    if command -v "${command_candidate}" >/dev/null 2>&1; then
-      export PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH="$(command -v "${command_candidate}")"
-      echo "INFO: using local Chromium executable for Playwright -> ${PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH}"
-      return 0
-    fi
-  done
-}
-
-resolve_local_playwright_browser
+export_playwright_browser_path
 
 require_explicit_nonlocal_mutation_opt_in() {
   local suite="$1"
