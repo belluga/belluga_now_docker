@@ -805,7 +805,7 @@ if ! grep -Fq "steps.stage_initialize_preflight.outputs.initialized == 'true'" <
   exit 1
 fi
 
-stage_mark_success_expected_if="if: steps.stage_initialize_preflight.outputs.initialized == 'true' && (steps.stage_rollback_target.outputs.trusted_tuple_present == 'true' || steps.stage_untrusted_initialized_bootstrap_block.outputs.first_trusted_tuple_bootstrap == 'true') && steps.stage_untrusted_initialized_bootstrap_block.outcome != 'failure' && steps.stage_runtime_web_sha_check.outcome == 'success' && steps.stage_public_edge_environment_probe.outcome == 'success' && steps.stage_provenance_check.outcome == 'success' && steps.stage_public_taxonomy_validation_fixture.outcome == 'success' && steps.stage_navigation_smoke.outcome == 'success' && steps.stage_navigation_mutation_smoke.outcome == 'success'"
+stage_mark_success_expected_if="if: steps.stage_initialize_preflight.outputs.initialized == 'true' && (steps.stage_rollback_target.outputs.trusted_tuple_present == 'true' || steps.stage_untrusted_initialized_bootstrap_block.outputs.first_trusted_tuple_bootstrap == 'true') && steps.stage_untrusted_initialized_bootstrap_block.outcome != 'failure' && steps.stage_runtime_web_sha_check.outcome == 'success' && steps.stage_public_edge_environment_probe.outcome == 'success' && steps.stage_provenance_check.outcome == 'success' && steps.stage_public_taxonomy_validation_fixture.outcome == 'success' && steps.stage_navigation_smoke.outcome == 'success' && steps.stage_navigation_mutation_smoke.outcome == 'success' && steps.stage_public_taxonomy_validation_fixture_cleanup.outcome != 'failure'"
 stage_mark_success_if_line="$(printf '%s\n' "${stage_mark_success_block}" | sed -n 's/^        if: /if: /p' | head -n 1)"
 if [[ "${stage_mark_success_if_line}" != "${stage_mark_success_expected_if}" ]]; then
   echo "ERROR: stage success-marking block must exactly match the allowlisted full-proof success expression." >&2
@@ -849,6 +849,11 @@ fi
 
 if ! grep -Fq "steps.stage_navigation_mutation_smoke.outcome == 'success'" <<<"${stage_mark_success_block}"; then
   echo "ERROR: stage success-marking block must require a successful mutation navigation smoke." >&2
+  exit 1
+fi
+
+if ! grep -Fq "steps.stage_public_taxonomy_validation_fixture_cleanup.outcome != 'failure'" <<<"${stage_mark_success_block}"; then
+  echo "ERROR: stage success-marking block must require successful or skipped taxonomy fixture cleanup." >&2
   exit 1
 fi
 
