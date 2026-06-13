@@ -50,6 +50,19 @@ function assertAndroidPromotionFallbackLocation(location, baseUrl, expectedTarge
   expect(fallback.searchParams.get('redirect')).toBe(expectedTargetPath);
 }
 
+function assertAndroidTargetFallbackLocation(location, baseUrl, expectedTargetPath) {
+  expect(location, `Expected Android target fallback for ${expectedTargetPath}`)
+    .toBeTruthy();
+
+  const base = new URL(baseUrl);
+  const fallback = new URL(location, base.origin);
+  expect(fallback.origin).toBe(base.origin);
+
+  const fallbackTarget = fallback.pathname
+    + (fallback.search ? fallback.search : '');
+  expect(fallbackTarget).toBe(expectedTargetPath);
+}
+
 function assertAndroidOpenAppHandoffLocation(location, baseUrl, expectedTargetPath) {
   if (location.startsWith('intent://')) {
     assertAndroidIntentLocation(location, baseUrl, expectedTargetPath);
@@ -57,6 +70,124 @@ function assertAndroidOpenAppHandoffLocation(location, baseUrl, expectedTargetPa
   }
 
   assertAndroidPromotionFallbackLocation(location, baseUrl, expectedTargetPath);
+}
+
+function assertAndroidDirectPublicHandoffLocation(location, baseUrl, expectedTargetPath) {
+  if (location.startsWith('intent://')) {
+    expect(location, `Expected Android intent redirect for ${expectedTargetPath}`)
+      .toBeTruthy();
+    expect(location).toContain('intent://');
+    expect(location).toContain(';scheme=https;');
+    expect(location).toContain(';package=');
+    expect(location).toContain(';S.browser_fallback_url=');
+    expect(location).toContain(';end');
+
+    const base = new URL(baseUrl);
+    const expectedIntentPrefix = `intent://${base.host}${expectedTargetPath}`;
+    expect(
+      location.startsWith(expectedIntentPrefix),
+      `Intent must target the current tenant host. Expected prefix ${expectedIntentPrefix}, got ${location}`,
+    ).toBeTruthy();
+
+    const fallbackMatch = location.match(/;S\.browser_fallback_url=([^;]+);end$/);
+    expect(fallbackMatch, `Intent must include browser fallback URL: ${location}`)
+      .toBeTruthy();
+    const fallbackUrl = decodeURIComponent(fallbackMatch[1]);
+    assertAndroidTargetFallbackLocation(
+      fallbackUrl,
+      baseUrl,
+      expectedTargetPath,
+    );
+    return;
+  }
+
+  assertAndroidTargetFallbackLocation(location, baseUrl, expectedTargetPath);
+}
+
+function androidDirectBrowserFallbackUrl(location, baseUrl) {
+  if (location.startsWith('intent://')) {
+    const fallbackMatch = location.match(/;S\.browser_fallback_url=([^;]+);end$/);
+    expect(fallbackMatch, `Intent must include browser fallback URL: ${location}`)
+      .toBeTruthy();
+    return decodeURIComponent(fallbackMatch[1]);
+  }
+
+  return new URL(location, baseUrl).toString();
+}
+
+function resolvePublicTargetPath(input) {
+  const current = input instanceof URL ? input : new URL(input);
+  const pathnameWithSearch = current.pathname + current.search;
+  if (pathnameWithSearch !== '/' || !current.hash) {
+    return pathnameWithSearch;
+  }
+
+  if (current.hash === '#' || current.hash === '#/') {
+    return '/';
+  }
+
+  if (current.hash.startsWith('#/')) {
+    return current.hash.slice(1);
+  }
+
+  return pathnameWithSearch;
+}
+
+async function waitForPublicRouteToSettle(page, expectedTargetPath, timeoutMs) {
+  await page.waitForFunction(
+    (targetPath) => {
+      const currentPath = window.location.pathname + window.location.search;
+      const hash = window.location.hash || '';
+      const resolvedTarget =
+        currentPath !== '/' || !hash
+          ? currentPath
+          : (
+            hash === '#' || hash === '#/'
+              ? '/'
+              : hash.startsWith('#/')
+                ? hash.slice(1)
+                : currentPath
+          );
+      const atExpectedTarget = resolvedTarget === targetPath;
+      if (!atExpectedTarget) {
+        return false;
+      }
+
+      const splashVisible = document.querySelector('#splash-screen') !== null;
+      const hasFlutterView = document.querySelector('flutter-view') !== null;
+      const hasGlassPane = document.querySelector('flt-glass-pane') !== null;
+      const readyState = document.readyState;
+
+      return !splashVisible
+        && (hasGlassPane || hasFlutterView)
+        && (readyState === 'interactive' || readyState === 'complete');
+    },
+    expectedTargetPath,
+    { timeout: timeoutMs },
+  );
+}
+
+async function assertNoPromotionSurface(page, expectedTargetPath) {
+  const promotionHints = [
+    'fica melhor no app',
+    'continue no app',
+    'baixe para continuar',
+    'escolha sua loja',
+    'app em preparação',
+    'aceite convites pelo app',
+  ];
+  const corpus = await page.evaluate(() => {
+    const bodyText = (document.body?.innerText || '').trim();
+    const semanticText = Array.from(document.querySelectorAll('[aria-label]'))
+      .map((element) => element.getAttribute('aria-label') || '')
+      .join(' ');
+    return `${bodyText} ${semanticText}`.toLowerCase();
+  });
+  const matchedPromotionHint = promotionHints.find((hint) => corpus.includes(hint));
+  expect(
+    matchedPromotionHint,
+    `Direct-public fallback for ${expectedTargetPath} must not render promotion UI before interaction. Corpus excerpt: ${corpus.slice(0, 500)}`,
+  ).toBeUndefined();
 }
 
 async function fetchAndroidIntentRedirect(request, baseUrl, params) {
@@ -83,26 +214,40 @@ async function fetchAndroidIntentRedirect(request, baseUrl, params) {
   return response.headers().location || '';
 }
 
-function waitForOpenAppResponse(context, baseUrl, timeoutMs) {
+function waitForOpenAppResponse(page, baseUrl, timeoutMs) {
   const expectedOrigin = new URL(baseUrl).origin;
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      context.off('response', onResponse);
-      reject(new Error(`Timed out waiting for /open-app on ${expectedOrigin}`));
-    }, timeoutMs);
-
-    function onResponse(response) {
+  return page.waitForResponse(
+    (response) => {
       const url = new URL(response.url());
-      if (url.origin !== expectedOrigin || url.pathname !== '/open-app') {
-        return;
-      }
-      clearTimeout(timer);
-      context.off('response', onResponse);
-      resolve(response);
-    }
+      return url.origin === expectedOrigin && url.pathname === '/open-app';
+    },
+    { timeout: timeoutMs },
+  );
+}
 
-    context.on('response', onResponse);
-  });
+function startOpenAppResponseCollector(page, baseUrl) {
+  const expectedOrigin = new URL(baseUrl).origin;
+  const responses = [];
+  const listener = (response) => {
+    const url = new URL(response.url());
+    if (url.origin !== expectedOrigin || url.pathname !== '/open-app') {
+      return;
+    }
+    responses.push({
+      status: response.status(),
+      location: response.headers().location || '',
+      url: response.url(),
+    });
+  };
+
+  page.on('response', listener);
+
+  return {
+    responses,
+    stop() {
+      page.off('response', listener);
+    },
+  };
 }
 
 async function expectAndroidOpenAppIntent({
@@ -113,7 +258,7 @@ async function expectAndroidOpenAppIntent({
   timeoutMs,
 }) {
   const responsePromise = waitForOpenAppResponse(
-    page.context(),
+    page,
     baseUrl,
     timeoutMs,
   );
@@ -137,7 +282,7 @@ async function expectAndroidOpenAppHandoff({
   timeoutMs,
 }) {
   const responsePromise = waitForOpenAppResponse(
-    page.context(),
+    page,
     baseUrl,
     timeoutMs,
   );
@@ -153,11 +298,73 @@ async function expectAndroidOpenAppHandoff({
   );
 }
 
+async function expectAndroidDirectPublicHandoff({
+  page,
+  baseUrl,
+  expectedTargetPath,
+  action,
+  timeoutMs,
+}) {
+  const collector = startOpenAppResponseCollector(page, baseUrl);
+  const responsePromise = waitForOpenAppResponse(
+    page,
+    baseUrl,
+    timeoutMs,
+  );
+
+  try {
+    await action();
+    const response = await responsePromise;
+    expect(response.status(), '/open-app must return a redirect response.')
+      .toBe(302);
+    const location = response.headers().location || '';
+    assertAndroidDirectPublicHandoffLocation(
+      location,
+      baseUrl,
+      expectedTargetPath,
+    );
+
+    if (location.startsWith('intent://')) {
+      const fallbackUrl = androidDirectBrowserFallbackUrl(location, baseUrl);
+      const fallbackResponse = await page.goto(fallbackUrl, {
+        waitUntil: 'domcontentloaded',
+        timeout: timeoutMs,
+      });
+      expect(
+        fallbackResponse,
+        `Browser fallback must render the original public route ${expectedTargetPath}.`,
+      ).not.toBeNull();
+      expect(
+        fallbackResponse.status(),
+        `Browser fallback must stay on the original public route ${expectedTargetPath}.`,
+      ).toBeLessThan(400);
+    }
+
+    await waitForPublicRouteToSettle(
+      page,
+      expectedTargetPath,
+      timeoutMs,
+    );
+    const currentTarget = resolvePublicTargetPath(page.url());
+    expect(currentTarget).toBe(expectedTargetPath);
+    expect(
+      collector.responses,
+      `Direct-public handoff must traverse /open-app exactly once for ${expectedTargetPath}. Responses:\n${JSON.stringify(collector.responses, null, 2)}`,
+    ).toHaveLength(1);
+    await assertNoPromotionSurface(page, expectedTargetPath);
+  } finally {
+    collector.stop();
+  }
+}
+
 module.exports = {
   androidBrowserContextOptions,
+  androidDirectBrowserFallbackUrl,
+  assertAndroidDirectPublicHandoffLocation,
   assertAndroidOpenAppHandoffLocation,
   assertAndroidIntentLocation,
   assertAndroidPromotionFallbackLocation,
+  expectAndroidDirectPublicHandoff,
   expectAndroidOpenAppHandoff,
   expectAndroidOpenAppIntent,
   fetchAndroidIntentRedirect,

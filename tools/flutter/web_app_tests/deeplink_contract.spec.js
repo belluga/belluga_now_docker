@@ -1,7 +1,9 @@
 const { test, expect } = require('@playwright/test');
 const {
   androidBrowserContextOptions,
+  assertAndroidDirectPublicHandoffLocation,
   assertAndroidOpenAppHandoffLocation,
+  expectAndroidDirectPublicHandoff,
   expectAndroidOpenAppHandoff,
   fetchAndroidIntentRedirect,
 } = require('./support/android_intent');
@@ -240,9 +242,6 @@ test('@readonly tenant Android direct public links request open-app handoff redi
   browser,
 }) => {
   const { tenantUrl } = requireNavigationUrls();
-  const context = await browser.newContext(androidBrowserContextOptions);
-  const page = await context.newPage();
-
   const cases = [
     {
       label: 'home root',
@@ -266,9 +265,11 @@ test('@readonly tenant Android direct public links request open-app handoff redi
     },
   ];
 
-  try {
-    for (const testCase of cases) {
-      await expectAndroidOpenAppHandoff({
+  for (const testCase of cases) {
+    const context = await browser.newContext(androidBrowserContextOptions);
+    const page = await context.newPage();
+    try {
+      await expectAndroidDirectPublicHandoff({
         page,
         baseUrl: tenantUrl,
         expectedTargetPath: testCase.expectedTargetPath,
@@ -280,8 +281,8 @@ test('@readonly tenant Android direct public links request open-app handoff redi
           );
         },
       });
+    } finally {
+      await context.close();
     }
-  } finally {
-    await context.close();
   }
 });

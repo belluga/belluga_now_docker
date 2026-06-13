@@ -1,3 +1,5 @@
+const { chromium } = require('@playwright/test');
+
 async function seedFlutterSecureStorage(context, entries) {
   await context.addInitScript(
     async ({ entries: rawEntries }) => {
@@ -6,7 +8,12 @@ async function seedFlutterSecureStorage(context, entries) {
       }
 
       const publicKey = 'FlutterSecureStorage';
-      const storage = window.localStorage;
+      let storage;
+      try {
+        storage = window.localStorage;
+      } catch (_) {
+        return;
+      }
       const algorithm = { name: 'AES-GCM', length: 256 };
 
       const bytesToBase64 = (bytes) => {
@@ -88,7 +95,29 @@ async function createAuthenticatedTenantAdminPage(browser, session) {
   return { context, page };
 }
 
+async function createFreshAuthenticatedTenantAdminPage(session) {
+  const browser = await chromium.launch({
+    executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH,
+  });
+  try {
+    const context = await browser.newContext({
+      ignoreHTTPSErrors: true,
+    });
+    await seedFlutterSecureStorage(context, {
+      landlord_token: session.token,
+      landlord_user_id: session.userId,
+      active_mode: 'landlord',
+    });
+    const page = await context.newPage();
+    return { browser, context, page };
+  } catch (error) {
+    await browser.close().catch(() => {});
+    throw error;
+  }
+}
+
 module.exports = {
   seedFlutterSecureStorage,
   createAuthenticatedTenantAdminPage,
+  createFreshAuthenticatedTenantAdminPage,
 };

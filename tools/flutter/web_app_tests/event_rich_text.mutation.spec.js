@@ -6,6 +6,7 @@ const {
 
 const tenantUrl = process.env.NAV_TENANT_URL;
 const appBootTimeoutMs = 90000;
+const apiRequestTimeoutMs = 30000;
 
 test.describe.configure({ timeout: 300000 });
 
@@ -200,7 +201,12 @@ async function seedFlutterSecureStorage(context, session) {
       }
 
       const publicKey = 'FlutterSecureStorage';
-      const storage = window.localStorage;
+      let storage;
+      try {
+        storage = window.localStorage;
+      } catch (_) {
+        return;
+      }
       const algorithm = { name: 'AES-GCM', length: 256 };
 
       const bytesToBase64 = (bytes) => {
@@ -344,6 +350,7 @@ async function deleteEventType(api, baseUrl, token, eventTypeId) {
   await api.delete(buildUrl(baseUrl, `/admin/api/v1/event_types/${eventTypeId}`), {
     headers: authHeaders(token),
     failOnStatusCode: false,
+    timeout: apiRequestTimeoutMs,
   });
 }
 
@@ -440,6 +447,7 @@ async function deleteEvent(api, baseUrl, token, eventId) {
   await api.delete(buildUrl(baseUrl, `/admin/api/v1/events/${eventId}`), {
     headers: authHeaders(token),
     failOnStatusCode: false,
+    timeout: apiRequestTimeoutMs,
   });
 }
 
@@ -475,10 +483,10 @@ async function scrollToSeededEventCard(page, uniqueTitle, expectedApiPage) {
     })
     .first();
   const candidates = [
-    semanticCard,
     page.getByRole('group', { name: titlePattern }).first(),
     page.getByLabel(titlePattern).first(),
     page.getByText(titlePattern).first(),
+    semanticCard,
   ];
   const listAnchors = page.getByRole('button', { name: /^Editar evento / });
   const maxAttempts = Math.max(24, expectedApiPage * 18);
@@ -495,8 +503,10 @@ async function scrollToSeededEventCard(page, uniqueTitle, expectedApiPage) {
       if (await candidate.isVisible().catch(() => false)) {
         return {
           locator: candidate,
-          source: index === 0 ? 'semantic button' : 'visible title/card surface',
-          isAccessibleEditButton: index === 0,
+          source: index === candidates.length - 1
+            ? 'semantic button'
+            : 'visible title/card surface',
+          isAccessibleEditButton: index === candidates.length - 1,
         };
       }
     }
