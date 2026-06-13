@@ -80,6 +80,29 @@ regex_search_stream() {
   grep -nP -- "${pattern}"
 }
 
+submodule_gitlink_requires_workflow_audit() {
+  local submodule_path="$1"
+  local base_ref=""
+
+  if [[ "${GITHUB_EVENT_NAME:-}" != "pull_request" ]]; then
+    return 0
+  fi
+
+  base_ref="${GITHUB_BASE_REF:-}"
+  if [[ -z "${base_ref}" ]]; then
+    return 0
+  fi
+
+  git fetch --no-tags --prune --depth=1 origin "${base_ref}" >/dev/null 2>&1 || true
+
+  if git diff --quiet --ignore-submodules=none "origin/${base_ref}...HEAD" -- "${submodule_path}"; then
+    printf 'INFO: skipping workflow runtime audit for unchanged gitlink %s against origin/%s.\n' "${submodule_path}" "${base_ref}"
+    return 1
+  fi
+
+  return 0
+}
+
 required_files=(
   ".gitmodules"
   "docker-compose.yml"
@@ -630,37 +653,51 @@ if regex_search_paths 'uses:\s+actions/upload-artifact@v(4|5|6)\b' .github/workf
   exit 1
 fi
 
-flutter_workflows_dir="$(materialize_submodule_path_from_gitlink "flutter-app" ".github/workflows")"
-laravel_workflows_dir="$(materialize_submodule_path_from_gitlink "laravel-app" ".github/workflows")"
-web_workflows_dir="$(materialize_submodule_path_from_gitlink "web-app" ".github/workflows")"
+submodule_workflow_dirs=()
+laravel_workflows_dir=""
 
-if regex_search_paths 'uses:\s+actions/checkout@v(4|5)\b' "${flutter_workflows_dir}" "${laravel_workflows_dir}" "${web_workflows_dir}" >/dev/null 2>&1; then
-  echo "ERROR: submodule workflows still reference a pre-v6 actions/checkout runtime in the HEAD candidate gitlinks." >&2
-  exit 1
+if submodule_gitlink_requires_workflow_audit "flutter-app"; then
+  submodule_workflow_dirs+=("$(materialize_submodule_path_from_gitlink "flutter-app" ".github/workflows")")
 fi
 
-if regex_search_paths 'uses:\s+actions/setup-node@v(4|5)\b' "${flutter_workflows_dir}" "${laravel_workflows_dir}" "${web_workflows_dir}" >/dev/null 2>&1; then
-  echo "ERROR: submodule workflows still reference a pre-v6 actions/setup-node runtime in the HEAD candidate gitlinks." >&2
-  exit 1
+if submodule_gitlink_requires_workflow_audit "laravel-app"; then
+  laravel_workflows_dir="$(materialize_submodule_path_from_gitlink "laravel-app" ".github/workflows")"
+  submodule_workflow_dirs+=("${laravel_workflows_dir}")
 fi
 
-if regex_search_paths 'uses:\s+actions/upload-artifact@v(4|5|6)\b' "${flutter_workflows_dir}" "${laravel_workflows_dir}" "${web_workflows_dir}" >/dev/null 2>&1; then
-  echo "ERROR: submodule workflows still reference a pre-v7 actions/upload-artifact runtime in the HEAD candidate gitlinks." >&2
-  exit 1
+if submodule_gitlink_requires_workflow_audit "web-app"; then
+  submodule_workflow_dirs+=("$(materialize_submodule_path_from_gitlink "web-app" ".github/workflows")")
 fi
 
-if regex_search_paths 'uses:\s+actions/download-artifact@v(4|5|6|7)\b' "${flutter_workflows_dir}" "${laravel_workflows_dir}" "${web_workflows_dir}" >/dev/null 2>&1; then
-  echo "ERROR: submodule workflows still reference a pre-v8 actions/download-artifact runtime in the HEAD candidate gitlinks." >&2
-  exit 1
+if ((${#submodule_workflow_dirs[@]} > 0)); then
+  if regex_search_paths 'uses:\s+actions/checkout@v(4|5)\b' "${submodule_workflow_dirs[@]}" >/dev/null 2>&1; then
+    echo "ERROR: submodule workflows still reference a pre-v6 actions/checkout runtime in the HEAD candidate gitlinks." >&2
+    exit 1
+  fi
+
+  if regex_search_paths 'uses:\s+actions/setup-node@v(4|5)\b' "${submodule_workflow_dirs[@]}" >/dev/null 2>&1; then
+    echo "ERROR: submodule workflows still reference a pre-v6 actions/setup-node runtime in the HEAD candidate gitlinks." >&2
+    exit 1
+  fi
+
+  if regex_search_paths 'uses:\s+actions/upload-artifact@v(4|5|6)\b' "${submodule_workflow_dirs[@]}" >/dev/null 2>&1; then
+    echo "ERROR: submodule workflows still reference a pre-v7 actions/upload-artifact runtime in the HEAD candidate gitlinks." >&2
+    exit 1
+  fi
+
+  if regex_search_paths 'uses:\s+actions/download-artifact@v(4|5|6|7)\b' "${submodule_workflow_dirs[@]}" >/dev/null 2>&1; then
+    echo "ERROR: submodule workflows still reference a pre-v8 actions/download-artifact runtime in the HEAD candidate gitlinks." >&2
+    exit 1
+  fi
+
+  if regex_search_paths 'uses:\s+peter-evans/repository-dispatch@v3\b' "${submodule_workflow_dirs[@]}" >/dev/null 2>&1; then
+    echo "ERROR: submodule workflows still reference peter-evans/repository-dispatch@v3, which emits Node 20 deprecation warnings on GitHub-hosted runners." >&2
+    exit 1
+  fi
 fi
 
-if regex_search_paths 'uses:\s+actions/cache@v(1|2|3|4)\b' "${laravel_workflows_dir}" >/dev/null 2>&1; then
+if [[ -n "${laravel_workflows_dir}" ]] && regex_search_paths 'uses:\s+actions/cache@v(1|2|3|4)\b' "${laravel_workflows_dir}" >/dev/null 2>&1; then
   echo "ERROR: Laravel submodule workflows still reference a pre-v5 actions/cache runtime in the HEAD candidate gitlinks." >&2
-  exit 1
-fi
-
-if regex_search_paths 'uses:\s+peter-evans/repository-dispatch@v3\b' "${flutter_workflows_dir}" "${laravel_workflows_dir}" "${web_workflows_dir}" >/dev/null 2>&1; then
-  echo "ERROR: submodule workflows still reference peter-evans/repository-dispatch@v3, which emits Node 20 deprecation warnings on GitHub-hosted runners." >&2
   exit 1
 fi
 
@@ -669,7 +706,7 @@ if regex_search_paths "node-version:\s*'20'\b" .github/workflows >/dev/null 2>&1
   exit 1
 fi
 
-if regex_search_paths "node-version:\s*'20'\b" "${flutter_workflows_dir}" "${laravel_workflows_dir}" "${web_workflows_dir}" >/dev/null 2>&1; then
+if ((${#submodule_workflow_dirs[@]} > 0)) && regex_search_paths "node-version:\s*'20'\b" "${submodule_workflow_dirs[@]}" >/dev/null 2>&1; then
   echo "ERROR: submodule workflows still pin Node 20 for CI browser/navigation execution in the HEAD candidate gitlinks." >&2
   exit 1
 fi
