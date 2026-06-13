@@ -74,14 +74,49 @@ server {
         try_files /__backend_owned_branding__ /index.php?$query_string;
     }
 
+    # --- Flutter Web (Frontend) ---
+    # Flutter core bootstrap files must always revalidate so cached bundles do
+    # not survive a deploy and bypass the canonical anonymous bootstrap path.
+    location = /index.html {
+        root /var/www/flutter;
+        try_files $uri =404;
+        add_header Cache-Control "no-cache" always;
+    }
+    location = /main.dart.js {
+        root /var/www/flutter;
+        try_files $uri =404;
+        add_header Cache-Control "no-cache" always;
+    }
+    location = /flutter_bootstrap.js {
+        root /var/www/flutter;
+        try_files $uri =404;
+        add_header Cache-Control "no-cache" always;
+    }
+    location = /flutter_service_worker.js {
+        root /var/www/flutter;
+        try_files $uri =404;
+        add_header Cache-Control "no-cache" always;
+    }
+    location = /version.json {
+        root /var/www/flutter;
+        try_files $uri =404;
+        add_header Cache-Control "no-cache" always;
+    }
+
+    location ^~ /assets/ {
+        root /var/www/flutter;
+        try_files $uri =404;
+        expires 1y;
+        add_header Cache-Control "public, immutable" always;
+    }
+
     location ~* \.(?:js|css|png|jpg|jpeg|gif|svg|webp|json|map|wasm|txt)$ {
         root /var/www/flutter;
         try_files $uri =404;
         expires 1y;
-        add_header Cache-Control "public, immutable";
+        add_header Cache-Control "public, immutable" always;
     }
 
-    # --- Flutter Web (Frontend) ---
     location = / {
         try_files /__tenant_public_shell__ /index.php?$query_string;
     }
@@ -111,63 +146,7 @@ server {
     location ^~ /admin/api/ {
         try_files $uri /index.php?$query_string;
     }
-    location ^~ /account-profiles/ {
-        try_files $uri /index.php?$query_string;
-    }
-    location ^~ /parceiro/ {
-        try_files $uri /index.php?$query_string;
-    }
-    location ^~ /agenda/evento/ {
-        try_files $uri /index.php?$query_string;
-    }
-    location ^~ /static/ {
-        try_files $uri /index.php?$query_string;
-    }
-    location = /open-app {
-        try_files $uri /index.php?$query_string;
-    }
-    location ^~ /account-profile-types/ {
-        try_files $uri /index.php?$query_string;
-    }
-    location ^~ /static-assets/ {
-        try_files $uri /index.php?$query_string;
-    }
-    location ^~ /event-types/ {
-        try_files $uri /index.php?$query_string;
-    }
-    location ^~ /static-profile-types/ {
-        try_files $uri /index.php?$query_string;
-    }
-    location ^~ /events/ {
-        try_files $uri /index.php?$query_string;
-    }
-    location ^~ /map-filters/ {
-        try_files $uri /index.php?$query_string;
-    }
-    location = /descobrir {
-        try_files /__tenant_public_shell__ /index.php?$query_string;
-    }
-    location = /privacy-policy {
-        try_files /__tenant_public_shell__ /index.php?$query_string;
-    }
-    location = /mapa {
-        try_files /__tenant_public_shell__ /index.php?$query_string;
-    }
-    location = /mapa/poi {
-        try_files /__tenant_public_shell__ /index.php?$query_string;
-    }
-    location = /invite {
-        try_files /__tenant_public_shell__ /index.php?$query_string;
-    }
-    location = /convites {
-        try_files /__tenant_public_shell__ /index.php?$query_string;
-    }
-    location = /location/permission {
-        try_files /__tenant_public_shell__ /index.php?$query_string;
-    }
-    location = /baixe-o-app {
-        try_files /__tenant_public_shell__ /index.php?$query_string;
-    }
+    include /etc/nginx/project/*.conf;
     location = /admin {
         root /var/www/flutter;
         try_files /index.html =404;

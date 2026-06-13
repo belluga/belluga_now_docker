@@ -74,6 +74,21 @@ async function waitForOption(page, optionText) {
   return resolveOption(page, optionText);
 }
 
+async function clickFirstVisible(locator) {
+  const count = await locator.count();
+  let visibleLocator = null;
+
+  for (let index = 0; index < count; index += 1) {
+    const candidate = locator.nth(index);
+    if (await candidate.isVisible().catch(() => false)) {
+      visibleLocator = candidate;
+      break;
+    }
+  }
+
+  await (visibleLocator ?? locator.first()).click();
+}
+
 async function selectDropdownOption(
   page,
   {
@@ -94,14 +109,14 @@ async function selectDropdownOption(
   });
   if ((await buttonTrigger.count()) > 0) {
     record(`open dropdown ${fieldLabel}`);
-    await buttonTrigger.last().click();
+    await clickFirstVisible(buttonTrigger);
   } else {
     const fallbackTrigger = fallbackButtonName
       ? page.getByRole('button', { name: new RegExp(fallbackButtonName, 'i') })
       : null;
     if (fallbackTrigger && (await fallbackTrigger.count()) > 0) {
       record(`open fallback dropdown ${fallbackButtonName}`);
-      await fallbackTrigger.last().click();
+      await clickFirstVisible(fallbackTrigger);
     } else {
       const labelTrigger = page.getByLabel(fieldLabel);
       expect(
@@ -109,7 +124,7 @@ async function selectDropdownOption(
         `Expected a visible trigger for dropdown "${fieldLabel}".`,
       ).toBeGreaterThan(0);
       record(`open labeled dropdown ${fieldLabel}`);
-      await labelTrigger.last().click();
+      await clickFirstVisible(labelTrigger);
     }
   }
 

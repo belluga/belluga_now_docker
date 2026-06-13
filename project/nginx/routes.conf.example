@@ -1,0 +1,21 @@
+# Copy this file to routes.conf and replace the placeholder route families with
+# your downstream project's public/browser route inventory.
+#
+# Current Belluga Now reference families:
+# - backend-routed prefixes: /account-profiles/ /parceiro/ /agenda/evento/
+#   /static/ /account-profile-types/ /static-assets/ /event-types/
+#   /static-profile-types/ /events/ /map-filters/
+# - tenant-public shell routes: /descobrir /privacy-policy /mapa /mapa/poi
+#   /invite /convites /location/permission /baixe-o-app
+
+location ^~ /resource-prefix/ {
+    try_files $uri /index.php?$query_string;
+}
+
+location = /open-app {
+    try_files $uri /index.php?$query_string;
+}
+
+location = /public-entry {
+    try_files /__tenant_public_shell__ /index.php?$query_string;
+}

@@ -17,6 +17,14 @@ function mutationManifest() {
   return mutation;
 }
 
+function suiteManifest(suiteName) {
+  const suiteManifestValue = manifest[suiteName];
+  if (!suiteManifestValue) {
+    throw new Error(`Missing ${suiteName} suite manifest.`);
+  }
+  return suiteManifestValue;
+}
+
 function shardFor(id) {
   const shard = mutationManifest().shards[id];
   if (!shard) {
@@ -39,6 +47,17 @@ function expectedTitles(id) {
   return [...(shardFor(id).expected_titles || [])].sort();
 }
 
+function expectedSuiteTitles(suiteName) {
+  const suiteValue = suiteManifest(suiteName);
+  const titles = Array.isArray(suiteValue.expected_titles)
+    ? suiteValue.expected_titles
+    : [];
+  if (titles.length === 0) {
+    throw new Error(`Missing expected titles for ${suiteName} suite.`);
+  }
+  return [...titles].sort();
+}
+
 function parseListedTitles(filePath) {
   const source = fs.readFileSync(filePath, 'utf8');
   return source
@@ -51,12 +70,41 @@ function parseListedTitles(filePath) {
     .sort();
 }
 
-try {
-  if (suite !== 'mutation') {
-    throw new Error('Shard manifest is only defined for mutation suite.');
+function countTitles(titles) {
+  const counts = new Map();
+  for (const title of titles) {
+    counts.set(title, (counts.get(title) || 0) + 1);
+  }
+  return counts;
+}
+
+function expandDiff(expectedCounts, actualCounts, mode) {
+  const rows = [];
+  const titleUniverse = new Set([
+    ...expectedCounts.keys(),
+    ...actualCounts.keys(),
+  ]);
+
+  for (const title of [...titleUniverse].sort()) {
+    const expectedCount = expectedCounts.get(title) || 0;
+    const actualCount = actualCounts.get(title) || 0;
+    const diff =
+      mode === 'missing'
+        ? expectedCount - actualCount
+        : actualCount - expectedCount;
+    for (let index = 0; index < diff; index += 1) {
+      rows.push(title);
+    }
   }
 
+  return rows;
+}
+
+try {
   if (command === 'grep') {
+    if (suite !== 'mutation') {
+      throw new Error('Shard grep selection is only defined for mutation suite.');
+    }
     process.stdout.write(shardFor(shardOrAll).grep_extra || '');
     process.exit(0);
   }
@@ -66,13 +114,17 @@ try {
       throw new Error('Missing Playwright --list output path.');
     }
 
-    const expected = expectedTitles(shardOrAll);
+    const expected = suite === 'mutation'
+      ? expectedTitles(shardOrAll)
+      : expectedSuiteTitles(suite);
     const actual = parseListedTitles(listPath);
-    const missing = expected.filter((title) => !actual.includes(title));
-    const unexpected = actual.filter((title) => !expected.includes(title));
+    const expectedCounts = countTitles(expected);
+    const actualCounts = countTitles(actual);
+    const missing = expandDiff(expectedCounts, actualCounts, 'missing');
+    const unexpected = expandDiff(expectedCounts, actualCounts, 'unexpected');
 
     if (missing.length || unexpected.length) {
-      console.error('Web navigation mutation shard selection mismatch.');
+      console.error(`Web navigation ${suite} selection mismatch.`);
       if (missing.length) {
         console.error(`Missing expected titles:\n- ${missing.join('\n- ')}`);
       }
@@ -83,7 +135,9 @@ try {
     }
 
     console.log(
-      `Validated mutation shard "${shardOrAll || 'all'}" selects ${actual.length} expected test(s).`,
+      suite === 'mutation'
+        ? `Validated mutation shard "${shardOrAll || 'all'}" selects ${actual.length} expected test(s).`
+        : `Validated ${suite} suite selects ${actual.length} expected test(s).`,
     );
     for (const title of actual) {
       console.log(`- ${title}`);

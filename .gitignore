@@ -2,6 +2,7 @@
 .env.testing
 .env.local.tunnel
 .env.local.navigation
+tools/flutter/.navigation_harness_policy_probe_*.sh
 # exclude everything
 application/*
 .idea/*

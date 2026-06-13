@@ -3,6 +3,10 @@ const { test, expect, request } = require('@playwright/test');
 const {
   loginTenantAdmin: loginTenantAdminWithRequiredCredentials,
 } = require('./support/tenant_admin_auth');
+const {
+  cleanupOnboardedAccount,
+  runCleanupPreservingPrimaryError,
+} = require('./support/account_onboarding_cleanup');
 
 const tenantUrl = process.env.NAV_TENANT_URL;
 const appBootTimeoutMs = 90000;
@@ -281,7 +285,8 @@ function matchesPoiCapableProfileType(row, { requireEvents = false } = {}) {
   const capabilities = row?.capabilities || {};
   const isPubliclyDiscoverable =
     capabilities.is_publicly_discoverable !== false;
-  return capabilities.is_poi_enabled === true
+  return capabilities.is_queryable === true
+    && capabilities.is_poi_enabled === true
     && capabilities.is_reference_location_enabled === true
     && capabilities.is_favoritable === true
     && isPubliclyDiscoverable
@@ -292,23 +297,25 @@ async function resolvePoiCapableProfileType(
   api,
   baseUrl,
   token,
-  { requireEvents = false } = {},
+  { requireEvents = false, preferDedicatedType = false } = {},
 ) {
-  const response = await api.get(
-    buildUrl(baseUrl, '/admin/api/v1/account_profile_types'),
-    {
-      headers: await authHeaders(token),
-    },
-  );
-  expect(response.status(), 'Account profile types must load.').toBe(200);
+  if (!preferDedicatedType) {
+    const response = await api.get(
+      buildUrl(baseUrl, '/admin/api/v1/account_profile_types'),
+      {
+        headers: await authHeaders(token),
+      },
+    );
+    expect(response.status(), 'Account profile types must load.').toBe(200);
 
-  const payload = await response.json();
-  const rows = Array.isArray(payload?.data) ? payload.data : [];
-  const selected = rows.find((row) =>
-    matchesPoiCapableProfileType(row, { requireEvents }),
-  );
-  if (selected) {
-    return { profileType: selected.type, createdType: null };
+    const payload = await response.json();
+    const rows = Array.isArray(payload?.data) ? payload.data : [];
+    const selected = rows.find((row) =>
+      matchesPoiCapableProfileType(row, { requireEvents }),
+    );
+    if (selected) {
+      return { profileType: selected.type, createdType: null };
+    }
   }
 
   const type = `playwright-apd-${Date.now()}`;
@@ -326,6 +333,8 @@ async function resolvePoiCapableProfileType(
           icon_color: '#FFFFFF',
         },
         capabilities: {
+          is_queryable: true,
+          is_publicly_navigable: true,
           is_favoritable: true,
           is_publicly_discoverable: true,
           is_poi_enabled: true,
@@ -356,7 +365,7 @@ async function createPoiAccountProfile(api, baseUrl, token, profileType) {
     {
       data: {
         name: `Playwright APD ${uniqueSuffix}`,
-        ownership_state: 'tenant_owned',
+        ownership_state: 'unmanaged',
         profile_type: profileType,
         location: {
           lat: -20.671339,
@@ -378,6 +387,24 @@ async function createPoiAccountProfile(api, baseUrl, token, profileType) {
     profileSlug: profile?.slug?.toString() || account?.slug?.toString() || '',
     displayName: profile?.display_name?.toString() || account?.name?.toString(),
   };
+}
+
+async function cleanupCreatedPoiAccountProfile(
+  api,
+  baseUrl,
+  token,
+  { accountSlug, profileId },
+) {
+  if (accountSlug) {
+    await cleanupOnboardedAccount(api, baseUrl, token, accountSlug);
+    return;
+  }
+
+  expect(
+    profileId,
+    'Seeded Account Profile cleanup requires either accountSlug or profileId.',
+  ).toBeTruthy();
+  await deleteAccountProfile(api, baseUrl, token, profileId);
 }
 
 async function createDetailEvent(api, baseUrl, token, { eventType, physicalHost }) {
@@ -440,7 +467,12 @@ async function createDetailEventType(api, baseUrl, token) {
   return payload?.data || {};
 }
 
-async function gotoPublicProfileDetailAndWaitForHydration(page, baseUrl, slug) {
+async function gotoPublicProfileDetailAndWaitForHydration(
+  page,
+  baseUrl,
+  slug,
+  { readPayload = true } = {},
+) {
   const responsePromise = page.waitForResponse(
     (candidate) => {
       if (candidate.request().method().toUpperCase() !== 'GET') {
@@ -460,13 +492,24 @@ async function gotoPublicProfileDetailAndWaitForHydration(page, baseUrl, slug) {
   expect(response.status(), 'Public account profile document must load.')
     .toBeLessThan(400);
 
-  const hydratedResponse = await responsePromise;
-  expect(hydratedResponse.status(), 'Profile detail API must load.')
-    .toBeLessThan(400);
   await assertAppBooted(page);
   await enableAccessibilityIfNeeded(page);
 
-  const payload = await hydratedResponse.json();
+  const hydratedResponse = await responsePromise;
+  expect(hydratedResponse.status(), 'Profile detail API must load.')
+    .toBeLessThan(400);
+  if (!readPayload) {
+    return null;
+  }
+  let payload;
+  try {
+    payload = await hydratedResponse.json();
+  } catch (error) {
+    throw new Error(
+      `Profile detail hydration returned a non-JSON payload for ${slug}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+
   return normalizePayload(payload);
 }
 
@@ -488,19 +531,57 @@ function locationPayload(row) {
   return row?.location || row?.poi || row?.map_poi || null;
 }
 
+function hasNestedProfileGroups(row) {
+  const groups = Array.isArray(row?.nested_profile_groups)
+    ? row.nested_profile_groups
+    : [];
+  return groups.length > 0;
+}
+
 function isMinimalNoSections(row) {
   const about = textValue(row?.bio, row?.content, row?.description);
-  return !about && agendaOccurrences(row).length === 0 && locationPayload(row) == null;
+  return !about
+    && agendaOccurrences(row).length === 0
+    && locationPayload(row) == null
+    && !hasNestedProfileGroups(row);
 }
 
 async function loadRuntimeProfiles(api, baseUrl) {
-  const token = await resolveAnonymousIdentityToken(api, baseUrl);
-  const rows = await fetchPublicProfiles(api, baseUrl, token);
-  const details = [];
-  for (const row of rows.slice(0, 20)) {
-    details.push(await fetchPublicProfileDetail(api, baseUrl, token, row.slug));
+  if (!loadRuntimeProfiles.catalogCache) {
+    loadRuntimeProfiles.catalogCache = new Map();
   }
-  return { token, rows: details };
+  if (!loadRuntimeProfiles.detailCache) {
+    loadRuntimeProfiles.detailCache = new Map();
+  }
+
+  if (!loadRuntimeProfiles.catalogCache.has(baseUrl)) {
+    loadRuntimeProfiles.catalogCache.set(baseUrl, (async () => {
+      const token = await resolveAnonymousIdentityToken(api, baseUrl);
+      const rows = await fetchPublicProfiles(api, baseUrl, token);
+      return { token, rows: rows.slice(0, 20) };
+    })());
+  }
+
+  const catalog = await loadRuntimeProfiles.catalogCache.get(baseUrl);
+  return {
+    token: catalog.token,
+    rows: catalog.rows,
+    async hydrate(rowOrSlug) {
+      const slug = typeof rowOrSlug === 'string'
+        ? textValue(rowOrSlug)
+        : textValue(rowOrSlug?.slug);
+      expect(slug, 'Runtime Account Profile hydration requires a slug.').toBeTruthy();
+
+      const cacheKey = `${baseUrl}:${slug}`;
+      if (!loadRuntimeProfiles.detailCache.has(cacheKey)) {
+        loadRuntimeProfiles.detailCache.set(
+          cacheKey,
+          fetchPublicProfileDetail(api, baseUrl, catalog.token, slug),
+        );
+      }
+      return loadRuntimeProfiles.detailCache.get(cacheKey);
+    },
+  };
 }
 
 async function openTenantPath(page, baseUrl, pathName) {
@@ -641,10 +722,13 @@ test('@readonly NAV-APD-02..06 and NAV-APD-10 hero, taxonomy, tabs, social remov
   page,
 }) => {
   const baseUrl = requireTenantUrl();
-  const { rows } = await loadRuntimeProfiles(page.request, baseUrl);
+  const { rows, hydrate } = await loadRuntimeProfiles(page.request, baseUrl);
   const taxonomyCandidate = rows.find((row) => taxonomySnapshot(row));
-  const minimalCandidate = rows.find(isMinimalNoSections);
-  const profile = taxonomyCandidate || rows[0];
+  const profile = taxonomyCandidate
+    ? await hydrate(taxonomyCandidate)
+    : rows[0]
+      ? await hydrate(rows[0])
+      : null;
   expect(profile, 'Seed at least one public Account Profile for NAV-APD-02..06.')
     .toBeTruthy();
 
@@ -685,6 +769,15 @@ test('@readonly NAV-APD-02..06 and NAV-APD-10 hero, taxonomy, tabs, social remov
     }
   }
 
+  let minimalCandidate = null;
+  for (const row of rows) {
+    const hydrated = await hydrate(row);
+    if (isMinimalNoSections(hydrated)) {
+      minimalCandidate = hydrated;
+      break;
+    }
+  }
+
   if (minimalCandidate) {
     await openTenantPath(page, baseUrl, `/parceiro/${minimalCandidate.slug}`);
     const minimalName = textValue(minimalCandidate.display_name, minimalCandidate.name);
@@ -714,14 +807,11 @@ test('@readonly NAV-APD-12 mobile breakpoint keeps title and taxonomy chips read
     .toBeTruthy();
 
   const profileName = textValue(profile.display_name, profile.name, profile.title);
+  // NAV-APD-12 verifies mobile readability, not cold-route bootstrap.
+  // Direct profile-route boot is already exercised by the other readonly detail tests.
+  await openTenantPath(page, baseUrl, '/');
   await openTenantPath(page, baseUrl, `/parceiro/${profile.slug}`);
   await assertVisibleTextOrSemanticLabel(page, profileName, 'Mobile Account Profile hero');
-  await page.mouse.wheel(0, 900);
-  await assertVisibleTextOrSemanticLabel(
-    page,
-    profileName,
-    'Mobile Account Profile hero after scroll',
-  );
 
   const snapshot = taxonomySnapshot(profile);
   if (snapshot) {
@@ -733,6 +823,13 @@ test('@readonly NAV-APD-12 mobile breakpoint keeps title and taxonomy chips read
     await expect(page.getByText(new RegExp(`^${escapeRegExp(snapshot.value)}$`, 'i')))
       .toHaveCount(0);
   }
+
+  await page.mouse.wheel(0, 900);
+  await assertVisibleTextOrSemanticLabel(
+    page,
+    profileName,
+    'Mobile Account Profile hero after scroll',
+  );
 });
 
 test('@mutation NAV-APD-07..08 agenda is occurrence-first and cards navigate to event detail', async ({
@@ -742,9 +839,11 @@ test('@mutation NAV-APD-07..08 agenda is occurrence-first and cards navigate to 
   const api = await createApiContext(baseUrl);
   let sessionToken = null;
   let createdProfileId = null;
+  let createdAccountSlug = null;
   let createdProfileType = null;
   let createdEventId = null;
   let createdEventTypeId = null;
+  let primaryError = null;
 
   try {
     sessionToken = await loginTenantAdmin(api, baseUrl);
@@ -752,7 +851,7 @@ test('@mutation NAV-APD-07..08 agenda is occurrence-first and cards navigate to 
       api,
       baseUrl,
       sessionToken,
-      { requireEvents: true },
+      { requireEvents: true, preferDedicatedType: true },
     );
     createdProfileType = profileTypeSeed.createdType;
     const createdProfile = await createPoiAccountProfile(
@@ -762,6 +861,7 @@ test('@mutation NAV-APD-07..08 agenda is occurrence-first and cards navigate to 
       profileTypeSeed.profileType,
     );
     createdProfileId = createdProfile.profileId;
+    createdAccountSlug = createdProfile.accountSlug;
 
     const eventType = await createDetailEventType(api, baseUrl, sessionToken);
     createdEventTypeId = eventType?.id?.toString() || null;
@@ -815,17 +915,28 @@ test('@mutation NAV-APD-07..08 agenda is occurrence-first and cards navigate to 
         timeout: appBootTimeoutMs,
       },
     );
+  } catch (error) {
+    primaryError = error;
+    throw error;
   } finally {
-    await deleteEvent(api, baseUrl, sessionToken, createdEventId);
-    await deleteEventType(api, baseUrl, sessionToken, createdEventTypeId);
-    await deleteAccountProfile(api, baseUrl, sessionToken, createdProfileId);
-    await deleteAccountProfileType(
-      api,
-      baseUrl,
-      sessionToken,
-      createdProfileType,
-    );
-    await api.dispose();
+    await runCleanupPreservingPrimaryError(primaryError, async () => {
+      try {
+        await deleteEvent(api, baseUrl, sessionToken, createdEventId);
+        await deleteEventType(api, baseUrl, sessionToken, createdEventTypeId);
+        await cleanupCreatedPoiAccountProfile(api, baseUrl, sessionToken, {
+          accountSlug: createdAccountSlug,
+          profileId: createdProfileId,
+        });
+        await deleteAccountProfileType(
+          api,
+          baseUrl,
+          sessionToken,
+          createdProfileType,
+        );
+      } finally {
+        await api.dispose();
+      }
+    });
   }
 });
 
@@ -836,7 +947,9 @@ test('@mutation NAV-APD-09 Como Chegar opens focused map and shared route choose
   const api = await createApiContext(baseUrl);
   let sessionToken = null;
   let createdProfileId = null;
+  let createdAccountSlug = null;
   let createdProfileType = null;
+  let primaryError = null;
 
   try {
     await page.context().grantPermissions(['geolocation'], { origin: baseUrl });
@@ -849,6 +962,7 @@ test('@mutation NAV-APD-09 Como Chegar opens focused map and shared route choose
       api,
       baseUrl,
       sessionToken,
+      { preferDedicatedType: true },
     );
     createdProfileType = profileTypeSeed.createdType;
     const createdProfile = await createPoiAccountProfile(
@@ -858,6 +972,7 @@ test('@mutation NAV-APD-09 Como Chegar opens focused map and shared route choose
       profileTypeSeed.profileType,
     );
     createdProfileId = createdProfile.profileId;
+    createdAccountSlug = createdProfile.accountSlug;
 
     const detailPayload = await gotoPublicProfileDetailAndWaitForHydration(
       page,
@@ -882,32 +997,328 @@ test('@mutation NAV-APD-09 Como Chegar opens focused map and shared route choose
       page,
       baseUrl,
       createdProfile.profileSlug,
+      { readPayload: false },
     );
-    const routeChooserCta = page
-      .getByRole('button', { name: /Traçar rota/i })
-      .first();
-    if (!(await routeChooserCta.isVisible().catch(() => false))) {
-      await clickLocatorCenter(
-        page,
-        page.getByRole('button', { name: /^Como Chegar$/i }).first(),
-        'Account Profile detail must expose the Como Chegar tab as a semantic button when route CTA is not already visible.',
-      );
-    }
+    const routeChooserCta = page.getByRole('button', { name: /^Outros$/i }).first();
     await clickLocatorCenter(
       page,
       routeChooserCta,
-      'Account Profile detail must expose the shared route chooser CTA.',
+      'Account Profile detail must expose the shared directions chooser through the inline Outros action.',
     );
-    await expect(page.getByText(/Google Maps|Apple Maps|Waze|Navegar/i).first())
+    await expect(page.getByText(/Google Maps|99|Waze|Uber/i).first())
       .toBeVisible({ timeout: appBootTimeoutMs });
+  } catch (error) {
+    primaryError = error;
+    throw error;
   } finally {
-    await deleteAccountProfile(api, baseUrl, sessionToken, createdProfileId);
-    await deleteAccountProfileType(
+    await runCleanupPreservingPrimaryError(primaryError, async () => {
+      try {
+        await cleanupCreatedPoiAccountProfile(api, baseUrl, sessionToken, {
+          accountSlug: createdAccountSlug,
+          profileId: createdProfileId,
+        });
+        await deleteAccountProfileType(
+          api,
+          baseUrl,
+          sessionToken,
+          createdProfileType,
+        );
+      } finally {
+        await api.dispose();
+      }
+    });
+  }
+});
+
+test('@mutation NAV-APD-11 reference point action opens confirmation modal', async ({
+  page,
+}) => {
+  const baseUrl = requireTenantUrl();
+  const api = await createApiContext(baseUrl);
+  let sessionToken = null;
+  let createdAccountSlug = null;
+  let createdProfileId = null;
+  let createdProfileType = null;
+  let primaryError = null;
+
+  try {
+    sessionToken = await loginTenantAdmin(api, baseUrl);
+    const profileTypeSeed = await resolvePoiCapableProfileType(
       api,
       baseUrl,
       sessionToken,
-      createdProfileType,
+      { preferDedicatedType: true },
     );
-    await api.dispose();
+    createdProfileType = profileTypeSeed.createdType;
+    const createdProfile = await createPoiAccountProfile(
+      api,
+      baseUrl,
+      sessionToken,
+      profileTypeSeed.profileType,
+    );
+    createdAccountSlug = createdProfile.accountSlug;
+    createdProfileId = createdProfile.profileId;
+
+    await gotoPublicProfileDetailAndWaitForHydration(
+      page,
+      baseUrl,
+      createdProfile.profileSlug,
+      { readPayload: false },
+    );
+
+    const referencePointButton = page.getByRole('button', {
+      name: /Usar como ponto de referência/i,
+    }).first();
+    await clickLocatorCenter(
+      page,
+      referencePointButton,
+      'Eligible Account Profile detail must expose the reference-point CTA.',
+    );
+
+    await expect(
+      page.getByText(
+        'Todas as distâncias serão calculadas a partir desse local:',
+        { exact: true },
+      ),
+    ).toBeVisible({ timeout: appBootTimeoutMs });
+    await expect(page.getByText(labelPattern(createdProfile.displayName)).first())
+      .toBeVisible({ timeout: appBootTimeoutMs });
+    await expect(
+      page.getByRole('button', {
+        name: /Usar como Ponto de Referência/i,
+      }).first(),
+    ).toBeVisible({ timeout: appBootTimeoutMs });
+  } catch (error) {
+    primaryError = error;
+    throw error;
+  } finally {
+    await runCleanupPreservingPrimaryError(primaryError, async () => {
+      try {
+        await cleanupCreatedPoiAccountProfile(api, baseUrl, sessionToken, {
+          accountSlug: createdAccountSlug,
+          profileId: createdProfileId,
+        });
+        await deleteAccountProfileType(
+          api,
+          baseUrl,
+          sessionToken,
+          createdProfileType,
+        );
+      } finally {
+        await api.dispose();
+      }
+    });
+  }
+});
+
+test('@mutation NAV-APD-13 map reference point action opens confirmation modal', async ({
+  page,
+}) => {
+  const baseUrl = requireTenantUrl();
+  const api = await createApiContext(baseUrl);
+  let sessionToken = null;
+  let createdAccountSlug = null;
+  let createdProfileId = null;
+  let createdProfileType = null;
+  let primaryError = null;
+
+  try {
+    await page.context().grantPermissions(['geolocation'], { origin: baseUrl });
+    await page
+      .context()
+      .setGeolocation({ latitude: -20.671339, longitude: -40.495395 });
+
+    sessionToken = await loginTenantAdmin(api, baseUrl);
+    const profileTypeSeed = await resolvePoiCapableProfileType(
+      api,
+      baseUrl,
+      sessionToken,
+      { preferDedicatedType: true },
+    );
+    createdProfileType = profileTypeSeed.createdType;
+    const createdProfile = await createPoiAccountProfile(
+      api,
+      baseUrl,
+      sessionToken,
+      profileTypeSeed.profileType,
+    );
+    createdAccountSlug = createdProfile.accountSlug;
+    createdProfileId = createdProfile.profileId;
+
+    await gotoPublicProfileDetailAndWaitForHydration(
+      page,
+      baseUrl,
+      createdProfile.profileSlug,
+      { readPayload: false },
+    );
+    await expect(page.getByText(/Como Chegar/i).first()).toBeVisible({
+      timeout: appBootTimeoutMs,
+    });
+    await page.getByText(/Ver no mapa/i).first().click();
+    await continueWithoutLocationIfPrompted(page);
+    await expect(page).toHaveURL(/\/mapa.*poi=account_profile/i, {
+      timeout: appBootTimeoutMs,
+    });
+
+    const referencePointButton = page.getByRole('button', {
+      name: /Usar como ponto de referência/i,
+    }).first();
+    await clickLocatorCenter(
+      page,
+      referencePointButton,
+      'Focused Account Profile map card must expose the reference-point CTA.',
+    );
+    await expect(
+      page.getByText(
+        'Todas as distâncias serão calculadas a partir desse local:',
+        { exact: true },
+      ),
+    ).toBeVisible({ timeout: appBootTimeoutMs });
+    await expect(page.getByText(labelPattern(createdProfile.displayName)).first())
+      .toBeVisible({ timeout: appBootTimeoutMs });
+    await expect(
+      page.getByRole('button', {
+        name: /Usar como Ponto de Referência/i,
+      }).first(),
+    ).toBeVisible({ timeout: appBootTimeoutMs });
+  } catch (error) {
+    primaryError = error;
+    throw error;
+  } finally {
+    await runCleanupPreservingPrimaryError(primaryError, async () => {
+      try {
+        await cleanupCreatedPoiAccountProfile(api, baseUrl, sessionToken, {
+          accountSlug: createdAccountSlug,
+          profileId: createdProfileId,
+        });
+        await deleteAccountProfileType(
+          api,
+          baseUrl,
+          sessionToken,
+          createdProfileType,
+        );
+      } finally {
+        await api.dispose();
+      }
+    });
+  }
+});
+
+test('@mutation NAV-APD-14 map route action reuses the shared route chooser after reference-point prompt', async ({
+  page,
+}) => {
+  const baseUrl = requireTenantUrl();
+  const api = await createApiContext(baseUrl);
+  let sessionToken = null;
+  let createdAccountSlug = null;
+  let createdProfileId = null;
+  let createdProfileType = null;
+  let primaryError = null;
+
+  try {
+    await page.context().grantPermissions(['geolocation'], { origin: baseUrl });
+    await page
+      .context()
+      .setGeolocation({ latitude: -20.671339, longitude: -40.495395 });
+
+    sessionToken = await loginTenantAdmin(api, baseUrl);
+    const profileTypeSeed = await resolvePoiCapableProfileType(
+      api,
+      baseUrl,
+      sessionToken,
+      { preferDedicatedType: true },
+    );
+    createdProfileType = profileTypeSeed.createdType;
+    const createdProfile = await createPoiAccountProfile(
+      api,
+      baseUrl,
+      sessionToken,
+      profileTypeSeed.profileType,
+    );
+    createdAccountSlug = createdProfile.accountSlug;
+    createdProfileId = createdProfile.profileId;
+
+    await gotoPublicProfileDetailAndWaitForHydration(
+      page,
+      baseUrl,
+      createdProfile.profileSlug,
+      { readPayload: false },
+    );
+    await expect(page.getByText(/Como Chegar/i).first()).toBeVisible({
+      timeout: appBootTimeoutMs,
+    });
+    await page.getByText(/Ver no mapa/i).first().click();
+    await continueWithoutLocationIfPrompted(page);
+    await expect(page).toHaveURL(/\/mapa.*poi=account_profile/i, {
+      timeout: appBootTimeoutMs,
+    });
+
+    const referencePointButton = page.getByRole('button', {
+      name: /Usar como ponto de referência/i,
+    }).first();
+    await clickLocatorCenter(
+      page,
+      referencePointButton,
+      'Focused Account Profile map card must expose the reference-point CTA before route selection.',
+    );
+    await page.getByRole('button', {
+      name: /Usar como Ponto de Referência/i,
+    }).first().click();
+    await expect(
+      page.getByRole('button', {
+        name: /Ponto de referência/i,
+      }).first(),
+    ).toBeVisible({ timeout: appBootTimeoutMs });
+
+    const routeButton = page.getByRole('button', {
+      name: /^Traçar rota$/i,
+    }).first();
+    await clickLocatorCenter(
+      page,
+      routeButton,
+      'Map card route CTA must open the canonical route-start prompt.',
+    );
+
+    await expect(
+      page.getByText('Qual PONTO DE PARTIDA quer usar?', { exact: true }),
+    ).toBeVisible({ timeout: appBootTimeoutMs });
+    const referencePointOption = page.getByRole('radio', {
+      name: new RegExp(
+        `O ponto de referência selecionado\\s+${escapeRegExp(createdProfile.displayName)}`,
+        'i',
+      ),
+    }).first();
+    await expect(referencePointOption).toBeVisible({
+      timeout: appBootTimeoutMs,
+    });
+
+    await referencePointOption.click();
+    await page.getByRole('button', { name: /^Continuar$/i }).click();
+
+    await expect(
+      page.getByText(/Selecione seu aplicativo de preferência/i).first(),
+    ).toBeVisible({ timeout: appBootTimeoutMs });
+    await expect(page.getByText(/Google Maps|99|Waze|Uber/i).first())
+      .toBeVisible({ timeout: appBootTimeoutMs });
+  } catch (error) {
+    primaryError = error;
+    throw error;
+  } finally {
+    await runCleanupPreservingPrimaryError(primaryError, async () => {
+      try {
+        await cleanupCreatedPoiAccountProfile(api, baseUrl, sessionToken, {
+          accountSlug: createdAccountSlug,
+          profileId: createdProfileId,
+        });
+        await deleteAccountProfileType(
+          api,
+          baseUrl,
+          sessionToken,
+          createdProfileType,
+        );
+      } finally {
+        await api.dispose();
+      }
+    });
   }
 });

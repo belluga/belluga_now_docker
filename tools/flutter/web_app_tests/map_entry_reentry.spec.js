@@ -1,4 +1,5 @@
 const { test, expect } = require('@playwright/test');
+const { withFreshBrowserPage } = require('./support/fresh_browser_context');
 
 const tenantUrl = process.env.NAV_TENANT_URL;
 const appBootTimeoutMs = 120000;
@@ -107,68 +108,62 @@ async function waitForTenantPath(page, allowedPrefixes) {
   );
 }
 
-test('@readonly MAP-NAV-REENTRY-01 tenant home can reopen map after returning from a warm permission-gated entry', async ({
-  browser,
-}) => {
+test('@readonly MAP-NAV-REENTRY-01 tenant home can reopen map after returning from a warm permission-gated entry', async () => {
   const baseUrl = requireTenantUrl();
   const appOrigin = new URL(baseUrl).origin;
-  const context = await browser.newContext({
-    ignoreHTTPSErrors: true,
+  await withFreshBrowserPage(async ({ page }) => {
+    const collectors = installFailureCollectors(page, appOrigin);
+    const continueWithoutLocationButton = page.getByRole('button', {
+      name: /Continuar sem localização/i,
+    });
+
+    const response = await page.goto(baseUrl, { waitUntil: 'domcontentloaded' });
+    expect(response, 'Tenant response should be available').not.toBeNull();
+    expect(response.status(), 'Tenant response should be successful').toBeLessThan(400);
+
+    await assertAppBooted(page);
+    await enableAccessibilityIfNeeded(page);
+    await waitForTenantPath(page, ['/']);
+
+    await page.getByRole('tab', { name: /^Mapa$/i }).click();
+    await expect(continueWithoutLocationButton).toBeVisible({
+      timeout: appBootTimeoutMs,
+    });
+    await continueWithoutLocationButton.click();
+
+    await waitForTenantPath(page, ['/mapa']);
+    await expect(page.getByRole('tab', { name: /^Inicio$/i })).toBeVisible({
+      timeout: appBootTimeoutMs,
+    });
+
+    await page.getByRole('tab', { name: /^Inicio$/i }).click();
+    await waitForTenantPath(page, ['/']);
+
+    await page.getByRole('tab', { name: /^Mapa$/i }).click();
+    await expect(continueWithoutLocationButton).toBeVisible({
+      timeout: appBootTimeoutMs,
+    });
+    await continueWithoutLocationButton.click();
+    await waitForTenantPath(page, ['/mapa']);
+
+    expect(
+      collectors.runtimeErrors,
+      `Unexpected runtime errors:\n${collectors.runtimeErrors.join('\n')}`,
+    ).toEqual([]);
+    expect(
+      collectors.failedRequests,
+      `Failed requests:\n${collectors.failedRequests.join('\n')}`,
+    ).toEqual([]);
+    const criticalConsoleErrors = collectors.consoleErrors.filter(
+      (entry) => !entry.includes('status of 401'),
+    );
+    expect(
+      criticalConsoleErrors,
+      `Console errors:\n${criticalConsoleErrors.join('\n')}`,
+    ).toEqual([]);
+    expect(
+      collectors.mutatingApiRequests,
+      `Readonly map reentry flow must not issue mutating API requests:\n${collectors.mutatingApiRequests.join('\n')}`,
+    ).toEqual([]);
   });
-  const page = await context.newPage();
-  const collectors = installFailureCollectors(page, appOrigin);
-  const continueWithoutLocationButton = page.getByRole('button', {
-    name: /Continuar sem localização/i,
-  });
-
-  const response = await page.goto(baseUrl, { waitUntil: 'domcontentloaded' });
-  expect(response, 'Tenant response should be available').not.toBeNull();
-  expect(response.status(), 'Tenant response should be successful').toBeLessThan(400);
-
-  await assertAppBooted(page);
-  await enableAccessibilityIfNeeded(page);
-  await waitForTenantPath(page, ['/']);
-
-  await page.getByRole('tab', { name: /^Mapa$/i }).click();
-  await expect(continueWithoutLocationButton).toBeVisible({
-    timeout: appBootTimeoutMs,
-  });
-  await continueWithoutLocationButton.click();
-
-  await waitForTenantPath(page, ['/mapa']);
-  await expect(page.getByRole('tab', { name: /^Inicio$/i })).toBeVisible({
-    timeout: appBootTimeoutMs,
-  });
-
-  await page.getByRole('tab', { name: /^Inicio$/i }).click();
-  await waitForTenantPath(page, ['/']);
-
-  await page.getByRole('tab', { name: /^Mapa$/i }).click();
-  await expect(continueWithoutLocationButton).toBeVisible({
-    timeout: appBootTimeoutMs,
-  });
-  await continueWithoutLocationButton.click();
-  await waitForTenantPath(page, ['/mapa']);
-
-  expect(
-    collectors.runtimeErrors,
-    `Unexpected runtime errors:\n${collectors.runtimeErrors.join('\n')}`,
-  ).toEqual([]);
-  expect(
-    collectors.failedRequests,
-    `Failed requests:\n${collectors.failedRequests.join('\n')}`,
-  ).toEqual([]);
-  const criticalConsoleErrors = collectors.consoleErrors.filter(
-    (entry) => !entry.includes('status of 401'),
-  );
-  expect(
-    criticalConsoleErrors,
-    `Console errors:\n${criticalConsoleErrors.join('\n')}`,
-  ).toEqual([]);
-  expect(
-    collectors.mutatingApiRequests,
-    `Readonly map reentry flow must not issue mutating API requests:\n${collectors.mutatingApiRequests.join('\n')}`,
-  ).toEqual([]);
-
-  await context.close();
 });

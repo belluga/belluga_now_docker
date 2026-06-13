@@ -1,11 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=tools/submodules/_common.sh
-source "$script_dir/_common.sh"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "${SCRIPT_DIR}/../.." && pwd)"
+CANONICAL_SCRIPT="${REPO_ROOT}/delphi-ai/tools/submodule_workspace_status.sh"
 
-require_git_repo
-ensure_submodules_present
-print_submodule_state
-
+exec bash "${CANONICAL_SCRIPT}" "$@"
