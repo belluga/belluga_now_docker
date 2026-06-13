@@ -5,6 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 RUNNER_DIR="${SCRIPT_DIR}/web_app_smoke_runner"
 ENV_FILE="${NAV_LOCAL_ENV_FILE:-${REPO_ROOT}/.env.local.navigation}"
+source "${SCRIPT_DIR}/resolve_playwright_browser.sh"
 
 load_optional_local_navigation_env() {
   if [[ ! -f "${ENV_FILE}" ]]; then
@@ -41,19 +42,7 @@ load_optional_local_navigation_env() {
 
 load_optional_local_navigation_env
 
-if [[ -z "${PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH:-}" ]]; then
-  for candidate in \
-    /usr/bin/google-chrome \
-    /usr/bin/google-chrome-stable \
-    /usr/bin/chromium-browser \
-    /usr/bin/chromium
-  do
-    if [[ -x "${candidate}" ]]; then
-      export PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH="${candidate}"
-      break
-    fi
-  done
-fi
+export_playwright_browser_path
 
 if [[ -z "${NAV_TENANT_URL:-}" ]]; then
   echo "ERROR: NAV_TENANT_URL is required." >&2
