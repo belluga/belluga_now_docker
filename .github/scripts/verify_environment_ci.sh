@@ -1211,8 +1211,8 @@ if ! grep -Fq "steps.main_rollback_target.outputs.revision" <<<"${main_rollback_
 fi
 
 stage_rollback_block="$(awk '
-  /- name: Roll back stage deploy when provenance, preflight, smoke, or post-mutation deploy failure requires recovery/ { in_block=1 }
-  in_block && /^      - name:/ && $0 !~ /Roll back stage deploy when provenance, preflight, smoke, or post-mutation deploy failure requires recovery/ { exit }
+  /- name: Roll back stage deploy when provenance, preflight, smoke, cleanup, or post-mutation deploy failure requires recovery/ { in_block=1 }
+  in_block && /^      - name:/ && $0 !~ /Roll back stage deploy when provenance, preflight, smoke, cleanup, or post-mutation deploy failure requires recovery/ { exit }
   in_block { print }
 ' .github/workflows/orchestration-ci-cd.yml)"
 
@@ -1248,6 +1248,11 @@ fi
 
 if ! grep -Fq "steps.stage_navigation_mutation_smoke.outcome == 'failure'" <<<"${stage_rollback_block}"; then
   echo "ERROR: stage rollback block must trigger on mutation navigation smoke failure." >&2
+  exit 1
+fi
+
+if ! grep -Fq "steps.stage_public_taxonomy_validation_fixture_cleanup.outcome == 'failure'" <<<"${stage_rollback_block}"; then
+  echo "ERROR: stage rollback block must trigger on taxonomy fixture cleanup failure." >&2
   exit 1
 fi
 
