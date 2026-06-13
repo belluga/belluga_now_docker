@@ -1,12 +1,6 @@
 #!/usr/bin/env node
 
 const crypto = require('crypto');
-const { request, expect } = require('@playwright/test');
-const { loginTenantAdmin } = require('./support/tenant_admin_auth');
-const {
-  cleanupOnboardedAccount,
-  cleanupOnboardedAccounts,
-} = require('./support/account_onboarding_cleanup');
 const {
   fixture,
   filterOwnedEventRows,
@@ -20,12 +14,40 @@ const {
   requireLiveMutationContract,
 } = require('./support/live_navigation_mutation_contract');
 
+requireLiveMutationContract({
+  scriptLabel: 'Public taxonomy validation fixture bootstrap',
+  allowedLanes: ['local', 'stage'],
+});
+
 const tenantUrl = (process.env.NAV_TENANT_URL || '').trim();
 const fixtureAction = (process.env.NAV_PUBLIC_TAXONOMY_FIXTURE_ACTION || 'ensure')
   .toString()
   .trim()
   .toLowerCase();
 let anonymousIdentityTokenPromise = null;
+let requestApi = null;
+let expectApi = null;
+let loginTenantAdmin = null;
+let cleanupOnboardedAccount = null;
+let cleanupOnboardedAccounts = null;
+
+function ensurePlaywrightRuntime() {
+  if (requestApi && expectApi) {
+    return;
+  }
+
+  ({ request: requestApi, expect: expectApi } = require('@playwright/test'));
+  ({ loginTenantAdmin } = require('./support/tenant_admin_auth'));
+  ({
+    cleanupOnboardedAccount,
+    cleanupOnboardedAccounts,
+  } = require('./support/account_onboarding_cleanup'));
+}
+
+function expect(...args) {
+  ensurePlaywrightRuntime();
+  return expectApi(...args);
+}
 
 function requireTenantUrl() {
   expect(
@@ -47,7 +69,8 @@ function authHeaders(token) {
 }
 
 async function createApiContext(baseUrl) {
-  return request.newContext({
+  ensurePlaywrightRuntime();
+  return requestApi.newContext({
     baseURL: baseUrl,
     extraHTTPHeaders: {
       Accept: 'application/json',
@@ -825,10 +848,6 @@ async function verifyEventFixture(api, baseUrl, { eventId, eventSlug }) {
 }
 
 async function main() {
-  requireLiveMutationContract({
-    scriptLabel: 'Public taxonomy validation fixture bootstrap',
-    allowedLanes: ['local', 'stage'],
-  });
   const baseUrl = requireTenantUrl();
   const api = await createApiContext(baseUrl);
 

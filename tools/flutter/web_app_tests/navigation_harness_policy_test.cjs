@@ -10,22 +10,16 @@ const repoRoot = path.resolve(__dirname, '..', '..', '..');
 const guardScript = path.join(__dirname, 'guard_web_navigation_policy.cjs');
 const shardsScript = path.join(__dirname, 'web_navigation_shards.cjs');
 const smokeScript = path.join(repoRoot, 'tools', 'flutter', 'run_web_navigation_smoke.sh');
+const directPlaywrightContractProbe = path.join(
+  repoRoot,
+  'tools',
+  'flutter',
+  'web_app_smoke_runner',
+  'scripts',
+  'probe_playwright_suite_contract.js',
+);
 const localNavigationEnvExample = path.join(repoRoot, '.env.local.navigation.example');
 const orchestrationWorkflow = path.join(repoRoot, '.github', 'workflows', 'orchestration-ci-cd.yml');
-const smokeRunnerNodeModules = path.join(
-  repoRoot,
-  'tools',
-  'flutter',
-  'web_app_smoke_runner',
-  'node_modules',
-);
-const playwrightConfig = path.join(
-  repoRoot,
-  'tools',
-  'flutter',
-  'web_app_smoke_runner',
-  'playwright.config.js',
-);
 const {
   filterOwnedEventRows,
   filterOwnedProfileRows,
@@ -148,9 +142,16 @@ function directPlaywrightEnv(overrides = {}) {
 
   return {
     ...env,
-    NODE_PATH: smokeRunnerNodeModules,
     ...overrides,
   };
+}
+
+function spawnDirectPlaywrightContractProbe(args, env) {
+  return spawnSync('node', [directPlaywrightContractProbe, ...args], {
+    cwd: path.join(repoRoot, 'tools', 'flutter', 'web_app_smoke_runner'),
+    env: directPlaywrightEnv(env),
+    encoding: 'utf8',
+  });
 }
 
 function assertFailsForSource(name, source, expectedMessage) {
@@ -931,28 +932,15 @@ function assertSmokeRunnerRejectsSuiteTypeMismatch() {
 }
 
 function assertDirectPlaywrightMutationFailsClosedOnMain() {
-  const result = spawnSync(
-    'npx',
-    [
-      'playwright',
-      'test',
-      '--config',
-      './playwright.config.js',
-      '--grep',
-      '@mutation',
-      '--list',
-    ],
+  const result = spawnDirectPlaywrightContractProbe(
+    ['test', '--config', './playwright.config.js', '--grep', '@mutation', '--list'],
     {
-      cwd: path.join(repoRoot, 'tools', 'flutter', 'web_app_smoke_runner'),
-      env: directPlaywrightEnv({
-        NAV_WEB_TEST_TYPE: 'mutation',
-        NAV_DEPLOY_LANE: 'main',
-        NAV_TENANT_URL: 'https://guarappari.belluga.space',
-        NAV_ADMIN_EMAIL: 'policy@example.test',
-        NAV_ADMIN_PASSWORD: 'policy-secret',
-        NAV_WEB_ALLOW_NONLOCAL_MUTATION_HOSTS: '1',
-      }),
-      encoding: 'utf8',
+      NAV_WEB_TEST_TYPE: 'mutation',
+      NAV_DEPLOY_LANE: 'main',
+      NAV_TENANT_URL: 'https://guarappari.belluga.space',
+      NAV_ADMIN_EMAIL: 'policy@example.test',
+      NAV_ADMIN_PASSWORD: 'policy-secret',
+      NAV_WEB_ALLOW_NONLOCAL_MUTATION_HOSTS: '1',
     },
   );
   assert.notStrictEqual(
@@ -967,28 +955,15 @@ function assertDirectPlaywrightMutationFailsClosedOnMain() {
 }
 
 function assertDirectPlaywrightMutationRequiresExplicitLaneForNonLocalHosts() {
-  const result = spawnSync(
-    'npx',
-    [
-      'playwright',
-      'test',
-      '--config',
-      './playwright.config.js',
-      '--grep',
-      '@mutation',
-      '--list',
-    ],
+  const result = spawnDirectPlaywrightContractProbe(
+    ['test', '--config', './playwright.config.js', '--grep', '@mutation', '--list'],
     {
-      cwd: path.join(repoRoot, 'tools', 'flutter', 'web_app_smoke_runner'),
-      env: directPlaywrightEnv({
-        NAV_WEB_TEST_TYPE: 'mutation',
-        GITHUB_REF_NAME: 'stage',
-        NAV_TENANT_URL: 'https://guarappari.belluga.space',
-        NAV_ADMIN_EMAIL: 'policy@example.test',
-        NAV_ADMIN_PASSWORD: 'policy-secret',
-        NAV_WEB_ALLOW_NONLOCAL_MUTATION_HOSTS: '1',
-      }),
-      encoding: 'utf8',
+      NAV_WEB_TEST_TYPE: 'mutation',
+      GITHUB_REF_NAME: 'stage',
+      NAV_TENANT_URL: 'https://guarappari.belluga.space',
+      NAV_ADMIN_EMAIL: 'policy@example.test',
+      NAV_ADMIN_PASSWORD: 'policy-secret',
+      NAV_WEB_ALLOW_NONLOCAL_MUTATION_HOSTS: '1',
     },
   );
   assert.notStrictEqual(
@@ -1003,28 +978,15 @@ function assertDirectPlaywrightMutationRequiresExplicitLaneForNonLocalHosts() {
 }
 
 function assertDirectPlaywrightMutationRejectsDeployLaneOnlyForNonLocalHosts() {
-  const result = spawnSync(
-    'npx',
-    [
-      'playwright',
-      'test',
-      '--config',
-      './playwright.config.js',
-      '--grep',
-      '@mutation',
-      '--list',
-    ],
+  const result = spawnDirectPlaywrightContractProbe(
+    ['test', '--config', './playwright.config.js', '--grep', '@mutation', '--list'],
     {
-      cwd: path.join(repoRoot, 'tools', 'flutter', 'web_app_smoke_runner'),
-      env: directPlaywrightEnv({
-        NAV_WEB_TEST_TYPE: 'mutation',
-        DEPLOY_LANE: 'stage',
-        NAV_TENANT_URL: 'https://guarappari.belluga.space',
-        NAV_ADMIN_EMAIL: 'policy@example.test',
-        NAV_ADMIN_PASSWORD: 'policy-secret',
-        NAV_WEB_ALLOW_NONLOCAL_MUTATION_HOSTS: '1',
-      }),
-      encoding: 'utf8',
+      NAV_WEB_TEST_TYPE: 'mutation',
+      DEPLOY_LANE: 'stage',
+      NAV_TENANT_URL: 'https://guarappari.belluga.space',
+      NAV_ADMIN_EMAIL: 'policy@example.test',
+      NAV_ADMIN_PASSWORD: 'policy-secret',
+      NAV_WEB_ALLOW_NONLOCAL_MUTATION_HOSTS: '1',
     },
   );
   assert.notStrictEqual(
@@ -1039,28 +1001,15 @@ function assertDirectPlaywrightMutationRejectsDeployLaneOnlyForNonLocalHosts() {
 }
 
 function assertDirectPlaywrightMutationRejectsBlankExplicitLaneForNonLocalHosts() {
-  const result = spawnSync(
-    'npx',
-    [
-      'playwright',
-      'test',
-      '--config',
-      './playwright.config.js',
-      '--grep',
-      '@mutation',
-      '--list',
-    ],
+  const result = spawnDirectPlaywrightContractProbe(
+    ['test', '--config', './playwright.config.js', '--grep', '@mutation', '--list'],
     {
-      cwd: path.join(repoRoot, 'tools', 'flutter', 'web_app_smoke_runner'),
-      env: directPlaywrightEnv({
-        NAV_WEB_TEST_TYPE: 'mutation',
-        NAV_DEPLOY_LANE: '   ',
-        NAV_TENANT_URL: 'https://guarappari.belluga.space',
-        NAV_ADMIN_EMAIL: 'policy@example.test',
-        NAV_ADMIN_PASSWORD: 'policy-secret',
-        NAV_WEB_ALLOW_NONLOCAL_MUTATION_HOSTS: '1',
-      }),
-      encoding: 'utf8',
+      NAV_WEB_TEST_TYPE: 'mutation',
+      NAV_DEPLOY_LANE: '   ',
+      NAV_TENANT_URL: 'https://guarappari.belluga.space',
+      NAV_ADMIN_EMAIL: 'policy@example.test',
+      NAV_ADMIN_PASSWORD: 'policy-secret',
+      NAV_WEB_ALLOW_NONLOCAL_MUTATION_HOSTS: '1',
     },
   );
   assert.notStrictEqual(
@@ -1075,10 +1024,8 @@ function assertDirectPlaywrightMutationRejectsBlankExplicitLaneForNonLocalHosts(
 }
 
 function assertDirectPlaywrightMutationRejectsGrepSubset() {
-  const result = spawnSync(
-    'npx',
+  const result = spawnDirectPlaywrightContractProbe(
     [
-      'playwright',
       'test',
       '--config',
       './playwright.config.js',
@@ -1087,16 +1034,12 @@ function assertDirectPlaywrightMutationRejectsGrepSubset() {
       '--list',
     ],
     {
-      cwd: path.join(repoRoot, 'tools', 'flutter', 'web_app_smoke_runner'),
-      env: directPlaywrightEnv({
-        NAV_WEB_TEST_TYPE: 'mutation',
-        NAV_DEPLOY_LANE: 'stage',
-        NAV_TENANT_URL: 'https://guarappari.belluga.space',
-        NAV_ADMIN_EMAIL: 'policy@example.test',
-        NAV_ADMIN_PASSWORD: 'policy-secret',
-        NAV_WEB_ALLOW_NONLOCAL_MUTATION_HOSTS: '1',
-      }),
-      encoding: 'utf8',
+      NAV_WEB_TEST_TYPE: 'mutation',
+      NAV_DEPLOY_LANE: 'stage',
+      NAV_TENANT_URL: 'https://guarappari.belluga.space',
+      NAV_ADMIN_EMAIL: 'policy@example.test',
+      NAV_ADMIN_PASSWORD: 'policy-secret',
+      NAV_WEB_ALLOW_NONLOCAL_MUTATION_HOSTS: '1',
     },
   );
   assert.notStrictEqual(
@@ -1144,27 +1087,14 @@ function assertIpv6LoopbackCountsAsLocalHostForRunner() {
 }
 
 function assertIpv6LoopbackCountsAsLocalHostForDirectPlaywright() {
-  const result = spawnSync(
-    'npx',
-    [
-      'playwright',
-      'test',
-      '--config',
-      './playwright.config.js',
-      '--grep',
-      '@mutation',
-      '--list',
-    ],
+  const result = spawnDirectPlaywrightContractProbe(
+    ['test', '--config', './playwright.config.js', '--grep', '@mutation', '--list'],
     {
-      cwd: path.join(repoRoot, 'tools', 'flutter', 'web_app_smoke_runner'),
-      env: directPlaywrightEnv({
-        NAV_WEB_TEST_TYPE: 'mutation',
-        NAV_LANDLORD_URL: 'http://[::1]',
-        NAV_TENANT_URL: 'http://[::1]',
-        NAV_ADMIN_EMAIL: 'policy@example.test',
-        NAV_ADMIN_PASSWORD: 'policy-secret',
-      }),
-      encoding: 'utf8',
+      NAV_WEB_TEST_TYPE: 'mutation',
+      NAV_LANDLORD_URL: 'http://[::1]',
+      NAV_TENANT_URL: 'http://[::1]',
+      NAV_ADMIN_EMAIL: 'policy@example.test',
+      NAV_ADMIN_PASSWORD: 'policy-secret',
     },
   );
   assert.strictEqual(
@@ -1175,10 +1105,8 @@ function assertIpv6LoopbackCountsAsLocalHostForDirectPlaywright() {
 }
 
 function assertDirectPlaywrightReadonlyRejectsMutationSpec() {
-  const result = spawnSync(
-    'npx',
+  const result = spawnDirectPlaywrightContractProbe(
     [
-      'playwright',
       'test',
       path.join('..', 'web_app_tests', 'directions_brand_visual.spec.js'),
       '--config',
@@ -1186,13 +1114,9 @@ function assertDirectPlaywrightReadonlyRejectsMutationSpec() {
       '--list',
     ],
     {
-      cwd: path.join(repoRoot, 'tools', 'flutter', 'web_app_smoke_runner'),
-      env: directPlaywrightEnv({
-        NAV_WEB_TEST_TYPE: 'readonly',
-        NAV_DEPLOY_LANE: 'main',
-        NAV_TENANT_URL: 'https://guarappari.belluga.space',
-      }),
-      encoding: 'utf8',
+      NAV_WEB_TEST_TYPE: 'readonly',
+      NAV_DEPLOY_LANE: 'main',
+      NAV_TENANT_URL: 'https://guarappari.belluga.space',
     },
   );
   assert.notStrictEqual(
@@ -1207,10 +1131,8 @@ function assertDirectPlaywrightReadonlyRejectsMutationSpec() {
 }
 
 function assertDirectPlaywrightReadonlyRejectsReadonlySpecSubset() {
-  const result = spawnSync(
-    'npx',
+  const result = spawnDirectPlaywrightContractProbe(
     [
-      'playwright',
       'test',
       path.join('..', 'web_app_tests', 'favorite_auth_gate_runtime.readonly.spec.js'),
       '--config',
@@ -1218,13 +1140,9 @@ function assertDirectPlaywrightReadonlyRejectsReadonlySpecSubset() {
       '--list',
     ],
     {
-      cwd: path.join(repoRoot, 'tools', 'flutter', 'web_app_smoke_runner'),
-      env: directPlaywrightEnv({
-        NAV_WEB_TEST_TYPE: 'readonly',
-        NAV_DEPLOY_LANE: 'main',
-        NAV_TENANT_URL: 'https://guarappari.belluga.space',
-      }),
-      encoding: 'utf8',
+      NAV_WEB_TEST_TYPE: 'readonly',
+      NAV_DEPLOY_LANE: 'main',
+      NAV_TENANT_URL: 'https://guarappari.belluga.space',
     },
   );
   assert.notStrictEqual(
@@ -1239,10 +1157,8 @@ function assertDirectPlaywrightReadonlyRejectsReadonlySpecSubset() {
 }
 
 function assertDirectPlaywrightReadonlyRejectsTestDirRelativeSpecSelector() {
-  const result = spawnSync(
-    'npx',
+  const result = spawnDirectPlaywrightContractProbe(
     [
-      'playwright',
       'test',
       'favorite_auth_gate_runtime.readonly.spec.js',
       '--config',
@@ -1250,13 +1166,9 @@ function assertDirectPlaywrightReadonlyRejectsTestDirRelativeSpecSelector() {
       '--list',
     ],
     {
-      cwd: path.join(repoRoot, 'tools', 'flutter', 'web_app_smoke_runner'),
-      env: directPlaywrightEnv({
-        NAV_WEB_TEST_TYPE: 'readonly',
-        NAV_DEPLOY_LANE: 'main',
-        NAV_TENANT_URL: 'https://guarappari.belluga.space',
-      }),
-      encoding: 'utf8',
+      NAV_WEB_TEST_TYPE: 'readonly',
+      NAV_DEPLOY_LANE: 'main',
+      NAV_TENANT_URL: 'https://guarappari.belluga.space',
     },
   );
   assert.notStrictEqual(
@@ -1271,10 +1183,8 @@ function assertDirectPlaywrightReadonlyRejectsTestDirRelativeSpecSelector() {
 }
 
 function assertDirectPlaywrightReadonlyRejectsDirectorySelector() {
-  const result = spawnSync(
-    'npx',
+  const result = spawnDirectPlaywrightContractProbe(
     [
-      'playwright',
       'test',
       '../web_app_tests',
       '--config',
@@ -1284,13 +1194,9 @@ function assertDirectPlaywrightReadonlyRejectsDirectorySelector() {
       '--list',
     ],
     {
-      cwd: path.join(repoRoot, 'tools', 'flutter', 'web_app_smoke_runner'),
-      env: directPlaywrightEnv({
-        NAV_WEB_TEST_TYPE: 'readonly',
-        NAV_DEPLOY_LANE: 'main',
-        NAV_TENANT_URL: 'https://guarappari.belluga.space',
-      }),
-      encoding: 'utf8',
+      NAV_WEB_TEST_TYPE: 'readonly',
+      NAV_DEPLOY_LANE: 'main',
+      NAV_TENANT_URL: 'https://guarappari.belluga.space',
     },
   );
   assert.notStrictEqual(
@@ -1305,25 +1211,12 @@ function assertDirectPlaywrightReadonlyRejectsDirectorySelector() {
 }
 
 function assertDirectPlaywrightReadonlyRejectsMutationGrep() {
-  const result = spawnSync(
-    'npx',
-    [
-      'playwright',
-      'test',
-      '--config',
-      './playwright.config.js',
-      '--grep',
-      '@mutation',
-      '--list',
-    ],
+  const result = spawnDirectPlaywrightContractProbe(
+    ['test', '--config', './playwright.config.js', '--grep', '@mutation', '--list'],
     {
-      cwd: path.join(repoRoot, 'tools', 'flutter', 'web_app_smoke_runner'),
-      env: directPlaywrightEnv({
-        NAV_WEB_TEST_TYPE: 'readonly',
-        NAV_DEPLOY_LANE: 'main',
-        NAV_TENANT_URL: 'https://guarappari.belluga.space',
-      }),
-      encoding: 'utf8',
+      NAV_WEB_TEST_TYPE: 'readonly',
+      NAV_DEPLOY_LANE: 'main',
+      NAV_TENANT_URL: 'https://guarappari.belluga.space',
     },
   );
   assert.notStrictEqual(
@@ -1338,10 +1231,8 @@ function assertDirectPlaywrightReadonlyRejectsMutationGrep() {
 }
 
 function assertDirectPlaywrightReadonlyRejectsGrepInvertSuiteTrim() {
-  const result = spawnSync(
-    'npx',
+  const result = spawnDirectPlaywrightContractProbe(
     [
-      'playwright',
       'test',
       '--config',
       './playwright.config.js',
@@ -1352,13 +1243,9 @@ function assertDirectPlaywrightReadonlyRejectsGrepInvertSuiteTrim() {
       '--list',
     ],
     {
-      cwd: path.join(repoRoot, 'tools', 'flutter', 'web_app_smoke_runner'),
-      env: directPlaywrightEnv({
-        NAV_WEB_TEST_TYPE: 'readonly',
-        NAV_DEPLOY_LANE: 'main',
-        NAV_TENANT_URL: 'https://guarappari.belluga.space',
-      }),
-      encoding: 'utf8',
+      NAV_WEB_TEST_TYPE: 'readonly',
+      NAV_DEPLOY_LANE: 'main',
+      NAV_TENANT_URL: 'https://guarappari.belluga.space',
     },
   );
   assert.notStrictEqual(
@@ -1373,10 +1260,8 @@ function assertDirectPlaywrightReadonlyRejectsGrepInvertSuiteTrim() {
 }
 
 function assertDirectPlaywrightReadonlyRejectsGrepSubset() {
-  const result = spawnSync(
-    'npx',
+  const result = spawnDirectPlaywrightContractProbe(
     [
-      'playwright',
       'test',
       '--config',
       './playwright.config.js',
@@ -1385,13 +1270,9 @@ function assertDirectPlaywrightReadonlyRejectsGrepSubset() {
       '--list',
     ],
     {
-      cwd: path.join(repoRoot, 'tools', 'flutter', 'web_app_smoke_runner'),
-      env: directPlaywrightEnv({
-        NAV_WEB_TEST_TYPE: 'readonly',
-        NAV_DEPLOY_LANE: 'main',
-        NAV_TENANT_URL: 'https://guarappari.belluga.space',
-      }),
-      encoding: 'utf8',
+      NAV_WEB_TEST_TYPE: 'readonly',
+      NAV_DEPLOY_LANE: 'main',
+      NAV_TENANT_URL: 'https://guarappari.belluga.space',
     },
   );
   assert.notStrictEqual(
