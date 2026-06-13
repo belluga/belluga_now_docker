@@ -547,13 +547,41 @@ function isMinimalNoSections(row) {
 }
 
 async function loadRuntimeProfiles(api, baseUrl) {
-  const token = await resolveAnonymousIdentityToken(api, baseUrl);
-  const rows = await fetchPublicProfiles(api, baseUrl, token);
-  const details = [];
-  for (const row of rows.slice(0, 20)) {
-    details.push(await fetchPublicProfileDetail(api, baseUrl, token, row.slug));
+  if (!loadRuntimeProfiles.catalogCache) {
+    loadRuntimeProfiles.catalogCache = new Map();
   }
-  return { token, rows: details };
+  if (!loadRuntimeProfiles.detailCache) {
+    loadRuntimeProfiles.detailCache = new Map();
+  }
+
+  if (!loadRuntimeProfiles.catalogCache.has(baseUrl)) {
+    loadRuntimeProfiles.catalogCache.set(baseUrl, (async () => {
+      const token = await resolveAnonymousIdentityToken(api, baseUrl);
+      const rows = await fetchPublicProfiles(api, baseUrl, token);
+      return { token, rows: rows.slice(0, 20) };
+    })());
+  }
+
+  const catalog = await loadRuntimeProfiles.catalogCache.get(baseUrl);
+  return {
+    token: catalog.token,
+    rows: catalog.rows,
+    async hydrate(rowOrSlug) {
+      const slug = typeof rowOrSlug === 'string'
+        ? textValue(rowOrSlug)
+        : textValue(rowOrSlug?.slug);
+      expect(slug, 'Runtime Account Profile hydration requires a slug.').toBeTruthy();
+
+      const cacheKey = `${baseUrl}:${slug}`;
+      if (!loadRuntimeProfiles.detailCache.has(cacheKey)) {
+        loadRuntimeProfiles.detailCache.set(
+          cacheKey,
+          fetchPublicProfileDetail(api, baseUrl, catalog.token, slug),
+        );
+      }
+      return loadRuntimeProfiles.detailCache.get(cacheKey);
+    },
+  };
 }
 
 async function openTenantPath(page, baseUrl, pathName) {
@@ -694,10 +722,13 @@ test('@readonly NAV-APD-02..06 and NAV-APD-10 hero, taxonomy, tabs, social remov
   page,
 }) => {
   const baseUrl = requireTenantUrl();
-  const { rows } = await loadRuntimeProfiles(page.request, baseUrl);
+  const { rows, hydrate } = await loadRuntimeProfiles(page.request, baseUrl);
   const taxonomyCandidate = rows.find((row) => taxonomySnapshot(row));
-  const minimalCandidate = rows.find(isMinimalNoSections);
-  const profile = taxonomyCandidate || rows[0];
+  const profile = taxonomyCandidate
+    ? await hydrate(taxonomyCandidate)
+    : rows[0]
+      ? await hydrate(rows[0])
+      : null;
   expect(profile, 'Seed at least one public Account Profile for NAV-APD-02..06.')
     .toBeTruthy();
 
@@ -735,6 +766,15 @@ test('@readonly NAV-APD-02..06 and NAV-APD-10 hero, taxonomy, tabs, social remov
     if ((await locator.count()) > 0) {
       await locator.first().click();
       await expect(locator.first()).toBeVisible();
+    }
+  }
+
+  let minimalCandidate = null;
+  for (const row of rows) {
+    const hydrated = await hydrate(row);
+    if (isMinimalNoSections(hydrated)) {
+      minimalCandidate = hydrated;
+      break;
     }
   }
 

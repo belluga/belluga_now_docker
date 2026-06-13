@@ -11,6 +11,9 @@ const {
   androidBrowserContextOptions,
   expectAndroidDirectPublicHandoff,
 } = require('./support/android_intent');
+const {
+  withFreshBrowserPage,
+} = require('./support/fresh_browser_context');
 
 const tenantUrl = process.env.NAV_TENANT_URL;
 const appBootTimeoutMs = 90000;
@@ -1062,7 +1065,6 @@ test('@mutation INVITE-SESSION-CONTEXT Android direct invite and event links gen
 }) => {
   const baseUrl = requireTenantUrl();
   const api = await createApiContext(baseUrl);
-  let androidContext = null;
   let seeded = null;
   let session = null;
   let primaryError = null;
@@ -1096,31 +1098,28 @@ test('@mutation INVITE-SESSION-CONTEXT Android direct invite and event links gen
     const inviteTargetPath = `/invite?code=${encodeURIComponent(code)}`;
     const eventTargetPath = `/agenda/evento/${encodeURIComponent(eventRouteRef)}?occurrence=${encodeURIComponent(occurrenceId)}`;
 
-    androidContext = await browser.newContext(androidBrowserContextOptions);
-    const androidPage = await androidContext.newPage();
-    for (const targetPath of [inviteTargetPath, eventTargetPath]) {
-      await expectAndroidDirectPublicHandoff({
-        page: androidPage,
-        baseUrl,
-        expectedTargetPath: targetPath,
-        timeoutMs: appBootTimeoutMs,
-        action: async () => {
-          await gotoAllowingAndroidIntent(
-            androidPage,
-            buildUrl(baseUrl, targetPath),
-          );
-        },
-      });
-    }
+    await withFreshBrowserPage(async ({ page: androidPage }) => {
+      for (const targetPath of [inviteTargetPath, eventTargetPath]) {
+        await expectAndroidDirectPublicHandoff({
+          page: androidPage,
+          baseUrl,
+          expectedTargetPath: targetPath,
+          timeoutMs: appBootTimeoutMs,
+          action: async () => {
+            await gotoAllowingAndroidIntent(
+              androidPage,
+              buildUrl(baseUrl, targetPath),
+            );
+          },
+        });
+      }
+    }, androidBrowserContextOptions);
   } catch (error) {
     primaryError = error;
     throw error;
   } finally {
     await runCleanupPreservingPrimaryError(primaryError, async () => {
       try {
-        if (androidContext) {
-          await androidContext.close();
-        }
         if (seeded && session) {
           await deleteEvent(api, baseUrl, session.token, seeded.event?.event_id?.toString() || '');
           await cleanupOnboardedAccounts(

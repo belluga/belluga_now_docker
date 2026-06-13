@@ -8,6 +8,9 @@ const {
   cleanupOnboardedAccount,
   cleanupOnboardedAccounts,
 } = require('./support/account_onboarding_cleanup');
+const {
+  createFreshAuthenticatedTenantAdminPage,
+} = require('./support/tenant_admin_seeded_session');
 
 const tenantUrl = process.env.NAV_TENANT_URL;
 const appBootTimeoutMs = 90000;
@@ -2783,12 +2786,14 @@ test('@mutation NAV-ADM-LOC-01..06 admin occurrence programming location ownersh
 test('@mutation tenant-admin event occurrence FAB persists second occurrence and public detail selects it', async ({
   browser,
 }) => {
+  test.setTimeout(420000);
   annotateMultiOccurrenceNavigationMatrix();
   resetMultiOccurrenceNavigationEvidence();
   const baseUrl = requireTenantUrl();
   const api = await createApiContext(baseUrl);
   const uniqueSuffix = Date.now().toString();
   let browserContext;
+  let freshBrowser;
   let publicContext;
   let session = null;
   let eventTypeId = null;
@@ -2879,10 +2884,10 @@ test('@mutation tenant-admin event occurrence FAB persists second occurrence and
       `seeded event is visible in admin list API page ${seededListLocation.page}`,
     );
 
-    const primaryPageBundle = await createAuthenticatedTenantAdminPage(
-      browser,
+    const primaryPageBundle = await createFreshAuthenticatedTenantAdminPage(
       session,
     );
+    freshBrowser = primaryPageBundle.browser;
     browserContext = primaryPageBundle.context;
     const page = primaryPageBundle.page;
     const collectors = installFailureCollectors(page);
@@ -3197,7 +3202,7 @@ test('@mutation tenant-admin event occurrence FAB persists second occurrence and
       ).toBe(true);
     });
 
-    const publicBundle = await browser.newContext({
+    const publicBundle = await freshBrowser.newContext({
       ignoreHTTPSErrors: true,
       geolocation: { latitude: -20.671339, longitude: -40.495395 },
       permissions: ['geolocation'],
@@ -3959,6 +3964,9 @@ test('@mutation tenant-admin event occurrence FAB persists second occurrence and
     }
     if (browserContext) {
       await browserContext.close().catch(() => {});
+    }
+    if (freshBrowser) {
+      await freshBrowser.close().catch(() => {});
     }
     await api.dispose();
   }

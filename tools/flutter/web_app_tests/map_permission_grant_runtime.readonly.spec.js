@@ -1,4 +1,5 @@
 const { test, expect } = require('@playwright/test');
+const { withFreshBrowserPage } = require('./support/fresh_browser_context');
 
 const tenantUrl = process.env.NAV_TENANT_URL;
 const appBootTimeoutMs = 120000;
@@ -349,125 +350,113 @@ async function waitForCanonicalMapResponses(mapCapture, contextLabel) {
     .toBe(true);
 }
 
-test('@readonly MAP-LOC-GRANT-01 first warm geolocation-granted map entry loads POIs from a resolved origin without public error state', async ({
-  browser,
-}) => {
+test('@readonly MAP-LOC-GRANT-01 first warm geolocation-granted map entry loads POIs from a resolved origin without public error state', async () => {
   const baseUrl = requireTenantUrl();
   const origin = new URL(baseUrl).origin;
-  const context = await browser.newContext({
-    ignoreHTTPSErrors: true,
+  await withFreshBrowserPage(async ({ context, page }) => {
+    await context.grantPermissions(['geolocation'], { origin });
+    const mapCapture = attachMapRequestCapture(page);
+
+    await context.setGeolocation({
+      latitude: -20.671339,
+      longitude: -40.495395,
+      accuracy: 25,
+    });
+
+    const response = await page.goto(baseUrl, { waitUntil: 'domcontentloaded' });
+    expect(response, 'Tenant response should be available').not.toBeNull();
+    expect(response.status(), 'Tenant response should be successful').toBeLessThan(400);
+
+    await assertAppBooted(page);
+    await enableAccessibilityIfNeeded(page);
+    await waitForTenantPath(page, ['/']);
+
+    await page.getByRole('tab', { name: /^Mapa$/i }).click();
+    await waitForTenantPath(page, ['/mapa']);
+
+    await waitForCanonicalMapResponses(
+      mapCapture,
+      'Warm geolocation-granted map entry',
+    );
+
+    await expect(
+      page.getByText(/Não foi possível carregar os pontos de interesse/i),
+      'Warm geolocation-granted map entry must not show the public POI error banner.',
+    ).toHaveCount(0);
+
+    const snapshot = await mapCapture.snapshot();
+    assertCanonicalMapSnapshot(
+      snapshot,
+      'warm geolocation-granted map entry',
+    );
   });
-  await context.grantPermissions(['geolocation'], { origin });
-  const page = await context.newPage();
-  const mapCapture = attachMapRequestCapture(page);
-
-  await context.setGeolocation({
-    latitude: -20.671339,
-    longitude: -40.495395,
-    accuracy: 25,
-  });
-
-  const response = await page.goto(baseUrl, { waitUntil: 'domcontentloaded' });
-  expect(response, 'Tenant response should be available').not.toBeNull();
-  expect(response.status(), 'Tenant response should be successful').toBeLessThan(400);
-
-  await assertAppBooted(page);
-  await enableAccessibilityIfNeeded(page);
-  await waitForTenantPath(page, ['/']);
-
-  await page.getByRole('tab', { name: /^Mapa$/i }).click();
-  await waitForTenantPath(page, ['/mapa']);
-
-  await waitForCanonicalMapResponses(
-    mapCapture,
-    'Warm geolocation-granted map entry',
-  );
-
-  await expect(
-    page.getByText(/Não foi possível carregar os pontos de interesse/i),
-    'Warm geolocation-granted map entry must not show the public POI error banner.',
-  ).toHaveCount(0);
-
-  const snapshot = await mapCapture.snapshot();
-  assertCanonicalMapSnapshot(
-    snapshot,
-    'warm geolocation-granted map entry',
-  );
-
-  await context.close();
 });
 
-test('@readonly MAP-LOC-GRANT-02 location-permission CTA continuation loads canonical map data once browser geolocation is granted', async ({
-  browser,
-}) => {
+test('@readonly MAP-LOC-GRANT-02 location-permission CTA continuation loads canonical map data once browser geolocation is granted', async () => {
   const baseUrl = requireTenantUrl();
   const origin = new URL(baseUrl).origin;
-  const context = await browser.newContext({
-    ignoreHTTPSErrors: true,
+  await withFreshBrowserPage(async ({ context, page }) => {
+    const mapCapture = attachMapRequestCapture(page);
+
+    const response = await page.goto(baseUrl, { waitUntil: 'domcontentloaded' });
+    expect(response, 'Tenant response should be available').not.toBeNull();
+    expect(response.status(), 'Tenant response should be successful').toBeLessThan(400);
+
+    await assertAppBooted(page);
+    await enableAccessibilityIfNeeded(page);
+    await waitForTenantPath(page, ['/']);
+
+    await page.getByRole('tab', { name: /^Mapa$/i }).click();
+    const allowLocationButton = page.getByRole('button', {
+      name: /Permitir localização/i,
+    });
+    await expect(allowLocationButton).toBeVisible({
+      timeout: appBootTimeoutMs,
+    });
+
+    await context.grantPermissions(['geolocation'], { origin });
+    await context.setGeolocation({
+      latitude: -20.671339,
+      longitude: -40.495395,
+      accuracy: 25,
+    });
+
+    await allowLocationButton.click();
+    await waitForTenantPath(page, ['/mapa']);
+
+    await waitForCanonicalMapResponses(
+      mapCapture,
+      'Permission-gated grant first entry',
+    );
+
+    await expect(
+      page.getByText(/Não foi possível carregar os pontos de interesse/i),
+      'Permission-gated grant must not show the public POI error banner on first entry.',
+    ).toHaveCount(0);
+
+    const snapshot = await mapCapture.snapshot();
+    assertCanonicalMapSnapshot(
+      snapshot,
+      'permission-gated map grant first entry',
+    );
+
+    const firstPoiResponse = snapshot.poiResponses[0];
+    expect(
+      firstPoiResponse,
+      'Permission-gated grant must return a first POI response.',
+    ).toBeTruthy();
+    expect(
+      firstPoiResponse.status,
+      `First POI response must be successful. Responses:\n${JSON.stringify(snapshot.poiResponses, null, 2)}`,
+    ).toBeGreaterThanOrEqual(200);
+    expect(firstPoiResponse.status).toBeLessThan(300);
+    expect(
+      firstPoiResponse.parseError,
+      `First POI response must stay JSON-decodable. Response:\n${JSON.stringify(firstPoiResponse, null, 2)}`,
+    ).toBeNull();
+    expect(
+      firstPoiResponse.stackCount,
+      `First POI response must already carry non-empty stacks. Response:\n${JSON.stringify(firstPoiResponse, null, 2)}`,
+    ).toBeGreaterThan(0);
   });
-  const page = await context.newPage();
-  const mapCapture = attachMapRequestCapture(page);
-
-  const response = await page.goto(baseUrl, { waitUntil: 'domcontentloaded' });
-  expect(response, 'Tenant response should be available').not.toBeNull();
-  expect(response.status(), 'Tenant response should be successful').toBeLessThan(400);
-
-  await assertAppBooted(page);
-  await enableAccessibilityIfNeeded(page);
-  await waitForTenantPath(page, ['/']);
-
-  await page.getByRole('tab', { name: /^Mapa$/i }).click();
-  const allowLocationButton = page.getByRole('button', {
-    name: /Permitir localização/i,
-  });
-  await expect(allowLocationButton).toBeVisible({
-    timeout: appBootTimeoutMs,
-  });
-
-  await context.grantPermissions(['geolocation'], { origin });
-  await context.setGeolocation({
-    latitude: -20.671339,
-    longitude: -40.495395,
-    accuracy: 25,
-  });
-
-  await allowLocationButton.click();
-  await waitForTenantPath(page, ['/mapa']);
-
-  await waitForCanonicalMapResponses(
-    mapCapture,
-    'Permission-gated grant first entry',
-  );
-
-  await expect(
-    page.getByText(/Não foi possível carregar os pontos de interesse/i),
-    'Permission-gated grant must not show the public POI error banner on first entry.',
-  ).toHaveCount(0);
-
-  const snapshot = await mapCapture.snapshot();
-  assertCanonicalMapSnapshot(
-    snapshot,
-    'permission-gated map grant first entry',
-  );
-
-  const firstPoiResponse = snapshot.poiResponses[0];
-  expect(
-    firstPoiResponse,
-    'Permission-gated grant must return a first POI response.',
-  ).toBeTruthy();
-  expect(
-    firstPoiResponse.status,
-    `First POI response must be successful. Responses:\n${JSON.stringify(snapshot.poiResponses, null, 2)}`,
-  ).toBeGreaterThanOrEqual(200);
-  expect(firstPoiResponse.status).toBeLessThan(300);
-  expect(
-    firstPoiResponse.parseError,
-    `First POI response must stay JSON-decodable. Response:\n${JSON.stringify(firstPoiResponse, null, 2)}`,
-  ).toBeNull();
-  expect(
-    firstPoiResponse.stackCount,
-    `First POI response must already carry non-empty stacks. Response:\n${JSON.stringify(firstPoiResponse, null, 2)}`,
-  ).toBeGreaterThan(0);
-
-  await context.close();
 });

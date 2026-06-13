@@ -1,5 +1,6 @@
 const crypto = require('crypto');
 const { test, expect, request } = require('@playwright/test');
+const { withFreshBrowserPage } = require('./support/fresh_browser_context');
 
 const tenantUrl = process.env.NAV_TENANT_URL;
 const appBootTimeoutMs = 120000;
@@ -521,51 +522,43 @@ function currentPathIndicatesPromotion(page) {
   );
 }
 
-test('@readonly STARTUP-PUBLIC-BOOTSTRAP-01 anonymous tenant home cold start keeps the public surface and completes anonymous bootstrap', async ({
-  browser,
-}) => {
+test('@readonly STARTUP-PUBLIC-BOOTSTRAP-01 anonymous tenant home cold start keeps the public surface and completes anonymous bootstrap', async () => {
   const baseUrl = requireTenantUrl();
-  const context = await browser.newContext({
-    ignoreHTTPSErrors: true,
+  await withFreshBrowserPage(async ({ page }) => {
+    const startupCapture = attachStartupCapture(page);
+
+    const response = await page.goto(baseUrl, { waitUntil: 'domcontentloaded' });
+    expect(response, 'Tenant response should be available').not.toBeNull();
+    expect(response.status(), 'Tenant response should be successful').toBeLessThan(400);
+
+    await assertAppBooted(page);
+    await enableAccessibilityIfNeeded(page);
+    await waitForTenantPath(page, ['/']);
+    await assertStartupSnapshotGreen(page, startupCapture, 'Anonymous home startup', {
+      requiredProtectedLabels: ['agenda'],
+    });
+
+    const snapshot = startupCapture.snapshot();
+
+    await expect(
+      page.getByText(/^Agenda$/i).first(),
+      'Anonymous home startup must remain on the tenant public home experience.',
+    ).toBeVisible({
+      timeout: appBootTimeoutMs,
+    });
+
+    expect(
+      snapshot.pageErrors,
+      `Unexpected page errors during startup:\n${snapshot.pageErrors.join('\n')}`,
+    ).toEqual([]);
+    expect(
+      snapshot.consoleErrors.filter((entry) => !entry.includes('status of 401')),
+      `Unexpected console errors during startup:\n${snapshot.consoleErrors.join('\n')}`,
+    ).toEqual([]);
   });
-  const page = await context.newPage();
-  const startupCapture = attachStartupCapture(page);
-
-  const response = await page.goto(baseUrl, { waitUntil: 'domcontentloaded' });
-  expect(response, 'Tenant response should be available').not.toBeNull();
-  expect(response.status(), 'Tenant response should be successful').toBeLessThan(400);
-
-  await assertAppBooted(page);
-  await enableAccessibilityIfNeeded(page);
-  await waitForTenantPath(page, ['/']);
-  await assertStartupSnapshotGreen(page, startupCapture, 'Anonymous home startup', {
-    requiredProtectedLabels: ['agenda'],
-  });
-
-  const snapshot = startupCapture.snapshot();
-
-  await expect(
-    page.getByText(/^Agenda$/i).first(),
-    'Anonymous home startup must remain on the tenant public home experience.',
-  ).toBeVisible({
-    timeout: appBootTimeoutMs,
-  });
-
-  expect(
-    snapshot.pageErrors,
-    `Unexpected page errors during startup:\n${snapshot.pageErrors.join('\n')}`,
-  ).toEqual([]);
-  expect(
-    snapshot.consoleErrors.filter((entry) => !entry.includes('status of 401')),
-    `Unexpected console errors during startup:\n${snapshot.consoleErrors.join('\n')}`,
-  ).toEqual([]);
-
-  await context.close();
 });
 
-test('@readonly STARTUP-PUBLIC-BOOTSTRAP-02 anonymous account-profile direct entry keeps the public surface and completes anonymous bootstrap', async ({
-  browser,
-}) => {
+test('@readonly STARTUP-PUBLIC-BOOTSTRAP-02 anonymous account-profile direct entry keeps the public surface and completes anonymous bootstrap', async () => {
   const apiClient = await createReadonlyPublicApiClient();
   let candidate;
   try {
@@ -574,34 +567,28 @@ test('@readonly STARTUP-PUBLIC-BOOTSTRAP-02 anonymous account-profile direct ent
     await apiClient.dispose();
   }
 
-  const context = await browser.newContext({
-    ignoreHTTPSErrors: true,
-  });
-  const page = await context.newPage();
   const slug = candidate.slug.toString().trim();
   const visibleLabel = candidate.display_name?.toString().trim()
     || candidate.account_name?.toString().trim();
 
-  await assertDirectPublicStartup(
-    page,
-    `/parceiro/${slug}`,
-    visibleLabel,
-    'Anonymous account-profile direct entry',
-    {
-      protectedReadMatchers: [
-        ...defaultProtectedReadMatchers(),
-        exactPathMatcher(`/api/v1/account_profiles/${slug}`, 'account_detail'),
-      ],
-      requiredProtectedLabels: ['account_detail'],
-    },
-  );
-
-  await context.close();
+  await withFreshBrowserPage(async ({ page }) => {
+    await assertDirectPublicStartup(
+      page,
+      `/parceiro/${slug}`,
+      visibleLabel,
+      'Anonymous account-profile direct entry',
+      {
+        protectedReadMatchers: [
+          ...defaultProtectedReadMatchers(),
+          exactPathMatcher(`/api/v1/account_profiles/${slug}`, 'account_detail'),
+        ],
+        requiredProtectedLabels: ['account_detail'],
+      },
+    );
+  });
 });
 
-test('@readonly STARTUP-PUBLIC-BOOTSTRAP-03 anonymous event-detail direct entry keeps the public surface and completes anonymous bootstrap', async ({
-  browser,
-}) => {
+test('@readonly STARTUP-PUBLIC-BOOTSTRAP-03 anonymous event-detail direct entry keeps the public surface and completes anonymous bootstrap', async () => {
   const apiClient = await createReadonlyPublicApiClient();
   let candidate;
   try {
@@ -610,10 +597,6 @@ test('@readonly STARTUP-PUBLIC-BOOTSTRAP-03 anonymous event-detail direct entry 
     await apiClient.dispose();
   }
 
-  const context = await browser.newContext({
-    ignoreHTTPSErrors: true,
-  });
-  const page = await context.newPage();
   const routeRef = candidate.slug?.toString().trim()
     || candidate.event_id?.toString().trim();
   const occurrenceId = candidate.occurrence_id?.toString().trim() || null;
@@ -622,19 +605,19 @@ test('@readonly STARTUP-PUBLIC-BOOTSTRAP-03 anonymous event-detail direct entry 
     ? `/agenda/evento/${routeRef}?occurrence=${encodeURIComponent(occurrenceId)}`
     : `/agenda/evento/${routeRef}`;
 
-  await assertDirectPublicStartup(
-    page,
-    path,
-    visibleLabel,
-    'Anonymous event-detail direct entry',
-    {
-      protectedReadMatchers: [
-        ...defaultProtectedReadMatchers(),
-        eventDetailMatcher(routeRef, occurrenceId),
-      ],
-      requiredProtectedLabels: ['event_detail'],
-    },
-  );
-
-  await context.close();
+  await withFreshBrowserPage(async ({ page }) => {
+    await assertDirectPublicStartup(
+      page,
+      path,
+      visibleLabel,
+      'Anonymous event-detail direct entry',
+      {
+        protectedReadMatchers: [
+          ...defaultProtectedReadMatchers(),
+          eventDetailMatcher(routeRef, occurrenceId),
+        ],
+        requiredProtectedLabels: ['event_detail'],
+      },
+    );
+  });
 });

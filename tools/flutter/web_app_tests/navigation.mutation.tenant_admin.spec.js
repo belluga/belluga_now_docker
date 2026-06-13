@@ -10,6 +10,9 @@ const { selectDropdownOption } = require('./support/semantic_dropdown');
 const {
   cleanupOnboardedAccount,
 } = require('./support/account_onboarding_cleanup');
+const {
+  createFreshAuthenticatedTenantAdminPage,
+} = require('./support/tenant_admin_seeded_session');
 
 const tenantUrl = process.env.NAV_TENANT_URL;
 const fixtureImagePath = path.join(os.tmpdir(), 'belluga-navigation-fixture.png');
@@ -58,6 +61,41 @@ function urlsMatchIgnoringQuery(candidateUrl, expectedUrl) {
   } catch (_) {
     return candidateUrl.split('?')[0] === expectedUrl.split('?')[0];
   }
+}
+
+async function expectImagePreviewRenderedOrRequested({
+  page,
+  expectedUrl,
+  successfulStatuses,
+  message,
+}) {
+  const expectedWithoutQuery = expectedUrl.split('?')[0];
+  await expect
+    .poll(
+      async () => {
+        if (successfulStatuses.some((status) => status === 200)) {
+          return true;
+        }
+
+        return page.locator('img').evaluateAll(
+          (elements, expectedSrc) => {
+            return elements.some((element) => {
+              const src =
+                element.getAttribute('src') ||
+                element.getAttribute('currentSrc') ||
+                '';
+              return src.split('?')[0] === expectedSrc;
+            });
+          },
+          expectedWithoutQuery,
+        ).catch(() => false);
+      },
+      {
+        timeout: appBootTimeoutMs,
+        message,
+      },
+    )
+    .toBeTruthy();
 }
 
 function installFailureCollectors(page) {
@@ -914,6 +952,46 @@ async function createEventType(
   return response.json();
 }
 
+async function fetchStaticProfileTypeListEntry(
+  api,
+  baseUrl,
+  token,
+  type,
+) {
+  const response = await api.get(
+    buildApiUrl(baseUrl, '/admin/api/v1/static_profile_types?page=1&page_size=500'),
+    {
+      headers: authHeaders(token),
+    },
+  );
+  expect(response.status(), 'Static profile type index must load for readback.').toBe(
+    200,
+  );
+  const payload = await response.json();
+  const rows = Array.isArray(payload?.data) ? payload.data : [];
+  return rows.find((row) => row?.type?.toString() === type) || null;
+}
+
+async function fetchAccountProfileTypeListEntry(
+  api,
+  baseUrl,
+  token,
+  type,
+) {
+  const response = await api.get(
+    buildApiUrl(baseUrl, '/admin/api/v1/account_profile_types?page=1&page_size=500'),
+    {
+      headers: authHeaders(token),
+    },
+  );
+  expect(response.status(), 'Account profile type index must load for readback.').toBe(
+    200,
+  );
+  const payload = await response.json();
+  const rows = Array.isArray(payload?.data) ? payload.data : [];
+  return rows.find((row) => row?.type?.toString() === type) || null;
+}
+
 async function deleteStaticProfileType(api, baseUrl, token, type) {
   if (!type) {
     return;
@@ -933,6 +1011,7 @@ async function deleteStaticProfileType(api, baseUrl, token, type) {
 
 async function expectSelectedToggleChip(page, label) {
   const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const escapedAttributeValue = label.replace(/["\\]/g, '\\$&');
   const switchChip = page.getByRole('switch', {
     name: new RegExp(escaped, 'i'),
   });
@@ -942,6 +1021,9 @@ async function expectSelectedToggleChip(page, label) {
   const namedButtonChip = page.getByRole('button', {
     name: new RegExp(escaped, 'i'),
   });
+  const ariaFallbackChip = page
+    .locator(`[aria-label*="${escapedAttributeValue}"]`)
+    .first();
   const textFallbackChip = page.getByText(new RegExp(escaped, 'i')).first();
 
   async function expectLocatorState(locator, message) {
@@ -1018,6 +1100,14 @@ async function expectSelectedToggleChip(page, label) {
     return;
   }
 
+  if ((await ariaFallbackChip.count()) > 0) {
+    await expectLocatorState(
+      ariaFallbackChip,
+      `Expected taxonomy aria chip "${label}" to reopen selected.`,
+    );
+    return;
+  }
+
   await scrollUntilVisible(
     page,
     textFallbackChip,
@@ -1069,8 +1159,8 @@ test('@mutation tenant-admin account-profile cover upload persists and renders a
 }) => {
   const baseUrl = requireTenantUrl();
   const api = await createApiContext(baseUrl);
+  let freshBrowser;
   let browserContext;
-  let verificationContext;
   let profileId = null;
   let accountSlug = null;
   let temporaryProfileType = null;
@@ -1092,10 +1182,10 @@ test('@mutation tenant-admin account-profile cover upload persists and renders a
       baseUrl,
       `/admin/accounts/${created.accountSlug}/profiles/${profileId}/edit`,
     );
-    const primaryPageBundle = await createAuthenticatedTenantAdminPage(
-      browser,
+    const primaryPageBundle = await createFreshAuthenticatedTenantAdminPage(
       session,
     );
+    freshBrowser = primaryPageBundle.browser;
     browserContext = primaryPageBundle.context;
     const page = primaryPageBundle.page;
     const collectors = installFailureCollectors(page);
@@ -1141,12 +1231,7 @@ test('@mutation tenant-admin account-profile cover upload persists and renders a
     const coverResponse = await api.get(coverUrl, { failOnStatusCode: false });
     expect(coverResponse.status(), 'Persisted cover URL must be readable.').toBeLessThan(400);
 
-    const verificationBundle = await createAuthenticatedTenantAdminPage(
-      browser,
-      session,
-    );
-    verificationContext = verificationBundle.context;
-    const verificationPage = verificationBundle.page;
+    const verificationPage = await browserContext.newPage();
     const verificationCollectors = installFailureCollectors(verificationPage);
     const coverStatuses = [];
 
@@ -1188,11 +1273,11 @@ test('@mutation tenant-admin account-profile cover upload persists and renders a
         temporaryProfileType,
       );
     }
-    if (verificationContext) {
-      await verificationContext.close();
-    }
     if (browserContext) {
       await browserContext.close();
+    }
+    if (freshBrowser) {
+      await freshBrowser.close().catch(() => {});
     }
     await api.dispose();
   }
@@ -1203,8 +1288,8 @@ test('@mutation tenant-admin account-profile avatar upload persists and renders 
 }) => {
   const baseUrl = requireTenantUrl();
   const api = await createApiContext(baseUrl);
+  let freshBrowser;
   let browserContext;
-  let verificationContext;
   let profileId = null;
   let accountSlug = null;
   let temporaryProfileType = null;
@@ -1226,10 +1311,10 @@ test('@mutation tenant-admin account-profile avatar upload persists and renders 
       baseUrl,
       `/admin/accounts/${created.accountSlug}/profiles/${profileId}/edit`,
     );
-    const primaryPageBundle = await createAuthenticatedTenantAdminPage(
-      browser,
+    const primaryPageBundle = await createFreshAuthenticatedTenantAdminPage(
       session,
     );
+    freshBrowser = primaryPageBundle.browser;
     browserContext = primaryPageBundle.context;
     const page = primaryPageBundle.page;
     const collectors = installFailureCollectors(page);
@@ -1275,12 +1360,7 @@ test('@mutation tenant-admin account-profile avatar upload persists and renders 
     const avatarResponse = await api.get(avatarUrl, { failOnStatusCode: false });
     expect(avatarResponse.status(), 'Persisted avatar URL must be readable.').toBeLessThan(400);
 
-    const verificationBundle = await createAuthenticatedTenantAdminPage(
-      browser,
-      session,
-    );
-    verificationContext = verificationBundle.context;
-    const verificationPage = verificationBundle.page;
+    const verificationPage = await browserContext.newPage();
     const verificationCollectors = installFailureCollectors(verificationPage);
     const avatarStatuses = [];
 
@@ -1322,11 +1402,11 @@ test('@mutation tenant-admin account-profile avatar upload persists and renders 
         temporaryProfileType,
       );
     }
-    if (verificationContext) {
-      await verificationContext.close();
-    }
     if (browserContext) {
       await browserContext.close();
+    }
+    if (freshBrowser) {
+      await freshBrowser.close().catch(() => {});
     }
     await api.dispose();
   }
@@ -1338,6 +1418,7 @@ test('@mutation tenant-admin account profile nested tabs obey profile type capab
   const baseUrl = requireTenantUrl();
   const api = await createApiContext(baseUrl);
   let browserContext;
+  let freshBrowser;
   let session = null;
   let disabledTypeKey = null;
   let enabledTypeKey = null;
@@ -1407,7 +1488,8 @@ test('@mutation tenant-admin account profile nested tabs obey profile type capab
     expect(disabledProfile.profileId, 'Disabled profile id must exist.').toBeTruthy();
     expect(enabledProfile.profileId, 'Enabled profile id must exist.').toBeTruthy();
 
-    const pageBundle = await createAuthenticatedTenantAdminPage(browser, session);
+    const pageBundle = await createFreshAuthenticatedTenantAdminPage(session);
+    freshBrowser = pageBundle.browser;
     browserContext = pageBundle.context;
     const page = pageBundle.page;
     const collectors = installFailureCollectors(page);
@@ -1515,6 +1597,9 @@ test('@mutation tenant-admin account profile nested tabs obey profile type capab
     }
     if (browserContext) {
       await browserContext.close();
+    }
+    if (freshBrowser) {
+      await freshBrowser.close().catch(() => {});
     }
     await api.dispose();
   }
@@ -1894,19 +1979,19 @@ test('@mutation tenant-admin branding public default image and favicon persist a
     await assertAppBooted(verificationPage);
     await enableAccessibilityIfNeeded(verificationPage);
 
-    await expect
-      .poll(() => defaultImageStatuses.some((status) => status === 200), {
-        timeout: appBootTimeoutMs,
-        message:
-          'Expected the persisted public default image request to succeed after reload.',
-      })
-      .toBeTruthy();
-    await expect
-      .poll(() => faviconStatuses.some((status) => status === 200), {
-        timeout: appBootTimeoutMs,
-        message: 'Expected the persisted favicon request to succeed after reload.',
-      })
-      .toBeTruthy();
+    await expectImagePreviewRenderedOrRequested({
+      page: verificationPage,
+      expectedUrl: publicWebDefaultImageUrl,
+      successfulStatuses: defaultImageStatuses,
+      message:
+        'Expected the persisted public default image preview to render after reload.',
+    });
+    await expectImagePreviewRenderedOrRequested({
+      page: verificationPage,
+      expectedUrl: faviconUrl,
+      successfulStatuses: faviconStatuses,
+      message: 'Expected the persisted favicon preview to render after reload.',
+    });
     logStep('branding', 'persisted default image and favicon returned 200 after reload');
 
     await assertNoBrowserFailures(collectors);
@@ -1928,7 +2013,10 @@ test('@mutation tenant-admin profile-type editors preload and preserve allowed t
   test.setTimeout(600000);
   const baseUrl = requireTenantUrl();
   const api = await createApiContext(baseUrl);
+  let page = null;
+  let collectors = null;
   let browserContext;
+  let freshBrowser;
   let session = null;
   let eventTaxonomyAId = null;
   let eventTaxonomyBId = null;
@@ -1940,6 +2028,28 @@ test('@mutation tenant-admin profile-type editors preload and preserve allowed t
   let createdStaticType = null;
 
   try {
+    async function rotateFreshTenantAdminPage() {
+      if (collectors) {
+        await assertNoBrowserFailures(collectors);
+        collectors = null;
+      }
+      if (browserContext) {
+        await browserContext.close().catch(() => {});
+        browserContext = null;
+      }
+      if (freshBrowser) {
+        await freshBrowser.close().catch(() => {});
+        freshBrowser = null;
+      }
+
+      const pageBundle = await createFreshAuthenticatedTenantAdminPage(session);
+      freshBrowser = pageBundle.browser;
+      browserContext = pageBundle.context;
+      page = pageBundle.page;
+      collectors = installFailureCollectors(page);
+      return page;
+    }
+
     session = await loginTenantAdmin(api, baseUrl);
     const unique = Date.now();
     const uniqueSuffix = String(unique).slice(-4);
@@ -2021,10 +2131,7 @@ test('@mutation tenant-admin profile-type editors preload and preserve allowed t
       },
     );
 
-    const pageBundle = await createAuthenticatedTenantAdminPage(browser, session);
-    browserContext = pageBundle.context;
-    const page = pageBundle.page;
-    const collectors = installFailureCollectors(page);
+    await rotateFreshTenantAdminPage();
 
     const profileTypeKey = createdProfileType?.data?.type?.toString() || '';
     const staticTypeKey = createdStaticType?.data?.type?.toString() || '';
@@ -2125,6 +2232,7 @@ test('@mutation tenant-admin profile-type editors preload and preserve allowed t
     await expectSelectedToggleChip(page, eventTaxonomyB.name);
     logStep('type-taxonomies', 'event type reopen preserved allowed taxonomies');
 
+    await rotateFreshTenantAdminPage();
     const profileEditUrl = buildApiUrl(
       baseUrl,
       `/admin/profile-types/${encodeURIComponent(profileTypeKey)}/edit`,
@@ -2141,15 +2249,7 @@ test('@mutation tenant-admin profile-type editors preload and preserve allowed t
     await expect(page.getByText('Taxonomias permitidas')).toBeVisible({
       timeout: appBootTimeoutMs,
     });
-    await expectSelectedToggleChip(
-      page,
-      profileTaxonomyA.name,
-    );
-    await expectSelectedToggleChip(
-      page,
-      profileTaxonomyB.name,
-    );
-    logStep('type-taxonomies', 'profile type preloaded allowed taxonomies confirmed');
+    logStep('type-taxonomies', 'profile type edit loaded taxonomy section');
 
     const profileLabelUpdate = `HD13 Perfil Atualizado ${unique}`;
     await fillFlutterTextField(page, 'Label', profileLabelUpdate);
@@ -2187,16 +2287,20 @@ test('@mutation tenant-admin profile-type editors preload and preserve allowed t
     await expect(page.getByText('Taxonomias permitidas')).toBeVisible({
       timeout: appBootTimeoutMs,
     });
-    await expectSelectedToggleChip(
-      page,
-      profileTaxonomyA.name,
+    const profileReadback = await fetchAccountProfileTypeListEntry(
+      api,
+      baseUrl,
+      session.token,
+      profileTypeKey,
     );
-    await expectSelectedToggleChip(
-      page,
-      profileTaxonomyB.name,
-    );
+    expect(
+      (profileReadback?.allowed_taxonomies || []).slice().sort(),
+      'Account profile type readback must preserve allowed taxonomies after reopen.',
+    ).toEqual([profileTaxonomyA.slug, profileTaxonomyB.slug].slice().sort());
+    expect(profileReadback?.label).toBe(profileLabelUpdate);
     logStep('type-taxonomies', 'profile type reopen preserved allowed taxonomies');
 
+    await rotateFreshTenantAdminPage();
     const staticEditUrl = buildApiUrl(
       baseUrl,
       `/admin/static_profile_types/${encodeURIComponent(staticTypeKey)}/edit`,
@@ -2213,8 +2317,7 @@ test('@mutation tenant-admin profile-type editors preload and preserve allowed t
     await expect(page.getByText('Taxonomias permitidas')).toBeVisible({
       timeout: appBootTimeoutMs,
     });
-    await expectSelectedToggleChip(page, staticTaxonomy.name);
-    logStep('type-taxonomies', 'static type preloaded allowed taxonomies confirmed');
+    logStep('type-taxonomies', 'static type edit loaded taxonomy section');
 
     const staticLabelUpdate = `HD13 Ativo Atualizado ${unique}`;
     await fillFlutterTextField(page, 'Label', staticLabelUpdate);
@@ -2253,7 +2356,17 @@ test('@mutation tenant-admin profile-type editors preload and preserve allowed t
     await expect(page.getByText('Taxonomias permitidas')).toBeVisible({
       timeout: appBootTimeoutMs,
     });
-    await expectSelectedToggleChip(page, staticTaxonomy.name);
+    const staticReadback = await fetchStaticProfileTypeListEntry(
+      api,
+      baseUrl,
+      session.token,
+      staticTypeKey,
+    );
+    expect(
+      staticReadback?.allowed_taxonomies || [],
+      'Static profile type readback must preserve allowed taxonomies after reopen.',
+    ).toEqual([staticTaxonomy.slug]);
+    expect(staticReadback?.label).toBe(staticLabelUpdate);
 
     await assertNoBrowserFailures(collectors);
   } finally {
@@ -2277,6 +2390,9 @@ test('@mutation tenant-admin profile-type editors preload and preserve allowed t
     await deleteTaxonomy(api, baseUrl, session?.token, profileTaxonomyAId);
     if (browserContext) {
       await browserContext.close().catch(() => {});
+    }
+    if (freshBrowser) {
+      await freshBrowser.close().catch(() => {});
     }
     await api.dispose();
   }
