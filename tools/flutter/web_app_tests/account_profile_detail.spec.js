@@ -7,6 +7,11 @@ const {
   cleanupOnboardedAccount,
   runCleanupPreservingPrimaryError,
 } = require('./support/account_onboarding_cleanup');
+const {
+  buildFavoritableProfileTypes,
+  buildMinimalEmptyStateExpectation,
+  selectMinimalEmptyStateCandidate,
+} = require('./support/account_profile_detail_empty_state_contract');
 
 const tenantUrl = process.env.NAV_TENANT_URL;
 const appBootTimeoutMs = 90000;
@@ -227,6 +232,18 @@ async function fetchPublicProfileDetail(api, baseUrl, token, slug) {
       `/api/v1/account_profiles/${slug}`,
       token,
       `Public account profile detail ${slug}`,
+    ),
+  );
+}
+
+async function fetchPublicEnvironment(api, baseUrl, token) {
+  return normalizePayload(
+    await fetchJson(
+      api,
+      baseUrl,
+      '/api/v1/environment',
+      token,
+      'Public tenant environment',
     ),
   );
 }
@@ -523,29 +540,6 @@ function taxonomySnapshot(row) {
     .find((term) => term.display && term.value && term.display !== term.value);
 }
 
-function agendaOccurrences(row) {
-  return Array.isArray(row?.agenda_occurrences) ? row.agenda_occurrences : [];
-}
-
-function locationPayload(row) {
-  return row?.location || row?.poi || row?.map_poi || null;
-}
-
-function hasNestedProfileGroups(row) {
-  const groups = Array.isArray(row?.nested_profile_groups)
-    ? row.nested_profile_groups
-    : [];
-  return groups.length > 0;
-}
-
-function isMinimalNoSections(row) {
-  const about = textValue(row?.bio, row?.content, row?.description);
-  return !about
-    && agendaOccurrences(row).length === 0
-    && locationPayload(row) == null
-    && !hasNestedProfileGroups(row);
-}
-
 async function loadRuntimeProfiles(api, baseUrl) {
   if (!loadRuntimeProfiles.catalogCache) {
     loadRuntimeProfiles.catalogCache = new Map();
@@ -725,7 +719,11 @@ test('@readonly NAV-APD-02..06 and NAV-APD-10 hero, taxonomy, tabs, social remov
   page,
 }) => {
   const baseUrl = requireTenantUrl();
-  const { rows, hydrate } = await loadRuntimeProfiles(page.request, baseUrl);
+  const { rows, hydrate, token } = await loadRuntimeProfiles(page.request, baseUrl);
+  const environment = await fetchPublicEnvironment(page.request, baseUrl, token);
+  const favoritableProfileTypes = buildFavoritableProfileTypes(
+    environment?.profile_types,
+  );
   const taxonomyCandidate = rows.find((row) => taxonomySnapshot(row));
   const profile = taxonomyCandidate
     ? await hydrate(taxonomyCandidate)
@@ -772,24 +770,23 @@ test('@readonly NAV-APD-02..06 and NAV-APD-10 hero, taxonomy, tabs, social remov
     }
   }
 
-  let minimalCandidate = null;
-  for (const row of rows) {
-    const hydrated = await hydrate(row);
-    if (isMinimalNoSections(hydrated)) {
-      minimalCandidate = hydrated;
-      break;
-    }
-  }
+  const minimalCandidate = await selectMinimalEmptyStateCandidate(
+    rows,
+    hydrate,
+    favoritableProfileTypes,
+  );
 
   if (minimalCandidate) {
-    await openTenantPath(page, baseUrl, `/parceiro/${minimalCandidate.slug}`);
-    const minimalName = textValue(minimalCandidate.display_name, minimalCandidate.name);
+    await openTenantPath(page, baseUrl, `/parceiro/${minimalCandidate.profile.slug}`);
+    const expectation = buildMinimalEmptyStateExpectation(minimalCandidate);
     await assertVisibleTextOrSemanticLabel(
       page,
-      `Favorite para ser avisado das novidades sobre ${minimalName}.`,
-      'Account Profile favorite empty state',
+      expectation.visibleLabel,
+      expectation.assertionLabel,
     );
-    await expect(page.getByText('Mais sobre este perfil')).toHaveCount(0);
+    if (expectation.hiddenLabel) {
+      await expect(page.getByText(expectation.hiddenLabel)).toHaveCount(0);
+    }
   }
 });
 
