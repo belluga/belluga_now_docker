@@ -55,123 +55,117 @@ main() {
   require_env "NAV_ADMIN_EMAIL"
   require_env "NAV_ADMIN_PASSWORD"
 
-  local repo_root
-  repo_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
-  cd "$repo_root"
+  STAGE_EQ_REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+  cd "$STAGE_EQ_REPO_ROOT"
 
-  local nav_test_run_id
-  nav_test_run_id="${NAV_TEST_RUN_ID:-stage-local-$(date +%Y%m%d%H%M%S)-$$}"
-  local node_path
-  node_path="${NODE_PATH:-$repo_root/tools/flutter/web_app_smoke_runner/node_modules}"
-  local allow_nonlocal_mutation_hosts
-  allow_nonlocal_mutation_hosts="${NAV_WEB_ALLOW_NONLOCAL_MUTATION_HOSTS:-1}"
+  STAGE_EQ_NAV_TEST_RUN_ID="${NAV_TEST_RUN_ID:-stage-local-$(date +%Y%m%d%H%M%S)-$$}"
+  STAGE_EQ_NODE_PATH="${NODE_PATH:-$STAGE_EQ_REPO_ROOT/tools/flutter/web_app_smoke_runner/node_modules}"
+  STAGE_EQ_ALLOW_NONLOCAL_MUTATION_HOSTS="${NAV_WEB_ALLOW_NONLOCAL_MUTATION_HOSTS:-1}"
 
-  local targets_output
-  local host_override_output
-  targets_output="$(mktemp)"
-  host_override_output="$(mktemp)"
-  local fixture_prepared=0
-  local host_override_applied=0
-  local managed_playwright_ignore_https_errors="${PLAYWRIGHT_IGNORE_HTTPS_ERRORS:-false}"
+  STAGE_EQ_TARGETS_OUTPUT="$(mktemp)"
+  STAGE_EQ_HOST_OVERRIDE_OUTPUT="$(mktemp)"
+  STAGE_EQ_FIXTURE_PREPARED=0
+  STAGE_EQ_HOST_OVERRIDE_APPLIED=0
+  STAGE_EQ_PLAYWRIGHT_IGNORE_HTTPS_ERRORS="${PLAYWRIGHT_IGNORE_HTTPS_ERRORS:-false}"
 
   cleanup() {
     local exit_code=$?
 
-    if [[ "$fixture_prepared" -eq 1 ]]; then
+    if [[ "${STAGE_EQ_FIXTURE_PREPARED:-0}" -eq 1 ]]; then
       (
-        cd "$repo_root/tools/flutter/web_app_smoke_runner"
-        NODE_PATH="$node_path" \
+        cd "$STAGE_EQ_REPO_ROOT/tools/flutter/web_app_smoke_runner"
+        NODE_PATH="$STAGE_EQ_NODE_PATH" \
         NAV_DEPLOY_LANE=stage \
         NAV_PUBLIC_TAXONOMY_FIXTURE_ACTION=cleanup \
-        NAV_TEST_RUN_ID="$nav_test_run_id" \
+        NAV_TEST_RUN_ID="$STAGE_EQ_NAV_TEST_RUN_ID" \
         NAV_TENANT_URL="$NAV_TENANT_URL" \
         NAV_ADMIN_EMAIL="$NAV_ADMIN_EMAIL" \
         NAV_ADMIN_PASSWORD="$NAV_ADMIN_PASSWORD" \
-        NAV_WEB_ALLOW_NONLOCAL_MUTATION_HOSTS="$allow_nonlocal_mutation_hosts" \
+        NAV_WEB_ALLOW_NONLOCAL_MUTATION_HOSTS="$STAGE_EQ_ALLOW_NONLOCAL_MUTATION_HOSTS" \
         node ../web_app_tests/ensure_public_taxonomy_validation_fixture.cjs
       ) || true
     fi
 
-    if [[ "$host_override_applied" -eq 1 ]]; then
-      bash "$repo_root/.github/scripts/manage_navigation_host_overrides.sh" reset || true
+    if [[ "${STAGE_EQ_HOST_OVERRIDE_APPLIED:-0}" -eq 1 ]]; then
+      bash "$STAGE_EQ_REPO_ROOT/.github/scripts/manage_navigation_host_overrides.sh" reset || true
     fi
 
-    rm -f "$targets_output" "$host_override_output"
+    rm -f "${STAGE_EQ_TARGETS_OUTPUT:-}" "${STAGE_EQ_HOST_OVERRIDE_OUTPUT:-}"
     exit "$exit_code"
   }
   trap cleanup EXIT
 
   echo "INFO: running root workflow invariants before stage-equivalent smoke."
-  bash "$repo_root/.github/scripts/verify_environment_ci.sh"
+  bash "$STAGE_EQ_REPO_ROOT/.github/scripts/verify_environment_ci.sh"
 
   echo "INFO: resolving explicit stage navigation targets."
-  GITHUB_OUTPUT="$targets_output" \
+  GITHUB_OUTPUT="$STAGE_EQ_TARGETS_OUTPUT" \
   NAV_TENANT_URL_INPUT="$NAV_TENANT_URL_INPUT" \
   NAV_LANDLORD_URL_INPUT="${NAV_LANDLORD_URL_INPUT:-}" \
-  bash "$repo_root/.github/scripts/resolve_lane_navigation_targets.sh" stage
-  load_github_output_file "$targets_output"
+  bash "$STAGE_EQ_REPO_ROOT/.github/scripts/resolve_lane_navigation_targets.sh" stage
+  load_github_output_file "$STAGE_EQ_TARGETS_OUTPUT"
 
   export NAV_DEPLOY_LANE=stage
-  export NAV_TEST_RUN_ID="$nav_test_run_id"
+  export NAV_TEST_RUN_ID="$STAGE_EQ_NAV_TEST_RUN_ID"
   export NAV_LANDLORD_URL="$landlord_url"
   export NAV_TENANT_URL="$tenant_url"
 
   echo "INFO: probing published stage public edge."
-  bash "$repo_root/.github/scripts/probe_public_navigation_environment_over_https.sh" stage
+  bash "$STAGE_EQ_REPO_ROOT/.github/scripts/probe_public_navigation_environment_over_https.sh" stage
 
   echo "INFO: validating deployed stage provenance."
   DEPLOY_LANE=stage \
   NAV_LANDLORD_URL="$NAV_LANDLORD_URL" \
   NAV_ORIGIN_IP="${NAV_ORIGIN_IP:-}" \
-  bash "$repo_root/.github/scripts/check_deployed_web_provenance.sh" stage
+  bash "$STAGE_EQ_REPO_ROOT/.github/scripts/check_deployed_web_provenance.sh" stage
 
   if [[ -n "${NAV_ORIGIN_IP:-}" ]]; then
     echo "INFO: applying temporary navigation host overrides for origin-targeted smoke."
-    GITHUB_OUTPUT="$host_override_output" \
+    GITHUB_OUTPUT="$STAGE_EQ_HOST_OVERRIDE_OUTPUT" \
     NAV_LANDLORD_URL="$NAV_LANDLORD_URL" \
     NAV_TENANT_URL="$NAV_TENANT_URL" \
     NAV_ORIGIN_IP="$NAV_ORIGIN_IP" \
-    bash "$repo_root/.github/scripts/manage_navigation_host_overrides.sh" apply
-    load_github_output_file "$host_override_output"
-    managed_playwright_ignore_https_errors="${playwright_ignore_https_errors:-$managed_playwright_ignore_https_errors}"
-    host_override_applied=1
+    bash "$STAGE_EQ_REPO_ROOT/.github/scripts/manage_navigation_host_overrides.sh" apply
+    load_github_output_file "$STAGE_EQ_HOST_OVERRIDE_OUTPUT"
+    STAGE_EQ_PLAYWRIGHT_IGNORE_HTTPS_ERRORS="${playwright_ignore_https_errors:-$STAGE_EQ_PLAYWRIGHT_IGNORE_HTTPS_ERRORS}"
+    STAGE_EQ_HOST_OVERRIDE_APPLIED=1
   fi
 
   echo "INFO: ensuring managed public taxonomy validation fixture."
   (
-    cd "$repo_root/tools/flutter/web_app_smoke_runner"
-    NODE_PATH="$node_path" \
+    cd "$STAGE_EQ_REPO_ROOT/tools/flutter/web_app_smoke_runner"
+    NODE_PATH="$STAGE_EQ_NODE_PATH" \
     NAV_DEPLOY_LANE=stage \
-    NAV_TEST_RUN_ID="$nav_test_run_id" \
+    NAV_TEST_RUN_ID="$STAGE_EQ_NAV_TEST_RUN_ID" \
     NAV_TENANT_URL="$NAV_TENANT_URL" \
     NAV_ADMIN_EMAIL="$NAV_ADMIN_EMAIL" \
     NAV_ADMIN_PASSWORD="$NAV_ADMIN_PASSWORD" \
-    NAV_WEB_ALLOW_NONLOCAL_MUTATION_HOSTS="$allow_nonlocal_mutation_hosts" \
+    NAV_WEB_ALLOW_NONLOCAL_MUTATION_HOSTS="$STAGE_EQ_ALLOW_NONLOCAL_MUTATION_HOSTS" \
     node ../web_app_tests/ensure_public_taxonomy_validation_fixture.cjs
   )
-  fixture_prepared=1
+  STAGE_EQ_FIXTURE_PREPARED=1
 
   echo "INFO: running stage readonly navigation smoke."
   NAV_DEPLOY_LANE=stage \
-  NAV_TEST_RUN_ID="$nav_test_run_id" \
+  NAV_TEST_RUN_ID="$STAGE_EQ_NAV_TEST_RUN_ID" \
   NAV_PUBLIC_TAXONOMY_MANAGED_FIXTURE=1 \
   NAV_WEB_TEST_TYPE=readonly \
   NAV_LANDLORD_URL="$NAV_LANDLORD_URL" \
   NAV_TENANT_URL="$NAV_TENANT_URL" \
-  PLAYWRIGHT_IGNORE_HTTPS_ERRORS="$managed_playwright_ignore_https_errors" \
-  bash "$repo_root/tools/flutter/run_web_navigation_smoke.sh" readonly
+  PLAYWRIGHT_IGNORE_HTTPS_ERRORS="$STAGE_EQ_PLAYWRIGHT_IGNORE_HTTPS_ERRORS" \
+  bash "$STAGE_EQ_REPO_ROOT/tools/flutter/run_web_navigation_smoke.sh" readonly
 
   echo "INFO: running stage mutation navigation smoke."
   NAV_DEPLOY_LANE=stage \
-  NAV_TEST_RUN_ID="$nav_test_run_id" \
+  NAV_TEST_RUN_ID="$STAGE_EQ_NAV_TEST_RUN_ID" \
   NAV_WEB_TEST_TYPE=mutation \
   NAV_LANDLORD_URL="$NAV_LANDLORD_URL" \
   NAV_TENANT_URL="$NAV_TENANT_URL" \
-  PLAYWRIGHT_IGNORE_HTTPS_ERRORS="$managed_playwright_ignore_https_errors" \
+  PLAYWRIGHT_IGNORE_HTTPS_ERRORS="$STAGE_EQ_PLAYWRIGHT_IGNORE_HTTPS_ERRORS" \
   NAV_ADMIN_EMAIL="$NAV_ADMIN_EMAIL" \
   NAV_ADMIN_PASSWORD="$NAV_ADMIN_PASSWORD" \
-  NAV_WEB_ALLOW_NONLOCAL_MUTATION_HOSTS="$allow_nonlocal_mutation_hosts" \
-  bash "$repo_root/tools/flutter/run_web_navigation_smoke.sh" mutation
+  NAV_WEB_ALLOW_NONLOCAL_MUTATION_HOSTS="$STAGE_EQ_ALLOW_NONLOCAL_MUTATION_HOSTS" \
+  bash "$STAGE_EQ_REPO_ROOT/tools/flutter/run_web_navigation_smoke.sh" mutation
 
   echo "INFO: stage-equivalent local validation completed successfully."
 }

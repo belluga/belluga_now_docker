@@ -378,22 +378,22 @@ function assertLocalStageEquivalentScriptMatchesWorkflowContract() {
 
   assert.match(
     source,
-    /bash "\$repo_root\/\.github\/scripts\/verify_environment_ci\.sh"/,
+    /bash "\$STAGE_EQ_REPO_ROOT\/\.github\/scripts\/verify_environment_ci\.sh"/,
     'local stage-equivalent runner must execute the canonical root invariant verifier',
   );
   assert.match(
     source,
-    /bash "\$repo_root\/\.github\/scripts\/resolve_lane_navigation_targets\.sh" stage/,
+    /bash "\$STAGE_EQ_REPO_ROOT\/\.github\/scripts\/resolve_lane_navigation_targets\.sh" stage/,
     'local stage-equivalent runner must resolve stage targets through the workflow-owned helper',
   );
   assert.match(
     source,
-    /bash "\$repo_root\/\.github\/scripts\/probe_public_navigation_environment_over_https\.sh" stage/,
+    /bash "\$STAGE_EQ_REPO_ROOT\/\.github\/scripts\/probe_public_navigation_environment_over_https\.sh" stage/,
     'local stage-equivalent runner must reuse the public-edge probe helper',
   );
   assert.match(
     source,
-    /bash "\$repo_root\/\.github\/scripts\/check_deployed_web_provenance\.sh" stage/,
+    /bash "\$STAGE_EQ_REPO_ROOT\/\.github\/scripts\/check_deployed_web_provenance\.sh" stage/,
     'local stage-equivalent runner must reuse the deployed-provenance helper',
   );
   assert.match(
@@ -403,12 +403,12 @@ function assertLocalStageEquivalentScriptMatchesWorkflowContract() {
   );
   assert.match(
     source,
-    /bash "\$repo_root\/tools\/flutter\/run_web_navigation_smoke\.sh" readonly/,
+    /bash "\$STAGE_EQ_REPO_ROOT\/tools\/flutter\/run_web_navigation_smoke\.sh" readonly/,
     'local stage-equivalent runner must reuse the readonly browser runner',
   );
   assert.match(
     source,
-    /bash "\$repo_root\/tools\/flutter\/run_web_navigation_smoke\.sh" mutation/,
+    /bash "\$STAGE_EQ_REPO_ROOT\/tools\/flutter\/run_web_navigation_smoke\.sh" mutation/,
     'local stage-equivalent runner must reuse the mutation browser runner',
   );
   assert.match(
