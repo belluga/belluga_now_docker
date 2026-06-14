@@ -8,6 +8,10 @@ function textValue(...values) {
   return '';
 }
 
+function profileTypeValue(row) {
+  return textValue(row?.profile_type, row?.type);
+}
+
 function agendaOccurrences(row) {
   return Array.isArray(row?.agenda_occurrences) ? row.agenda_occurrences : [];
 }
@@ -36,7 +40,7 @@ function buildFavoritableProfileTypes(profileTypes) {
   const rows = Array.isArray(profileTypes) ? profileTypes : [];
 
   for (const row of rows) {
-    const type = textValue(row?.type);
+    const type = profileTypeValue(row);
     if (!type) {
       continue;
     }
@@ -49,7 +53,7 @@ function buildFavoritableProfileTypes(profileTypes) {
 }
 
 function isFavoritableProfile(profile, favoritableTypes) {
-  const type = textValue(profile?.type);
+  const type = profileTypeValue(profile);
   return Boolean(type) && favoritableTypes.has(type);
 }
 

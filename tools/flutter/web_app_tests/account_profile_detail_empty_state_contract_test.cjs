@@ -19,14 +19,14 @@ test('selectMinimalEmptyStateCandidate prefers a favoritable minimal profile ove
     ['orla-de-meaipe', {
       slug: 'orla-de-meaipe',
       name: 'Orla de Meaípe',
-      type: 'local-publico',
+      profile_type: 'local-publico',
       agenda_occurrences: [],
       nested_profile_groups: [],
     }],
     ['ananda-torres', {
       slug: 'ananda-torres',
       name: 'Ananda Torres',
-      type: 'artist',
+      profile_type: 'artist',
       agenda_occurrences: [],
       nested_profile_groups: [],
     }],
@@ -62,14 +62,14 @@ test('selectMinimalEmptyStateCandidate falls back to a generic empty state when 
     ['orla-de-meaipe', {
       slug: 'orla-de-meaipe',
       name: 'Orla de Meaípe',
-      type: 'local-publico',
+      profile_type: 'local-publico',
       agenda_occurrences: [],
       nested_profile_groups: [],
     }],
     ['praia-do-morro', {
       slug: 'praia-do-morro',
       name: 'Praia do Morro',
-      type: 'local-publico',
+      profile_type: 'local-publico',
       agenda_occurrences: [],
       nested_profile_groups: [],
     }],
@@ -97,22 +97,22 @@ test('selectMinimalEmptyStateCandidate falls back to a generic empty state when 
 
 test('isMinimalNoSections rejects profiles that publish extra sections', () => {
   assert.equal(
-    isMinimalNoSections({
-      name: 'Com bio',
-      type: 'artist',
-      bio: 'Publicado',
-      agenda_occurrences: [],
-      nested_profile_groups: [],
+      isMinimalNoSections({
+        name: 'Com bio',
+      profile_type: 'artist',
+        bio: 'Publicado',
+        agenda_occurrences: [],
+        nested_profile_groups: [],
     }),
     false,
   );
   assert.equal(
-    isMinimalNoSections({
-      name: 'Sem secoes',
-      type: 'artist',
-      agenda_occurrences: [],
-      nested_profile_groups: [],
-    }),
+      isMinimalNoSections({
+        name: 'Sem secoes',
+      profile_type: 'artist',
+        agenda_occurrences: [],
+        nested_profile_groups: [],
+      }),
     true,
   );
 });
