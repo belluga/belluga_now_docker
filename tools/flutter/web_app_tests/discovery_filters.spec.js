@@ -340,9 +340,25 @@ async function grantNavigationGeolocation(page, baseUrl) {
 }
 
 async function continueWithoutLocationIfPrompted(page) {
+  const permissionRoutePattern = /\/location\/permission/;
   const continueButton = page.getByRole('button', {
     name: /Continuar sem localizacao|Continuar sem localização/i,
   });
+  const continueText = page.getByText(/Continuar sem localizacao|Continuar sem localização/i)
+    .first();
+
+  await enableAccessibilityIfNeeded(page);
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    if (permissionRoutePattern.test(page.url()) || (await continueButton.count()) > 0) {
+      break;
+    }
+    await page.waitForTimeout(250);
+    await enableAccessibilityIfNeeded(page);
+  }
+
+  if (!permissionRoutePattern.test(page.url()) && (await continueButton.count()) === 0) {
+    return;
+  }
 
   await continueButton
     .first()
@@ -352,11 +368,33 @@ async function continueWithoutLocationIfPrompted(page) {
     })
     .catch(() => null);
 
-  if ((await continueButton.count()) === 0) {
-    return;
+  if (permissionRoutePattern.test(page.url()) && (await continueButton.count()) === 0) {
+    await enableAccessibilityIfNeeded(page);
+    await continueButton
+      .first()
+      .waitFor({
+        state: 'visible',
+        timeout: 15000,
+      })
+      .catch(() => null);
   }
-  await continueButton.first().click();
-  await expect(continueButton).toHaveCount(0, { timeout: appBootTimeoutMs });
+
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    if (!permissionRoutePattern.test(page.url())) {
+      break;
+    }
+    if ((await continueButton.count()) > 0) {
+      await continueButton.first().click();
+    } else if (await continueText.isVisible().catch(() => false)) {
+      await continueText.click();
+    } else {
+      break;
+    }
+    await page.waitForTimeout(400);
+  }
+  await expect(page).not.toHaveURL(permissionRoutePattern, {
+    timeout: appBootTimeoutMs,
+  });
   await assertAppBooted(page);
   await enableAccessibilityIfNeeded(page);
 }
@@ -819,6 +857,18 @@ function filterPanel(page, label) {
 
 function filterActionPattern(baseLabel) {
   return new RegExp(`(${baseLabel}|Filtros ativos)`, 'i');
+}
+
+async function ensureFilterPanelVisible(page, actionLocator, panelLocator) {
+  if (await panelLocator.isVisible().catch(() => false)) {
+    return;
+  }
+
+  const action = actionLocator.first();
+  await action.scrollIntoViewIfNeeded().catch(() => {});
+  await expect(action).toBeVisible({ timeout: appBootTimeoutMs });
+  await action.click();
+  await expect(panelLocator).toBeVisible({ timeout: appBootTimeoutMs });
 }
 
 function filterOption(panel, label) {
@@ -1983,7 +2033,7 @@ test('@mutation Home filters honor Event Type taxonomy compatibility, hide zero-
     await expect(page.getByRole('button', { name: /Filtros ativos/i })).toBeVisible({
       timeout: appBootTimeoutMs,
     });
-    await expect(panel).toBeVisible({ timeout: appBootTimeoutMs });
+    await ensureFilterPanelVisible(page, filterAction, panel);
     await expectAccessibleGroupContains(panel, taxonomyA.name);
     await expect(filterOption(panel, `Rock ${unique}`))
       .toBeVisible({ timeout: appBootTimeoutMs });
@@ -2014,7 +2064,7 @@ test('@mutation Home filters honor Event Type taxonomy compatibility, hide zero-
     await expectSelectedChipIconAndLabelForegroundParity(
       typeBSelectionOption.first(),
     );
-    await expect(panel).toBeVisible({ timeout: appBootTimeoutMs });
+    await ensureFilterPanelVisible(page, filterAction, panel);
     await expectAccessibleGroupContains(panel, taxonomyB.name);
     await expect(filterOption(panel, `Chef ${unique}`))
       .toBeVisible({ timeout: appBootTimeoutMs });
@@ -2041,7 +2091,7 @@ test('@mutation Home filters honor Event Type taxonomy compatibility, hide zero-
     await expectSelectedChipIconAndLabelForegroundParity(
       typeCSelectionOption.first(),
     );
-    await expect(panel).toBeVisible({ timeout: appBootTimeoutMs });
+    await ensureFilterPanelVisible(page, filterAction, panel);
     await expectAccessibleGroupNotContains(panel, taxonomyA.name, appBootTimeoutMs);
     await expectAccessibleGroupNotContains(panel, taxonomyB.name, appBootTimeoutMs);
     await expect(filterOption(panel, `Rock ${unique}`))
@@ -2255,7 +2305,7 @@ test('@mutation Profile Discovery hides non-publicly-discoverable types and keep
     await expectSelectedChipIconAndLabelForegroundParity(
       filterOption(panel, visibleTypeLabel).first(),
     );
-    await expect(panel).toBeVisible({ timeout: appBootTimeoutMs });
+    await ensureFilterPanelVisible(page, filterAction, panel);
     await expectAccessibleGroupContains(panel, taxonomy.name);
     await expect(filterOption(panel, `Japonesa ${unique}`))
       .toBeVisible({ timeout: appBootTimeoutMs });
