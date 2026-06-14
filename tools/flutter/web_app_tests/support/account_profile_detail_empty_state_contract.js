@@ -117,8 +117,10 @@ function buildMinimalEmptyStateExpectation(candidate) {
 }
 
 module.exports = {
+  agendaOccurrences,
   buildFavoritableProfileTypes,
   buildMinimalEmptyStateExpectation,
   isMinimalNoSections,
+  locationPayload,
   selectMinimalEmptyStateCandidate,
 };
