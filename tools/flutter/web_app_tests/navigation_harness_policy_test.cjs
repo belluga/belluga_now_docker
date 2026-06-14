@@ -310,7 +310,7 @@ function assertStageMutationWorkflowSuppliesRuntimeCredentials() {
   );
 
   const rollbackReadonlyStepMatch = source.match(
-    /- name: Run restored stage readonly navigation smoke[\s\S]*?run: bash tools\/flutter\/run_web_navigation_smoke\.sh readonly/,
+    /- name: Run restored stage readonly navigation smoke[\s\S]*?restored_navigation_workspace[\s\S]*?run_web_navigation_smoke\.sh" readonly/,
   );
   assert.ok(
     rollbackReadonlyStepMatch,
@@ -340,7 +340,7 @@ function assertStageMutationWorkflowSuppliesRuntimeCredentials() {
   );
 
   const rollbackMutationStepMatch = source.match(
-    /- name: Run restored stage mutation navigation smoke[\s\S]*?run: bash tools\/flutter\/run_web_navigation_smoke\.sh mutation/,
+    /- name: Run restored stage mutation navigation smoke[\s\S]*?restored_navigation_workspace[\s\S]*?run_web_navigation_smoke\.sh" mutation/,
   );
   assert.ok(
     rollbackMutationStepMatch,
@@ -352,7 +352,7 @@ function assertStageMutationWorkflowSuppliesRuntimeCredentials() {
   );
 
   const rollbackCleanupStepMatch = source.match(
-    /- name: Clean up restored stage public taxonomy validation fixture[\s\S]*?run: node \.\.\/web_app_tests\/ensure_public_taxonomy_validation_fixture\.cjs/,
+    /- name: Clean up restored stage public taxonomy validation fixture[\s\S]*?working-directory:\s*\$\{\{ steps\.stage_rollback_proof_plan\.outputs\.restored_navigation_workspace \}\}\/tools\/flutter\/web_app_smoke_runner[\s\S]*?run: node \.\.\/web_app_tests\/ensure_public_taxonomy_validation_fixture\.cjs/,
   );
   assert.ok(
     rollbackCleanupStepMatch,

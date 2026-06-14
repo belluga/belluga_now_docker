@@ -780,9 +780,11 @@ done
 required_workflow_markers=(
   "id: stage_rollback_proof_plan"
   "id: stage_rollback_proof_guard"
+  "id: stage_rollback_restored_navigation_prep"
   "id: stage_rollback_provenance_check"
   "id: main_rollback_proof_plan"
   "id: main_rollback_proof_guard"
+  "id: main_rollback_restored_navigation_prep"
   "id: main_rollback_provenance_check"
   "id: stage_untrusted_bootstrap_block"
   "id: main_untrusted_bootstrap_block"
@@ -803,6 +805,16 @@ for marker in "${required_workflow_markers[@]}"; do
     exit 1
   fi
 done
+
+if [[ ! -x .github/scripts/prepare_navigation_workspace_from_revision.sh ]]; then
+  echo "ERROR: prepare_navigation_workspace_from_revision.sh is required for restored-revision rollback proof." >&2
+  exit 1
+fi
+
+if ! bash -n .github/scripts/prepare_navigation_workspace_from_revision.sh; then
+  echo "ERROR: prepare_navigation_workspace_from_revision.sh must remain shell-parseable." >&2
+  exit 1
+fi
 
 promotion_runtime_preflight_block="$(awk '
   /- name: Validate promotion runtime builds/ { in_block=1 }
@@ -1216,6 +1228,16 @@ if ! grep -Fq "steps.stage_rollback_target.outputs.revision" <<<"${stage_rollbac
   exit 1
 fi
 
+if ! grep -Fq "prepare_navigation_workspace_from_revision.sh" .github/workflows/orchestration-ci-cd.yml; then
+  echo "ERROR: stage rollback proof plan must prepare restored navigation checks from the trusted target revision when available." >&2
+  exit 1
+fi
+
+if ! grep -Fq "restored_navigation_validation_mode" .github/workflows/orchestration-ci-cd.yml; then
+  echo "ERROR: rollback proof plan must classify restored navigation validation mode so missing historical checks fall back to basic validation." >&2
+  exit 1
+fi
+
 main_rollback_proof_guard_block="$(awk '
   /- name: Guard trusted rollback target for production rollback proof/ { in_block=1 }
   in_block && /^      - name:/ && $0 !~ /Guard trusted rollback target for production rollback proof/ { exit }
@@ -1254,6 +1276,58 @@ fi
 
 if ! grep -Fq "steps.main_rollback_target.outputs.revision" <<<"${main_rollback_proof_guard_block}"; then
   echo "ERROR: the production rollback proof guard must compare internal rollback restores against the trusted successful-release target revision." >&2
+  exit 1
+fi
+
+stage_rollback_navigation_block="$(awk '
+  /- name: Run restored stage readonly navigation smoke/ { in_block=1 }
+  in_block && /^      - name:/ && $0 !~ /Run restored stage readonly navigation smoke/ { exit }
+  in_block { print }
+' .github/workflows/orchestration-ci-cd.yml)"
+
+if [[ -z "${stage_rollback_navigation_block}" ]]; then
+  echo "ERROR: could not locate restored stage readonly navigation block in orchestration-ci-cd.yml." >&2
+  exit 1
+fi
+
+if ! grep -Fq "restored_navigation_validation_mode == 'restored-checks'" <<<"${stage_rollback_navigation_block}"; then
+  echo "ERROR: restored stage readonly smoke must run only when trusted target navigation checks are available." >&2
+  exit 1
+fi
+
+if ! grep -Fq "stage_rollback_restored_navigation_prep.outcome != 'failure'" <<<"${stage_rollback_navigation_block}"; then
+  echo "ERROR: restored stage readonly smoke must fall back to basic validation when restored navigation workspace preparation fails." >&2
+  exit 1
+fi
+
+if ! grep -Fq 'steps.stage_rollback_proof_plan.outputs.restored_navigation_workspace' <<<"${stage_rollback_navigation_block}"; then
+  echo "ERROR: restored stage readonly smoke must execute from the trusted target revision workspace, not the candidate checkout." >&2
+  exit 1
+fi
+
+main_rollback_navigation_block="$(awk '
+  /- name: Run restored production readonly navigation smoke/ { in_block=1 }
+  in_block && /^      - name:/ && $0 !~ /Run restored production readonly navigation smoke/ { exit }
+  in_block { print }
+' .github/workflows/orchestration-ci-cd.yml)"
+
+if [[ -z "${main_rollback_navigation_block}" ]]; then
+  echo "ERROR: could not locate restored production readonly navigation block in orchestration-ci-cd.yml." >&2
+  exit 1
+fi
+
+if ! grep -Fq "restored_navigation_validation_mode == 'restored-checks'" <<<"${main_rollback_navigation_block}"; then
+  echo "ERROR: restored production readonly smoke must run only when trusted target navigation checks are available." >&2
+  exit 1
+fi
+
+if ! grep -Fq "main_rollback_restored_navigation_prep.outcome != 'failure'" <<<"${main_rollback_navigation_block}"; then
+  echo "ERROR: restored production readonly smoke must fall back to basic validation when restored navigation workspace preparation fails." >&2
+  exit 1
+fi
+
+if ! grep -Fq 'steps.main_rollback_proof_plan.outputs.restored_navigation_workspace' <<<"${main_rollback_navigation_block}"; then
+  echo "ERROR: restored production readonly smoke must execute from the trusted target revision workspace, not the candidate checkout." >&2
   exit 1
 fi
 
