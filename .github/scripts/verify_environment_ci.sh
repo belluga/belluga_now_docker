@@ -721,6 +721,16 @@ if [[ ! -f .github/scripts/check_remote_web_runtime_sha_over_ssh.sh ]]; then
   exit 1
 fi
 
+if [[ ! -x .github/scripts/run_stage_ci_equivalent.sh ]]; then
+  echo "ERROR: run_stage_ci_equivalent.sh is required as the canonical local stage-equivalent root entrypoint." >&2
+  exit 1
+fi
+
+if ! bash -n .github/scripts/run_stage_ci_equivalent.sh; then
+  echo "ERROR: run_stage_ci_equivalent.sh must remain shell-parseable." >&2
+  exit 1
+fi
+
 if grep -Fq 'checkout_web_runtime_ref "origin/\${DEPLOY_LANE}"' .github/scripts/deploy_stage_over_ssh.sh; then
   echo "ERROR: deploy_stage_over_ssh.sh must not float web-app runtime content to origin/\${DEPLOY_LANE}." >&2
   exit 1
