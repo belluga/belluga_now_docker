@@ -184,21 +184,55 @@ async function enableAccessibilityIfNeeded(page) {
 }
 
 async function continueWithoutLocationIfPrompted(page) {
+  const permissionRoutePattern = /\/location\/permission/;
   const continueButton = page.getByRole('button', {
     name: /Continuar sem localizacao|Continuar sem localização/i,
   });
+  const continueText = page.getByText(/Continuar sem localizacao|Continuar sem localização/i)
+    .first();
+
+  await enableAccessibilityIfNeeded(page);
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    if (permissionRoutePattern.test(page.url()) || (await continueButton.count()) > 0) {
+      break;
+    }
+    await page.waitForTimeout(250);
+    await enableAccessibilityIfNeeded(page);
+  }
+
+  if (!permissionRoutePattern.test(page.url()) && (await continueButton.count()) === 0) {
+    return;
+  }
 
   await continueButton.first().waitFor({
     state: 'visible',
     timeout: 15000,
   }).catch(() => null);
 
-  if ((await continueButton.count()) === 0) {
-    return;
+  if (permissionRoutePattern.test(page.url()) && (await continueButton.count()) === 0) {
+    await enableAccessibilityIfNeeded(page);
+    await continueButton.first().waitFor({
+      state: 'visible',
+      timeout: 15000,
+    }).catch(() => null);
   }
 
-  await continueButton.first().click();
-  await expect(continueButton).toHaveCount(0, { timeout: appBootTimeoutMs });
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    if (!permissionRoutePattern.test(page.url())) {
+      break;
+    }
+    if ((await continueButton.count()) > 0) {
+      await continueButton.first().click();
+    } else if (await continueText.isVisible().catch(() => false)) {
+      await continueText.click();
+    } else {
+      break;
+    }
+    await page.waitForTimeout(400);
+  }
+  await expect(page).not.toHaveURL(permissionRoutePattern, {
+    timeout: appBootTimeoutMs,
+  });
   await assertAppBooted(page);
   await enableAccessibilityIfNeeded(page);
 }
