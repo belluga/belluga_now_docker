@@ -1395,11 +1395,17 @@ function assertStageFixtureOwnedFiltersUseCanonicalKeysOnly() {
       slug: stageTaxonomyFixture.eventSlug,
       type: { slug: 'foreign_event_type' },
     },
+    {
+      id: 'owned-event-by-suffixed-slug',
+      title: 'Foreign visible title',
+      slug: `${stageTaxonomyFixture.eventSlug}-rollback-proof`,
+      type: { slug: 'foreign_event_type' },
+    },
   ]);
   assert.deepStrictEqual(
     ownedEvents.map((row) => row.id).sort(),
-    ['owned-event-by-slug'],
-    'stage fixture cleanup must identify the current run by canonical event slug only, never by mutable title or foreign type.',
+    ['owned-event-by-slug', 'owned-event-by-suffixed-slug'],
+    'stage fixture cleanup must identify the current run by canonical event slug anchors only, including backend-generated suffixes, never by mutable title or foreign type.',
   );
 
   const ownedProfiles = filterOwnedProfileRows([
@@ -1422,6 +1428,18 @@ function assertStageFixtureOwnedFiltersUseCanonicalKeysOnly() {
       profile_type: 'foreign_profile_type',
     },
     {
+      id: 'owned-profile-by-suffixed-slug',
+      display_name: 'Another visible name',
+      slug: `${stageTaxonomyFixture.profileSlug}-rollback-proof`,
+      profile_type: 'foreign_profile_type',
+    },
+    {
+      id: 'owned-profile-by-related-suffixed-slug',
+      display_name: 'Another visible name',
+      slug: `${stageTaxonomyFixture.relatedProfileSlug}-rollback-proof`,
+      profile_type: 'foreign_profile_type',
+    },
+    {
       id: 'owned-profile-by-display-name',
       display_name: stageTaxonomyFixture.relatedProfileName,
       slug: 'different-related-profile-slug',
@@ -1436,8 +1454,13 @@ function assertStageFixtureOwnedFiltersUseCanonicalKeysOnly() {
   ]);
   assert.deepStrictEqual(
     ownedProfiles.map((row) => row.id).sort(),
-    ['owned-profile-by-related-slug', 'owned-profile-by-slug'],
-    'stage fixture cleanup must identify the current run by canonical profile slug only, never by mutable display name or profile type.',
+    [
+      'owned-profile-by-related-slug',
+      'owned-profile-by-related-suffixed-slug',
+      'owned-profile-by-slug',
+      'owned-profile-by-suffixed-slug',
+    ],
+    'stage fixture cleanup must identify the current run by canonical profile slug anchors only, including backend-generated suffixes, never by mutable display name or profile type.',
   );
 }
 

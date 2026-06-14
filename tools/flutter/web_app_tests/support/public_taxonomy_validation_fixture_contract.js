@@ -84,18 +84,28 @@ function shouldContinuePagedFetch({ payload, pageRows, pageNumber, pageSize }) {
   return false;
 }
 
+function matchesCanonicalManagedSlug(actualSlug, canonicalSlug) {
+  const actual = actualSlug?.toString().trim();
+  const canonical = canonicalSlug?.toString().trim();
+  if (!actual || !canonical) {
+    return false;
+  }
+
+  return actual === canonical || actual.startsWith(`${canonical}-`);
+}
+
 function filterOwnedEventRows(rows) {
   return rows.filter((row) => {
     const slug = row?.slug?.toString().trim();
-    return slug === fixture.eventSlug;
+    return matchesCanonicalManagedSlug(slug, fixture.eventSlug);
   });
 }
 
 function filterOwnedProfileRows(rows) {
   return rows.filter((row) => {
     const slug = row?.slug?.toString().trim();
-    return slug === fixture.profileSlug
-      || slug === fixture.relatedProfileSlug;
+    return matchesCanonicalManagedSlug(slug, fixture.profileSlug)
+      || matchesCanonicalManagedSlug(slug, fixture.relatedProfileSlug);
   });
 }
 
