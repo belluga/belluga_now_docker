@@ -575,6 +575,7 @@ jobs:
           trusted_tuple_present="${{ steps.stage_rollback_target.outputs.trusted_tuple_present }}"
           target_revision="${{ steps.stage_rollback_target.outputs.revision }}"
           expected_web_app_runtime_sha="${{ steps.stage_rollback_target.outputs.web_app_runtime_sha }}"
+          restored_navigation_validation_mode="basic-only"
 
           if [[ "${{ steps.stage_deploy_remote.outputs.internal_rollback_status }}" == "success" ]]; then
             run=true
@@ -603,7 +604,23 @@ jobs:
             if [[ -n "${expected_web_app_runtime_sha}" ]]; then
               echo "expected_web_app_runtime_sha=${expected_web_app_runtime_sha}" >> "$GITHUB_OUTPUT"
             fi
+
+            restored_navigation_workspace="$(mktemp -d /tmp/stage-rollback-navigation-XXXXXX)"
+            if bash .github/scripts/prepare_navigation_workspace_from_revision.sh --revision "${target_revision}" --output-dir "${restored_navigation_workspace}"; then
+              restored_navigation_validation_mode="restored-checks"
+              echo "restored_navigation_workspace=${restored_navigation_workspace}" >> "$GITHUB_OUTPUT"
+              echo "INFO: stage rollback proof will use restored revision navigation checks from ${target_revision}."
+            else
+              prepare_status=$?
+              rm -rf "${restored_navigation_workspace}"
+              if [[ "${prepare_status}" -ne 2 ]]; then
+                exit "${prepare_status}"
+              fi
+              echo "INFO: stage rollback proof will fall back to basic validation because restored revision ${target_revision} does not provide compatible canonical navigation checks."
+            fi
           fi
+
+          echo "restored_navigation_validation_mode=${restored_navigation_validation_mode}" >> "$GITHUB_OUTPUT"
 
       - name: Guard trusted rollback target for stage rollback proof
         id: stage_rollback_proof_guard
@@ -718,21 +735,36 @@ jobs:
         run: bash .github/scripts/probe_public_navigation_environment_over_https.sh stage
 
       - name: Setup Node.js for stage rollback proof
-        if: ${{ always() && steps.stage_rollback_proof_plan.outputs.run == 'true' && steps.stage_rollback_initialize_preflight.outcome != 'failure' && steps.stage_rollback_public_edge_environment_probe.outcome != 'failure' }}
+        if: ${{ always() && steps.stage_rollback_proof_plan.outputs.run == 'true' && steps.stage_rollback_proof_plan.outputs.restored_navigation_validation_mode == 'restored-checks' && steps.stage_rollback_initialize_preflight.outcome != 'failure' && steps.stage_rollback_public_edge_environment_probe.outcome != 'failure' }}
         uses: actions/setup-node@v6
         with:
           node-version: '24'
           cache: npm
           cache-dependency-path: tools/flutter/web_app_smoke_runner/package-lock.json
 
-      - name: Install web navigation dependencies after stage rollback
-        if: ${{ always() && steps.stage_rollback_proof_plan.outputs.run == 'true' && steps.stage_rollback_initialize_preflight.outcome != 'failure' && steps.stage_rollback_public_edge_environment_probe.outcome != 'failure' }}
-        run: npm ci
-        working-directory: tools/flutter/web_app_smoke_runner
+      - name: Prepare restored stage navigation workspace
+        id: stage_rollback_restored_navigation_prep
+        if: ${{ always() && steps.stage_rollback_proof_plan.outputs.run == 'true' && steps.stage_rollback_proof_plan.outputs.restored_navigation_validation_mode == 'restored-checks' && steps.stage_rollback_initialize_preflight.outcome != 'failure' && steps.stage_rollback_public_edge_environment_probe.outcome != 'failure' }}
+        continue-on-error: true
+        env:
+          ROLLBACK_NAV_WORKSPACE: ${{ steps.stage_rollback_proof_plan.outputs.restored_navigation_workspace }}
+        run: |
+          set -euo pipefail
+          npm ci --prefix "${ROLLBACK_NAV_WORKSPACE}/tools/flutter/web_app_smoke_runner"
+          bash "${ROLLBACK_NAV_WORKSPACE}/tools/flutter/resolve_playwright_browser.sh"
 
-      - name: Verify Playwright browser availability after stage rollback
-        if: ${{ always() && steps.stage_rollback_proof_plan.outputs.run == 'true' && steps.stage_rollback_initialize_preflight.outcome != 'failure' && steps.stage_rollback_public_edge_environment_probe.outcome != 'failure' }}
-        run: bash tools/flutter/resolve_playwright_browser.sh
+      - name: Record stage rollback basic-validation fallback
+        if: ${{ always() && steps.stage_rollback_proof_plan.outputs.run == 'true' && (steps.stage_rollback_proof_plan.outputs.restored_navigation_validation_mode != 'restored-checks' || steps.stage_rollback_restored_navigation_prep.outcome == 'failure') && steps.stage_rollback_initialize_preflight.outcome != 'failure' && steps.stage_rollback_public_edge_environment_probe.outcome != 'failure' }}
+        env:
+          ROLLBACK_NAV_MODE: ${{ steps.stage_rollback_proof_plan.outputs.restored_navigation_validation_mode }}
+          ROLLBACK_NAV_REVISION: ${{ steps.stage_rollback_proof_plan.outputs.target_revision }}
+        run: |
+          set -euo pipefail
+          if [[ "${ROLLBACK_NAV_MODE}" != "restored-checks" ]]; then
+            echo "INFO: stage rollback proof is using basic validation only because restored revision ${ROLLBACK_NAV_REVISION} does not expose compatible canonical navigation checks."
+          else
+            echo "INFO: stage rollback proof is using basic validation only because restored revision ${ROLLBACK_NAV_REVISION} could not prepare its canonical navigation workspace on the runner."
+          fi
 
       - name: Warm up stage environment endpoints after rollback
         if: ${{ always() && steps.stage_rollback_proof_plan.outputs.run == 'true' && steps.stage_rollback_initialize_preflight.outcome != 'failure' && steps.stage_rollback_public_edge_environment_probe.outcome != 'failure' }}
@@ -757,7 +789,7 @@ jobs:
 
       - name: Ensure restored stage public taxonomy validation fixture
         id: stage_rollback_public_taxonomy_validation_fixture
-        if: ${{ always() && steps.stage_rollback_proof_plan.outputs.run == 'true' && steps.stage_rollback_initialize_preflight.outcome != 'failure' && steps.stage_rollback_public_edge_environment_probe.outcome != 'failure' && steps.stage_rollback_provenance_check.outcome != 'failure' }}
+        if: ${{ always() && steps.stage_rollback_proof_plan.outputs.run == 'true' && steps.stage_rollback_proof_plan.outputs.restored_navigation_validation_mode == 'restored-checks' && steps.stage_rollback_restored_navigation_prep.outcome != 'failure' && steps.stage_rollback_initialize_preflight.outcome != 'failure' && steps.stage_rollback_public_edge_environment_probe.outcome != 'failure' && steps.stage_rollback_provenance_check.outcome != 'failure' }}
         timeout-minutes: 10
         env:
           NAV_DEPLOY_LANE: stage
@@ -766,13 +798,13 @@ jobs:
           NAV_ADMIN_EMAIL: ${{ vars.STAGE_NAV_ADMIN_EMAIL }}
           NAV_ADMIN_PASSWORD: ${{ secrets.STAGE_NAV_ADMIN_PASSWORD }}
           NAV_WEB_ALLOW_NONLOCAL_MUTATION_HOSTS: '1'
-          NODE_PATH: ${{ github.workspace }}/tools/flutter/web_app_smoke_runner/node_modules
-        working-directory: tools/flutter/web_app_smoke_runner
+          NODE_PATH: ${{ steps.stage_rollback_proof_plan.outputs.restored_navigation_workspace }}/tools/flutter/web_app_smoke_runner/node_modules
+        working-directory: ${{ steps.stage_rollback_proof_plan.outputs.restored_navigation_workspace }}/tools/flutter/web_app_smoke_runner
         run: node ../web_app_tests/ensure_public_taxonomy_validation_fixture.cjs
 
       - name: Apply managed stage rollback-proof navigation host overrides to origin
         id: stage_rollback_origin_host_overrides
-        if: ${{ always() && steps.stage_rollback_proof_plan.outputs.run == 'true' && steps.stage_rollback_initialize_preflight.outcome != 'failure' && steps.stage_rollback_public_edge_environment_probe.outcome != 'failure' && steps.stage_rollback_provenance_check.outcome != 'failure' && steps.stage_rollback_public_taxonomy_validation_fixture.outcome != 'failure' }}
+        if: ${{ always() && steps.stage_rollback_proof_plan.outputs.run == 'true' && steps.stage_rollback_proof_plan.outputs.restored_navigation_validation_mode == 'restored-checks' && steps.stage_rollback_restored_navigation_prep.outcome != 'failure' && steps.stage_rollback_initialize_preflight.outcome != 'failure' && steps.stage_rollback_public_edge_environment_probe.outcome != 'failure' && steps.stage_rollback_provenance_check.outcome != 'failure' && steps.stage_rollback_public_taxonomy_validation_fixture.outcome != 'failure' }}
         env:
           NAV_LANDLORD_URL: ${{ steps.stage_nav_targets.outputs.landlord_url }}
           NAV_TENANT_URL: ${{ steps.stage_nav_targets.outputs.tenant_url }}
@@ -781,7 +813,7 @@ jobs:
 
       - name: Run restored stage readonly navigation smoke
         id: stage_rollback_navigation_smoke
-        if: ${{ always() && steps.stage_rollback_proof_plan.outputs.run == 'true' && steps.stage_rollback_initialize_preflight.outcome != 'failure' && steps.stage_rollback_public_edge_environment_probe.outcome != 'failure' && steps.stage_rollback_provenance_check.outcome != 'failure' && steps.stage_rollback_public_taxonomy_validation_fixture.outcome != 'failure' }}
+        if: ${{ always() && steps.stage_rollback_proof_plan.outputs.run == 'true' && steps.stage_rollback_proof_plan.outputs.restored_navigation_validation_mode == 'restored-checks' && steps.stage_rollback_restored_navigation_prep.outcome != 'failure' && steps.stage_rollback_initialize_preflight.outcome != 'failure' && steps.stage_rollback_public_edge_environment_probe.outcome != 'failure' && steps.stage_rollback_provenance_check.outcome != 'failure' && steps.stage_rollback_public_taxonomy_validation_fixture.outcome != 'failure' }}
         continue-on-error: true
         timeout-minutes: 25
         env:
@@ -792,11 +824,11 @@ jobs:
           NAV_LANDLORD_URL: ${{ steps.stage_nav_targets.outputs.landlord_url }}
           NAV_TENANT_URL: ${{ steps.stage_nav_targets.outputs.tenant_url }}
           PLAYWRIGHT_IGNORE_HTTPS_ERRORS: ${{ steps.stage_rollback_origin_host_overrides.outputs.playwright_ignore_https_errors }}
-        run: bash tools/flutter/run_web_navigation_smoke.sh readonly
+        run: bash "${{ steps.stage_rollback_proof_plan.outputs.restored_navigation_workspace }}/tools/flutter/run_web_navigation_smoke.sh" readonly
 
       - name: Run restored stage mutation navigation smoke
         id: stage_rollback_navigation_mutation_smoke
-        if: ${{ always() && steps.stage_rollback_proof_plan.outputs.run == 'true' && steps.stage_rollback_initialize_preflight.outcome != 'failure' && steps.stage_rollback_public_edge_environment_probe.outcome != 'failure' && steps.stage_rollback_provenance_check.outcome != 'failure' && steps.stage_rollback_public_taxonomy_validation_fixture.outcome != 'failure' && steps.stage_rollback_navigation_smoke.outcome != 'failure' }}
+        if: ${{ always() && steps.stage_rollback_proof_plan.outputs.run == 'true' && steps.stage_rollback_proof_plan.outputs.restored_navigation_validation_mode == 'restored-checks' && steps.stage_rollback_restored_navigation_prep.outcome != 'failure' && steps.stage_rollback_initialize_preflight.outcome != 'failure' && steps.stage_rollback_public_edge_environment_probe.outcome != 'failure' && steps.stage_rollback_provenance_check.outcome != 'failure' && steps.stage_rollback_public_taxonomy_validation_fixture.outcome != 'failure' && steps.stage_rollback_navigation_smoke.outcome != 'failure' }}
         continue-on-error: true
         timeout-minutes: 35
         env:
@@ -809,11 +841,11 @@ jobs:
           NAV_ADMIN_EMAIL: ${{ vars.STAGE_NAV_ADMIN_EMAIL }}
           NAV_ADMIN_PASSWORD: ${{ secrets.STAGE_NAV_ADMIN_PASSWORD }}
           NAV_WEB_ALLOW_NONLOCAL_MUTATION_HOSTS: '1'
-        run: bash tools/flutter/run_web_navigation_smoke.sh mutation
+        run: bash "${{ steps.stage_rollback_proof_plan.outputs.restored_navigation_workspace }}/tools/flutter/run_web_navigation_smoke.sh" mutation
 
       - name: Clean up restored stage public taxonomy validation fixture
         id: stage_rollback_public_taxonomy_validation_fixture_cleanup
-        if: ${{ always() && steps.stage_rollback_proof_plan.outputs.run == 'true' && steps.stage_rollback_public_taxonomy_validation_fixture.outcome != 'skipped' }}
+        if: ${{ always() && steps.stage_rollback_proof_plan.outputs.run == 'true' && steps.stage_rollback_proof_plan.outputs.restored_navigation_validation_mode == 'restored-checks' && steps.stage_rollback_public_taxonomy_validation_fixture.outcome != 'skipped' }}
         continue-on-error: true
         timeout-minutes: 10
         env:
@@ -824,8 +856,8 @@ jobs:
           NAV_ADMIN_EMAIL: ${{ vars.STAGE_NAV_ADMIN_EMAIL }}
           NAV_ADMIN_PASSWORD: ${{ secrets.STAGE_NAV_ADMIN_PASSWORD }}
           NAV_WEB_ALLOW_NONLOCAL_MUTATION_HOSTS: '1'
-          NODE_PATH: ${{ github.workspace }}/tools/flutter/web_app_smoke_runner/node_modules
-        working-directory: tools/flutter/web_app_smoke_runner
+          NODE_PATH: ${{ steps.stage_rollback_proof_plan.outputs.restored_navigation_workspace }}/tools/flutter/web_app_smoke_runner/node_modules
+        working-directory: ${{ steps.stage_rollback_proof_plan.outputs.restored_navigation_workspace }}/tools/flutter/web_app_smoke_runner
         run: node ../web_app_tests/ensure_public_taxonomy_validation_fixture.cjs
 
       - name: Collect stage rollback proof diagnostics
@@ -851,6 +883,8 @@ jobs:
           path: |
             tools/flutter/web_app_smoke_runner/test-results
             tools/flutter/web_app_smoke_runner/playwright-report
+            ${{ steps.stage_rollback_proof_plan.outputs.restored_navigation_workspace }}/tools/flutter/web_app_smoke_runner/test-results
+            ${{ steps.stage_rollback_proof_plan.outputs.restored_navigation_workspace }}/tools/flutter/web_app_smoke_runner/playwright-report
             /tmp/stage_rollback_proof_diagnostics.txt
           if-no-files-found: warn
           retention-days: 7
@@ -1340,6 +1374,7 @@ jobs:
           trusted_tuple_present="${{ steps.main_rollback_target.outputs.trusted_tuple_present }}"
           target_revision="${{ steps.main_rollback_target.outputs.revision }}"
           expected_web_app_runtime_sha="${{ steps.main_rollback_target.outputs.web_app_runtime_sha }}"
+          restored_navigation_validation_mode="basic-only"
 
           if [[ "${{ steps.main_deploy_remote.outputs.internal_rollback_status }}" == "success" ]]; then
             run=true
@@ -1368,7 +1403,23 @@ jobs:
             if [[ -n "${expected_web_app_runtime_sha}" ]]; then
               echo "expected_web_app_runtime_sha=${expected_web_app_runtime_sha}" >> "$GITHUB_OUTPUT"
             fi
+
+            restored_navigation_workspace="$(mktemp -d /tmp/main-rollback-navigation-XXXXXX)"
+            if bash .github/scripts/prepare_navigation_workspace_from_revision.sh --revision "${target_revision}" --output-dir "${restored_navigation_workspace}"; then
+              restored_navigation_validation_mode="restored-checks"
+              echo "restored_navigation_workspace=${restored_navigation_workspace}" >> "$GITHUB_OUTPUT"
+              echo "INFO: production rollback proof will use restored revision readonly checks from ${target_revision}."
+            else
+              prepare_status=$?
+              rm -rf "${restored_navigation_workspace}"
+              if [[ "${prepare_status}" -ne 2 ]]; then
+                exit "${prepare_status}"
+              fi
+              echo "INFO: production rollback proof will fall back to basic validation because restored revision ${target_revision} does not provide compatible canonical navigation checks."
+            fi
           fi
+
+          echo "restored_navigation_validation_mode=${restored_navigation_validation_mode}" >> "$GITHUB_OUTPUT"
 
       - name: Guard trusted rollback target for production rollback proof
         id: main_rollback_proof_guard
@@ -1520,6 +1571,17 @@ jobs:
           EXPECTED_FLUTTER_SHA: ${{ steps.main_rollback_proof_plan.outputs.expected_flutter_sha }}
         run: bash .github/scripts/check_deployed_web_provenance.sh main
 
+      - name: Prepare restored production readonly navigation workspace
+        id: main_rollback_restored_navigation_prep
+        if: ${{ always() && steps.main_rollback_proof_plan.outputs.run == 'true' && steps.main_rollback_proof_plan.outputs.restored_navigation_validation_mode == 'restored-checks' && steps.main_rollback_initialize_preflight.outcome != 'failure' && steps.main_rollback_public_edge_environment_probe.outcome != 'failure' }}
+        continue-on-error: true
+        env:
+          ROLLBACK_NAV_WORKSPACE: ${{ steps.main_rollback_proof_plan.outputs.restored_navigation_workspace }}
+        run: |
+          set -euo pipefail
+          npm ci --prefix "${ROLLBACK_NAV_WORKSPACE}/tools/flutter/web_app_smoke_runner"
+          bash "${ROLLBACK_NAV_WORKSPACE}/tools/flutter/resolve_playwright_browser.sh"
+
       - name: Assert mutation suite is hard-blocked on production after rollback
         id: main_rollback_mutation_guard
         if: ${{ always() && steps.main_rollback_proof_plan.outputs.run == 'true' && steps.main_rollback_initialize_preflight.outcome != 'failure' && steps.main_rollback_public_edge_environment_probe.outcome != 'failure' && steps.main_rollback_provenance_check.outcome != 'failure' }}
@@ -1550,9 +1612,22 @@ jobs:
 
           echo "Production rollback hard block check passed (mutation is blocked)."
 
+      - name: Record production rollback basic-validation fallback
+        if: ${{ always() && steps.main_rollback_proof_plan.outputs.run == 'true' && (steps.main_rollback_proof_plan.outputs.restored_navigation_validation_mode != 'restored-checks' || steps.main_rollback_restored_navigation_prep.outcome == 'failure') && steps.main_rollback_initialize_preflight.outcome != 'failure' && steps.main_rollback_public_edge_environment_probe.outcome != 'failure' && steps.main_rollback_provenance_check.outcome != 'failure' }}
+        env:
+          ROLLBACK_NAV_MODE: ${{ steps.main_rollback_proof_plan.outputs.restored_navigation_validation_mode }}
+          ROLLBACK_NAV_REVISION: ${{ steps.main_rollback_proof_plan.outputs.target_revision }}
+        run: |
+          set -euo pipefail
+          if [[ "${ROLLBACK_NAV_MODE}" != "restored-checks" ]]; then
+            echo "INFO: production rollback proof is using basic validation plus the current main mutation hard-block because restored revision ${ROLLBACK_NAV_REVISION} does not expose compatible canonical readonly checks."
+          else
+            echo "INFO: production rollback proof is using basic validation plus the current main mutation hard-block because restored revision ${ROLLBACK_NAV_REVISION} could not prepare its canonical readonly workspace on the runner."
+          fi
+
       - name: Apply managed production rollback-proof navigation host overrides to origin
         id: main_rollback_origin_host_overrides
-        if: ${{ always() && steps.main_rollback_proof_plan.outputs.run == 'true' && steps.main_rollback_initialize_preflight.outcome != 'failure' && steps.main_rollback_public_edge_environment_probe.outcome != 'failure' && steps.main_rollback_provenance_check.outcome != 'failure' && steps.main_rollback_mutation_guard.outcome != 'failure' }}
+        if: ${{ always() && steps.main_rollback_proof_plan.outputs.run == 'true' && steps.main_rollback_proof_plan.outputs.restored_navigation_validation_mode == 'restored-checks' && steps.main_rollback_restored_navigation_prep.outcome != 'failure' && steps.main_rollback_initialize_preflight.outcome != 'failure' && steps.main_rollback_public_edge_environment_probe.outcome != 'failure' && steps.main_rollback_provenance_check.outcome != 'failure' && steps.main_rollback_mutation_guard.outcome != 'failure' }}
         env:
           NAV_LANDLORD_URL: ${{ steps.main_nav_targets.outputs.landlord_url }}
           NAV_TENANT_URL: ${{ steps.main_nav_targets.outputs.tenant_url }}
@@ -1561,7 +1636,7 @@ jobs:
 
       - name: Run restored production readonly navigation smoke
         id: main_rollback_navigation_smoke
-        if: ${{ always() && steps.main_rollback_proof_plan.outputs.run == 'true' && steps.main_rollback_initialize_preflight.outcome != 'failure' && steps.main_rollback_public_edge_environment_probe.outcome != 'failure' && steps.main_rollback_provenance_check.outcome != 'failure' && steps.main_rollback_mutation_guard.outcome != 'failure' }}
+        if: ${{ always() && steps.main_rollback_proof_plan.outputs.run == 'true' && steps.main_rollback_proof_plan.outputs.restored_navigation_validation_mode == 'restored-checks' && steps.main_rollback_restored_navigation_prep.outcome != 'failure' && steps.main_rollback_initialize_preflight.outcome != 'failure' && steps.main_rollback_public_edge_environment_probe.outcome != 'failure' && steps.main_rollback_provenance_check.outcome != 'failure' && steps.main_rollback_mutation_guard.outcome != 'failure' }}
         continue-on-error: true
         timeout-minutes: 25
         env:
@@ -1570,7 +1645,7 @@ jobs:
           NAV_LANDLORD_URL: ${{ steps.main_nav_targets.outputs.landlord_url }}
           NAV_TENANT_URL: ${{ steps.main_nav_targets.outputs.tenant_url }}
           PLAYWRIGHT_IGNORE_HTTPS_ERRORS: ${{ steps.main_rollback_origin_host_overrides.outputs.playwright_ignore_https_errors }}
-        run: bash tools/flutter/run_web_navigation_smoke.sh readonly
+        run: bash "${{ steps.main_rollback_proof_plan.outputs.restored_navigation_workspace }}/tools/flutter/run_web_navigation_smoke.sh" readonly
 
       - name: Collect production rollback proof diagnostics
         if: ${{ always() && steps.main_rollback_proof_plan.outputs.run == 'true' && (steps.main_rollback_proof_guard.outcome == 'failure' || steps.main_rollback_runtime_web_sha_check.outcome == 'failure' || steps.main_rollback_initialize_preflight.outcome == 'failure' || steps.main_rollback_public_edge_environment_probe.outcome == 'failure' || steps.main_rollback_provenance_check.outcome == 'failure' || steps.main_rollback_mutation_guard.outcome == 'failure' || steps.main_rollback_navigation_smoke.outcome == 'failure') }}
@@ -1595,6 +1670,8 @@ jobs:
           path: |
             tools/flutter/web_app_smoke_runner/test-results
             tools/flutter/web_app_smoke_runner/playwright-report
+            ${{ steps.main_rollback_proof_plan.outputs.restored_navigation_workspace }}/tools/flutter/web_app_smoke_runner/test-results
+            ${{ steps.main_rollback_proof_plan.outputs.restored_navigation_workspace }}/tools/flutter/web_app_smoke_runner/playwright-report
             /tmp/main_rollback_proof_diagnostics.txt
           if-no-files-found: warn
           retention-days: 7
