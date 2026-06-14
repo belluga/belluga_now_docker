@@ -666,6 +666,9 @@ async function continueWithoutLocationIfPrompted(page) {
   const continueButton = page.getByRole('button', {
     name: /Continuar sem localizacao|Continuar sem localização/i,
   });
+  if ((await continueButton.count()) === 0) {
+    await enableAccessibilityIfNeeded(page);
+  }
   if ((await continueButton.count()) > 0) {
     await continueButton.first().click();
   } else {

@@ -10,6 +10,7 @@ const repoRoot = path.resolve(__dirname, '..', '..', '..');
 const guardScript = path.join(__dirname, 'guard_web_navigation_policy.cjs');
 const shardsScript = path.join(__dirname, 'web_navigation_shards.cjs');
 const smokeScript = path.join(repoRoot, 'tools', 'flutter', 'run_web_navigation_smoke.sh');
+const stageCiEquivalentScript = path.join(repoRoot, '.github', 'scripts', 'run_stage_ci_equivalent.sh');
 const directPlaywrightContractProbe = path.join(
   repoRoot,
   'tools',
@@ -20,6 +21,7 @@ const directPlaywrightContractProbe = path.join(
 );
 const localNavigationEnvExample = path.join(repoRoot, '.env.local.navigation.example');
 const orchestrationWorkflow = path.join(repoRoot, '.github', 'workflows', 'orchestration-ci-cd.yml');
+const rootReadme = path.join(repoRoot, 'README.md');
 const {
   filterOwnedEventRows,
   filterOwnedProfileRows,
@@ -368,6 +370,93 @@ function assertStageWorkflowIntentionallyOmitsDiagnosticSuite() {
     source,
     /run:\s*bash tools\/flutter\/run_web_navigation_smoke\.sh diagnostic/,
     'stage workflow must not invoke the diagnostic suite because diagnostics are local-only by policy',
+  );
+}
+
+function assertLocalStageEquivalentScriptMatchesWorkflowContract() {
+  const source = fs.readFileSync(stageCiEquivalentScript, 'utf8');
+
+  assert.match(
+    source,
+    /bash "\$STAGE_EQ_REPO_ROOT\/\.github\/scripts\/verify_environment_ci\.sh"/,
+    'local stage-equivalent runner must execute the canonical root invariant verifier',
+  );
+  assert.match(
+    source,
+    /bash "\$STAGE_EQ_REPO_ROOT\/\.github\/scripts\/resolve_lane_navigation_targets\.sh" stage/,
+    'local stage-equivalent runner must resolve stage targets through the workflow-owned helper',
+  );
+  assert.match(
+    source,
+    /bash "\$STAGE_EQ_REPO_ROOT\/\.github\/scripts\/probe_public_navigation_environment_over_https\.sh" stage/,
+    'local stage-equivalent runner must reuse the public-edge probe helper',
+  );
+  assert.match(
+    source,
+    /bash "\$STAGE_EQ_REPO_ROOT\/\.github\/scripts\/check_deployed_web_provenance\.sh" stage/,
+    'local stage-equivalent runner must reuse the deployed-provenance helper',
+  );
+  assert.match(
+    source,
+    /node \.\.\/web_app_tests\/ensure_public_taxonomy_validation_fixture\.cjs/,
+    'local stage-equivalent runner must reuse the managed taxonomy fixture helper',
+  );
+  assert.match(
+    source,
+    /bash "\$STAGE_EQ_REPO_ROOT\/tools\/flutter\/run_web_navigation_smoke\.sh" readonly/,
+    'local stage-equivalent runner must reuse the readonly browser runner',
+  );
+  assert.match(
+    source,
+    /bash "\$STAGE_EQ_REPO_ROOT\/tools\/flutter\/run_web_navigation_smoke\.sh" mutation/,
+    'local stage-equivalent runner must reuse the mutation browser runner',
+  );
+  assert.match(
+    source,
+    /require_env "NAV_TENANT_URL_INPUT"/,
+    'local stage-equivalent runner must require explicit tenant target input',
+  );
+  assert.match(
+    source,
+    /require_env "NAV_ADMIN_EMAIL"/,
+    'local stage-equivalent runner must require explicit admin email',
+  );
+  assert.match(
+    source,
+    /require_env "NAV_ADMIN_PASSWORD"/,
+    'local stage-equivalent runner must require explicit admin password',
+  );
+  assert.match(
+    source,
+    /stage-local-\$\(date \+%Y%m%d%H%M%S\)-\$\$/,
+    'local stage-equivalent runner must synthesize a non-static local run id when one is not supplied',
+  );
+  assert.doesNotMatch(
+    source,
+    /NAV_LOCAL_ENV_FILE|source\s+["']?[^"'\n]*\.env\.local\.navigation/,
+    'local stage-equivalent runner must not operationally fall back to the dev/local navigation env file',
+  );
+  assert.doesNotMatch(
+    source,
+    /belluga\.space|guarappari\.belluga\.space/,
+    'local stage-equivalent runner must not bake dev/public local hosts into the stage contract',
+  );
+
+  const readmeSource = fs.readFileSync(rootReadme, 'utf8');
+  assert.match(
+    readmeSource,
+    /Published Stage-Equivalent Validation/,
+    'root README must document the published stage-equivalent entrypoint explicitly',
+  );
+  assert.match(
+    readmeSource,
+    /bash \.github\/scripts\/run_stage_ci_equivalent\.sh/,
+    'root README must point users at the canonical stage-equivalent command',
+  );
+  assert.match(
+    readmeSource,
+    /run_reconcile_validation\.sh`: package reconciliation against the principal checkout\./,
+    'root README must keep reconcile validation distinct from published stage-equivalent proof',
   );
 }
 
@@ -1495,6 +1584,7 @@ function assertCheckedInManifestMatchesCurrentSpecTitles() {
 assertGuardPassesCleanFixture();
 assertStageMutationWorkflowSuppliesRuntimeCredentials();
 assertStageWorkflowIntentionallyOmitsDiagnosticSuite();
+assertLocalStageEquivalentScriptMatchesWorkflowContract();
 assertLocalNavigationEnvAutomationIsSafe();
 assertReadonlyFavoriteSpecMessageMatchesSuite();
 assertRunnerAlwaysExecutesHarnessPolicyTest();
