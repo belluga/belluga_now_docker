@@ -1623,6 +1623,7 @@ assertStageFixtureRunIdIsolation();
 assertStageFixturePaginationHelperIsExhaustive();
 assertCheckedInManifestMatchesCurrentSpecTitles();
 assertAccountOnboardingCleanupContractPasses();
+assertPublicTaxonomyCleanupResolutionContractPasses();
 
 assertFailsForSource(
   'coordinate-click',
@@ -1817,5 +1818,21 @@ function assertAccountOnboardingCleanupContractPasses() {
     result.status,
     0,
     `account onboarding cleanup contract must pass.\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
+  );
+}
+
+function assertPublicTaxonomyCleanupResolutionContractPasses() {
+  const result = spawnSync(
+    'node',
+    [path.join(__dirname, 'public_taxonomy_cleanup_resolution_contract_test.cjs')],
+    {
+      cwd: repoRoot,
+      encoding: 'utf8',
+    },
+  );
+  assert.strictEqual(
+    result.status,
+    0,
+    `public taxonomy cleanup resolution contract must pass.\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
   );
 }

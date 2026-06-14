@@ -13,6 +13,11 @@ const {
 const {
   requireLiveMutationContract,
 } = require('./support/live_navigation_mutation_contract');
+const {
+  buildAccountSlugIndexById,
+  readCanonicalAccountSlugFromProfileDetail,
+  resolveAccountSlugFromIndexByProfileRecord,
+} = require('./support/public_taxonomy_cleanup_resolution');
 
 requireLiveMutationContract({
   scriptLabel: 'Public taxonomy validation fixture bootstrap',
@@ -187,6 +192,23 @@ async function listEventTypes(api, baseUrl, token) {
   );
 }
 
+async function listAdminAccounts(api, baseUrl, token) {
+  return fetchPagedRows(
+    api,
+    (pageNumber, pageSize) => {
+      const url = new URL(buildUrl(baseUrl, '/admin/api/v1/accounts'));
+      url.searchParams.set('page', pageNumber.toString());
+      url.searchParams.set('page_size', pageSize.toString());
+      return url.toString();
+    },
+    {
+      headers: authHeaders(token),
+      label: 'Admin accounts list',
+      pageSize: 200,
+    },
+  );
+}
+
 async function listAdminAccountProfiles(api, baseUrl, token) {
   return fetchPagedRows(
     api,
@@ -240,23 +262,24 @@ async function fetchAdminAccountProfileDetail(api, baseUrl, token, profileId) {
   return payload?.data || payload;
 }
 
-function readCanonicalAccountSlugFromProfileDetail(detail) {
-  return (
-    detail?.account_slug?.toString().trim()
-    || detail?.account?.slug?.toString().trim()
-    || detail?.account_profile?.account_slug?.toString().trim()
-    || detail?.account_profile?.account?.slug?.toString().trim()
-    || ''
-  );
-}
-
-async function resolveCanonicalAccountSlugForCleanup(api, baseUrl, token, row) {
+async function resolveCanonicalAccountSlugForCleanup(
+  api,
+  baseUrl,
+  token,
+  row,
+  accountSlugById = new Map(),
+) {
   const directSlug =
     row?.account_slug?.toString().trim()
     || row?.account?.slug?.toString().trim()
     || '';
   if (directSlug) {
     return directSlug;
+  }
+
+  const rowAccountSlug = resolveAccountSlugFromIndexByProfileRecord(accountSlugById, row);
+  if (rowAccountSlug) {
+    return rowAccountSlug;
   }
 
   const profileId = row?.id?.toString().trim() || '';
@@ -267,11 +290,19 @@ async function resolveCanonicalAccountSlugForCleanup(api, baseUrl, token, row) {
 
   const detail = await fetchAdminAccountProfileDetail(api, baseUrl, token, profileId);
   const resolvedSlug = readCanonicalAccountSlugFromProfileDetail(detail);
+  if (resolvedSlug) {
+    return resolvedSlug;
+  }
+
+  const resolvedSlugFromAccountId = resolveAccountSlugFromIndexByProfileRecord(
+    accountSlugById,
+    detail,
+  );
   expect(
-    resolvedSlug,
-    `Owned taxonomy fixture profile ${profileId} must expose canonical account.slug on admin readback for strict cleanup. Row: ${rowFingerprint(row)}`,
+    resolvedSlugFromAccountId,
+    `Owned taxonomy fixture profile ${profileId} must expose canonical account.slug or a resolvable account_id on admin readback for strict cleanup. Row: ${rowFingerprint(row)}`,
   ).toBeTruthy();
-  return resolvedSlug;
+  return resolvedSlugFromAccountId;
 }
 
 async function deleteWithSuccessExpectation(response, label) {
@@ -721,10 +752,12 @@ async function resetOwnedFixtureArtifacts(api, baseUrl, token) {
 
   const adminProfiles = await listAdminAccountProfiles(api, baseUrl, token);
   const ownedProfiles = filterOwnedProfileRows(adminProfiles);
+  const adminAccounts = await listAdminAccounts(api, baseUrl, token);
+  const accountSlugById = buildAccountSlugIndexById(adminAccounts);
   const ownedAccountSlugs = [];
   for (const row of ownedProfiles) {
     ownedAccountSlugs.push(
-      await resolveCanonicalAccountSlugForCleanup(api, baseUrl, token, row),
+      await resolveCanonicalAccountSlugForCleanup(api, baseUrl, token, row, accountSlugById),
     );
   }
 
