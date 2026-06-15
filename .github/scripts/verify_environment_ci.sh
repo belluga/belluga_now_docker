@@ -721,13 +721,23 @@ if [[ ! -f .github/scripts/check_remote_web_runtime_sha_over_ssh.sh ]]; then
   exit 1
 fi
 
-if [[ ! -x .github/scripts/run_stage_ci_equivalent.sh ]]; then
-  echo "ERROR: run_stage_ci_equivalent.sh is required as the canonical local stage-equivalent root entrypoint." >&2
+if [[ -e .github/scripts/run_stage_ci_equivalent.sh ]]; then
+  echo "ERROR: run_stage_ci_equivalent.sh must not exist. Published-stage proof is a separate surface and the old CI-Equivalent misnomer is hard-blocked." >&2
   exit 1
 fi
 
-if ! bash -n .github/scripts/run_stage_ci_equivalent.sh; then
-  echo "ERROR: run_stage_ci_equivalent.sh must remain shell-parseable." >&2
+if [[ -e .github/scripts/run_stage_published_validation.sh ]]; then
+  echo "ERROR: run_stage_published_validation.sh must not exist. Published stage/main proof is pipeline-only; local root execution must stay CI Equivalent/reconcile-only." >&2
+  exit 1
+fi
+
+if grep -Fq '### Published Stage Validation' README.md; then
+  echo "ERROR: README must not describe a local published-stage validation workflow. Published stage/main proof is pipeline-only." >&2
+  exit 1
+fi
+
+if grep -Fq 'run_stage_published_validation.sh' README.md; then
+  echo "ERROR: README must not advertise run_stage_published_validation.sh. Published stage/main proof is pipeline-only." >&2
   exit 1
 fi
 
