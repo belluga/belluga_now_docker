@@ -1709,6 +1709,81 @@ async function fillFlutterTextField(page, label, value) {
   );
 }
 
+async function fillFlutterTextFieldByLocator(page, field, value, label) {
+  await field.scrollIntoViewIfNeeded().catch(() => {});
+  await expect(field).toBeVisible({ timeout: appBootTimeoutMs });
+
+  let lastValue = '';
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    await field.click();
+    await field.focus().catch(() => {});
+    const selectAll = process.platform === 'darwin' ? 'Meta+A' : 'Control+A';
+    await field.press(selectAll).catch(async () => {
+      await page.keyboard.press(selectAll);
+    });
+    await field.press('Backspace').catch(async () => {
+      await page.keyboard.press('Backspace');
+    });
+
+    try {
+      await expect
+        .poll(
+          async () => {
+            try {
+              return await field.inputValue();
+            } catch (_) {
+              return '';
+            }
+          },
+          {
+            timeout: 3000,
+            message: `Expected Flutter text field "${label}" to clear before typing.`,
+          },
+        )
+        .toBe('');
+    } catch (_) {
+      await field.click({ clickCount: 3 }).catch(() => {});
+      await field.press('Backspace').catch(async () => {
+        await page.keyboard.press('Backspace');
+      });
+    }
+
+    await field.pressSequentially(value, { delay: 5 }).catch(async () => {
+      await page.keyboard.type(value, { delay: 5 });
+    });
+
+    try {
+      await expect
+        .poll(
+          async () => {
+            try {
+              return await field.inputValue();
+            } catch (_) {
+              return '';
+            }
+          },
+          {
+            timeout: 3000,
+            message: `Expected Flutter text field "${label}" to retain input.`,
+          },
+        )
+        .toBe(value);
+      return field;
+    } catch (_) {
+      try {
+        lastValue = await field.inputValue();
+      } catch (_) {
+        lastValue = '<unreadable>';
+      }
+      await page.waitForTimeout(150);
+    }
+  }
+
+  throw new Error(
+    `Flutter text field "${label}" did not retain "${value}" before submit; last value was "${lastValue}".`,
+  );
+}
+
 function relatedProfileDisplayName(profile) {
   return (
     profile?.display_name?.toString?.() ||
@@ -1747,11 +1822,21 @@ async function addOccurrenceProfileGroup(page, { groupLabel, profileNames = [] }
   };
 
   for (const [index, profileName] of profileNames.entries()) {
-    await searchField.click();
-    const selectAll = process.platform === 'darwin' ? 'Meta+A' : 'Control+A';
-    await page.keyboard.press(selectAll);
-    await page.keyboard.press('Backspace');
-    await page.keyboard.type(profileName, { delay: 5 });
+    if (index > 0) {
+      await page.keyboard.press('Escape').catch(() => {});
+      await selectorButton.click();
+      await expect(
+        searchField,
+        'Occurrence profile selector search field must remain visible after reopening the selector.',
+      ).toBeVisible({ timeout: appBootTimeoutMs });
+    }
+
+    await fillFlutterTextFieldByLocator(
+      page,
+      searchField,
+      profileName,
+      'Buscar perfil',
+    );
 
     const checkbox = page.getByRole('checkbox', {
       name: new RegExp(escapeRegExp(profileName)),

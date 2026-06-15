@@ -12,6 +12,8 @@ const {
 const tenantUrl = process.env.NAV_TENANT_URL;
 const appBootTimeoutMs = 90000;
 const apiRequestTimeoutMs = 30000;
+const localRuntimeSeedEnabled =
+  (process.env.NAV_DEPLOY_LANE || '').toString().trim().toLowerCase() === 'local';
 const navigationGeolocation = {
   latitude: -20.671339,
   longitude: -40.495395,
@@ -87,6 +89,13 @@ function valuesFor(value) {
     return [];
   }
   return Array.isArray(value) ? value.map(String) : [String(value)];
+}
+
+function hasFiniteCoordinate(value) {
+  if (value == null || value === '') {
+    return false;
+  }
+  return Number.isFinite(Number(value));
 }
 
 function firstQueryExpectation(filter) {
@@ -620,6 +629,10 @@ async function loginTenantAdmin(api, baseUrl) {
 }
 
 async function ensureRuntimeDiscoveryFilters(baseUrl) {
+  if (!localRuntimeSeedEnabled) {
+    return;
+  }
+
   const api = await createApiContext(baseUrl);
   const session = await loginTenantAdmin(api, baseUrl);
   const valuesResponse = await api.get(buildUrl(baseUrl, '/admin/api/v1/settings/values'), {
@@ -637,8 +650,24 @@ async function ensureRuntimeDiscoveryFilters(baseUrl) {
     discoveryFilters.surfaces && typeof discoveryFilters.surfaces === 'object'
       ? { ...discoveryFilters.surfaces }
       : {};
+  const mapUi =
+    normalizePayload(valuesPayload)?.map_ui &&
+    typeof normalizePayload(valuesPayload).map_ui === 'object'
+      ? normalizePayload(valuesPayload).map_ui
+      : {};
+  const defaultOrigin =
+    mapUi.default_origin && typeof mapUi.default_origin === 'object'
+      ? mapUi.default_origin
+      : {};
 
   let needsPatch = false;
+  let needsMapUiPatch = false;
+  if (
+    !hasFiniteCoordinate(defaultOrigin?.lat)
+    || !hasFiniteCoordinate(defaultOrigin?.lng)
+  ) {
+    needsMapUiPatch = true;
+  }
   if (normalizeList(surfaces['home.events']?.filters).length === 0) {
     surfaces['home.events'] = {
       ...(surfaces['home.events'] || {}),
@@ -681,6 +710,46 @@ async function ensureRuntimeDiscoveryFilters(baseUrl) {
       ],
     };
     needsPatch = true;
+  }
+
+  if (normalizeList(surfaces['public_map.primary']?.filters).length === 0) {
+    surfaces['public_map.primary'] = {
+      ...(surfaces['public_map.primary'] || {}),
+      target: 'map_poi',
+      primary_selection_mode: 'single',
+      filters: [
+        {
+          key: 'sr_b_web_public_map',
+          target: 'map_poi',
+          label: 'Mapa SR-B',
+          query: {
+            entities: ['event'],
+            types_by_entity: {
+              event: ['musica-ao-vivo'],
+            },
+          },
+        },
+      ],
+    };
+    needsPatch = true;
+  }
+
+  if (needsMapUiPatch) {
+    const mapUiPatchResponse = await api.patch(
+      buildUrl(baseUrl, '/admin/api/v1/settings/values/map_ui'),
+      {
+        headers: authHeaders(session.token),
+        data: {
+          'default_origin.lat': navigationGeolocation.latitude,
+          'default_origin.lng': navigationGeolocation.longitude,
+          'default_origin.label': 'Praia do Morro',
+        },
+      },
+    );
+    expect(
+      mapUiPatchResponse.status(),
+      'Tenant-admin map default origin runtime seed must persist through Settings Kernel.',
+    ).toBe(200);
   }
 
   if (!needsPatch) {
@@ -1651,6 +1720,7 @@ test('@mutation public Map keeps baseline primary filters without taxonomy subfi
   page,
 }) => {
   const baseUrl = requireTenantUrl();
+  await ensureRuntimeDiscoveryFilters(baseUrl);
   const collectors = installFailureCollectors(page);
   const categories = await fetchMapFilters(page, baseUrl);
   expect(
