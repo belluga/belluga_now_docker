@@ -431,6 +431,7 @@ O Docker **não** executa o build do Flutter automaticamente. O NGINX serve apen
    bash tools/flutter/run_web_navigation_smoke.sh mutation
    ```
    > Política canônica: `mutation` pode rodar em `local|dev|stage`, mas é sempre bloqueada em `main`.
+   > Contrato published atual: o smoke readonly não usa mais um evento recoverable específico de catálogo para provar invite fallback no browser publicado. Em published lanes, ele cobre apenas o caminho irrecoverable-home (`/invite` quebrado continua sem tela cinza/erro para `/`). O comportamento recoverable continua coberto pelos testes determinísticos do Flutter.
    Em ambiente local, o build do Flutter deve usar a origem browser-facing real do fluxo que será validado. Se o navegador abre hosts públicos/tunelados do projeto, mantenha esses valores apenas em `.env.local.navigation` e em `flutter-app/config/defines/local.override.json`, nunca como defaults versionados do Boilerplate.
    Rotas públicas específicas de projeto agora vivem em `project/nginx/routes.conf`, enquanto o mecanismo reutilizável está documentado em `project/nginx/routes.conf.example`.
    Os contratos de referência para `/.well-known/assetlinks.json` e `/.well-known/apple-app-site-association` ficam em `project/well-known/*.example.json`; a entrega runtime continua backend-owned.

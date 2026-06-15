@@ -3,11 +3,6 @@ const { test, expect } = require('@playwright/test');
 const tenantUrl = process.env.NAV_TENANT_URL;
 const appBootTimeoutMs = 120000;
 const knownBrokenInviteCode = '7A9SCU6U4H';
-const recoverableFallback = {
-  eventSlug: 'pw-event-share-boundary-store-release-5',
-  occurrenceId: '6a17bada93ba592fce055f5d',
-  eventTitle: 'PW Event Share Boundary Store Release',
-};
 
 test.describe.configure({ timeout: 300000 });
 
@@ -233,47 +228,6 @@ test('@readonly invite not-found without recoverable fallback lands safely on ho
     expect(
       readPageErrors(),
       'Irrecoverable invite fallback must not throw page-level runtime exceptions.',
-    ).toEqual([]);
-  } finally {
-    previewCapture.dispose();
-    promotionSignals.dispose();
-  }
-});
-
-test('@readonly invite not-found with canonical fallback query lands on the target event', async ({
-  page,
-}) => {
-  const baseUrl = requireTenantUrl();
-  const syntheticBrokenCode = 'PW-READONLY-INVITE-FALLBACK';
-  const previewCapture = attachInvitePreviewCapture(page, syntheticBrokenCode);
-  const promotionSignals = attachPromotionSignalCapture(page);
-  const readPageErrors = attachPageErrorCapture(page);
-  const fallbackPath = `/agenda/evento/${recoverableFallback.eventSlug}?occurrence=${recoverableFallback.occurrenceId}`;
-  const invitePath =
-    `/invite?code=${encodeURIComponent(syntheticBrokenCode)}`
-    + `&fallback=${encodeURIComponent(fallbackPath)}`;
-
-  try {
-    await gotoInvite(page, baseUrl, invitePath);
-    await waitForPathname(page, `/agenda/evento/${recoverableFallback.eventSlug}`);
-    await waitForOccurrence(page, recoverableFallback.occurrenceId);
-    await expect(
-      page.getByText(recoverableFallback.eventTitle, { exact: false }).first(),
-    ).toBeVisible({
-      timeout: appBootTimeoutMs,
-    });
-
-    expect(
-      previewCapture.snapshot(),
-      'The controlled broken invite code must still hit the unavailable preview path before event fallback.',
-    ).toContain(404);
-    expectNoPromotionBoundary(
-      promotionSignals,
-      'Recoverable invite fallback',
-    );
-    expect(
-      readPageErrors(),
-      'Recoverable invite fallback must not throw page-level runtime exceptions.',
     ).toEqual([]);
   } finally {
     previewCapture.dispose();
