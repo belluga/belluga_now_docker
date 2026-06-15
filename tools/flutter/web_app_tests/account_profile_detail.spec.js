@@ -16,6 +16,8 @@ const {
 } = require('./support/account_profile_detail_empty_state_contract');
 
 const tenantUrl = process.env.NAV_TENANT_URL;
+const localRuntimeSeedEnabled =
+  (process.env.NAV_DEPLOY_LANE || '').toString().trim().toLowerCase() === 'local';
 const appBootTimeoutMs = 90000;
 
 test.describe.configure({ timeout: 300000 });
@@ -97,6 +99,13 @@ function textValue(...values) {
     }
   }
   return '';
+}
+
+function hasFiniteCoordinate(value) {
+  if (value == null || value === '') {
+    return false;
+  }
+  return Number.isFinite(Number(value));
 }
 
 async function createApiContext(baseUrl) {
@@ -406,6 +415,74 @@ async function createPoiAccountProfile(api, baseUrl, token, profileType) {
     profileSlug: profile?.slug?.toString() || account?.slug?.toString() || '',
     displayName: profile?.display_name?.toString() || account?.name?.toString(),
   };
+}
+
+async function ensureLocalMapDefaultOrigin(api, baseUrl, token) {
+  if (!localRuntimeSeedEnabled) {
+    return;
+  }
+
+  const valuesResponse = await api.get(
+    buildUrl(baseUrl, '/admin/api/v1/settings/values'),
+    {
+      headers: await authHeaders(token),
+    },
+  );
+  expect(
+    valuesResponse.status(),
+    'Tenant-admin settings values must be readable before seeding local map defaults.',
+  ).toBe(200);
+
+  const valuesPayload = normalizePayload(await valuesResponse.json());
+  const mapUi =
+    valuesPayload?.map_ui && typeof valuesPayload.map_ui === 'object'
+      ? valuesPayload.map_ui
+      : {};
+  const defaultOrigin =
+    mapUi?.default_origin && typeof mapUi.default_origin === 'object'
+      ? mapUi.default_origin
+      : {};
+  const hasLatitude = hasFiniteCoordinate(defaultOrigin?.lat);
+  const hasLongitude = hasFiniteCoordinate(defaultOrigin?.lng);
+  if (hasLatitude && hasLongitude) {
+    return;
+  }
+
+  const patchResponse = await api.patch(
+    buildUrl(baseUrl, '/admin/api/v1/settings/values/map_ui'),
+    {
+      headers: await authHeaders(token),
+      data: {
+        'default_origin.lat': -20.671339,
+        'default_origin.lng': -40.495395,
+        'default_origin.label': 'Praia do Morro',
+      },
+    },
+  );
+  expect(
+    patchResponse.status(),
+    'Local map default origin runtime seed must persist through Settings Kernel.',
+  ).toBe(200);
+
+  await expect
+    .poll(
+      async () => {
+        const environment = await fetchPublicEnvironment(api, baseUrl, token);
+        const publicDefaultOrigin =
+          environment?.settings?.map_ui?.default_origin
+          && typeof environment.settings.map_ui.default_origin === 'object'
+            ? environment.settings.map_ui.default_origin
+            : {};
+        return hasFiniteCoordinate(publicDefaultOrigin?.lat)
+          && hasFiniteCoordinate(publicDefaultOrigin?.lng);
+      },
+      {
+        message:
+          'Local map default origin runtime seed must become visible through the public environment payload.',
+        timeout: appBootTimeoutMs,
+      },
+    )
+    .toBe(true);
 }
 
 async function cleanupCreatedPoiAccountProfile(
@@ -849,6 +926,7 @@ test('@mutation NAV-APD-07..08 agenda is occurrence-first and cards navigate to 
 
   try {
     sessionToken = await loginTenantAdmin(api, baseUrl);
+    await ensureLocalMapDefaultOrigin(api, baseUrl, sessionToken);
     const profileTypeSeed = await resolvePoiCapableProfileType(
       api,
       baseUrl,
@@ -960,6 +1038,7 @@ test('@mutation NAV-APD-09 Como Chegar opens focused map and shared route choose
       .setGeolocation({ latitude: -20.671339, longitude: -40.495395 });
 
     sessionToken = await loginTenantAdmin(api, baseUrl);
+    await ensureLocalMapDefaultOrigin(api, baseUrl, sessionToken);
     const profileTypeSeed = await resolvePoiCapableProfileType(
       api,
       baseUrl,
@@ -1045,6 +1124,7 @@ test('@mutation NAV-APD-11 reference point action opens confirmation modal', asy
 
   try {
     sessionToken = await loginTenantAdmin(api, baseUrl);
+    await ensureLocalMapDefaultOrigin(api, baseUrl, sessionToken);
     const profileTypeSeed = await resolvePoiCapableProfileType(
       api,
       baseUrl,
@@ -1131,6 +1211,7 @@ test('@mutation NAV-APD-13 map reference point action opens confirmation modal',
       .setGeolocation({ latitude: -20.671339, longitude: -40.495395 });
 
     sessionToken = await loginTenantAdmin(api, baseUrl);
+    await ensureLocalMapDefaultOrigin(api, baseUrl, sessionToken);
     const profileTypeSeed = await resolvePoiCapableProfileType(
       api,
       baseUrl,
@@ -1224,6 +1305,7 @@ test('@mutation NAV-APD-14 map route action reuses the shared route chooser afte
       .setGeolocation({ latitude: -20.671339, longitude: -40.495395 });
 
     sessionToken = await loginTenantAdmin(api, baseUrl);
+    await ensureLocalMapDefaultOrigin(api, baseUrl, sessionToken);
     const profileTypeSeed = await resolvePoiCapableProfileType(
       api,
       baseUrl,
