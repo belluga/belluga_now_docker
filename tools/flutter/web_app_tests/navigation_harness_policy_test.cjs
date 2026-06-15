@@ -417,8 +417,9 @@ function assertPublishedLaneProofRemainsPipelineOnly() {
     /\[\[ -e \.github\/scripts\/run_stage_ci_equivalent\.sh \]\]/,
     'verify_environment_ci must fail if the legacy stage CI-equivalent misnomer is reintroduced',
   );
+  const workflowSource = fs.readFileSync(orchestrationWorkflow, 'utf8');
   assert.doesNotMatch(
-    orchestrationWorkflow,
+    workflowSource,
     /run:\s*bash \.github\/scripts\/run_stage_published_validation\.sh/,
     'pipeline must own published-lane proof directly instead of delegating to a local convenience runner',
   );

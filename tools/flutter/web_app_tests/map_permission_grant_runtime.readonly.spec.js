@@ -413,6 +413,11 @@ test('@readonly MAP-LOC-GRANT-02 location-permission CTA continuation loads cano
     await expect(locationPrimaryActionButton).toBeVisible({
       timeout: appBootTimeoutMs,
     });
+    const locationPrimaryActionLabel =
+      (await locationPrimaryActionButton.textContent())?.trim() ?? '<missing>';
+    console.info(
+      `[map-loc-grant-02] initial location CTA before grant: ${locationPrimaryActionLabel}`,
+    );
 
     await context.grantPermissions(['geolocation'], { origin });
     await context.setGeolocation({
