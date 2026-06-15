@@ -407,12 +407,17 @@ test('@readonly MAP-LOC-GRANT-02 location-permission CTA continuation loads cano
     await waitForTenantPath(page, ['/']);
 
     await page.getByRole('tab', { name: /^Mapa$/i }).click();
-    const allowLocationButton = page.getByRole('button', {
-      name: /Permitir localização/i,
+    const locationPrimaryActionButton = page.getByRole('button', {
+      name: /^(Permitir localização|Tentar novamente)$/i,
     });
-    await expect(allowLocationButton).toBeVisible({
+    await expect(locationPrimaryActionButton).toBeVisible({
       timeout: appBootTimeoutMs,
     });
+    const locationPrimaryActionLabel =
+      (await locationPrimaryActionButton.textContent())?.trim() ?? '<missing>';
+    console.info(
+      `[map-loc-grant-02] initial location CTA before grant: ${locationPrimaryActionLabel}`,
+    );
 
     await context.grantPermissions(['geolocation'], { origin });
     await context.setGeolocation({
@@ -421,7 +426,7 @@ test('@readonly MAP-LOC-GRANT-02 location-permission CTA continuation loads cano
       accuracy: 25,
     });
 
-    await allowLocationButton.click();
+    await locationPrimaryActionButton.click();
     await waitForTenantPath(page, ['/mapa']);
 
     await waitForCanonicalMapResponses(
