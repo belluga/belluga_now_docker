@@ -22,6 +22,13 @@ const directPlaywrightContractProbe = path.join(
 const localNavigationEnvExample = path.join(repoRoot, '.env.local.navigation.example');
 const orchestrationWorkflow = path.join(repoRoot, '.github', 'workflows', 'orchestration-ci-cd.yml');
 const rootReadme = path.join(repoRoot, 'README.md');
+const inviteFallbackReadonlySpec = path.join(
+  repoRoot,
+  'tools',
+  'flutter',
+  'web_app_tests',
+  'invite_not_found_event_fallback.readonly.spec.js',
+);
 const {
   filterOwnedEventRows,
   filterOwnedProfileRows,
@@ -95,6 +102,9 @@ function spawnSmokeScriptForPolicyTest(suite, env) {
       'NAV_WEB_SHARD',
       'NAV_WEB_ALLOW_NONLOCAL_MUTATION_HOSTS',
       'NAV_RUNTIME_DB_MUTATION_ALLOWED',
+      'NAV_INVITE_FALLBACK_EVENT_SLUG',
+      'NAV_INVITE_FALLBACK_OCCURRENCE_ID',
+      'NAV_INVITE_FALLBACK_EVENT_TITLE',
       'NAV_TEST_RUN_ID',
       'NAV_WEB_OUTPUT_DIR',
       'DEPLOY_LANE',
@@ -134,6 +144,9 @@ function directPlaywrightEnv(overrides = {}) {
     'NAV_WEB_SHARD',
     'NAV_WEB_ALLOW_NONLOCAL_MUTATION_HOSTS',
     'NAV_RUNTIME_DB_MUTATION_ALLOWED',
+    'NAV_INVITE_FALLBACK_EVENT_SLUG',
+    'NAV_INVITE_FALLBACK_OCCURRENCE_ID',
+    'NAV_INVITE_FALLBACK_EVENT_TITLE',
     'NAV_TEST_RUN_ID',
     'NAV_WEB_OUTPUT_DIR',
     'DEPLOY_LANE',
@@ -308,6 +321,11 @@ function assertStageMutationWorkflowSuppliesRuntimeCredentials() {
     /NAV_PUBLIC_TAXONOMY_MANAGED_FIXTURE:\s*['"]?1['"]?/,
     'stage readonly smoke must opt into the managed taxonomy fixture explicitly',
   );
+  assert.doesNotMatch(
+    readonlyStepMatch[0],
+    /NAV_INVITE_FALLBACK_EVENT_(?:SLUG|TITLE)|NAV_INVITE_FALLBACK_OCCURRENCE_ID/,
+    'stage readonly smoke must not wire a published recoverable invite event fixture implicitly',
+  );
 
   const rollbackReadonlyStepMatch = source.match(
     /- name: Run restored stage readonly navigation smoke[\s\S]*?restored_navigation_workspace[\s\S]*?run_web_navigation_smoke\.sh" readonly/,
@@ -325,6 +343,11 @@ function assertStageMutationWorkflowSuppliesRuntimeCredentials() {
     /NAV_PUBLIC_TAXONOMY_MANAGED_FIXTURE:\s*['"]?1['"]?/,
     'restored stage readonly smoke must opt into the managed taxonomy fixture explicitly',
   );
+  assert.doesNotMatch(
+    rollbackReadonlyStepMatch[0],
+    /NAV_INVITE_FALLBACK_EVENT_(?:SLUG|TITLE)|NAV_INVITE_FALLBACK_OCCURRENCE_ID/,
+    'restored stage readonly smoke must not wire a published recoverable invite event fixture implicitly',
+  );
 
   const productionReadonlyStepMatch = source.match(
     /- name: Run production real navigation smoke[\s\S]*?run: bash tools\/flutter\/run_web_navigation_smoke\.sh readonly/,
@@ -337,6 +360,11 @@ function assertStageMutationWorkflowSuppliesRuntimeCredentials() {
     productionReadonlyStepMatch[0],
     /NAV_PUBLIC_TAXONOMY_MANAGED_FIXTURE:\s*['"]?1['"]?/,
     'production readonly smoke must not implicitly opt into the stage-managed taxonomy fixture',
+  );
+  assert.doesNotMatch(
+    productionReadonlyStepMatch[0],
+    /NAV_INVITE_FALLBACK_EVENT_(?:SLUG|TITLE)|NAV_INVITE_FALLBACK_OCCURRENCE_ID/,
+    'production readonly smoke must not wire a published recoverable invite event fixture implicitly',
   );
 
   const rollbackMutationStepMatch = source.match(
@@ -468,6 +496,25 @@ function assertLocalNavigationEnvAutomationIsSafe() {
     example,
     /https:\/\/(?:belluga\.space|guarappari\.belluga\.space)/,
     'example file must not ship shared/public navigation hosts as defaults',
+  );
+}
+
+function assertInviteRecoverableFallbackPublishedSmokeIsRemoved() {
+  const source = fs.readFileSync(inviteFallbackReadonlySpec, 'utf8');
+  assert.match(
+    source,
+    /@readonly invite not-found without recoverable fallback lands safely on home/,
+    'invite fallback readonly spec must keep the irrecoverable-home proof',
+  );
+  assert.doesNotMatch(
+    source,
+    /@readonly invite not-found with canonical fallback query lands on the target event/,
+    'invite fallback readonly spec must not keep the published recoverable-event proof',
+  );
+  assert.doesNotMatch(
+    source,
+    /pw-event-share-boundary-store-release-5|PW-READONLY-INVITE-FALLBACK/,
+    'invite fallback readonly spec must not hardcode a published recoverable invite event fixture',
   );
 }
 
@@ -1593,6 +1640,7 @@ assertStageMutationWorkflowSuppliesRuntimeCredentials();
 assertStageWorkflowIntentionallyOmitsDiagnosticSuite();
 assertPublishedLaneProofRemainsPipelineOnly();
 assertLocalNavigationEnvAutomationIsSafe();
+assertInviteRecoverableFallbackPublishedSmokeIsRemoved();
 assertReadonlyFavoriteSpecMessageMatchesSuite();
 assertRunnerAlwaysExecutesHarnessPolicyTest();
 assertSmokeRunnerIsolatesOutputsPerInvocation();
