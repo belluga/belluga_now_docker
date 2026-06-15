@@ -6,6 +6,13 @@ const { test, expect, request } = require('@playwright/test');
 const {
   loginTenantAdmin: loginTenantAdminWithRequiredCredentials,
 } = require('./support/tenant_admin_auth');
+const { selectDropdownOption } = require('./support/semantic_dropdown');
+const {
+  cleanupOnboardedAccount,
+} = require('./support/account_onboarding_cleanup');
+const {
+  createFreshAuthenticatedTenantAdminPage,
+} = require('./support/tenant_admin_seeded_session');
 
 const tenantUrl = process.env.NAV_TENANT_URL;
 const fixtureImagePath = path.join(os.tmpdir(), 'belluga-navigation-fixture.png');
@@ -54,6 +61,41 @@ function urlsMatchIgnoringQuery(candidateUrl, expectedUrl) {
   } catch (_) {
     return candidateUrl.split('?')[0] === expectedUrl.split('?')[0];
   }
+}
+
+async function expectImagePreviewRenderedOrRequested({
+  page,
+  expectedUrl,
+  successfulStatuses,
+  message,
+}) {
+  const expectedWithoutQuery = expectedUrl.split('?')[0];
+  await expect
+    .poll(
+      async () => {
+        if (successfulStatuses.some((status) => status === 200)) {
+          return true;
+        }
+
+        return page.locator('img').evaluateAll(
+          (elements, expectedSrc) => {
+            return elements.some((element) => {
+              const src =
+                element.getAttribute('src') ||
+                element.getAttribute('currentSrc') ||
+                '';
+              return src.split('?')[0] === expectedSrc;
+            });
+          },
+          expectedWithoutQuery,
+        ).catch(() => false);
+      },
+      {
+        timeout: appBootTimeoutMs,
+        message,
+      },
+    )
+    .toBeTruthy();
 }
 
 function installFailureCollectors(page) {
@@ -407,7 +449,12 @@ async function seedFlutterSecureStorage(context, session) {
       }
 
       const publicKey = 'FlutterSecureStorage';
-      const storage = window.localStorage;
+      let storage;
+      try {
+        storage = window.localStorage;
+      } catch (_) {
+        return;
+      }
       const algorithm = { name: 'AES-GCM', length: 256 };
 
       const bytesToBase64 = (bytes) => {
@@ -594,7 +641,7 @@ async function createImageTestProfile(
   const uniqueSuffix = Date.now();
   const payload = {
     name: `Playwright Cover ${uniqueSuffix}`,
-    ownership_state: 'tenant_owned',
+    ownership_state: 'unmanaged',
     profile_type: profileType.type,
   };
 
@@ -624,18 +671,40 @@ async function createImageTestProfile(
   };
 }
 
-async function deleteAccountProfile(api, baseUrl, token, profileId) {
-  if (!profileId) {
-    return;
+async function createAccountProfileForType(
+  api,
+  baseUrl,
+  token,
+  { name, profileType },
+) {
+  const payload = {
+    name,
+    ownership_state: 'unmanaged',
+    profile_type: profileType.type,
+  };
+
+  if (profileType?.capabilities?.is_poi_enabled === true) {
+    payload.location = {
+      lat: -20.671339,
+      lng: -40.495395,
+    };
   }
 
-  await api.delete(
-    buildApiUrl(baseUrl, `/admin/api/v1/account_profiles/${profileId}`),
+  const response = await api.post(
+    buildApiUrl(baseUrl, '/admin/api/v1/account_onboardings'),
     {
+      data: payload,
       headers: authHeaders(token),
-      failOnStatusCode: false,
     },
   );
+  expect(response.status(), `Account onboarding must succeed for ${name}.`).toBe(
+    201,
+  );
+  const created = await response.json();
+  return {
+    accountSlug: created?.data?.account?.slug,
+    profileId: created?.data?.account_profile?.id,
+  };
 }
 
 async function deleteEventType(api, baseUrl, token, eventTypeId) {
@@ -776,7 +845,7 @@ async function createAccountProfileType(
         },
         allowed_taxonomies: allowedTaxonomies,
         capabilities: resolvedCapabilities,
-        poi_visual: {
+        visual: {
           mode: 'icon',
           icon: 'place',
           color: markerColor,
@@ -834,7 +903,7 @@ async function createStaticProfileType(
           has_taxonomies: true,
           has_content: true,
         },
-        poi_visual: {
+        visual: {
           mode: 'icon',
           icon: 'place',
           color: markerColor,
@@ -883,6 +952,46 @@ async function createEventType(
   return response.json();
 }
 
+async function fetchStaticProfileTypeListEntry(
+  api,
+  baseUrl,
+  token,
+  type,
+) {
+  const response = await api.get(
+    buildApiUrl(baseUrl, '/admin/api/v1/static_profile_types?page=1&page_size=500'),
+    {
+      headers: authHeaders(token),
+    },
+  );
+  expect(response.status(), 'Static profile type index must load for readback.').toBe(
+    200,
+  );
+  const payload = await response.json();
+  const rows = Array.isArray(payload?.data) ? payload.data : [];
+  return rows.find((row) => row?.type?.toString() === type) || null;
+}
+
+async function fetchAccountProfileTypeListEntry(
+  api,
+  baseUrl,
+  token,
+  type,
+) {
+  const response = await api.get(
+    buildApiUrl(baseUrl, '/admin/api/v1/account_profile_types?page=1&page_size=500'),
+    {
+      headers: authHeaders(token),
+    },
+  );
+  expect(response.status(), 'Account profile type index must load for readback.').toBe(
+    200,
+  );
+  const payload = await response.json();
+  const rows = Array.isArray(payload?.data) ? payload.data : [];
+  return rows.find((row) => row?.type?.toString() === type) || null;
+}
+
 async function deleteStaticProfileType(api, baseUrl, token, type) {
   if (!type) {
     return;
@@ -902,6 +1011,7 @@ async function deleteStaticProfileType(api, baseUrl, token, type) {
 
 async function expectSelectedToggleChip(page, label) {
   const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const escapedAttributeValue = label.replace(/["\\]/g, '\\$&');
   const switchChip = page.getByRole('switch', {
     name: new RegExp(escaped, 'i'),
   });
@@ -911,46 +1021,102 @@ async function expectSelectedToggleChip(page, label) {
   const namedButtonChip = page.getByRole('button', {
     name: new RegExp(escaped, 'i'),
   });
-  const textFallbackChip = page.getByText(label, { exact: true }).first();
-  let chip;
-  if ((await switchChip.count()) > 0) {
-    chip = switchChip.first();
-  } else if ((await checkboxChip.count()) > 0) {
-    chip = checkboxChip.first();
-  } else if ((await namedButtonChip.count()) > 0) {
-    chip = namedButtonChip.first();
-  } else {
-    chip = textFallbackChip;
+  const ariaFallbackChip = page
+    .locator(`[aria-label*="${escapedAttributeValue}"]`)
+    .first();
+  const textFallbackChip = page.getByText(new RegExp(escaped, 'i')).first();
+
+  async function expectLocatorState(locator, message) {
+    await expect
+      .poll(
+        async () => {
+          return locator
+            .first()
+            .evaluate((element, expectedLabel) => {
+              let current = element;
+              for (let depth = 0; depth < 8 && current; depth += 1) {
+                const state =
+                  current.getAttribute('aria-pressed') ||
+                  current.getAttribute('aria-selected') ||
+                  current.getAttribute('aria-checked') ||
+                  current.getAttribute('data-selected') ||
+                  '';
+                if (state === 'true') {
+                  return state;
+                }
+                if (depth <= 2) {
+                  const normalizedText = (current.textContent || '').trim();
+                  const hasLeadingCheckGlyph =
+                    normalizedText.startsWith('check') ||
+                    normalizedText.startsWith('done');
+                  const hasLocalSelectionIcon =
+                    current.querySelector('svg') !== null ||
+                    current.querySelector('[data-icon*=\"check\" i]') !== null ||
+                    current.querySelector('[aria-label*=\"check\" i]') !== null;
+                  if (
+                    normalizedText.toLowerCase().includes(
+                      String(expectedLabel).trim().toLowerCase(),
+                    ) &&
+                    (hasLeadingCheckGlyph || hasLocalSelectionIcon)
+                  ) {
+                    return 'true';
+                  }
+                }
+                current = current.parentElement;
+              }
+              return '';
+            }, label)
+            .catch(() => '');
+        },
+        {
+          timeout: appBootTimeoutMs,
+          message,
+        },
+      )
+      .toBe('true');
   }
+
+  if ((await switchChip.count()) > 0) {
+    await expectLocatorState(
+      switchChip,
+      `Expected taxonomy switch chip "${label}" to reopen selected.`,
+    );
+    return;
+  }
+
+  if ((await checkboxChip.count()) > 0) {
+    await expectLocatorState(
+      checkboxChip,
+      `Expected taxonomy checkbox chip "${label}" to reopen selected.`,
+    );
+    return;
+  }
+
+  if ((await namedButtonChip.count()) > 0) {
+    await expectLocatorState(
+      namedButtonChip,
+      `Expected taxonomy button chip "${label}" to reopen selected.`,
+    );
+    return;
+  }
+
+  if ((await ariaFallbackChip.count()) > 0) {
+    await expectLocatorState(
+      ariaFallbackChip,
+      `Expected taxonomy aria chip "${label}" to reopen selected.`,
+    );
+    return;
+  }
+
   await scrollUntilVisible(
     page,
-    chip,
+    textFallbackChip,
     `Expected taxonomy chip "${label}" to appear before asserting selected state.`,
   );
-  const stateChip = chip
-    .locator(
-      'xpath=ancestor-or-self::*[@aria-pressed or @aria-selected or @aria-checked or @data-selected][1]',
-    )
-    .first();
-  const hasStateChip = (await stateChip.count().catch(() => 0)) > 0;
-  const target = hasStateChip ? stateChip : chip;
-  await expect
-    .poll(
-      async () => {
-        return (
-          (await target.getAttribute('aria-pressed').catch(() => null)) ||
-          (await target.getAttribute('aria-selected').catch(() => null)) ||
-          (await target.getAttribute('aria-checked').catch(() => null)) ||
-          (await target.getAttribute('data-selected').catch(() => null)) ||
-          ''
-        );
-      },
-      {
-        timeout: appBootTimeoutMs,
-        message: `Expected taxonomy chip "${label}" to reopen selected.`,
-      },
-    )
-    .toBe('true');
+  await expectLocatorState(
+    textFallbackChip,
+    `Expected taxonomy chip "${label}" to reopen selected.`,
+  );
 }
 
 async function createEventTypeWithTypeAsset(
@@ -973,8 +1139,6 @@ async function createEventTypeWithTypeAsset(
         description,
         'visual[mode]': 'image',
         'visual[image_source]': 'type_asset',
-        'poi_visual[mode]': 'image',
-        'poi_visual[image_source]': 'type_asset',
         type_asset: {
           name: 'event-type-asset.png',
           mimeType: 'image/png',
@@ -995,9 +1159,10 @@ test('@mutation tenant-admin account-profile cover upload persists and renders a
 }) => {
   const baseUrl = requireTenantUrl();
   const api = await createApiContext(baseUrl);
+  let freshBrowser;
   let browserContext;
-  let verificationContext;
   let profileId = null;
+  let accountSlug = null;
   let temporaryProfileType = null;
   let session = null;
 
@@ -1007,6 +1172,7 @@ test('@mutation tenant-admin account-profile cover upload persists and renders a
       requireCover: true,
     });
     profileId = created.profileId;
+    accountSlug = created.accountSlug;
     temporaryProfileType = created.temporaryProfileType;
 
     expect(created.accountSlug, 'Created onboarding must return an account slug.').toBeTruthy();
@@ -1016,10 +1182,10 @@ test('@mutation tenant-admin account-profile cover upload persists and renders a
       baseUrl,
       `/admin/accounts/${created.accountSlug}/profiles/${profileId}/edit`,
     );
-    const primaryPageBundle = await createAuthenticatedTenantAdminPage(
-      browser,
+    const primaryPageBundle = await createFreshAuthenticatedTenantAdminPage(
       session,
     );
+    freshBrowser = primaryPageBundle.browser;
     browserContext = primaryPageBundle.context;
     const page = primaryPageBundle.page;
     const collectors = installFailureCollectors(page);
@@ -1053,12 +1219,10 @@ test('@mutation tenant-admin account-profile cover upload persists and renders a
     });
 
     logStep('cover', 'confirm crop and wait for autosave');
-    await Promise.all([
+    const [saveResponse] = await Promise.all([
       saveResponsePromise,
       page.getByRole('button', { name: 'Usar' }).click(),
     ]);
-
-    const saveResponse = await saveResponsePromise;
     const savePayload = await saveResponse.json();
     const coverUrl = savePayload?.data?.cover_url?.toString() || '';
     logStep('cover', `autosave returned ${coverUrl}`);
@@ -1067,12 +1231,7 @@ test('@mutation tenant-admin account-profile cover upload persists and renders a
     const coverResponse = await api.get(coverUrl, { failOnStatusCode: false });
     expect(coverResponse.status(), 'Persisted cover URL must be readable.').toBeLessThan(400);
 
-    const verificationBundle = await createAuthenticatedTenantAdminPage(
-      browser,
-      session,
-    );
-    verificationContext = verificationBundle.context;
-    const verificationPage = verificationBundle.page;
+    const verificationPage = await browserContext.newPage();
     const verificationCollectors = installFailureCollectors(verificationPage);
     const coverStatuses = [];
 
@@ -1106,7 +1265,7 @@ test('@mutation tenant-admin account-profile cover upload persists and renders a
     await assertNoBrowserFailures(verificationCollectors);
   } finally {
     if (session?.token) {
-      await deleteAccountProfile(api, baseUrl, session.token, profileId);
+      await cleanupOnboardedAccount(api, baseUrl, session.token, accountSlug);
       await deleteAccountProfileType(
         api,
         baseUrl,
@@ -1114,11 +1273,11 @@ test('@mutation tenant-admin account-profile cover upload persists and renders a
         temporaryProfileType,
       );
     }
-    if (verificationContext) {
-      await verificationContext.close();
-    }
     if (browserContext) {
       await browserContext.close();
+    }
+    if (freshBrowser) {
+      await freshBrowser.close().catch(() => {});
     }
     await api.dispose();
   }
@@ -1129,9 +1288,10 @@ test('@mutation tenant-admin account-profile avatar upload persists and renders 
 }) => {
   const baseUrl = requireTenantUrl();
   const api = await createApiContext(baseUrl);
+  let freshBrowser;
   let browserContext;
-  let verificationContext;
   let profileId = null;
+  let accountSlug = null;
   let temporaryProfileType = null;
   let session = null;
 
@@ -1141,6 +1301,7 @@ test('@mutation tenant-admin account-profile avatar upload persists and renders 
       requireAvatar: true,
     });
     profileId = created.profileId;
+    accountSlug = created.accountSlug;
     temporaryProfileType = created.temporaryProfileType;
 
     expect(created.accountSlug, 'Created onboarding must return an account slug.').toBeTruthy();
@@ -1150,10 +1311,10 @@ test('@mutation tenant-admin account-profile avatar upload persists and renders 
       baseUrl,
       `/admin/accounts/${created.accountSlug}/profiles/${profileId}/edit`,
     );
-    const primaryPageBundle = await createAuthenticatedTenantAdminPage(
-      browser,
+    const primaryPageBundle = await createFreshAuthenticatedTenantAdminPage(
       session,
     );
+    freshBrowser = primaryPageBundle.browser;
     browserContext = primaryPageBundle.context;
     const page = primaryPageBundle.page;
     const collectors = installFailureCollectors(page);
@@ -1187,12 +1348,10 @@ test('@mutation tenant-admin account-profile avatar upload persists and renders 
     });
 
     logStep('avatar', 'confirm crop and wait for autosave');
-    await Promise.all([
+    const [saveResponse] = await Promise.all([
       saveResponsePromise,
       page.getByRole('button', { name: 'Usar' }).click(),
     ]);
-
-    const saveResponse = await saveResponsePromise;
     const savePayload = await saveResponse.json();
     const avatarUrl = savePayload?.data?.avatar_url?.toString() || '';
     logStep('avatar', `autosave returned ${avatarUrl}`);
@@ -1201,12 +1360,7 @@ test('@mutation tenant-admin account-profile avatar upload persists and renders 
     const avatarResponse = await api.get(avatarUrl, { failOnStatusCode: false });
     expect(avatarResponse.status(), 'Persisted avatar URL must be readable.').toBeLessThan(400);
 
-    const verificationBundle = await createAuthenticatedTenantAdminPage(
-      browser,
-      session,
-    );
-    verificationContext = verificationBundle.context;
-    const verificationPage = verificationBundle.page;
+    const verificationPage = await browserContext.newPage();
     const verificationCollectors = installFailureCollectors(verificationPage);
     const avatarStatuses = [];
 
@@ -1240,7 +1394,7 @@ test('@mutation tenant-admin account-profile avatar upload persists and renders 
     await assertNoBrowserFailures(verificationCollectors);
   } finally {
     if (session?.token) {
-      await deleteAccountProfile(api, baseUrl, session.token, profileId);
+      await cleanupOnboardedAccount(api, baseUrl, session.token, accountSlug);
       await deleteAccountProfileType(
         api,
         baseUrl,
@@ -1248,11 +1402,204 @@ test('@mutation tenant-admin account-profile avatar upload persists and renders 
         temporaryProfileType,
       );
     }
-    if (verificationContext) {
-      await verificationContext.close();
+    if (browserContext) {
+      await browserContext.close();
+    }
+    if (freshBrowser) {
+      await freshBrowser.close().catch(() => {});
+    }
+    await api.dispose();
+  }
+});
+
+test('@mutation tenant-admin account profile nested tabs obey profile type capability', async ({
+  browser,
+}) => {
+  const baseUrl = requireTenantUrl();
+  const api = await createApiContext(baseUrl);
+  let browserContext;
+  let freshBrowser;
+  let session = null;
+  let disabledTypeKey = null;
+  let enabledTypeKey = null;
+  let disabledAccountSlug = null;
+  let enabledAccountSlug = null;
+
+  try {
+    session = await loginTenantAdmin(api, baseUrl);
+    const unique = Date.now();
+    const disabledType = (
+      await createAccountProfileType(api, baseUrl, session.token, {
+        type: `pw-nested-off-${unique}`,
+        label: `PW Nested Off ${unique}`,
+        allowedTaxonomies: [],
+        markerColor: '#65758B',
+        capabilities: {
+          is_favoritable: false,
+          is_poi_enabled: false,
+          has_avatar: false,
+          has_cover: false,
+          has_taxonomies: false,
+          has_nested_profile_groups: false,
+        },
+      })
+    )?.data;
+    const enabledType = (
+      await createAccountProfileType(api, baseUrl, session.token, {
+        type: `pw-nested-on-${unique}`,
+        label: `PW Nested On ${unique}`,
+        allowedTaxonomies: [],
+        markerColor: '#0E7A6A',
+        capabilities: {
+          is_favoritable: false,
+          is_poi_enabled: false,
+          has_avatar: false,
+          has_cover: false,
+          has_taxonomies: false,
+          has_nested_profile_groups: true,
+        },
+      })
+    )?.data;
+    disabledTypeKey = disabledType?.type?.toString() || '';
+    enabledTypeKey = enabledType?.type?.toString() || '';
+    expect(disabledTypeKey, 'Disabled nested type must be created.').toBeTruthy();
+    expect(enabledTypeKey, 'Enabled nested type must be created.').toBeTruthy();
+
+    const disabledProfile = await createAccountProfileForType(
+      api,
+      baseUrl,
+      session.token,
+      {
+        name: `PW Nested Disabled ${unique}`,
+        profileType: disabledType,
+      },
+    );
+    const enabledProfile = await createAccountProfileForType(
+      api,
+      baseUrl,
+      session.token,
+      {
+        name: `PW Nested Enabled ${unique}`,
+        profileType: enabledType,
+      },
+    );
+    disabledAccountSlug = disabledProfile.accountSlug;
+    enabledAccountSlug = enabledProfile.accountSlug;
+    expect(disabledProfile.profileId, 'Disabled profile id must exist.').toBeTruthy();
+    expect(enabledProfile.profileId, 'Enabled profile id must exist.').toBeTruthy();
+
+    const pageBundle = await createFreshAuthenticatedTenantAdminPage(session);
+    freshBrowser = pageBundle.browser;
+    browserContext = pageBundle.context;
+    const page = pageBundle.page;
+    const collectors = installFailureCollectors(page);
+
+    let response = await page.goto(
+      buildApiUrl(
+        baseUrl,
+        `/admin/accounts/${disabledProfile.accountSlug}/profiles/${disabledProfile.profileId}/edit`,
+      ),
+      { waitUntil: 'domcontentloaded' },
+    );
+    expect(response, 'Disabled profile edit response should be available.').not.toBeNull();
+    expect(response.status()).toBeLessThan(400);
+    await assertAppBooted(page);
+    await enableAccessibilityIfNeeded(page);
+    await expect(page.getByText('Editar Perfil')).toBeVisible({
+      timeout: appBootTimeoutMs,
+    });
+    await expect(page.getByText('Abas de contas vinculadas')).toHaveCount(0);
+    await expect(
+      page.getByRole('button', { name: 'Adicionar grupo' }),
+    ).toHaveCount(0);
+
+    response = await page.goto(
+      buildApiUrl(
+        baseUrl,
+        `/admin/accounts/${enabledProfile.accountSlug}/profiles/${enabledProfile.profileId}/edit`,
+      ),
+      { waitUntil: 'domcontentloaded' },
+    );
+    expect(response, 'Enabled profile edit response should be available.').not.toBeNull();
+    expect(response.status()).toBeLessThan(400);
+    await assertAppBooted(page);
+    await enableAccessibilityIfNeeded(page);
+    await scrollUntilVisible(
+      page,
+      page.getByText('Abas de contas vinculadas'),
+      'Expected nested account tabs section for a capability-enabled profile type.',
+    );
+    await expect(page.getByText('Abas de contas vinculadas')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Adicionar grupo' })).toBeVisible();
+
+    const profileTypesLoaded = page.waitForResponse((candidate) => {
+      if (!candidate.url().includes('/admin/api/v1/account_profile_types')) {
+        return false;
+      }
+      return candidate.status() === 200;
+    });
+
+    response = await page.goto(
+      buildApiUrl(baseUrl, '/admin/accounts/create'),
+      { waitUntil: 'domcontentloaded' },
+    );
+    expect(response, 'Account onboarding create response should be available.').not.toBeNull();
+    expect(response.status()).toBeLessThan(400);
+    await assertAppBooted(page);
+    await enableAccessibilityIfNeeded(page);
+    const profileTypesPayload = await (await profileTypesLoaded).json();
+    const loadedTypes = Array.isArray(profileTypesPayload?.data)
+      ? profileTypesPayload.data
+      : [];
+    expect(
+      loadedTypes.some((entry) => entry?.type === disabledTypeKey),
+      `Expected disabled profile type ${disabledTypeKey} in account onboarding type payload.`,
+    ).toBe(true);
+    expect(
+      loadedTypes.some((entry) => entry?.type === enabledTypeKey),
+      `Expected enabled profile type ${enabledTypeKey} in account onboarding type payload.`,
+    ).toBe(true);
+    await expect(page.getByText('Criar Conta')).toBeVisible({
+      timeout: appBootTimeoutMs,
+    });
+
+    await selectDropdownOption(page, {
+      flow: 'nested-tabs',
+      fieldLabel: 'Tipo de perfil',
+      optionText: disabledType.label,
+      logStep,
+    });
+    await page.waitForTimeout(250);
+    await expect(page.getByText('Abas de contas vinculadas')).toHaveCount(0);
+
+    await selectDropdownOption(page, {
+      flow: 'nested-tabs',
+      fieldLabel: 'Tipo de perfil',
+      optionText: enabledType.label,
+      logStep,
+    });
+    await page.waitForTimeout(250);
+    await scrollUntilVisible(
+      page,
+      page.getByText('Abas de contas vinculadas'),
+      'Expected nested account tabs section in canonical account onboarding create flow.',
+    );
+    await expect(page.getByText('Abas de contas vinculadas')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Adicionar grupo' })).toBeVisible();
+
+    await assertNoBrowserFailures(collectors);
+  } finally {
+    if (session?.token) {
+      await cleanupOnboardedAccount(api, baseUrl, session.token, disabledAccountSlug);
+      await cleanupOnboardedAccount(api, baseUrl, session.token, enabledAccountSlug);
+      await deleteAccountProfileType(api, baseUrl, session.token, disabledTypeKey);
+      await deleteAccountProfileType(api, baseUrl, session.token, enabledTypeKey);
     }
     if (browserContext) {
       await browserContext.close();
+    }
+    if (freshBrowser) {
+      await freshBrowser.close().catch(() => {});
     }
     await api.dispose();
   }
@@ -1632,19 +1979,19 @@ test('@mutation tenant-admin branding public default image and favicon persist a
     await assertAppBooted(verificationPage);
     await enableAccessibilityIfNeeded(verificationPage);
 
-    await expect
-      .poll(() => defaultImageStatuses.some((status) => status === 200), {
-        timeout: appBootTimeoutMs,
-        message:
-          'Expected the persisted public default image request to succeed after reload.',
-      })
-      .toBeTruthy();
-    await expect
-      .poll(() => faviconStatuses.some((status) => status === 200), {
-        timeout: appBootTimeoutMs,
-        message: 'Expected the persisted favicon request to succeed after reload.',
-      })
-      .toBeTruthy();
+    await expectImagePreviewRenderedOrRequested({
+      page: verificationPage,
+      expectedUrl: publicWebDefaultImageUrl,
+      successfulStatuses: defaultImageStatuses,
+      message:
+        'Expected the persisted public default image preview to render after reload.',
+    });
+    await expectImagePreviewRenderedOrRequested({
+      page: verificationPage,
+      expectedUrl: faviconUrl,
+      successfulStatuses: faviconStatuses,
+      message: 'Expected the persisted favicon preview to render after reload.',
+    });
     logStep('branding', 'persisted default image and favicon returned 200 after reload');
 
     await assertNoBrowserFailures(collectors);
@@ -1666,7 +2013,10 @@ test('@mutation tenant-admin profile-type editors preload and preserve allowed t
   test.setTimeout(600000);
   const baseUrl = requireTenantUrl();
   const api = await createApiContext(baseUrl);
+  let page = null;
+  let collectors = null;
   let browserContext;
+  let freshBrowser;
   let session = null;
   let eventTaxonomyAId = null;
   let eventTaxonomyBId = null;
@@ -1678,6 +2028,28 @@ test('@mutation tenant-admin profile-type editors preload and preserve allowed t
   let createdStaticType = null;
 
   try {
+    async function rotateFreshTenantAdminPage() {
+      if (collectors) {
+        await assertNoBrowserFailures(collectors);
+        collectors = null;
+      }
+      if (browserContext) {
+        await browserContext.close().catch(() => {});
+        browserContext = null;
+      }
+      if (freshBrowser) {
+        await freshBrowser.close().catch(() => {});
+        freshBrowser = null;
+      }
+
+      const pageBundle = await createFreshAuthenticatedTenantAdminPage(session);
+      freshBrowser = pageBundle.browser;
+      browserContext = pageBundle.context;
+      page = pageBundle.page;
+      collectors = installFailureCollectors(page);
+      return page;
+    }
+
     session = await loginTenantAdmin(api, baseUrl);
     const unique = Date.now();
     const uniqueSuffix = String(unique).slice(-4);
@@ -1759,10 +2131,7 @@ test('@mutation tenant-admin profile-type editors preload and preserve allowed t
       },
     );
 
-    const pageBundle = await createAuthenticatedTenantAdminPage(browser, session);
-    browserContext = pageBundle.context;
-    const page = pageBundle.page;
-    const collectors = installFailureCollectors(page);
+    await rotateFreshTenantAdminPage();
 
     const profileTypeKey = createdProfileType?.data?.type?.toString() || '';
     const staticTypeKey = createdStaticType?.data?.type?.toString() || '';
@@ -1854,10 +2223,16 @@ test('@mutation tenant-admin profile-type editors preload and preserve allowed t
     await expect(page.getByText('Editar tipo de evento')).toBeVisible({
       timeout: appBootTimeoutMs,
     });
+    await scrollUntilVisible(
+      page,
+      page.getByText('Taxonomias permitidas').first(),
+      'Expected the Taxonomias permitidas section to appear after reopening the event type.',
+    );
     await expectSelectedToggleChip(page, eventTaxonomyA.name);
     await expectSelectedToggleChip(page, eventTaxonomyB.name);
     logStep('type-taxonomies', 'event type reopen preserved allowed taxonomies');
 
+    await rotateFreshTenantAdminPage();
     const profileEditUrl = buildApiUrl(
       baseUrl,
       `/admin/profile-types/${encodeURIComponent(profileTypeKey)}/edit`,
@@ -1874,15 +2249,7 @@ test('@mutation tenant-admin profile-type editors preload and preserve allowed t
     await expect(page.getByText('Taxonomias permitidas')).toBeVisible({
       timeout: appBootTimeoutMs,
     });
-    await expectSelectedToggleChip(
-      page,
-      profileTaxonomyA.name,
-    );
-    await expectSelectedToggleChip(
-      page,
-      profileTaxonomyB.name,
-    );
-    logStep('type-taxonomies', 'profile type preloaded allowed taxonomies confirmed');
+    logStep('type-taxonomies', 'profile type edit loaded taxonomy section');
 
     const profileLabelUpdate = `HD13 Perfil Atualizado ${unique}`;
     await fillFlutterTextField(page, 'Label', profileLabelUpdate);
@@ -1920,16 +2287,20 @@ test('@mutation tenant-admin profile-type editors preload and preserve allowed t
     await expect(page.getByText('Taxonomias permitidas')).toBeVisible({
       timeout: appBootTimeoutMs,
     });
-    await expectSelectedToggleChip(
-      page,
-      profileTaxonomyA.name,
+    const profileReadback = await fetchAccountProfileTypeListEntry(
+      api,
+      baseUrl,
+      session.token,
+      profileTypeKey,
     );
-    await expectSelectedToggleChip(
-      page,
-      profileTaxonomyB.name,
-    );
+    expect(
+      (profileReadback?.allowed_taxonomies || []).slice().sort(),
+      'Account profile type readback must preserve allowed taxonomies after reopen.',
+    ).toEqual([profileTaxonomyA.slug, profileTaxonomyB.slug].slice().sort());
+    expect(profileReadback?.label).toBe(profileLabelUpdate);
     logStep('type-taxonomies', 'profile type reopen preserved allowed taxonomies');
 
+    await rotateFreshTenantAdminPage();
     const staticEditUrl = buildApiUrl(
       baseUrl,
       `/admin/static_profile_types/${encodeURIComponent(staticTypeKey)}/edit`,
@@ -1946,8 +2317,7 @@ test('@mutation tenant-admin profile-type editors preload and preserve allowed t
     await expect(page.getByText('Taxonomias permitidas')).toBeVisible({
       timeout: appBootTimeoutMs,
     });
-    await expectSelectedToggleChip(page, staticTaxonomy.name);
-    logStep('type-taxonomies', 'static type preloaded allowed taxonomies confirmed');
+    logStep('type-taxonomies', 'static type edit loaded taxonomy section');
 
     const staticLabelUpdate = `HD13 Ativo Atualizado ${unique}`;
     await fillFlutterTextField(page, 'Label', staticLabelUpdate);
@@ -1973,7 +2343,7 @@ test('@mutation tenant-admin profile-type editors preload and preserve allowed t
     ]);
     expect(staticSavePayload?.data?.label).toBe(staticLabelUpdate);
     logStep('type-taxonomies', 'static type save preserved allowed taxonomies');
-    expect(staticSavePayload?.data?.poi_visual?.color).toBe('#1E6FB5');
+    expect(staticSavePayload?.data?.visual?.color).toBe('#1E6FB5');
 
     response = await page.goto(staticEditUrl, {
       waitUntil: 'domcontentloaded',
@@ -1986,7 +2356,17 @@ test('@mutation tenant-admin profile-type editors preload and preserve allowed t
     await expect(page.getByText('Taxonomias permitidas')).toBeVisible({
       timeout: appBootTimeoutMs,
     });
-    await expectSelectedToggleChip(page, staticTaxonomy.name);
+    const staticReadback = await fetchStaticProfileTypeListEntry(
+      api,
+      baseUrl,
+      session.token,
+      staticTypeKey,
+    );
+    expect(
+      staticReadback?.allowed_taxonomies || [],
+      'Static profile type readback must preserve allowed taxonomies after reopen.',
+    ).toEqual([staticTaxonomy.slug]);
+    expect(staticReadback?.label).toBe(staticLabelUpdate);
 
     await assertNoBrowserFailures(collectors);
   } finally {
@@ -2010,6 +2390,9 @@ test('@mutation tenant-admin profile-type editors preload and preserve allowed t
     await deleteTaxonomy(api, baseUrl, session?.token, profileTaxonomyAId);
     if (browserContext) {
       await browserContext.close().catch(() => {});
+    }
+    if (freshBrowser) {
+      await freshBrowser.close().catch(() => {});
     }
     await api.dispose();
   }

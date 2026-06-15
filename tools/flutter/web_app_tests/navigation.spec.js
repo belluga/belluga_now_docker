@@ -427,7 +427,33 @@ test('@mutation tenant agenda UI state matches tenant agenda API payload', async
   expect(response.status(), 'Tenant response should be successful').toBeLessThan(400);
   await assertAppBooted(page);
   await enableAccessibilityIfNeeded(page);
-  await page.waitForTimeout(12000);
+  const defaultEmptyStateText = page.getByText('Nenhum evento disponível no momento');
+  const filteredEmptyStateText = page.getByText('Nenhum resultado encontrado');
+
+  await expect
+    .poll(
+      () => [200, 201].includes(anonymousIdentityStatus),
+      {
+        timeout: appBootTimeoutMs,
+        message: 'Expected anonymous identity bootstrap call on tenant public startup.',
+      },
+    )
+    .toBe(true);
+
+  await expect
+    .poll(
+      async () =>
+        homeAgendaResponses.length > 0 ||
+        agendaErrorResponses.length > 0 ||
+        (await defaultEmptyStateText.count()) > 0 ||
+        (await filteredEmptyStateText.count()) > 0,
+      {
+        timeout: appBootTimeoutMs,
+        message:
+          'Expected canonical home agenda response or explicit empty-state UI on tenant startup.',
+      },
+    )
+    .toBe(true);
 
   expect(
     anonymousIdentityStatus,
@@ -454,8 +480,6 @@ test('@mutation tenant agenda UI state matches tenant agenda API payload', async
       .join('\n')}`,
   ).toEqual([]);
 
-  const defaultEmptyStateText = page.getByText('Nenhum evento disponível no momento');
-  const filteredEmptyStateText = page.getByText('Nenhum resultado encontrado');
   const hasVisibleEmptyState =
     (await defaultEmptyStateText.count()) > 0 ||
     (await filteredEmptyStateText.count()) > 0;

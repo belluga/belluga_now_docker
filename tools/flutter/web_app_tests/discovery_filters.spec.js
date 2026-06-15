@@ -4,9 +4,16 @@ const { test, expect, request } = require('@playwright/test');
 const {
   loginTenantAdmin: loginTenantAdminWithRequiredCredentials,
 } = require('./support/tenant_admin_auth');
+const {
+  cleanupOnboardedAccounts,
+  runCleanupPreservingPrimaryError,
+} = require('./support/account_onboarding_cleanup');
 
 const tenantUrl = process.env.NAV_TENANT_URL;
 const appBootTimeoutMs = 90000;
+const apiRequestTimeoutMs = 30000;
+const localRuntimeSeedEnabled =
+  (process.env.NAV_DEPLOY_LANE || '').toString().trim().toLowerCase() === 'local';
 const navigationGeolocation = {
   latitude: -20.671339,
   longitude: -40.495395,
@@ -84,11 +91,18 @@ function valuesFor(value) {
   return Array.isArray(value) ? value.map(String) : [String(value)];
 }
 
+function hasFiniteCoordinate(value) {
+  if (value == null || value === '') {
+    return false;
+  }
+  return Number.isFinite(Number(value));
+}
+
 function firstQueryExpectation(filter) {
   const query = normalizeQuery(filter.query);
-  const entities = valuesFor(query.entities ?? query.entity);
+  const entities = valuesFor(query.entities);
   const typesByEntity = normalizeQuery(query.types_by_entity);
-  const flatTypes = valuesFor(query.types ?? query.type);
+  const flatTypes = valuesFor(query.types);
   const taxonomy = normalizeQuery(query.taxonomy);
 
   const typeEntity = Object.keys(typesByEntity)[0];
@@ -118,12 +132,41 @@ function firstQueryExpectation(filter) {
   return { name: 'filter', value: filter.key };
 }
 
+function canonicalQueryParamKeys(expectedName) {
+  switch (String(expectedName || '').toLowerCase()) {
+    case 'entity':
+      return ['entities', 'entities[]'];
+    case 'type':
+      return ['types', 'types[]'];
+    case 'taxonomy':
+      return ['taxonomy', 'taxonomy[]'];
+    case 'category':
+      return ['categories', 'categories[]'];
+    case 'source':
+      return ['source'];
+    default:
+      return [];
+  }
+}
+
 function requestContainsFilterValue(rawUrl, expected) {
   const url = new URL(rawUrl);
   const params = url.searchParams;
   const expectedValue = expected.value.toLowerCase();
-  for (const [, value] of params.entries()) {
-    if (String(value).toLowerCase().includes(expectedValue)) {
+  const allEntries = [...params.entries()];
+  const candidateKeys = canonicalQueryParamKeys(expected.name)
+    .map((value) => value.toLowerCase());
+  const scopedEntries = candidateKeys.length > 0
+    ? allEntries.filter(([key]) => candidateKeys.includes(String(key).toLowerCase()))
+    : [];
+  const entriesToCheck = scopedEntries.length > 0 ? scopedEntries : allEntries;
+  for (const [, value] of entriesToCheck) {
+    const rawValue = String(value).toLowerCase();
+    const tokens = rawValue
+      .split(',')
+      .map((token) => token.trim())
+      .filter(Boolean);
+    if (rawValue === expectedValue || tokens.includes(expectedValue)) {
       return true;
     }
   }
@@ -151,12 +194,13 @@ function trackFilteredRequests(page, pathFragment, expected) {
 async function waitForTrackedFilteredRequest(
   tracker,
   message,
+  previousCount = 0,
   timeoutMs = appBootTimeoutMs,
 ) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (tracker.urls.length > 0) {
-      return tracker.urls[0];
+    if (tracker.urls.length > previousCount) {
+      return tracker.urls[tracker.urls.length - 1];
     }
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
@@ -171,14 +215,32 @@ async function clickUntilFilteredRequest({
 }) {
   let lastError = null;
   for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const previousCount = tracker.urls.length;
     await activateSemanticToggle(locator.first());
     try {
-      return await waitForTrackedFilteredRequest(tracker, message, 12000);
+      return await waitForTrackedFilteredRequest(
+        tracker,
+        message,
+        previousCount,
+        12000,
+      );
     } catch (error) {
       lastError = error;
     }
   }
   throw lastError ?? new Error(message);
+}
+
+async function expectVisibleRuntimeTitle(page, title) {
+  await expect(
+    page.getByText(new RegExp(escapeRegExp(title), 'i')).first(),
+  ).toBeVisible({ timeout: appBootTimeoutMs });
+}
+
+async function expectAbsentRuntimeTitle(page, title) {
+  await expect(
+    page.getByText(new RegExp(escapeRegExp(title), 'i')),
+  ).toHaveCount(0, { timeout: appBootTimeoutMs });
 }
 
 async function activateSemanticToggle(locator) {
@@ -287,23 +349,61 @@ async function grantNavigationGeolocation(page, baseUrl) {
 }
 
 async function continueWithoutLocationIfPrompted(page) {
+  const permissionRoutePattern = /\/location\/permission/;
   const continueButton = page.getByRole('button', {
     name: /Continuar sem localizacao|Continuar sem localização/i,
   });
+  const continueText = page.getByText(/Continuar sem localizacao|Continuar sem localização/i)
+    .first();
+
+  await enableAccessibilityIfNeeded(page);
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    if (permissionRoutePattern.test(page.url()) || (await continueButton.count()) > 0) {
+      break;
+    }
+    await page.waitForTimeout(250);
+    await enableAccessibilityIfNeeded(page);
+  }
+
+  if (!permissionRoutePattern.test(page.url()) && (await continueButton.count()) === 0) {
+    return;
+  }
 
   await continueButton
     .first()
     .waitFor({
       state: 'visible',
-      timeout: 15000,
+      timeout: 45000,
     })
     .catch(() => null);
 
-  if ((await continueButton.count()) === 0) {
-    return;
+  if (permissionRoutePattern.test(page.url()) && (await continueButton.count()) === 0) {
+    await enableAccessibilityIfNeeded(page);
+    await continueButton
+      .first()
+      .waitFor({
+        state: 'visible',
+        timeout: 15000,
+      })
+      .catch(() => null);
   }
-  await continueButton.first().click();
-  await expect(continueButton).toHaveCount(0, { timeout: appBootTimeoutMs });
+
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    if (!permissionRoutePattern.test(page.url())) {
+      break;
+    }
+    if ((await continueButton.count()) > 0) {
+      await continueButton.first().click();
+    } else if (await continueText.isVisible().catch(() => false)) {
+      await continueText.click();
+    } else {
+      break;
+    }
+    await page.waitForTimeout(400);
+  }
+  await expect(page).not.toHaveURL(permissionRoutePattern, {
+    timeout: appBootTimeoutMs,
+  });
   await assertAppBooted(page);
   await enableAccessibilityIfNeeded(page);
 }
@@ -390,6 +490,85 @@ async function fetchDiscoveryCatalog(page, baseUrl, surface) {
   return catalog;
 }
 
+async function waitForPublicAccountProfileListHit(
+  page,
+  baseUrl,
+  { slug, displayName },
+) {
+  await expect
+    .poll(
+      async () => {
+        const searchValue = encodeURIComponent(displayName || slug || '');
+        const payload = await fetchJson(
+          page,
+          baseUrl,
+          `/api/v1/account_profiles?search=${searchValue}`,
+          `Public account profile search ${displayName || slug}`,
+        );
+        const rows = normalizeList(payload?.data ?? payload?.items ?? payload);
+        return rows.some((row) => {
+          const rowSlug = String(row?.slug || '').trim();
+          const rowDisplayName = String(
+            row?.display_name ?? row?.name ?? '',
+          ).trim();
+          return rowSlug === slug || rowDisplayName === displayName;
+        });
+      },
+      {
+        timeout: appBootTimeoutMs,
+        message: `Public account profile ${displayName || slug} must hydrate before discovery runtime validation.`,
+      },
+    )
+    .toBe(true);
+}
+
+async function waitForPublicEnvironmentProfileType(
+  page,
+  baseUrl,
+  { type, label, isPubliclyDiscoverable = null },
+) {
+  const deadline = Date.now() + appBootTimeoutMs;
+  let lastSeenTypes = [];
+
+  while (Date.now() < deadline) {
+    const payload = await fetchJson(
+      page,
+      baseUrl,
+      '/api/v1/environment',
+      'Public tenant environment',
+    );
+    const profileTypes = normalizeList(payload?.profile_types);
+    lastSeenTypes = profileTypes.map((entry) => ({
+      type: String(entry?.type ?? '').trim(),
+      label: String(entry?.label ?? '').trim(),
+      isPubliclyDiscoverable: Boolean(
+        entry?.capabilities?.is_publicly_discoverable ?? true,
+      ),
+    }));
+
+    const match = profileTypes.find(
+      (entry) => String(entry?.type ?? '').trim() === type,
+    );
+    if (match) {
+      const labelMatches =
+        !label || String(match?.label ?? '').trim() === label;
+      const capabilityMatches =
+        isPubliclyDiscoverable == null
+        || Boolean(match?.capabilities?.is_publicly_discoverable ?? true)
+          === isPubliclyDiscoverable;
+      if (labelMatches && capabilityMatches) {
+        return match;
+      }
+    }
+
+    await page.waitForTimeout(500);
+  }
+
+  throw new Error(
+    `Public environment profile type ${type} did not hydrate in time. Last seen profile types: ${JSON.stringify(lastSeenTypes)}`,
+  );
+}
+
 async function fetchMapFilters(page, baseUrl) {
   const payload = await fetchJson(
     page,
@@ -450,6 +629,10 @@ async function loginTenantAdmin(api, baseUrl) {
 }
 
 async function ensureRuntimeDiscoveryFilters(baseUrl) {
+  if (!localRuntimeSeedEnabled) {
+    return;
+  }
+
   const api = await createApiContext(baseUrl);
   const session = await loginTenantAdmin(api, baseUrl);
   const valuesResponse = await api.get(buildUrl(baseUrl, '/admin/api/v1/settings/values'), {
@@ -467,8 +650,24 @@ async function ensureRuntimeDiscoveryFilters(baseUrl) {
     discoveryFilters.surfaces && typeof discoveryFilters.surfaces === 'object'
       ? { ...discoveryFilters.surfaces }
       : {};
+  const mapUi =
+    normalizePayload(valuesPayload)?.map_ui &&
+    typeof normalizePayload(valuesPayload).map_ui === 'object'
+      ? normalizePayload(valuesPayload).map_ui
+      : {};
+  const defaultOrigin =
+    mapUi.default_origin && typeof mapUi.default_origin === 'object'
+      ? mapUi.default_origin
+      : {};
 
   let needsPatch = false;
+  let needsMapUiPatch = false;
+  if (
+    !hasFiniteCoordinate(defaultOrigin?.lat)
+    || !hasFiniteCoordinate(defaultOrigin?.lng)
+  ) {
+    needsMapUiPatch = true;
+  }
   if (normalizeList(surfaces['home.events']?.filters).length === 0) {
     surfaces['home.events'] = {
       ...(surfaces['home.events'] || {}),
@@ -513,6 +712,46 @@ async function ensureRuntimeDiscoveryFilters(baseUrl) {
     needsPatch = true;
   }
 
+  if (normalizeList(surfaces['public_map.primary']?.filters).length === 0) {
+    surfaces['public_map.primary'] = {
+      ...(surfaces['public_map.primary'] || {}),
+      target: 'map_poi',
+      primary_selection_mode: 'single',
+      filters: [
+        {
+          key: 'sr_b_web_public_map',
+          target: 'map_poi',
+          label: 'Mapa SR-B',
+          query: {
+            entities: ['event'],
+            types_by_entity: {
+              event: ['musica-ao-vivo'],
+            },
+          },
+        },
+      ],
+    };
+    needsPatch = true;
+  }
+
+  if (needsMapUiPatch) {
+    const mapUiPatchResponse = await api.patch(
+      buildUrl(baseUrl, '/admin/api/v1/settings/values/map_ui'),
+      {
+        headers: authHeaders(session.token),
+        data: {
+          'default_origin.lat': navigationGeolocation.latitude,
+          'default_origin.lng': navigationGeolocation.longitude,
+          'default_origin.label': 'Praia do Morro',
+        },
+      },
+    );
+    expect(
+      mapUiPatchResponse.status(),
+      'Tenant-admin map default origin runtime seed must persist through Settings Kernel.',
+    ).toBe(200);
+  }
+
   if (!needsPatch) {
     await api.dispose();
     return;
@@ -540,7 +779,12 @@ async function seedFlutterSecureStorage(context, session) {
       }
 
       const publicKey = 'FlutterSecureStorage';
-      const storage = window.localStorage;
+      let storage;
+      try {
+        storage = window.localStorage;
+      } catch (_) {
+        return;
+      }
       const algorithm = { name: 'AES-GCM', length: 256 };
 
       const bytesToBase64 = (bytes) => {
@@ -684,11 +928,154 @@ function filterActionPattern(baseLabel) {
   return new RegExp(`(${baseLabel}|Filtros ativos)`, 'i');
 }
 
+async function ensureFilterPanelVisible(page, actionLocator, panelLocator) {
+  if (await panelLocator.isVisible().catch(() => false)) {
+    return;
+  }
+
+  const action = actionLocator.first();
+  await action.scrollIntoViewIfNeeded().catch(() => {});
+  await expect(action).toBeVisible({ timeout: appBootTimeoutMs });
+  await action.click();
+  await expect(panelLocator).toBeVisible({ timeout: appBootTimeoutMs });
+}
+
 function filterOption(panel, label) {
   const pattern = labelPattern(label);
   return panel
     .getByRole('button', { name: pattern })
     .or(panel.getByRole('switch', { name: pattern }));
+}
+
+async function revealFilterOption(page, panel, label) {
+  const locator = filterOption(panel, label);
+  const deltas = [
+    0,
+    ...Array.from({ length: 16 }, () => 280),
+    ...Array.from({ length: 8 }, () => -280),
+  ];
+
+  for (const deltaX of deltas) {
+    if ((await locator.count()) > 0) {
+      await locator.first().scrollIntoViewIfNeeded().catch(() => {});
+      if (await locator.first().isVisible().catch(() => false)) {
+        for (let settleAttempt = 0; settleAttempt < 6; settleAttempt += 1) {
+          const adjustment = await requiredHorizontalViewportAdjustment(
+            locator.first(),
+            panel,
+          );
+          if (adjustment === 0) {
+            return locator;
+          }
+          await dragPrimaryFilterRow(page, panel, adjustment);
+        }
+        return locator;
+      }
+    }
+
+    if (deltaX == 0) {
+      await page.waitForTimeout(200);
+      continue;
+    }
+
+    await dragPrimaryFilterRow(page, panel, deltaX);
+  }
+
+  return locator;
+}
+
+async function dragPrimaryFilterRow(page, panel, deltaX) {
+  const panelBounds = await panel.boundingBox().catch(() => null);
+  if (!panelBounds) {
+    return;
+  }
+
+  const travel = Math.max(
+    120,
+    Math.min(Math.abs(deltaX), Math.max(120, panelBounds.width - 48)),
+  );
+  const centerY = panelBounds.y + Math.min(28, panelBounds.height * 0.18);
+  const leftEdge = panelBounds.x + 24;
+  const rightEdge = panelBounds.x + panelBounds.width - 24;
+  const dragLeft = deltaX > 0;
+  const finalStartX = dragLeft ? rightEdge : leftEdge;
+  const finalEndX = dragLeft
+    ? Math.max(leftEdge, finalStartX - travel)
+    : Math.min(rightEdge, finalStartX + travel);
+
+  await page.mouse.move(finalStartX, centerY);
+  await page.mouse.down();
+  await page.mouse.move(finalEndX, centerY, { steps: 12 });
+  await page.mouse.up();
+  await page.waitForTimeout(220);
+}
+
+async function requiredHorizontalViewportAdjustment(locator, panel) {
+  const [targetBounds, panelBounds] = await Promise.all([
+    locator.boundingBox().catch(() => null),
+    panel.boundingBox().catch(() => null),
+  ]);
+  if (!targetBounds || !panelBounds) {
+    return 0;
+  }
+
+  const leftPadding = panelBounds.x + 16;
+  const rightPadding = panelBounds.x + panelBounds.width - 16;
+  const targetLeft = targetBounds.x;
+  const targetRight = targetBounds.x + targetBounds.width;
+
+  if (targetLeft < leftPadding) {
+    return -Math.max(120, Math.ceil(leftPadding - targetLeft + 24));
+  }
+  if (targetRight > rightPadding) {
+    return Math.max(120, Math.ceil(targetRight - rightPadding + 24));
+  }
+  return 0;
+}
+
+async function expectFilterChipShowsVisibleLabel(locator, minWidth = 96) {
+  await expect(locator).toBeVisible({ timeout: appBootTimeoutMs });
+  await expect
+    .poll(
+      async () => {
+        const bounds = await locator.boundingBox().catch(() => null);
+        return Math.round(bounds?.width || 0);
+      },
+      {
+        timeout: appBootTimeoutMs,
+        message: `Expected filter chip to keep its visible label width (>= ${minWidth}px).`,
+      },
+    )
+    .toBeGreaterThanOrEqual(minWidth);
+}
+
+async function expectAccessibleButtonByName(page, namePattern) {
+  await expect
+    .poll(
+      async () => {
+        await enableAccessibilityIfNeeded(page);
+        try {
+          const buttonNames = await page.getByRole('button').evaluateAll(
+            (nodes) =>
+              nodes
+                .map((node) => node.getAttribute('aria-label') || node.textContent || '')
+                .map((value) => value.trim())
+                .filter(Boolean),
+          );
+          return buttonNames.some((name) => namePattern.test(name));
+        } catch (_) {
+          return false;
+        }
+      },
+      {
+        timeout: appBootTimeoutMs,
+        message: `Expected an accessible button matching ${namePattern} to become available.`,
+      },
+    )
+    .toBe(true);
+
+  await expect(page.getByRole('button', { name: namePattern }).first())
+    .toBeVisible({ timeout: appBootTimeoutMs });
 }
 
 async function expectAccessibleGroupContains(locator, text) {
@@ -763,6 +1150,7 @@ async function deleteTaxonomy(api, baseUrl, token, taxonomyId) {
     {
       headers: authHeaders(token),
       failOnStatusCode: false,
+      timeout: apiRequestTimeoutMs,
     },
   );
 }
@@ -811,8 +1199,206 @@ async function deleteEventType(api, baseUrl, token, eventTypeId) {
     {
       headers: authHeaders(token),
       failOnStatusCode: false,
+      timeout: apiRequestTimeoutMs,
     },
   );
+}
+
+async function createNearbyAccountProfile(
+  api,
+  baseUrl,
+  token,
+  profileType,
+  name,
+) {
+  const response = await api.post(
+    buildUrl(baseUrl, '/admin/api/v1/account_onboardings'),
+    {
+      headers: authHeaders(token),
+      data: {
+        name,
+        ownership_state: 'unmanaged',
+        profile_type: profileType,
+        location: {
+          lat: navigationGeolocation.latitude,
+          lng: navigationGeolocation.longitude,
+        },
+      },
+    },
+  );
+  expect(response.status(), `Account profile ${name} must be created.`).toBe(201);
+
+  const payload = await response.json();
+  const data = payload?.data || {};
+  const account = data?.account || {};
+  const profile = data?.account_profile || {};
+  const id = profile?.id?.toString() || '';
+  expect(id, `Account profile ${name} must return id.`).toBeTruthy();
+  return {
+    id,
+    accountSlug: account?.slug?.toString() || '',
+    displayName: profile?.display_name?.toString() || name,
+    slug: profile?.slug?.toString() || '',
+    profileType,
+  };
+}
+
+async function updateAccountProfileTaxonomyTerms(
+  api,
+  baseUrl,
+  token,
+  profile,
+  taxonomyTerms,
+) {
+  const response = await api.patch(
+    buildUrl(baseUrl, `/admin/api/v1/account_profiles/${profile.id}`),
+    {
+      headers: authHeaders(token),
+      data: {
+        profile_type: profile.profileType,
+        display_name: profile.displayName,
+        taxonomy_terms: taxonomyTerms,
+      },
+    },
+  );
+  expect(
+    response.status(),
+    `Account profile ${profile.displayName} taxonomy update must succeed.`,
+  ).toBeLessThan(400);
+}
+
+function futureWindow(daysFromNow) {
+  const start = new Date();
+  start.setDate(start.getDate() + daysFromNow);
+  start.setHours(20, 0, 0, 0);
+
+  const end = new Date(start);
+  end.setHours(end.getHours() + 2);
+
+  return {
+    date_time_start: start.toISOString(),
+    date_time_end: end.toISOString(),
+  };
+}
+
+async function createDiagnosticEvent(
+  api,
+  baseUrl,
+  token,
+  {
+    title,
+    eventType,
+    host,
+    taxonomyTerms = [],
+    daysFromNow = 1,
+  },
+) {
+  const response = await api.post(
+    buildUrl(baseUrl, '/admin/api/v1/events'),
+    {
+      headers: authHeaders(token),
+      data: {
+        title,
+        content: `<p>${title} validates discovery filter runtime facets.</p>`,
+        type: {
+          id: eventType.id,
+          name: eventType.name,
+          slug: eventType.slug,
+          description: eventType.description || 'Discovery filters diagnostic event type',
+        },
+        location: {
+          mode: 'physical',
+        },
+        place_ref: {
+          type: 'account_profile',
+          id: host.id,
+        },
+        taxonomy_terms: taxonomyTerms,
+        occurrences: [futureWindow(daysFromNow)],
+        publication: {
+          status: 'published',
+          publish_at: new Date(Date.now() - 60 * 1000).toISOString(),
+        },
+      },
+    },
+  );
+  const responseBody = await response.json().catch(async () => ({
+    raw: await response.text().catch(() => ''),
+  }));
+  expect(
+    response.status(),
+    `Diagnostic event ${title} must be created. Response: ${JSON.stringify(responseBody)}`,
+  ).toBe(201);
+  return responseBody?.data || {};
+}
+
+async function deleteEvent(api, baseUrl, token, eventId) {
+  if (!eventId) {
+    return;
+  }
+
+  await api.delete(
+    buildUrl(baseUrl, `/admin/api/v1/events/${eventId}`),
+    {
+      headers: authHeaders(token),
+      failOnStatusCode: false,
+      timeout: apiRequestTimeoutMs,
+    },
+  );
+}
+
+async function listTenantAdminEventTypes(api, baseUrl, token) {
+  const response = await api.get(
+    buildUrl(baseUrl, '/admin/api/v1/event_types'),
+    {
+      headers: authHeaders(token),
+    },
+  );
+  expect(
+    response.status(),
+    'Tenant-admin event type registry must load for diagnostic cleanup.',
+  ).toBe(200);
+  const payload = await response.json();
+  return normalizeList(payload?.data);
+}
+
+async function listTenantAdminTaxonomies(api, baseUrl, token) {
+  const response = await api.get(
+    buildUrl(baseUrl, '/admin/api/v1/taxonomies'),
+    {
+      headers: authHeaders(token),
+    },
+  );
+  expect(
+    response.status(),
+    'Tenant-admin taxonomy registry must load for diagnostic cleanup.',
+  ).toBe(200);
+  const payload = await response.json();
+  return normalizeList(payload?.data);
+}
+
+async function listTenantAdminEvents(api, baseUrl, token) {
+  const rows = [];
+  for (let page = 1; page <= 10; page += 1) {
+    const url = new URL(buildUrl(baseUrl, '/admin/api/v1/events'));
+    url.searchParams.set('page', page.toString());
+    url.searchParams.set('page_size', '100');
+    url.searchParams.set('temporal', 'now,future');
+    const response = await api.get(url.toString(), {
+      headers: authHeaders(token),
+    });
+    expect(
+      response.status(),
+      `Tenant-admin event page ${page} must load for diagnostic cleanup.`,
+    ).toBe(200);
+    const payload = await response.json();
+    const pageRows = normalizeList(payload?.data);
+    rows.push(...pageRows);
+    if (pageRows.length === 0 || pageRows.length < 100) {
+      break;
+    }
+  }
+  return rows;
 }
 
 async function createAccountProfileType(
@@ -824,6 +1410,8 @@ async function createAccountProfileType(
     label,
     allowedTaxonomies,
     isFavoritable,
+    isQueryable = true,
+    isPubliclyNavigable = true,
     isPubliclyDiscoverable = true,
     icon,
     color,
@@ -843,11 +1431,13 @@ async function createAccountProfileType(
         },
         allowed_taxonomies: allowedTaxonomies,
         capabilities: {
+          is_queryable: isQueryable,
+          is_publicly_navigable: isPubliclyNavigable,
           is_favoritable: isFavoritable,
           is_publicly_discoverable: isPubliclyDiscoverable,
           has_taxonomies: allowedTaxonomies.length > 0,
         },
-        poi_visual: {
+        visual: {
           mode: 'icon',
           icon,
           color,
@@ -872,6 +1462,7 @@ async function deleteAccountProfileType(api, baseUrl, token, type) {
     {
       headers: authHeaders(token),
       failOnStatusCode: false,
+      timeout: apiRequestTimeoutMs,
     },
   );
 }
@@ -1078,7 +1669,16 @@ test('@mutation tenant-admin keeps public Map filter config in the canonical fil
       }),
     ).toHaveCount(0, { timeout: appBootTimeoutMs });
 
-    await openTenantPath(page, baseUrl, '/admin/filters');
+    await openTenantPath(page, baseUrl, '/admin/settings');
+    const settingsFiltersEntry = page.getByRole('button', {
+      name: /^Filtros[\s\S]*Mapa público e superfícies configuráveis/i,
+    });
+    await expect(settingsFiltersEntry)
+      .toBeVisible({ timeout: appBootTimeoutMs });
+    await settingsFiltersEntry.click();
+    await expect(page).toHaveURL(/\/admin\/filters(?:\?|$)/, {
+      timeout: appBootTimeoutMs,
+    });
     await expect(page.getByRole('button', { name: /^Mapa/i }))
       .toBeVisible({ timeout: appBootTimeoutMs });
     await expect(page.getByRole('button', { name: /Eventos na Tela Principal/i }))
@@ -1120,6 +1720,7 @@ test('@mutation public Map keeps baseline primary filters without taxonomy subfi
   page,
 }) => {
   const baseUrl = requireTenantUrl();
+  await ensureRuntimeDiscoveryFilters(baseUrl);
   const collectors = installFailureCollectors(page);
   const categories = await fetchMapFilters(page, baseUrl);
   expect(
@@ -1136,8 +1737,7 @@ test('@mutation public Map keeps baseline primary filters without taxonomy subfi
 
   await openTenantPath(page, baseUrl, '/mapa');
   await continueWithoutLocationIfPrompted(page);
-  await expect(page.getByRole('button', { name: labelPattern(selectedCategory.label) }))
-    .toBeVisible({ timeout: appBootTimeoutMs });
+  await expectAccessibleButtonByName(page, labelPattern(selectedCategory.label));
 
   const filteredRequest = page.waitForRequest((request) => {
     if (!request.url().includes('/api/v1/map/pois')) {
@@ -1155,8 +1755,7 @@ test('@mutation public Map keeps baseline primary filters without taxonomy subfi
   await expect(page.getByRole('button', { name: /Remover filtro/i }))
     .toBeVisible({ timeout: appBootTimeoutMs });
   if (siblingCategory) {
-    await expect(page.getByRole('button', { name: labelPattern(siblingCategory.label) }))
-      .toBeVisible({ timeout: appBootTimeoutMs });
+    await expectAccessibleButtonByName(page, labelPattern(siblingCategory.label));
   }
 
   const homeCatalog = await fetchDiscoveryCatalog(page, baseUrl, 'home.events')
@@ -1175,6 +1774,160 @@ test('@mutation public Map keeps baseline primary filters without taxonomy subfi
   await assertNoCriticalBrowserFailures(collectors);
 });
 
+test('@mutation public Map navigates configured canonical filters with and without marker override visuals', async ({
+  page,
+}) => {
+  const baseUrl = requireTenantUrl();
+  const api = await createApiContext(baseUrl);
+  const collectors = installFailureCollectors(page);
+  let originalDiscoveryFilters = null;
+  const unique = Date.now();
+  const overrideKey = `pw_override_${unique}`;
+  const buttonOnlyKey = `pw_button_${unique}`;
+  const overrideType = `pw-override-type-${unique}`;
+  const buttonOnlyType = `pw-button-type-${unique}`;
+  const overrideLabel = `PW Override ${unique}`;
+  const buttonOnlyLabel = `PW Botao ${unique}`;
+  let session = null;
+  let primaryError = null;
+
+  try {
+    session = await loginTenantAdmin(api, baseUrl);
+    const valuesResponse = await api.get(buildUrl(baseUrl, '/admin/api/v1/settings/values'), {
+      headers: authHeaders(session.token),
+    });
+    expect(valuesResponse.status(), 'Tenant-admin settings values must be readable')
+      .toBe(200);
+    const valuesPayload = normalizePayload(await valuesResponse.json());
+    originalDiscoveryFilters =
+      valuesPayload?.discovery_filters && typeof valuesPayload.discovery_filters === 'object'
+        ? valuesPayload.discovery_filters
+        : {};
+    const originalSurfaces =
+      originalDiscoveryFilters.surfaces && typeof originalDiscoveryFilters.surfaces === 'object'
+        ? originalDiscoveryFilters.surfaces
+        : {};
+    const nextDiscoveryFilters = {
+      ...originalDiscoveryFilters,
+      surfaces: {
+        ...originalSurfaces,
+        'public_map.primary': {
+          ...(originalSurfaces['public_map.primary'] || {}),
+          target: 'map_poi',
+          primary_selection_mode: 'single',
+          filters: [
+            {
+              key: overrideKey,
+              target: 'map_poi',
+              label: overrideLabel,
+              override_marker: true,
+              marker_override: {
+                mode: 'icon',
+                icon: 'music_note',
+                color: '#0055AA',
+                icon_color: '#F3F7FF',
+              },
+              query: {
+                entities: ['event'],
+                types_by_entity: {
+                  event: [overrideType],
+                },
+              },
+            },
+            {
+              key: buttonOnlyKey,
+              target: 'map_poi',
+              label: buttonOnlyLabel,
+              override_marker: false,
+              marker_override: {
+                mode: 'icon',
+                icon: 'storefront',
+                color: '#0F766E',
+                icon_color: '#FFFFFF',
+              },
+              query: {
+                entities: ['account_profile'],
+                types_by_entity: {
+                  account_profile: [buttonOnlyType],
+                },
+              },
+            },
+          ],
+        },
+      },
+    };
+
+    const patchResponse = await api.patch(
+      buildUrl(baseUrl, '/admin/api/v1/settings/values/discovery_filters'),
+      {
+        headers: authHeaders(session.token),
+        data: nextDiscoveryFilters,
+      },
+    );
+    expect(patchResponse.status(), 'Canonical map filter fixtures must persist.')
+      .toBe(200);
+
+    const categories = await fetchMapFilters(page, baseUrl);
+    const overrideCategory = categories.find((category) => category.key === overrideKey);
+    const buttonOnlyCategory = categories.find((category) => category.key === buttonOnlyKey);
+    expect(overrideCategory, `Map API must expose ${overrideKey}.`).toBeTruthy();
+    expect(buttonOnlyCategory, `Map API must expose ${buttonOnlyKey}.`).toBeTruthy();
+    expect(overrideCategory.label).toBe(overrideLabel);
+    expect(overrideCategory.override_marker).toBe(true);
+    expect(overrideCategory.marker_override?.color).toBe('#0055AA');
+    expect(buttonOnlyCategory.label).toBe(buttonOnlyLabel);
+    expect(buttonOnlyCategory.override_marker).toBe(false);
+    expect(buttonOnlyCategory.marker_override?.color).toBe('#0F766E');
+
+    await openTenantPath(page, baseUrl, '/mapa');
+    await continueWithoutLocationIfPrompted(page);
+    await expectAccessibleButtonByName(page, labelPattern(overrideLabel));
+    await expectAccessibleButtonByName(page, labelPattern(buttonOnlyLabel));
+    const overrideButton = page.getByRole('button', { name: labelPattern(overrideLabel) }).first();
+    const removeFilterButton = page.getByRole('button', { name: /Remover filtro/i }).first();
+    if (!(await removeFilterButton.isVisible().catch(() => false))) {
+      await overrideButton.click();
+      await expect(removeFilterButton).toBeVisible({ timeout: appBootTimeoutMs });
+    }
+    await expect(page.getByText(overrideLabel, { exact: true }))
+      .toBeVisible({ timeout: appBootTimeoutMs });
+    await expectSelectedChipIconAndLabelForegroundParity(overrideButton);
+    await removeFilterButton.click();
+
+    const buttonOnlyButton = page.getByRole('button', { name: labelPattern(buttonOnlyLabel) }).first();
+    await buttonOnlyButton.click();
+    await expect(removeFilterButton).toBeVisible({ timeout: appBootTimeoutMs });
+    await expect(page.getByText(buttonOnlyLabel, { exact: true }))
+      .toBeVisible({ timeout: appBootTimeoutMs });
+    await expectSelectedChipIconAndLabelForegroundParity(buttonOnlyButton);
+
+    await assertNoCriticalBrowserFailures(collectors);
+  } catch (error) {
+    primaryError = error;
+    throw error;
+  } finally {
+    await runCleanupPreservingPrimaryError(primaryError, async () => {
+      try {
+        if (originalDiscoveryFilters !== null) {
+          const restoreResponse = await api.patch(
+            buildUrl(baseUrl, '/admin/api/v1/settings/values/discovery_filters'),
+            {
+              headers: authHeaders(session?.token ?? ''),
+              data: originalDiscoveryFilters,
+            },
+          );
+          expect(
+            restoreResponse.status(),
+            'Canonical map filter fixtures must restore the original discovery filter settings during cleanup.',
+          ).toBe(200);
+        }
+      } finally {
+        await api.dispose();
+      }
+    });
+  }
+});
+
 test('@mutation Home filters honor Event Type taxonomy compatibility, hide zero-taxonomy rows, and keep selected icon foreground aligned with the label', async ({
   page,
 }) => {
@@ -1182,11 +1935,15 @@ test('@mutation Home filters honor Event Type taxonomy compatibility, hide zero-
   const api = await createApiContext(baseUrl);
   const collectors = installFailureCollectors(page);
   let session = null;
+  let physicalHost = null;
   let typeAId = null;
   let typeBId = null;
   let typeCId = null;
+  let typeDId = null;
   let taxonomyAId = null;
   let taxonomyBId = null;
+  const createdEventIds = [];
+  let primaryError = null;
 
   try {
     session = await loginTenantAdmin(api, baseUrl);
@@ -1194,12 +1951,14 @@ test('@mutation Home filters honor Event Type taxonomy compatibility, hide zero-
     const typeALabel = `AAA HD10 Show ${unique}`;
     const typeBLabel = `AAB HD10 Talk ${unique}`;
     const typeCLabel = `AAC HD10 Empty ${unique}`;
+    const typeDLabel = `AAD HD10 No Results ${unique}`;
     const taxonomyA = await createTaxonomy(api, baseUrl, session.token, {
       slug: `hd10-music-${unique}`,
       name: `Genero Musical ${unique}`,
       appliesTo: ['event'],
       terms: [
         { slug: `rock-${unique}`, name: `Rock ${unique}` },
+        { slug: `blues-${unique}`, name: `Blues ${unique}` },
       ],
     });
     taxonomyAId = taxonomyA.taxonomyId;
@@ -1237,6 +1996,14 @@ test('@mutation Home filters honor Event Type taxonomy compatibility, hide zero-
       color: '#555555',
     });
     typeCId = typeC?.data?.id?.toString() || null;
+    const typeD = await createEventType(api, baseUrl, session.token, {
+      name: typeDLabel,
+      slug: `hd10-no-results-${unique}`,
+      allowedTaxonomies: [taxonomyA.slug],
+      icon: 'hide_source',
+      color: '#4A4A4A',
+    });
+    typeDId = typeD?.data?.id?.toString() || null;
 
     const catalog = await fetchDiscoveryCatalog(page, baseUrl, 'home.events');
     const filterKeys = normalizeList(catalog.filters).map((filter) => filter.key);
@@ -1244,7 +2011,52 @@ test('@mutation Home filters honor Event Type taxonomy compatibility, hide zero-
       `hd10-show-${unique}`,
       `hd10-talk-${unique}`,
       `hd10-empty-${unique}`,
+      `hd10-no-results-${unique}`,
     ]));
+
+    physicalHost = await createNearbyAccountProfile(
+      api,
+      baseUrl,
+      session.token,
+      'venue',
+      `HD10 Venue ${unique}`,
+    );
+
+    const eventA = await createDiagnosticEvent(api, baseUrl, session.token, {
+      title: `HD10 Event A ${unique}`,
+      eventType: typeA.data,
+      host: physicalHost,
+      taxonomyTerms: [
+        {
+          type: taxonomyA.slug,
+          value: `rock-${unique}`,
+        },
+      ],
+      daysFromNow: 1,
+    });
+    createdEventIds.push(eventA.event_id?.toString() || '');
+
+    const eventB = await createDiagnosticEvent(api, baseUrl, session.token, {
+      title: `HD10 Event B ${unique}`,
+      eventType: typeB.data,
+      host: physicalHost,
+      taxonomyTerms: [
+        {
+          type: taxonomyB.slug,
+          value: `chef-${unique}`,
+        },
+      ],
+      daysFromNow: 2,
+    });
+    createdEventIds.push(eventB.event_id?.toString() || '');
+
+    const eventC = await createDiagnosticEvent(api, baseUrl, session.token, {
+      title: `HD10 Event C ${unique}`,
+      eventType: typeC.data,
+      host: physicalHost,
+      daysFromNow: 3,
+    });
+    createdEventIds.push(eventC.event_id?.toString() || '');
 
     await grantNavigationGeolocation(page, baseUrl);
     await openTenantPath(page, baseUrl, '/');
@@ -1256,15 +2068,21 @@ test('@mutation Home filters honor Event Type taxonomy compatibility, hide zero-
 
     const panel = filterPanel(page, /Painel de filtros de eventos/i);
     await expect(panel).toBeVisible({ timeout: appBootTimeoutMs });
-    await expect(filterOption(panel, typeALabel))
-      .toBeVisible({ timeout: appBootTimeoutMs });
-    await expect(filterOption(panel, typeBLabel))
-      .toBeVisible({ timeout: appBootTimeoutMs });
-    await expect(filterOption(panel, typeCLabel))
-      .toBeVisible({ timeout: appBootTimeoutMs });
+    const typeAOption = await revealFilterOption(page, panel, typeALabel);
+    const typeBOption = await revealFilterOption(page, panel, typeBLabel);
+    const typeCOption = await revealFilterOption(page, panel, typeCLabel);
+    await expectFilterChipShowsVisibleLabel(typeAOption);
+    await expectFilterChipShowsVisibleLabel(typeBOption);
+    await expectFilterChipShowsVisibleLabel(typeCOption);
+    await expect(
+      filterOption(panel, typeDLabel),
+      'Home runtime facets must hide event types with zero eligible events in the current universe.',
+    ).toHaveCount(0, { timeout: appBootTimeoutMs });
     await expectAccessibleGroupNotContains(panel, taxonomyA.name);
     await expectAccessibleGroupNotContains(panel, taxonomyB.name);
     await expect(filterOption(panel, `Rock ${unique}`))
+      .toHaveCount(0, { timeout: 5000 });
+    await expect(filterOption(panel, `Blues ${unique}`))
       .toHaveCount(0, { timeout: 5000 });
     await expect(filterOption(panel, `Chef ${unique}`))
       .toHaveCount(0, { timeout: 5000 });
@@ -1274,66 +2092,120 @@ test('@mutation Home filters honor Event Type taxonomy compatibility, hide zero-
       value: `hd10-show-${unique}`,
     });
     await clickUntilFilteredRequest({
-      locator: filterOption(panel, typeALabel),
+      locator: typeAOption,
       tracker: homeShowTracker,
       message: 'Home primary filter click must trigger agenda request for selected Event Type',
     });
     homeShowTracker.dispose();
+    await expectSelectedChipIconAndLabelForegroundParity(
+      typeAOption.first(),
+    );
     await expect(page.getByRole('button', { name: /Filtros ativos/i })).toBeVisible({
       timeout: appBootTimeoutMs,
     });
-    await expect(panel).toBeVisible({ timeout: appBootTimeoutMs });
+    await ensureFilterPanelVisible(page, filterAction, panel);
     await expectAccessibleGroupContains(panel, taxonomyA.name);
     await expect(filterOption(panel, `Rock ${unique}`))
       .toBeVisible({ timeout: appBootTimeoutMs });
+    await expect(
+      filterOption(panel, `Blues ${unique}`),
+      'Home runtime taxonomy facets must hide terms with zero eligible events under the selected type universe.',
+    ).toHaveCount(0, { timeout: appBootTimeoutMs });
     await expectAccessibleGroupNotContains(panel, taxonomyB.name, appBootTimeoutMs);
+    await filterAction.click();
+    await expect(panel).toHaveCount(0, { timeout: appBootTimeoutMs });
+    await expectVisibleRuntimeTitle(page, eventA.title);
+    await expectAbsentRuntimeTitle(page, eventB.title);
+    await expectAbsentRuntimeTitle(page, eventC.title);
+    await filterAction.click();
+    await expect(panel).toBeVisible({ timeout: appBootTimeoutMs });
 
     const homeTalkTracker = trackFilteredRequests(page, '/api/v1/agenda', {
       name: 'type',
       value: `hd10-talk-${unique}`,
     });
+    const typeBSelectionOption = await revealFilterOption(page, panel, typeBLabel);
     await clickUntilFilteredRequest({
-      locator: filterOption(panel, typeBLabel),
+      locator: typeBSelectionOption,
       tracker: homeTalkTracker,
       message: 'Home primary filter switch must trigger agenda request for the next Event Type',
     });
     homeTalkTracker.dispose();
-    await expect(panel).toBeVisible({ timeout: appBootTimeoutMs });
+    await expectSelectedChipIconAndLabelForegroundParity(
+      typeBSelectionOption.first(),
+    );
+    await ensureFilterPanelVisible(page, filterAction, panel);
     await expectAccessibleGroupContains(panel, taxonomyB.name);
     await expect(filterOption(panel, `Chef ${unique}`))
       .toBeVisible({ timeout: appBootTimeoutMs });
     await expectAccessibleGroupNotContains(panel, taxonomyA.name, appBootTimeoutMs);
+    await filterAction.click();
+    await expect(panel).toHaveCount(0, { timeout: appBootTimeoutMs });
+    await expectVisibleRuntimeTitle(page, eventB.title);
+    await expectAbsentRuntimeTitle(page, eventA.title);
+    await expectAbsentRuntimeTitle(page, eventC.title);
+    await filterAction.click();
+    await expect(panel).toBeVisible({ timeout: appBootTimeoutMs });
 
     const homeEmptyTracker = trackFilteredRequests(page, '/api/v1/agenda', {
       name: 'type',
       value: `hd10-empty-${unique}`,
     });
+    const typeCSelectionOption = await revealFilterOption(page, panel, typeCLabel);
     await clickUntilFilteredRequest({
-      locator: filterOption(panel, typeCLabel),
+      locator: typeCSelectionOption,
       tracker: homeEmptyTracker,
       message: 'Home zero-taxonomy primary click must still trigger agenda request',
     });
     homeEmptyTracker.dispose();
-    await expect(panel).toBeVisible({ timeout: appBootTimeoutMs });
+    await expectSelectedChipIconAndLabelForegroundParity(
+      typeCSelectionOption.first(),
+    );
+    await ensureFilterPanelVisible(page, filterAction, panel);
     await expectAccessibleGroupNotContains(panel, taxonomyA.name, appBootTimeoutMs);
     await expectAccessibleGroupNotContains(panel, taxonomyB.name, appBootTimeoutMs);
     await expect(filterOption(panel, `Rock ${unique}`))
       .toHaveCount(0, { timeout: appBootTimeoutMs });
+    await expect(filterOption(panel, `Blues ${unique}`))
+      .toHaveCount(0, { timeout: appBootTimeoutMs });
     await expect(filterOption(panel, `Chef ${unique}`))
       .toHaveCount(0, { timeout: appBootTimeoutMs });
+    await filterAction.click();
+    await expect(panel).toHaveCount(0, { timeout: appBootTimeoutMs });
+    await expectVisibleRuntimeTitle(page, eventC.title);
+    await expectAbsentRuntimeTitle(page, eventA.title);
+    await expectAbsentRuntimeTitle(page, eventB.title);
 
     await assertNoCriticalBrowserFailures(collectors);
+  } catch (error) {
+    primaryError = error;
+    throw error;
   } finally {
-    await deleteEventType(api, baseUrl, session?.token, typeCId);
-    await deleteEventType(api, baseUrl, session?.token, typeBId);
-    await deleteEventType(api, baseUrl, session?.token, typeAId);
-    await deleteTaxonomy(api, baseUrl, session?.token, taxonomyBId);
-    await deleteTaxonomy(api, baseUrl, session?.token, taxonomyAId);
-    await api.dispose();
+    await runCleanupPreservingPrimaryError(primaryError, async () => {
+      try {
+        for (const eventId of createdEventIds.reverse()) {
+          await deleteEvent(api, baseUrl, session?.token, eventId);
+        }
+        await cleanupOnboardedAccounts(
+          api,
+          baseUrl,
+          session?.token,
+          [physicalHost?.accountSlug].filter(Boolean),
+        );
+        await deleteEventType(api, baseUrl, session?.token, typeCId);
+        await deleteEventType(api, baseUrl, session?.token, typeBId);
+        await deleteEventType(api, baseUrl, session?.token, typeAId);
+        await deleteEventType(api, baseUrl, session?.token, typeDId);
+        await deleteTaxonomy(api, baseUrl, session?.token, taxonomyBId);
+        await deleteTaxonomy(api, baseUrl, session?.token, taxonomyAId);
+      } finally {
+        await api.dispose();
+      }
+    });
   }
 });
 
-test('@mutation Profile Discovery excludes non-favoritable types and keeps selected icon foreground aligned with the label', async ({
+test('@mutation Profile Discovery hides non-publicly-discoverable types and keeps selected icon foreground aligned with the label', async ({
   page,
 }) => {
   const baseUrl = requireTenantUrl();
@@ -1341,13 +2213,18 @@ test('@mutation Profile Discovery excludes non-favoritable types and keeps selec
   const collectors = installFailureCollectors(page);
   let session = null;
   let visibleType = null;
+  let visibleEmptyType = null;
   let hiddenType = null;
   let taxonomyId = null;
+  let visibleProfile = null;
+  let hiddenProfile = null;
+  let primaryError = null;
 
   try {
     session = await loginTenantAdmin(api, baseUrl);
     const unique = Date.now();
     const visibleTypeLabel = `AAA HD12 Visivel ${unique}`;
+    const visibleEmptyTypeLabel = `AAB HD12 Sem Perfis ${unique}`;
     const hiddenTypeLabel = `ZZZ HD12 Oculto ${unique}`;
     const taxonomy = await createTaxonomy(api, baseUrl, session.token, {
       slug: `hd12-cuisine-${unique}`,
@@ -1355,6 +2232,7 @@ test('@mutation Profile Discovery excludes non-favoritable types and keeps selec
       appliesTo: ['account_profile'],
       terms: [
         { slug: `japanese-${unique}`, name: `Japonesa ${unique}` },
+        { slug: `thai-${unique}`, name: `Tailandesa ${unique}` },
       ],
     });
     taxonomyId = taxonomy.taxonomyId;
@@ -1363,15 +2241,29 @@ test('@mutation Profile Discovery excludes non-favoritable types and keeps selec
       type: `hd12-visible-${unique}`,
       label: visibleTypeLabel,
       allowedTaxonomies: [taxonomy.slug],
-      isFavoritable: true,
+      isFavoritable: false,
       icon: 'restaurant',
       color: '#A94A00',
     });
+    visibleEmptyType = await createAccountProfileType(
+      api,
+      baseUrl,
+      session.token,
+      {
+        type: `hd12-empty-${unique}`,
+        label: visibleEmptyTypeLabel,
+        allowedTaxonomies: [taxonomy.slug],
+        isFavoritable: false,
+        icon: 'storefront',
+        color: '#6A4C93',
+      },
+    );
     hiddenType = await createAccountProfileType(api, baseUrl, session.token, {
       type: `hd12-hidden-${unique}`,
       label: hiddenTypeLabel,
       allowedTaxonomies: [taxonomy.slug],
-      isFavoritable: false,
+      isFavoritable: true,
+      isPubliclyDiscoverable: false,
       icon: 'lock',
       color: '#555555',
     });
@@ -1383,10 +2275,61 @@ test('@mutation Profile Discovery excludes non-favoritable types and keeps selec
     );
     const filters = normalizeList(catalog.filters);
     expect(filters.map((filter) => filter.key)).toContain(`hd12-visible-${unique}`);
+    expect(filters.map((filter) => filter.key)).toContain(`hd12-empty-${unique}`);
     expect(filters.map((filter) => filter.key)).not.toContain(`hd12-hidden-${unique}`);
     const typeOptions = normalizeList(catalog?.type_options?.account_profile);
     expect(typeOptions.map((option) => option.value)).toContain(`hd12-visible-${unique}`);
+    expect(typeOptions.map((option) => option.value)).toContain(`hd12-empty-${unique}`);
     expect(typeOptions.map((option) => option.value)).not.toContain(`hd12-hidden-${unique}`);
+    await waitForPublicEnvironmentProfileType(page, baseUrl, {
+      type: `hd12-visible-${unique}`,
+      label: visibleTypeLabel,
+      isPubliclyDiscoverable: true,
+    });
+
+    visibleProfile = await createNearbyAccountProfile(
+      api,
+      baseUrl,
+      session.token,
+      `hd12-visible-${unique}`,
+      `HD12 Visivel ${unique}`,
+    );
+    await updateAccountProfileTaxonomyTerms(
+      api,
+      baseUrl,
+      session.token,
+      visibleProfile,
+      [
+        {
+          type: taxonomy.slug,
+          value: `japanese-${unique}`,
+        },
+      ],
+    );
+    await waitForPublicAccountProfileListHit(page, baseUrl, {
+      slug: visibleProfile.slug,
+      displayName: visibleProfile.displayName,
+    });
+
+    hiddenProfile = await createNearbyAccountProfile(
+      api,
+      baseUrl,
+      session.token,
+      `hd12-hidden-${unique}`,
+      `HD12 Oculto ${unique}`,
+    );
+    await updateAccountProfileTaxonomyTerms(
+      api,
+      baseUrl,
+      session.token,
+      hiddenProfile,
+      [
+        {
+          type: taxonomy.slug,
+          value: `japanese-${unique}`,
+        },
+      ],
+    );
 
     await openTenantPath(page, baseUrl, '/descobrir');
     await expect(page.getByText('Descubra', { exact: true }))
@@ -1400,12 +2343,19 @@ test('@mutation Profile Discovery excludes non-favoritable types and keeps selec
 
     const panel = filterPanel(page, /Painel de filtros de perfis/i);
     await expect(panel).toBeVisible({ timeout: appBootTimeoutMs });
+    await expectFilterChipShowsVisibleLabel(filterOption(panel, visibleTypeLabel));
     await expect(filterOption(panel, visibleTypeLabel))
       .toBeVisible({ timeout: appBootTimeoutMs });
+    await expect(
+      filterOption(panel, visibleEmptyTypeLabel),
+      'Discovery runtime facets must hide publicly discoverable types with zero eligible public profiles.',
+    ).toHaveCount(0, { timeout: 5000 });
     await expect(filterOption(panel, hiddenTypeLabel))
       .toHaveCount(0, { timeout: 5000 });
     await expectAccessibleGroupNotContains(panel, taxonomy.name);
     await expect(filterOption(panel, `Japonesa ${unique}`))
+      .toHaveCount(0, { timeout: 5000 });
+    await expect(filterOption(panel, `Tailandesa ${unique}`))
       .toHaveCount(0, { timeout: 5000 });
 
     const discoveryTracker = trackFilteredRequests(
@@ -1422,28 +2372,62 @@ test('@mutation Profile Discovery excludes non-favoritable types and keeps selec
       message: 'Discovery primary filter click must trigger account profile request for selected type',
     });
     discoveryTracker.dispose();
-    await expect(panel).toBeVisible({ timeout: appBootTimeoutMs });
+    await expectSelectedChipIconAndLabelForegroundParity(
+      filterOption(panel, visibleTypeLabel).first(),
+    );
+    await ensureFilterPanelVisible(page, filterAction, panel);
     await expectAccessibleGroupContains(panel, taxonomy.name);
     await expect(filterOption(panel, `Japonesa ${unique}`))
       .toBeVisible({ timeout: appBootTimeoutMs });
+    await expect(
+      filterOption(panel, `Tailandesa ${unique}`),
+      'Discovery runtime taxonomy facets must hide terms with zero eligible public profiles.',
+    ).toHaveCount(0, { timeout: 5000 });
     await expect(filterOption(panel, hiddenTypeLabel))
       .toHaveCount(0, { timeout: 5000 });
+    await filterAction.click();
+    await expect(panel).toHaveCount(0, { timeout: appBootTimeoutMs });
+    await expectVisibleRuntimeTitle(page, visibleProfile.displayName);
+    await expectAbsentRuntimeTitle(page, hiddenProfile.displayName);
 
     await assertNoCriticalBrowserFailures(collectors);
+  } catch (error) {
+    primaryError = error;
+    throw error;
   } finally {
-    await deleteAccountProfileType(
-      api,
-      baseUrl,
-      session?.token,
-      hiddenType?.data?.type?.toString() || '',
-    );
-    await deleteAccountProfileType(
-      api,
-      baseUrl,
-      session?.token,
-      visibleType?.data?.type?.toString() || '',
-    );
-    await deleteTaxonomy(api, baseUrl, session?.token, taxonomyId);
-    await api.dispose();
+    await runCleanupPreservingPrimaryError(primaryError, async () => {
+      try {
+        await cleanupOnboardedAccounts(
+          api,
+          baseUrl,
+          session?.token,
+          [
+            visibleProfile?.accountSlug,
+            hiddenProfile?.accountSlug,
+          ].filter(Boolean),
+        );
+        await deleteAccountProfileType(
+          api,
+          baseUrl,
+          session?.token,
+          hiddenType?.data?.type?.toString() || '',
+        );
+        await deleteAccountProfileType(
+          api,
+          baseUrl,
+          session?.token,
+          visibleEmptyType?.data?.type?.toString() || '',
+        );
+        await deleteAccountProfileType(
+          api,
+          baseUrl,
+          session?.token,
+          visibleType?.data?.type?.toString() || '',
+        );
+        await deleteTaxonomy(api, baseUrl, session?.token, taxonomyId);
+      } finally {
+        await api.dispose();
+      }
+    });
   }
 });

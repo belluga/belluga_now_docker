@@ -80,6 +80,29 @@ regex_search_stream() {
   grep -nP -- "${pattern}"
 }
 
+submodule_gitlink_requires_workflow_audit() {
+  local submodule_path="$1"
+  local base_ref=""
+
+  if [[ "${GITHUB_EVENT_NAME:-}" != "pull_request" ]]; then
+    return 0
+  fi
+
+  base_ref="${GITHUB_BASE_REF:-}"
+  if [[ -z "${base_ref}" ]]; then
+    return 0
+  fi
+
+  git fetch --no-tags --prune --depth=1 origin "${base_ref}" >/dev/null 2>&1 || true
+
+  if git diff --quiet --ignore-submodules=none "origin/${base_ref}...HEAD" -- "${submodule_path}"; then
+    printf 'INFO: skipping workflow runtime audit for unchanged gitlink %s against origin/%s.\n' "${submodule_path}" "${base_ref}"
+    return 1
+  fi
+
+  return 0
+}
+
 required_files=(
   ".gitmodules"
   "docker-compose.yml"
@@ -630,37 +653,51 @@ if regex_search_paths 'uses:\s+actions/upload-artifact@v(4|5|6)\b' .github/workf
   exit 1
 fi
 
-flutter_workflows_dir="$(materialize_submodule_path_from_gitlink "flutter-app" ".github/workflows")"
-laravel_workflows_dir="$(materialize_submodule_path_from_gitlink "laravel-app" ".github/workflows")"
-web_workflows_dir="$(materialize_submodule_path_from_gitlink "web-app" ".github/workflows")"
+submodule_workflow_dirs=()
+laravel_workflows_dir=""
 
-if regex_search_paths 'uses:\s+actions/checkout@v(4|5)\b' "${flutter_workflows_dir}" "${laravel_workflows_dir}" "${web_workflows_dir}" >/dev/null 2>&1; then
-  echo "ERROR: submodule workflows still reference a pre-v6 actions/checkout runtime in the HEAD candidate gitlinks." >&2
-  exit 1
+if submodule_gitlink_requires_workflow_audit "flutter-app"; then
+  submodule_workflow_dirs+=("$(materialize_submodule_path_from_gitlink "flutter-app" ".github/workflows")")
 fi
 
-if regex_search_paths 'uses:\s+actions/setup-node@v(4|5)\b' "${flutter_workflows_dir}" "${laravel_workflows_dir}" "${web_workflows_dir}" >/dev/null 2>&1; then
-  echo "ERROR: submodule workflows still reference a pre-v6 actions/setup-node runtime in the HEAD candidate gitlinks." >&2
-  exit 1
+if submodule_gitlink_requires_workflow_audit "laravel-app"; then
+  laravel_workflows_dir="$(materialize_submodule_path_from_gitlink "laravel-app" ".github/workflows")"
+  submodule_workflow_dirs+=("${laravel_workflows_dir}")
 fi
 
-if regex_search_paths 'uses:\s+actions/upload-artifact@v(4|5|6)\b' "${flutter_workflows_dir}" "${laravel_workflows_dir}" "${web_workflows_dir}" >/dev/null 2>&1; then
-  echo "ERROR: submodule workflows still reference a pre-v7 actions/upload-artifact runtime in the HEAD candidate gitlinks." >&2
-  exit 1
+if submodule_gitlink_requires_workflow_audit "web-app"; then
+  submodule_workflow_dirs+=("$(materialize_submodule_path_from_gitlink "web-app" ".github/workflows")")
 fi
 
-if regex_search_paths 'uses:\s+actions/download-artifact@v(4|5|6|7)\b' "${flutter_workflows_dir}" "${laravel_workflows_dir}" "${web_workflows_dir}" >/dev/null 2>&1; then
-  echo "ERROR: submodule workflows still reference a pre-v8 actions/download-artifact runtime in the HEAD candidate gitlinks." >&2
-  exit 1
+if ((${#submodule_workflow_dirs[@]} > 0)); then
+  if regex_search_paths 'uses:\s+actions/checkout@v(4|5)\b' "${submodule_workflow_dirs[@]}" >/dev/null 2>&1; then
+    echo "ERROR: submodule workflows still reference a pre-v6 actions/checkout runtime in the HEAD candidate gitlinks." >&2
+    exit 1
+  fi
+
+  if regex_search_paths 'uses:\s+actions/setup-node@v(4|5)\b' "${submodule_workflow_dirs[@]}" >/dev/null 2>&1; then
+    echo "ERROR: submodule workflows still reference a pre-v6 actions/setup-node runtime in the HEAD candidate gitlinks." >&2
+    exit 1
+  fi
+
+  if regex_search_paths 'uses:\s+actions/upload-artifact@v(4|5|6)\b' "${submodule_workflow_dirs[@]}" >/dev/null 2>&1; then
+    echo "ERROR: submodule workflows still reference a pre-v7 actions/upload-artifact runtime in the HEAD candidate gitlinks." >&2
+    exit 1
+  fi
+
+  if regex_search_paths 'uses:\s+actions/download-artifact@v(4|5|6|7)\b' "${submodule_workflow_dirs[@]}" >/dev/null 2>&1; then
+    echo "ERROR: submodule workflows still reference a pre-v8 actions/download-artifact runtime in the HEAD candidate gitlinks." >&2
+    exit 1
+  fi
+
+  if regex_search_paths 'uses:\s+peter-evans/repository-dispatch@v3\b' "${submodule_workflow_dirs[@]}" >/dev/null 2>&1; then
+    echo "ERROR: submodule workflows still reference peter-evans/repository-dispatch@v3, which emits Node 20 deprecation warnings on GitHub-hosted runners." >&2
+    exit 1
+  fi
 fi
 
-if regex_search_paths 'uses:\s+actions/cache@v(1|2|3|4)\b' "${laravel_workflows_dir}" >/dev/null 2>&1; then
+if [[ -n "${laravel_workflows_dir}" ]] && regex_search_paths 'uses:\s+actions/cache@v(1|2|3|4)\b' "${laravel_workflows_dir}" >/dev/null 2>&1; then
   echo "ERROR: Laravel submodule workflows still reference a pre-v5 actions/cache runtime in the HEAD candidate gitlinks." >&2
-  exit 1
-fi
-
-if regex_search_paths 'uses:\s+peter-evans/repository-dispatch@v3\b' "${flutter_workflows_dir}" "${laravel_workflows_dir}" "${web_workflows_dir}" >/dev/null 2>&1; then
-  echo "ERROR: submodule workflows still reference peter-evans/repository-dispatch@v3, which emits Node 20 deprecation warnings on GitHub-hosted runners." >&2
   exit 1
 fi
 
@@ -669,7 +706,7 @@ if regex_search_paths "node-version:\s*'20'\b" .github/workflows >/dev/null 2>&1
   exit 1
 fi
 
-if regex_search_paths "node-version:\s*'20'\b" "${flutter_workflows_dir}" "${laravel_workflows_dir}" "${web_workflows_dir}" >/dev/null 2>&1; then
+if ((${#submodule_workflow_dirs[@]} > 0)) && regex_search_paths "node-version:\s*'20'\b" "${submodule_workflow_dirs[@]}" >/dev/null 2>&1; then
   echo "ERROR: submodule workflows still pin Node 20 for CI browser/navigation execution in the HEAD candidate gitlinks." >&2
   exit 1
 fi
@@ -681,6 +718,26 @@ fi
 
 if [[ ! -f .github/scripts/check_remote_web_runtime_sha_over_ssh.sh ]]; then
   echo "ERROR: check_remote_web_runtime_sha_over_ssh.sh is required for exact remote web-app runtime validation." >&2
+  exit 1
+fi
+
+if [[ -e .github/scripts/run_stage_ci_equivalent.sh ]]; then
+  echo "ERROR: run_stage_ci_equivalent.sh must not exist. Published-stage proof is a separate surface and the old CI-Equivalent misnomer is hard-blocked." >&2
+  exit 1
+fi
+
+if [[ -e .github/scripts/run_stage_published_validation.sh ]]; then
+  echo "ERROR: run_stage_published_validation.sh must not exist. Published stage/main proof is pipeline-only; local root execution must stay CI Equivalent/reconcile-only." >&2
+  exit 1
+fi
+
+if grep -Eq '### Published Stage(-Equivalent)? Validation' README.md; then
+  echo "ERROR: README must not describe a local published-stage validation workflow. Published stage/main proof is pipeline-only." >&2
+  exit 1
+fi
+
+if grep -Fq 'run_stage_published_validation.sh' README.md; then
+  echo "ERROR: README must not advertise run_stage_published_validation.sh. Published stage/main proof is pipeline-only." >&2
   exit 1
 fi
 
@@ -733,9 +790,11 @@ done
 required_workflow_markers=(
   "id: stage_rollback_proof_plan"
   "id: stage_rollback_proof_guard"
+  "id: stage_rollback_restored_navigation_prep"
   "id: stage_rollback_provenance_check"
   "id: main_rollback_proof_plan"
   "id: main_rollback_proof_guard"
+  "id: main_rollback_restored_navigation_prep"
   "id: main_rollback_provenance_check"
   "id: stage_untrusted_bootstrap_block"
   "id: main_untrusted_bootstrap_block"
@@ -756,6 +815,16 @@ for marker in "${required_workflow_markers[@]}"; do
     exit 1
   fi
 done
+
+if [[ ! -x .github/scripts/prepare_navigation_workspace_from_revision.sh ]]; then
+  echo "ERROR: prepare_navigation_workspace_from_revision.sh is required for restored-revision rollback proof." >&2
+  exit 1
+fi
+
+if ! bash -n .github/scripts/prepare_navigation_workspace_from_revision.sh; then
+  echo "ERROR: prepare_navigation_workspace_from_revision.sh must remain shell-parseable." >&2
+  exit 1
+fi
 
 promotion_runtime_preflight_block="$(awk '
   /- name: Validate promotion runtime builds/ { in_block=1 }
@@ -805,7 +874,7 @@ if ! grep -Fq "steps.stage_initialize_preflight.outputs.initialized == 'true'" <
   exit 1
 fi
 
-stage_mark_success_expected_if="if: steps.stage_initialize_preflight.outputs.initialized == 'true' && (steps.stage_rollback_target.outputs.trusted_tuple_present == 'true' || steps.stage_untrusted_initialized_bootstrap_block.outputs.first_trusted_tuple_bootstrap == 'true') && steps.stage_untrusted_initialized_bootstrap_block.outcome != 'failure' && steps.stage_runtime_web_sha_check.outcome == 'success' && steps.stage_public_edge_environment_probe.outcome == 'success' && steps.stage_provenance_check.outcome == 'success' && steps.stage_public_taxonomy_validation_fixture.outcome == 'success' && steps.stage_navigation_smoke.outcome == 'success' && steps.stage_navigation_mutation_smoke.outcome == 'success'"
+stage_mark_success_expected_if="if: steps.stage_initialize_preflight.outputs.initialized == 'true' && (steps.stage_rollback_target.outputs.trusted_tuple_present == 'true' || steps.stage_untrusted_initialized_bootstrap_block.outputs.first_trusted_tuple_bootstrap == 'true') && steps.stage_untrusted_initialized_bootstrap_block.outcome != 'failure' && steps.stage_runtime_web_sha_check.outcome == 'success' && steps.stage_public_edge_environment_probe.outcome == 'success' && steps.stage_provenance_check.outcome == 'success' && steps.stage_public_taxonomy_validation_fixture.outcome == 'success' && steps.stage_navigation_smoke.outcome == 'success' && steps.stage_navigation_mutation_smoke.outcome == 'success' && steps.stage_public_taxonomy_validation_fixture_cleanup.outcome != 'failure'"
 stage_mark_success_if_line="$(printf '%s\n' "${stage_mark_success_block}" | sed -n 's/^        if: /if: /p' | head -n 1)"
 if [[ "${stage_mark_success_if_line}" != "${stage_mark_success_expected_if}" ]]; then
   echo "ERROR: stage success-marking block must exactly match the allowlisted full-proof success expression." >&2
@@ -849,6 +918,11 @@ fi
 
 if ! grep -Fq "steps.stage_navigation_mutation_smoke.outcome == 'success'" <<<"${stage_mark_success_block}"; then
   echo "ERROR: stage success-marking block must require a successful mutation navigation smoke." >&2
+  exit 1
+fi
+
+if ! grep -Fq "steps.stage_public_taxonomy_validation_fixture_cleanup.outcome != 'failure'" <<<"${stage_mark_success_block}"; then
+  echo "ERROR: stage success-marking block must require successful or skipped taxonomy fixture cleanup." >&2
   exit 1
 fi
 
@@ -1164,6 +1238,16 @@ if ! grep -Fq "steps.stage_rollback_target.outputs.revision" <<<"${stage_rollbac
   exit 1
 fi
 
+if ! grep -Fq "prepare_navigation_workspace_from_revision.sh" .github/workflows/orchestration-ci-cd.yml; then
+  echo "ERROR: stage rollback proof plan must prepare restored navigation checks from the trusted target revision when available." >&2
+  exit 1
+fi
+
+if ! grep -Fq "restored_navigation_validation_mode" .github/workflows/orchestration-ci-cd.yml; then
+  echo "ERROR: rollback proof plan must classify restored navigation validation mode so missing historical checks fall back to basic validation." >&2
+  exit 1
+fi
+
 main_rollback_proof_guard_block="$(awk '
   /- name: Guard trusted rollback target for production rollback proof/ { in_block=1 }
   in_block && /^      - name:/ && $0 !~ /Guard trusted rollback target for production rollback proof/ { exit }
@@ -1205,9 +1289,61 @@ if ! grep -Fq "steps.main_rollback_target.outputs.revision" <<<"${main_rollback_
   exit 1
 fi
 
+stage_rollback_navigation_block="$(awk '
+  /- name: Run restored stage readonly navigation smoke/ { in_block=1 }
+  in_block && /^      - name:/ && $0 !~ /Run restored stage readonly navigation smoke/ { exit }
+  in_block { print }
+' .github/workflows/orchestration-ci-cd.yml)"
+
+if [[ -z "${stage_rollback_navigation_block}" ]]; then
+  echo "ERROR: could not locate restored stage readonly navigation block in orchestration-ci-cd.yml." >&2
+  exit 1
+fi
+
+if ! grep -Fq "restored_navigation_validation_mode == 'restored-checks'" <<<"${stage_rollback_navigation_block}"; then
+  echo "ERROR: restored stage readonly smoke must run only when trusted target navigation checks are available." >&2
+  exit 1
+fi
+
+if ! grep -Fq "stage_rollback_restored_navigation_prep.outcome != 'failure'" <<<"${stage_rollback_navigation_block}"; then
+  echo "ERROR: restored stage readonly smoke must fall back to basic validation when restored navigation workspace preparation fails." >&2
+  exit 1
+fi
+
+if ! grep -Fq 'steps.stage_rollback_proof_plan.outputs.restored_navigation_workspace' <<<"${stage_rollback_navigation_block}"; then
+  echo "ERROR: restored stage readonly smoke must execute from the trusted target revision workspace, not the candidate checkout." >&2
+  exit 1
+fi
+
+main_rollback_navigation_block="$(awk '
+  /- name: Run restored production readonly navigation smoke/ { in_block=1 }
+  in_block && /^      - name:/ && $0 !~ /Run restored production readonly navigation smoke/ { exit }
+  in_block { print }
+' .github/workflows/orchestration-ci-cd.yml)"
+
+if [[ -z "${main_rollback_navigation_block}" ]]; then
+  echo "ERROR: could not locate restored production readonly navigation block in orchestration-ci-cd.yml." >&2
+  exit 1
+fi
+
+if ! grep -Fq "restored_navigation_validation_mode == 'restored-checks'" <<<"${main_rollback_navigation_block}"; then
+  echo "ERROR: restored production readonly smoke must run only when trusted target navigation checks are available." >&2
+  exit 1
+fi
+
+if ! grep -Fq "main_rollback_restored_navigation_prep.outcome != 'failure'" <<<"${main_rollback_navigation_block}"; then
+  echo "ERROR: restored production readonly smoke must fall back to basic validation when restored navigation workspace preparation fails." >&2
+  exit 1
+fi
+
+if ! grep -Fq 'steps.main_rollback_proof_plan.outputs.restored_navigation_workspace' <<<"${main_rollback_navigation_block}"; then
+  echo "ERROR: restored production readonly smoke must execute from the trusted target revision workspace, not the candidate checkout." >&2
+  exit 1
+fi
+
 stage_rollback_block="$(awk '
-  /- name: Roll back stage deploy when provenance, preflight, smoke, or post-mutation deploy failure requires recovery/ { in_block=1 }
-  in_block && /^      - name:/ && $0 !~ /Roll back stage deploy when provenance, preflight, smoke, or post-mutation deploy failure requires recovery/ { exit }
+  /- name: Roll back stage deploy when provenance, preflight, smoke, cleanup, or post-mutation deploy failure requires recovery/ { in_block=1 }
+  in_block && /^      - name:/ && $0 !~ /Roll back stage deploy when provenance, preflight, smoke, cleanup, or post-mutation deploy failure requires recovery/ { exit }
   in_block { print }
 ' .github/workflows/orchestration-ci-cd.yml)"
 
@@ -1243,6 +1379,11 @@ fi
 
 if ! grep -Fq "steps.stage_navigation_mutation_smoke.outcome == 'failure'" <<<"${stage_rollback_block}"; then
   echo "ERROR: stage rollback block must trigger on mutation navigation smoke failure." >&2
+  exit 1
+fi
+
+if ! grep -Fq "steps.stage_public_taxonomy_validation_fixture_cleanup.outcome == 'failure'" <<<"${stage_rollback_block}"; then
+  echo "ERROR: stage rollback block must trigger on taxonomy fixture cleanup failure." >&2
   exit 1
 fi
 

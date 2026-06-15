@@ -1,4 +1,5 @@
 const { test, expect } = require('@playwright/test');
+const { withFreshBrowserPage } = require('./support/fresh_browser_context');
 
 const tenantUrl = process.env.NAV_TENANT_URL;
 const expectedWebBuildSha = process.env.NAV_EXPECTED_WEB_BUILD_SHA;
@@ -74,49 +75,51 @@ async function bottomNavigationBounds(page) {
 }
 
 test('@readonly MAP-WEB-WIDTH-01 tenant map route is full width while framed tenant routes remain constrained', async ({
-  browser,
 }) => {
   const baseUrl = requireTenantUrl();
-  const context = await browser.newContext({
-    ignoreHTTPSErrors: true,
-    viewport: wideViewport,
-    geolocation: { latitude: -20.671339, longitude: -40.495395 },
-    permissions: ['geolocation'],
-  });
-  const page = await context.newPage();
+  await withFreshBrowserPage(async ({ context, page }) => {
+    await context.grantPermissions(['geolocation'], { origin: new URL(baseUrl).origin });
+    await context.setGeolocation({
+      latitude: -20.671339,
+      longitude: -40.495395,
+      accuracy: 25,
+    });
 
-  await openTenantPath(page, baseUrl, '/');
-  const homeBounds = await bottomNavigationBounds(page);
-  expect(homeBounds.width, 'Tenant home must keep the public web frame width.')
-    .toBeLessThanOrEqual(framedWidthPx + 2);
-  expect(
-    Math.abs(homeBounds.x - ((wideViewport.width - framedWidthPx) / 2)),
-    'Tenant home frame must remain centered on wide web viewports.',
-  ).toBeLessThanOrEqual(2);
+    await openTenantPath(page, baseUrl, '/');
+    const homeBounds = await bottomNavigationBounds(page);
+    expect(homeBounds.width, 'Tenant home must keep the public web frame width.')
+      .toBeLessThanOrEqual(framedWidthPx + 2);
+    expect(
+      Math.abs(homeBounds.x - ((wideViewport.width - framedWidthPx) / 2)),
+      'Tenant home frame must remain centered on wide web viewports.',
+    ).toBeLessThanOrEqual(2);
 
-  await openTenantPath(page, baseUrl, '/mapa');
-  const mapBounds = await bottomNavigationBounds(page);
-  expect(
-    mapBounds.width,
-    'Tenant map route must occupy the full browser viewport width.',
-  ).toBeGreaterThanOrEqual(wideViewport.width - 2);
-  expect(mapBounds.x, 'Tenant map route must start at the left viewport edge.')
-    .toBeLessThanOrEqual(2);
+    await openTenantPath(page, baseUrl, '/mapa');
+    const mapBounds = await bottomNavigationBounds(page);
+    expect(
+      mapBounds.width,
+      'Tenant map route must occupy the full browser viewport width.',
+    ).toBeGreaterThanOrEqual(wideViewport.width - 2);
+    expect(mapBounds.x, 'Tenant map route must start at the left viewport edge.')
+      .toBeLessThanOrEqual(2);
 
-  const runtimeProvenance = await page.evaluate(() => ({
-    buildSha: window.__WEB_BUILD_SHA__ || null,
-    landlordHost: window.__LANDLORD_HOST__ || null,
-  }));
-  console.log(
-    `[map-width] runtime provenance: ${JSON.stringify(runtimeProvenance)}`,
-  );
+    const runtimeProvenance = await page.evaluate(() => ({
+      buildSha: window.__WEB_BUILD_SHA__ || null,
+      landlordHost: window.__LANDLORD_HOST__ || null,
+    }));
+    console.log(
+      `[map-width] runtime provenance: ${JSON.stringify(runtimeProvenance)}`,
+    );
 
-  if (expectedWebBuildSha) {
-    expect(runtimeProvenance.buildSha).toBe(expectedWebBuildSha);
-  }
-  if (expectedLandlordHost) {
-    expect(runtimeProvenance.landlordHost).toBe(expectedLandlordHost);
-  }
-
-  await context.close();
+    if (expectedWebBuildSha) {
+      expect(runtimeProvenance.buildSha).toBe(expectedWebBuildSha);
+    }
+    if (expectedLandlordHost) {
+      expect(runtimeProvenance.landlordHost).toBe(expectedLandlordHost);
+    }
+  }, {
+      ignoreHTTPSErrors: true,
+      viewport: wideViewport,
+      permissions: ['geolocation'],
+    });
 });

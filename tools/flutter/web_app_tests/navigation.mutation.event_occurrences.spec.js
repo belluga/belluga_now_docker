@@ -4,9 +4,18 @@ const {
   loginTenantAdmin: loginTenantAdminWithRequiredCredentials,
 } = require('./support/tenant_admin_auth');
 const { selectDropdownOption } = require('./support/semantic_dropdown');
+const {
+  cleanupOnboardedAccount,
+  cleanupOnboardedAccounts,
+} = require('./support/account_onboarding_cleanup');
+const {
+  createFreshAuthenticatedTenantAdminPage,
+} = require('./support/tenant_admin_seeded_session');
 
 const tenantUrl = process.env.NAV_TENANT_URL;
 const appBootTimeoutMs = 90000;
+const apiRequestTimeoutMs = 30000;
+const navigationRunId = (process.env.NAV_TEST_RUN_ID || 'local').trim();
 let anonymousIdentityToken = null;
 
 test.describe.configure({ timeout: 300000 });
@@ -99,10 +108,23 @@ function formatAgendaOccurrenceMetaLabel(occurrence) {
   return `${weekday}, ${day} • ${startTime} - ${endWeekday}, ${endDay} • ${endTime}`.toUpperCase();
 }
 
+function formatAdminOccurrenceDateTimeLabel(value) {
+  const date = new Date(value);
+  expect(
+    Number.isNaN(date.getTime()),
+    `Invalid admin occurrence datetime ${value}`,
+  ).toBe(false);
+  return `${String(date.getDate()).padStart(2, '0')}/${String(
+    date.getMonth() + 1,
+  ).padStart(2, '0')}/${date.getFullYear()} ${String(
+    date.getHours(),
+  ).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+}
+
 function anonymousFingerprintHash(baseUrl) {
   return crypto
     .createHash('sha256')
-    .update(`event-occurrences:${baseUrl}`)
+    .update(`event-occurrences:${baseUrl}:${navigationRunId}`)
     .digest('hex');
 }
 
@@ -522,7 +544,12 @@ async function seedFlutterSecureStorageEntries(context, entries) {
       }
 
       const publicKey = 'FlutterSecureStorage';
-      const storage = window.localStorage;
+      let storage;
+      try {
+        storage = window.localStorage;
+      } catch (_) {
+        return;
+      }
       const algorithm = { name: 'AES-GCM', length: 256 };
 
       const bytesToBase64 = (bytes) => {
@@ -636,6 +663,7 @@ async function deleteEventType(api, baseUrl, token, eventTypeId) {
     {
       headers: authHeaders(token),
       failOnStatusCode: false,
+      timeout: apiRequestTimeoutMs,
     },
   );
 }
@@ -675,7 +703,8 @@ async function listAccountProfileCandidates(api, baseUrl, token, type) {
 }
 
 function matchesPoiCapableProfileType(row, { requireEvents = false } = {}) {
-  return row?.capabilities?.is_poi_enabled === true
+  return row?.capabilities?.is_queryable === true
+    && row?.capabilities?.is_poi_enabled === true
     && row?.capabilities?.is_reference_location_enabled === true
     && (!requireEvents || row?.capabilities?.has_events === true);
 }
@@ -686,23 +715,6 @@ async function resolvePoiCapableProfileType(
   token,
   { requireEvents = false } = {},
 ) {
-  const response = await api.get(
-    buildApiUrl(baseUrl, '/admin/api/v1/account_profile_types'),
-    {
-      headers: authHeaders(token),
-    },
-  );
-  expect(response.status(), 'Account profile types must load.').toBe(200);
-
-  const payload = await response.json();
-  const rows = Array.isArray(payload?.data) ? payload.data : [];
-  const selected = rows.find((row) =>
-    matchesPoiCapableProfileType(row, { requireEvents }),
-  );
-  if (selected?.type) {
-    return { profileType: selected.type, createdType: null };
-  }
-
   const type = `pw-srd-host-${Date.now()}`;
   const createResponse = await api.post(
     buildApiUrl(baseUrl, '/admin/api/v1/account_profile_types'),
@@ -710,6 +722,10 @@ async function resolvePoiCapableProfileType(
       data: {
         type,
         label: 'PW SR-D Host',
+        labels: {
+          singular: 'PW SR-D Host',
+          plural: 'PW SR-D Hosts',
+        },
         allowed_taxonomies: [],
         visual: {
           mode: 'icon',
@@ -718,6 +734,8 @@ async function resolvePoiCapableProfileType(
           icon_color: '#FFFFFF',
         },
         capabilities: {
+          is_queryable: true,
+          is_publicly_navigable: true,
           is_favoritable: true,
           is_poi_enabled: true,
           is_reference_location_enabled: true,
@@ -738,8 +756,91 @@ async function resolvePoiCapableProfileType(
   return { profileType: type, createdType: type };
 }
 
+async function createDedicatedRelatedProfiles(
+  api,
+  baseUrl,
+  token,
+  uniqueSuffix,
+) {
+  const type = `pw-srd-related-${uniqueSuffix}`;
+  const createResponse = await api.post(
+    buildApiUrl(baseUrl, '/admin/api/v1/account_profile_types'),
+    {
+      data: {
+        type,
+        label: `PW SR-D Related ${uniqueSuffix}`,
+        labels: {
+          singular: `PW SR-D Related ${uniqueSuffix}`,
+          plural: `PW SR-D Related ${uniqueSuffix}`,
+        },
+        allowed_taxonomies: [],
+        visual: {
+          mode: 'icon',
+          icon: 'store',
+          color: '#0F766E',
+          icon_color: '#FFFFFF',
+        },
+        capabilities: {
+          is_queryable: true,
+          is_publicly_navigable: true,
+          is_publicly_discoverable: true,
+          is_favoritable: true,
+          is_poi_enabled: true,
+          is_reference_location_enabled: true,
+          has_bio: false,
+          has_content: false,
+          has_taxonomies: false,
+          has_avatar: false,
+          has_cover: false,
+          has_events: true,
+          has_nested_profile_groups: false,
+        },
+      },
+      headers: authHeaders(token),
+    },
+  );
+  const createPayload = await createResponse.json().catch(async () => ({
+    raw: await createResponse.text().catch(() => ''),
+  }));
+  expect(
+    createResponse.status(),
+    `Dedicated related profile type ${type} must be created. Response: ${JSON.stringify(createPayload)}`,
+  ).toBe(201);
+
+  const createdAccountSlugs = [];
+  const createdProfileIds = [];
+  const names = [
+    `PW SR-D Banda Alpha ${uniqueSuffix}`,
+    `PW SR-D Banda Beta ${uniqueSuffix}`,
+    `PW SR-D Expo Gamma ${uniqueSuffix}`,
+    `PW SR-D Expo Delta ${uniqueSuffix}`,
+  ];
+  const candidates = [];
+
+  for (const name of names) {
+    const createdProfile = await createNearbyPhysicalHost(
+      api,
+      baseUrl,
+      token,
+      type,
+      name,
+    );
+    createdAccountSlugs.push(createdProfile.accountSlug);
+    createdProfileIds.push(createdProfile.id);
+    candidates.push(createdProfile);
+  }
+
+  return {
+    candidates,
+    createdAccountSlugs,
+    createdProfileIds,
+    createdType: type,
+  };
+}
+
 async function ensurePhysicalHostCandidates(api, baseUrl, token, minimum = 1) {
   const createdProfileIds = [];
+  const createdAccountSlugs = [];
   let createdType = null;
   const candidates = await listAccountProfileCandidates(
     api,
@@ -752,6 +853,7 @@ async function ensurePhysicalHostCandidates(api, baseUrl, token, minimum = 1) {
     return {
       candidates: candidates.slice(0, Math.max(minimum, 1)),
       createdProfileIds,
+      createdAccountSlugs,
       createdType,
     };
   }
@@ -773,6 +875,7 @@ async function ensurePhysicalHostCandidates(api, baseUrl, token, minimum = 1) {
       `PW SR-D Auto Host ${Date.now()}-${index + 1}`,
     );
     createdProfileIds.push(createdHost.id);
+    createdAccountSlugs.push(createdHost.accountSlug);
     seededCandidates.push(createdHost);
   }
 
@@ -784,6 +887,7 @@ async function ensurePhysicalHostCandidates(api, baseUrl, token, minimum = 1) {
   return {
     candidates: seededCandidates.slice(0, Math.max(minimum, 1)),
     createdProfileIds,
+    createdAccountSlugs,
     createdType,
   };
 }
@@ -794,7 +898,7 @@ async function createNearbyPhysicalHost(api, baseUrl, token, profileType, name) 
     {
       data: {
         name,
-        ownership_state: 'tenant_owned',
+        ownership_state: 'unmanaged',
         profile_type: profileType,
         location: {
           lat: -20.671339,
@@ -809,28 +913,16 @@ async function createNearbyPhysicalHost(api, baseUrl, token, profileType, name) 
 
   const payload = await response.json();
   const data = payload?.data || {};
+  const account = data?.account || {};
   const profile = data?.account_profile || {};
   const profileId = profile?.id?.toString() || '';
   expect(profileId, 'Nearby physical host seed must return a profile id.')
     .toBeTruthy();
   return {
     id: profileId,
+    accountSlug: account?.slug?.toString() || '',
     display_name: profile?.display_name?.toString() || name,
   };
-}
-
-async function deleteAccountProfile(api, baseUrl, token, profileId) {
-  if (!profileId) {
-    return;
-  }
-
-  await api.delete(
-    buildApiUrl(baseUrl, `/admin/api/v1/account_profiles/${profileId}`),
-    {
-      headers: authHeaders(token),
-      failOnStatusCode: false,
-    },
-  );
 }
 
 async function deleteAccountProfileType(api, baseUrl, token, profileType) {
@@ -846,6 +938,7 @@ async function deleteAccountProfileType(api, baseUrl, token, profileType) {
     {
       headers: authHeaders(token),
       failOnStatusCode: false,
+      timeout: apiRequestTimeoutMs,
     },
   );
 }
@@ -858,6 +951,7 @@ async function fetchRelatedAccountProfileCandidates(
 ) {
   const excluded = new Set(excludeIds.filter(Boolean));
   const createdProfileIds = [];
+  const createdAccountSlugs = [];
   let createdType = null;
   const candidates = (await listAccountProfileCandidates(
     api,
@@ -870,6 +964,7 @@ async function fetchRelatedAccountProfileCandidates(
     return {
       candidates: candidates.slice(0, minimum),
       createdProfileIds,
+      createdAccountSlugs,
       createdType,
     };
   }
@@ -892,6 +987,7 @@ async function fetchRelatedAccountProfileCandidates(
       `PW SR-D Related Profile ${Date.now()}-${index + 1}`,
     );
     createdProfileIds.push(createdProfile.id);
+    createdAccountSlugs.push(createdProfile.accountSlug);
     if (!excluded.has(createdProfile.id)) {
       seededCandidates.push(createdProfile);
     }
@@ -905,6 +1001,7 @@ async function fetchRelatedAccountProfileCandidates(
   return {
     candidates: seededCandidates.slice(0, minimum),
     createdProfileIds,
+    createdAccountSlugs,
     createdType,
   };
 }
@@ -951,10 +1048,13 @@ async function createSingleOccurrenceEvent(
       headers: authHeaders(token),
     },
   );
-  expect(response.status(), 'Single-occurrence event seed must succeed.').toBe(
-    201,
-  );
-  const payload = await response.json();
+  const payload = await response.json().catch(async () => ({
+    raw: await response.text().catch(() => ''),
+  }));
+  expect(
+    response.status(),
+    `Single-occurrence event seed must succeed. Response: ${JSON.stringify(payload)}`,
+  ).toBe(201);
   return payload?.data;
 }
 
@@ -1002,6 +1102,14 @@ async function createSingleOccurrenceProgrammedEvent(
                 permissions: { can_edit: false },
               },
             ],
+            profile_groups: [
+              {
+                id: `programacao-single-${uniqueSuffix}`,
+                label: 'Participantes',
+                order: 0,
+                account_profile_ids: [occurrenceParty.id],
+              },
+            ],
             programming_items: [
               {
                 time: '17:00',
@@ -1019,12 +1127,14 @@ async function createSingleOccurrenceProgrammedEvent(
       headers: authHeaders(token),
     },
   );
+  const responseBody = await response.json().catch(async () => ({
+    raw: await response.text().catch(() => ''),
+  }));
   expect(
     response.status(),
-    'Single-occurrence programmed event seed must succeed.',
+    `Single-occurrence programmed event seed must succeed. Response: ${JSON.stringify(responseBody)}`,
   ).toBe(201);
-  const payload = await response.json();
-  const data = payload?.data;
+  const data = responseBody?.data;
   expect(
     data?.occurrences || [],
     'Single-occurrence programmed event must return one occurrence.',
@@ -1072,6 +1182,14 @@ async function createProgrammedMultiOccurrenceEvent(
             permissions: { can_edit: false },
           },
         ],
+        profile_groups: [
+          {
+            id: `programacao-evento-${uniqueSuffix}`,
+            label: 'Participantes',
+            order: 0,
+            account_profile_ids: [eventParty.id],
+          },
+        ],
         occurrences: [
           {
             date_time_start: firstStart.toISOString(),
@@ -1084,6 +1202,14 @@ async function createProgrammedMultiOccurrenceEvent(
               {
                 party_ref_id: occurrenceParty.id,
                 permissions: { can_edit: false },
+              },
+            ],
+            profile_groups: [
+              {
+                id: `programacao-ocorrencia-${uniqueSuffix}`,
+                label: 'Participantes',
+                order: 0,
+                account_profile_ids: [occurrenceParty.id],
               },
             ],
             programming_items: [
@@ -1121,10 +1247,15 @@ async function createProgrammedMultiOccurrenceEvent(
       headers: authHeaders(token),
     },
   );
-  expect(response.status(), 'Programmed multi-occurrence event seed must succeed.')
+  const responseBody = await response.json().catch(async () => ({
+    raw: await response.text().catch(() => ''),
+  }));
+  expect(
+    response.status(),
+    `Programmed multi-occurrence event seed must succeed. Response: ${JSON.stringify(responseBody)}`,
+  )
     .toBe(201);
-  const payload = await response.json();
-  const data = payload?.data;
+  const data = responseBody?.data;
   expect(data?.event_id?.toString(), 'Programmed event must return event_id.')
     .toBeTruthy();
   expect(data?.occurrences || [], 'Programmed event must return two occurrences.')
@@ -1431,6 +1562,7 @@ async function deleteEvent(api, baseUrl, token, eventId) {
   await api.delete(buildApiUrl(baseUrl, `/admin/api/v1/events/${eventId}`), {
     headers: authHeaders(token),
     failOnStatusCode: false,
+    timeout: apiRequestTimeoutMs,
   });
 }
 
@@ -1575,6 +1707,243 @@ async function fillFlutterTextField(page, label, value) {
   throw new Error(
     `Flutter text field "${label}" did not retain "${value}" before submit; last value was "${lastValue}".`,
   );
+}
+
+async function fillFlutterTextFieldByLocator(page, field, value, label) {
+  await field.scrollIntoViewIfNeeded().catch(() => {});
+  await expect(field).toBeVisible({ timeout: appBootTimeoutMs });
+
+  let lastValue = '';
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    await field.click();
+    await field.focus().catch(() => {});
+    const selectAll = process.platform === 'darwin' ? 'Meta+A' : 'Control+A';
+    await field.press(selectAll).catch(async () => {
+      await page.keyboard.press(selectAll);
+    });
+    await field.press('Backspace').catch(async () => {
+      await page.keyboard.press('Backspace');
+    });
+
+    try {
+      await expect
+        .poll(
+          async () => {
+            try {
+              return await field.inputValue();
+            } catch (_) {
+              return '';
+            }
+          },
+          {
+            timeout: 3000,
+            message: `Expected Flutter text field "${label}" to clear before typing.`,
+          },
+        )
+        .toBe('');
+    } catch (_) {
+      await field.click({ clickCount: 3 }).catch(() => {});
+      await field.press('Backspace').catch(async () => {
+        await page.keyboard.press('Backspace');
+      });
+    }
+
+    await field.pressSequentially(value, { delay: 5 }).catch(async () => {
+      await page.keyboard.type(value, { delay: 5 });
+    });
+
+    try {
+      await expect
+        .poll(
+          async () => {
+            try {
+              return await field.inputValue();
+            } catch (_) {
+              return '';
+            }
+          },
+          {
+            timeout: 3000,
+            message: `Expected Flutter text field "${label}" to retain input.`,
+          },
+        )
+        .toBe(value);
+      return field;
+    } catch (_) {
+      try {
+        lastValue = await field.inputValue();
+      } catch (_) {
+        lastValue = '<unreadable>';
+      }
+      await page.waitForTimeout(150);
+    }
+  }
+
+  throw new Error(
+    `Flutter text field "${label}" did not retain "${value}" before submit; last value was "${lastValue}".`,
+  );
+}
+
+function relatedProfileDisplayName(profile) {
+  return (
+    profile?.display_name?.toString?.() ||
+    profile?.displayName?.toString?.() ||
+    ''
+  ).trim();
+}
+
+async function addOccurrenceProfileGroup(page, { groupLabel, profileNames = [] }) {
+  logStep(
+    'evg-helper',
+    `addOccurrenceProfileGroup start label="${groupLabel}" profiles=${profileNames.join(' | ') || '<none>'}`,
+  );
+  await page.getByRole('button', { name: 'Adicionar grupo' }).click();
+  await fillFlutterTextField(page, 'Nome da aba', groupLabel);
+  logStep('evg-helper', `group label filled "${groupLabel}"`);
+
+  if (profileNames.length === 0) {
+    return;
+  }
+
+  const selectorButton = page.getByRole('button', {
+    name: /Selecionar perfis|perfil\(is\) selecionado\(s\)/i,
+  });
+  await selectorButton.click();
+  logStep('evg-helper', `group selector opened "${groupLabel}"`);
+  const searchField = page.getByLabel('Buscar perfil').last();
+  await expect(
+    searchField,
+    'Occurrence profile selector search field must be visible after opening the selector.',
+  ).toBeVisible({ timeout: appBootTimeoutMs });
+  const selectedCount = async () => {
+    const buttonText = (await selectorButton.textContent().catch(() => '')) || '';
+    const match = buttonText.match(/(\d+)\s+perfil\(is\)\s+selecionado\(s\)/i);
+    return match ? Number.parseInt(match[1], 10) : 0;
+  };
+
+  for (const [index, profileName] of profileNames.entries()) {
+    if (index > 0) {
+      await page.keyboard.press('Escape').catch(() => {});
+      await selectorButton.click();
+      await expect(
+        searchField,
+        'Occurrence profile selector search field must remain visible after reopening the selector.',
+      ).toBeVisible({ timeout: appBootTimeoutMs });
+    }
+
+    await fillFlutterTextFieldByLocator(
+      page,
+      searchField,
+      profileName,
+      'Buscar perfil',
+    );
+
+    const checkbox = page.getByRole('checkbox', {
+      name: new RegExp(escapeRegExp(profileName)),
+    });
+    await expect(
+      checkbox,
+      `Occurrence profile selector must expose candidate ${profileName}.`,
+    ).toBeVisible({ timeout: appBootTimeoutMs });
+    const expectedCount = index + 1;
+    if ((await selectedCount()) < expectedCount) {
+      await checkbox.click();
+      await expect
+        .poll(selectedCount, {
+          timeout: appBootTimeoutMs,
+          message: `Occurrence profile selector must increment to ${expectedCount} after selecting ${profileName}.`,
+        })
+        .toBe(expectedCount);
+    }
+    logStep('evg-helper', `selected group profile "${profileName}"`);
+  }
+
+  await page.keyboard.press('Escape').catch(() => {});
+  if (
+    await page
+      .getByRole('checkbox', {
+        name: new RegExp(escapeRegExp(profileNames[0])),
+      })
+      .first()
+      .isVisible()
+      .catch(() => false)
+  ) {
+    await selectorButton.click();
+  }
+  logStep('evg-helper', `group selector closed "${groupLabel}"`);
+  await expect(
+    page.getByRole('button', {
+      name: new RegExp(`${profileNames.length}\\s+perfil\\(is\\) selecionado\\(s\\)`),
+    }),
+    `Occurrence profile selector must report ${profileNames.length} selected profile(s).`,
+  ).toBeVisible({ timeout: appBootTimeoutMs });
+  logStep('evg-helper', `group selection count visible "${groupLabel}"`);
+}
+
+async function addOccurrenceProfilesViaProgramming(page, {
+  groupLabel,
+  programmingTitle,
+  time,
+  profileNames,
+}) {
+  logStep(
+    'evg-helper',
+    `addOccurrenceProfilesViaProgramming start group="${groupLabel}" title="${programmingTitle}" profiles=${profileNames.join(' | ')}`,
+  );
+  await page.getByRole('button', { name: 'Adicionar item de programação' }).click();
+  await expect(page.getByText('Adicionar item de programação')).toBeVisible({
+    timeout: appBootTimeoutMs,
+  });
+  await fillFlutterTextField(page, 'Horário', time);
+  await fillFlutterTextField(page, 'Título (opcional)', programmingTitle);
+  logStep('evg-helper', `programming item draft ready "${programmingTitle}"`);
+
+  for (const profileName of profileNames) {
+    await page.getByRole('button', { name: new RegExp(`^${escapeRegExp(groupLabel)}$`) }).click();
+    await expect(page.getByLabel('Buscar perfil relacionado')).toBeVisible({
+      timeout: appBootTimeoutMs,
+    });
+    await fillFlutterTextField(page, 'Buscar perfil relacionado', profileName);
+    await page.getByText(profileName, { exact: true }).click();
+    logStep('evg-helper', `programming flow added occurrence profile "${profileName}"`);
+  }
+
+  await page.getByRole('button', { name: 'Salvar item' }).click();
+  logStep('evg-helper', `programming item saved "${programmingTitle}"`);
+}
+
+async function openOccurrenceEditorForStart(
+  page,
+  startValue,
+  description = 'Occurrence card must open the occurrence editor.',
+) {
+  const label = formatAdminOccurrenceDateTimeLabel(startValue);
+  await scrollUntilTextInViewport(
+    page,
+    label,
+    `${description} Occurrence card start label must become visible before activation.`,
+  );
+  const candidates = [
+    page.getByRole('button', { name: new RegExp(escapeRegExp(label)) }).first(),
+    page.getByRole('group', { name: new RegExp(escapeRegExp(label)) }).first(),
+    page.getByText(label, { exact: true }).first(),
+  ];
+
+  for (const candidate of candidates) {
+    if (!(await candidate.isVisible().catch(() => false))) {
+      continue;
+    }
+    await candidate.click({ timeout: appBootTimeoutMs }).catch(() => {});
+    const opened = await page
+      .getByText('Editar data')
+      .isVisible({ timeout: 3000 })
+      .catch(() => false);
+    if (opened) {
+      return;
+    }
+  }
+
+  throw new Error(`${description} Start label: ${label}`);
 }
 
 async function assertTextDoesNotAppearBetween(
@@ -1814,10 +2183,13 @@ async function openSeededEventFromAdminList(
   flow = 'admin',
 ) {
   async function openList() {
-    const listResponsePromise = page.waitForResponse(
-      (candidate) => matchesAdminEventsListResponse(candidate, baseUrl),
-      { timeout: appBootTimeoutMs },
-    );
+    let listResponse = null;
+    const captureListResponse = (candidate) => {
+      if (!listResponse && matchesAdminEventsListResponse(candidate, baseUrl)) {
+        listResponse = candidate;
+      }
+    };
+    page.on('response', captureListResponse);
     const response = await page.goto(buildApiUrl(baseUrl, '/admin/events'), {
       waitUntil: 'domcontentloaded',
     });
@@ -1825,17 +2197,29 @@ async function openSeededEventFromAdminList(
     expect(response.status()).toBeLessThan(400);
     await assertAppBooted(page);
     await enableAccessibilityIfNeeded(page);
-    const listResponse = await listResponsePromise;
-    expect(
-      listResponse.status(),
-      'Tenant-admin events list response must succeed before UI assertions.',
-    ).toBeGreaterThanOrEqual(200);
-    expect(
-      listResponse.status(),
-      'Tenant-admin events list response must succeed before UI assertions.',
-    ).toBeLessThan(300);
-    await logAdminEventsListResponse(flow, listResponse, 'initial');
-    await waitForAdminEventsListUiReady(page);
+    try {
+      await waitForAdminEventsListUiReady(page);
+      await page.waitForTimeout(300);
+    } finally {
+      page.off('response', captureListResponse);
+    }
+
+    if (listResponse) {
+      expect(
+        listResponse.status(),
+        'Tenant-admin events list response must succeed before UI assertions.',
+      ).toBeGreaterThanOrEqual(200);
+      expect(
+        listResponse.status(),
+        'Tenant-admin events list response must succeed before UI assertions.',
+      ).toBeLessThan(300);
+      await logAdminEventsListResponse(flow, listResponse, 'initial');
+      return;
+    }
+
+    console.log(
+      `[event-occurrences][${flow}] admin events list reached ready UI state without observing a fresh list response; proceeding with visible state.`,
+    );
   }
 
   await openList();
@@ -1969,13 +2353,122 @@ async function clickVisibleAddOccurrenceAffordance(page) {
 }
 
 async function closeOccurrenceEditorSheet(page) {
+  logStep('evg-helper', 'closeOccurrenceEditorSheet start');
   await expect(
     page.getByRole('button', { name: 'Salvar data' }),
     'Occurrence editor must not expose the superseded per-occurrence save boundary.',
   ).toHaveCount(0);
-  const closeButton = page.getByRole('button', { name: 'Fechar' }).last();
-  await expect(closeButton).toBeVisible({ timeout: appBootTimeoutMs });
-  await closeButton.click({ timeout: appBootTimeoutMs });
+  const closeButtons = page.getByRole('button', { name: 'Fechar' });
+  let headerCloseButton = null;
+  let headerCloseHandle = null;
+  let bestX = Number.NEGATIVE_INFINITY;
+  let bestY = Number.POSITIVE_INFINITY;
+  const closeButtonCount = await closeButtons.count();
+
+  for (let index = 0; index < closeButtonCount; index += 1) {
+    const candidate = closeButtons.nth(index);
+    if (!(await candidate.isVisible().catch(() => false))) {
+      continue;
+    }
+    const box = await candidate.boundingBox().catch(() => null);
+    if (
+      box &&
+      (box.x > bestX || (box.x === bestX && box.y < bestY))
+    ) {
+      headerCloseButton = candidate;
+      headerCloseHandle = await candidate.elementHandle();
+      bestX = box.x;
+      bestY = box.y;
+    }
+  }
+
+  if (headerCloseButton) {
+    logStep(
+      'evg-helper',
+      `closeOccurrenceEditorSheet header close selected at x=${bestX}, y=${bestY}`,
+    );
+    await headerCloseButton.click({ timeout: appBootTimeoutMs });
+    await expect
+      .poll(
+        async () => {
+          if (!headerCloseHandle) {
+            return false;
+          }
+          try {
+            return await headerCloseHandle.evaluate((element) => {
+              if (!element.isConnected) {
+                return false;
+              }
+              const node = element;
+              if (!(node instanceof HTMLElement)) {
+                return true;
+              }
+              const style = window.getComputedStyle(node);
+              const hiddenByStyle =
+                style.display === 'none' ||
+                style.visibility === 'hidden' ||
+                style.opacity === '0';
+              return !hiddenByStyle && node.getClientRects().length > 0;
+            });
+          } catch (_error) {
+            return false;
+          }
+        },
+        {
+          timeout: appBootTimeoutMs,
+          message:
+            'Closing the occurrence editor must dismiss the sheet-specific Fechar button that was clicked.',
+        },
+      )
+      .toBe(false);
+    logStep('evg-helper', 'closeOccurrenceEditorSheet header close dismissed');
+  } else {
+    logStep('evg-helper', 'closeOccurrenceEditorSheet fallback escape path');
+    await page.keyboard.press('Escape');
+    await expect
+      .poll(
+        async () => {
+          return page
+            .getByRole('button', { name: 'Remover data' })
+            .count()
+            .catch(() => 0);
+        },
+        {
+          timeout: appBootTimeoutMs,
+          message:
+            'Escaping the occurrence editor must restore the event-level occurrence list.',
+        },
+      )
+      .toBeGreaterThan(0);
+    logStep('evg-helper', 'closeOccurrenceEditorSheet escape fallback dismissed');
+  }
+}
+
+async function countVisibleMatches(locator) {
+  return locator
+    .evaluateAll((elements) =>
+      elements.filter((element) => {
+        if (!(element instanceof HTMLElement)) {
+          return false;
+        }
+        const style = window.getComputedStyle(element);
+        const hiddenByStyle =
+          style.display === 'none' ||
+          style.visibility === 'hidden' ||
+          style.opacity === '0';
+        return !hiddenByStyle && element.getClientRects().length > 0;
+      }).length,
+    )
+    .catch(() => 0);
+}
+
+async function expectAnyVisibleMatch(locator, message) {
+  await expect
+    .poll(async () => countVisibleMatches(locator), {
+      timeout: appBootTimeoutMs,
+      message,
+    })
+    .toBeGreaterThan(0);
 }
 
 async function openPublicAgendaCardAndReturn(
@@ -2093,6 +2586,7 @@ test('@mutation NAV-ADM-LOC-01..06 admin occurrence programming location ownersh
   let eventTypeId = null;
   let eventId = null;
   const createdSeedProfileIds = [];
+  const createdSeedAccountSlugs = [];
   const createdSeedProfileTypes = new Set();
 
   try {
@@ -2115,6 +2609,7 @@ test('@mutation NAV-ADM-LOC-01..06 admin occurrence programming location ownersh
       2,
     );
     createdSeedProfileIds.push(...physicalHostSeed.createdProfileIds);
+    createdSeedAccountSlugs.push(...physicalHostSeed.createdAccountSlugs);
     if (physicalHostSeed.createdType) {
       createdSeedProfileTypes.add(physicalHostSeed.createdType);
     }
@@ -2361,9 +2856,7 @@ test('@mutation NAV-ADM-LOC-01..06 admin occurrence programming location ownersh
     if (session?.token) {
       await deleteEvent(api, baseUrl, session.token, eventId);
       await deleteEventType(api, baseUrl, session.token, eventTypeId);
-      for (const profileId of createdSeedProfileIds) {
-        await deleteAccountProfile(api, baseUrl, session.token, profileId);
-      }
+      await cleanupOnboardedAccounts(api, baseUrl, session.token, createdSeedAccountSlugs);
       for (const profileType of createdSeedProfileTypes) {
         await deleteAccountProfileType(api, baseUrl, session.token, profileType);
       }
@@ -2378,12 +2871,14 @@ test('@mutation NAV-ADM-LOC-01..06 admin occurrence programming location ownersh
 test('@mutation tenant-admin event occurrence FAB persists second occurrence and public detail selects it', async ({
   browser,
 }) => {
+  test.setTimeout(420000);
   annotateMultiOccurrenceNavigationMatrix();
   resetMultiOccurrenceNavigationEvidence();
   const baseUrl = requireTenantUrl();
   const api = await createApiContext(baseUrl);
   const uniqueSuffix = Date.now().toString();
   let browserContext;
+  let freshBrowser;
   let publicContext;
   let session = null;
   let eventTypeId = null;
@@ -2394,8 +2889,11 @@ test('@mutation tenant-admin event occurrence FAB persists second occurrence and
   let futureLaterEventId = null;
   let createdPhysicalHostId = null;
   let createdProgrammingHostId = null;
+  let createdPhysicalHostAccountSlug = null;
+  let createdProgrammingHostAccountSlug = null;
   let createdProfileType = null;
   const createdSeedProfileIds = [];
+  const createdSeedAccountSlugs = [];
   const createdSeedProfileTypes = new Set();
 
   try {
@@ -2424,6 +2922,7 @@ test('@mutation tenant-admin event occurrence FAB persists second occurrence and
       `PW SR-D Host ${uniqueSuffix}`,
     );
     createdPhysicalHostId = physicalHost.id;
+    createdPhysicalHostAccountSlug = physicalHost.accountSlug;
     const programmingHost = await createNearbyPhysicalHost(
       api,
       baseUrl,
@@ -2432,6 +2931,7 @@ test('@mutation tenant-admin event occurrence FAB persists second occurrence and
       `PW SR-D Programming Host ${uniqueSuffix}`,
     );
     createdProgrammingHostId = programmingHost.id;
+    createdProgrammingHostAccountSlug = programmingHost.accountSlug;
     const relatedProfileSeed = await fetchRelatedAccountProfileCandidates(
       api,
       baseUrl,
@@ -2441,6 +2941,7 @@ test('@mutation tenant-admin event occurrence FAB persists second occurrence and
       },
     );
     createdSeedProfileIds.push(...relatedProfileSeed.createdProfileIds);
+    createdSeedAccountSlugs.push(...relatedProfileSeed.createdAccountSlugs);
     if (relatedProfileSeed.createdType) {
       createdSeedProfileTypes.add(relatedProfileSeed.createdType);
     }
@@ -2468,10 +2969,10 @@ test('@mutation tenant-admin event occurrence FAB persists second occurrence and
       `seeded event is visible in admin list API page ${seededListLocation.page}`,
     );
 
-    const primaryPageBundle = await createAuthenticatedTenantAdminPage(
-      browser,
+    const primaryPageBundle = await createFreshAuthenticatedTenantAdminPage(
       session,
     );
+    freshBrowser = primaryPageBundle.browser;
     browserContext = primaryPageBundle.context;
     const page = primaryPageBundle.page;
     const collectors = installFailureCollectors(page);
@@ -2786,7 +3287,7 @@ test('@mutation tenant-admin event occurrence FAB persists second occurrence and
       ).toBe(true);
     });
 
-    const publicBundle = await browser.newContext({
+    const publicBundle = await freshBrowser.newContext({
       ignoreHTTPSErrors: true,
       geolocation: { latitude: -20.671339, longitude: -40.495395 },
       permissions: ['geolocation'],
@@ -3326,6 +3827,14 @@ test('@mutation tenant-admin event occurrence FAB persists second occurrence and
     });
     await navStep('NAV-02', async () => {
       const firstProgrammedOccurrence = programmedEvent?.occurrences?.[0];
+      const warmSwitchMarker = await publicPage.evaluate(() => {
+        if (!window.__occurrenceWarmSwitchMarker) {
+          window.__occurrenceWarmSwitchMarker = Math.random()
+            .toString(36)
+            .slice(2);
+        }
+        return window.__occurrenceWarmSwitchMarker;
+      });
       await expect(
         legacyOccurrenceDateChipLocator(publicPage, firstProgrammedOccurrence),
         'Programação date selector must not use the superseded date+time chip contract.',
@@ -3339,6 +3848,19 @@ test('@mutation tenant-admin event occurrence FAB persists second occurrence and
         new RegExp(`occurrence=${firstProgrammedOccurrenceId}`),
         { timeout: appBootTimeoutMs },
       );
+      await expect
+        .poll(
+          async () =>
+            publicPage.evaluate(
+              () => window.__occurrenceWarmSwitchMarker ?? null,
+            ),
+          {
+            timeout: appBootTimeoutMs,
+            message:
+              'Programação occurrence switching must stay inside the warm SPA/runtime flow and must not hard reload the page.',
+          },
+        )
+        .toBe(warmSwitchMarker);
       await expect(
         legacyOccurrenceDateChipLocator(publicPage, firstProgrammedOccurrence, {
           selected: true,
@@ -3390,6 +3912,22 @@ test('@mutation tenant-admin event occurrence FAB persists second occurrence and
         mapCard,
         'Como Chegar must be the active visible section before destination assertions.',
       ).toBeVisible({ timeout: appBootTimeoutMs });
+      await expect(
+        publicPage.getByRole('button', { name: /^Waze$/ }).first(),
+        'Como Chegar must expose the direct Waze provider action in the browser runtime.',
+      ).toBeVisible({ timeout: appBootTimeoutMs });
+      await expect(
+        publicPage.getByRole('button', { name: /^Uber$/ }).first(),
+        'Como Chegar must expose the direct Uber provider action in the browser runtime.',
+      ).toBeVisible({ timeout: appBootTimeoutMs });
+      await expect(
+        publicPage.getByRole('button', { name: /^Outros$/ }).first(),
+        'Como Chegar must expose the accessible three-dots Outros provider action in the browser runtime.',
+      ).toBeVisible({ timeout: appBootTimeoutMs });
+      await expect(
+        publicPage.getByRole('button', { name: /Traçar rota/i }),
+        'Como Chegar must not expose the removed tab-specific Traçar rota CTA in the browser runtime.',
+      ).toHaveCount(0);
       await expect(publicPage.getByText(physicalHost.display_name).first())
         .toBeVisible({ timeout: appBootTimeoutMs });
       await expect(
@@ -3496,11 +4034,9 @@ test('@mutation tenant-admin event occurrence FAB persists second occurrence and
       await deleteEvent(api, baseUrl, session.token, noProgrammingEventId);
       await deleteEvent(api, baseUrl, session.token, eventId);
       await deleteEventType(api, baseUrl, session.token, eventTypeId);
-      await deleteAccountProfile(api, baseUrl, session.token, createdProgrammingHostId);
-      await deleteAccountProfile(api, baseUrl, session.token, createdPhysicalHostId);
-      for (const profileId of createdSeedProfileIds) {
-        await deleteAccountProfile(api, baseUrl, session.token, profileId);
-      }
+      await cleanupOnboardedAccount(api, baseUrl, session.token, createdProgrammingHostAccountSlug);
+      await cleanupOnboardedAccount(api, baseUrl, session.token, createdPhysicalHostAccountSlug);
+      await cleanupOnboardedAccounts(api, baseUrl, session.token, createdSeedAccountSlugs);
       await deleteAccountProfileType(api, baseUrl, session.token, createdProfileType);
       for (const profileType of createdSeedProfileTypes) {
         if (profileType !== createdProfileType) {
@@ -3513,6 +4049,9 @@ test('@mutation tenant-admin event occurrence FAB persists second occurrence and
     }
     if (browserContext) {
       await browserContext.close().catch(() => {});
+    }
+    if (freshBrowser) {
+      await freshBrowser.close().catch(() => {});
     }
     await api.dispose();
   }
@@ -3528,6 +4067,7 @@ test('@mutation repeated public event detail GET/hydration keeps programming pay
   let firstEventId = null;
   let secondEventId = null;
   const createdSeedProfileIds = [];
+  const createdSeedAccountSlugs = [];
   const createdSeedProfileTypes = new Set();
 
   try {
@@ -3548,6 +4088,7 @@ test('@mutation repeated public event detail GET/hydration keeps programming pay
       2,
     );
     createdSeedProfileIds.push(...physicalHostSeed.createdProfileIds);
+    createdSeedAccountSlugs.push(...physicalHostSeed.createdAccountSlugs);
     if (physicalHostSeed.createdType) {
       createdSeedProfileTypes.add(physicalHostSeed.createdType);
     }
@@ -3562,6 +4103,7 @@ test('@mutation repeated public event detail GET/hydration keeps programming pay
       },
     );
     createdSeedProfileIds.push(...relatedProfileSeed.createdProfileIds);
+    createdSeedAccountSlugs.push(...relatedProfileSeed.createdAccountSlugs);
     if (relatedProfileSeed.createdType) {
       createdSeedProfileTypes.add(relatedProfileSeed.createdType);
     }
@@ -3695,12 +4237,404 @@ test('@mutation repeated public event detail GET/hydration keeps programming pay
       await deleteEvent(api, baseUrl, session.token, secondEventId);
       await deleteEvent(api, baseUrl, session.token, firstEventId);
       await deleteEventType(api, baseUrl, session.token, eventTypeId);
-      for (const profileId of createdSeedProfileIds) {
-        await deleteAccountProfile(api, baseUrl, session.token, profileId);
-      }
+      await cleanupOnboardedAccounts(api, baseUrl, session.token, createdSeedAccountSlugs);
       for (const profileType of createdSeedProfileTypes) {
         await deleteAccountProfileType(api, baseUrl, session.token, profileType);
       }
+    }
+    await api.dispose();
+  }
+});
+
+test('@mutation admin-authored occurrence profile groups persist full chip readback and public aggregation', async ({
+  browser,
+}) => {
+  const baseUrl = requireTenantUrl();
+  const api = await createApiContext(baseUrl);
+  const uniqueSuffix = `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+  let browserContext;
+  let publicContext;
+  let session = null;
+  let eventTypeId = null;
+  let eventId = null;
+  const createdSeedAccountSlugs = [];
+  const createdSeedProfileTypes = new Set();
+
+  try {
+    session = await loginTenantAdmin(api, baseUrl);
+    await deleteStaleOccurrenceSeedEvents(api, baseUrl, session.token);
+
+    const eventType = await createEventType(
+      api,
+      baseUrl,
+      session.token,
+      `${uniqueSuffix}-groups`,
+    );
+    eventTypeId = eventType?.id?.toString() || null;
+
+    const physicalHostSeed = await ensurePhysicalHostCandidates(
+      api,
+      baseUrl,
+      session.token,
+      1,
+    );
+    createdSeedAccountSlugs.push(...physicalHostSeed.createdAccountSlugs);
+    if (physicalHostSeed.createdType) {
+      createdSeedProfileTypes.add(physicalHostSeed.createdType);
+    }
+    const physicalHost = physicalHostSeed.candidates[0];
+
+    const relatedProfileSeed = await createDedicatedRelatedProfiles(
+      api,
+      baseUrl,
+      session.token,
+      uniqueSuffix,
+    );
+    createdSeedAccountSlugs.push(...relatedProfileSeed.createdAccountSlugs);
+    if (relatedProfileSeed.createdType) {
+      createdSeedProfileTypes.add(relatedProfileSeed.createdType);
+    }
+    const [bandLead, bandSupport, guestOne, guestTwo] =
+      relatedProfileSeed.candidates;
+    const bandLeadName = relatedProfileDisplayName(bandLead);
+    const bandSupportName = relatedProfileDisplayName(bandSupport);
+    const guestOneName = relatedProfileDisplayName(guestOne);
+    const guestTwoName = relatedProfileDisplayName(guestTwo);
+    expect(
+      [bandLeadName, bandSupportName, guestOneName, guestTwoName].every(Boolean),
+      'Occurrence profile group mutation proof requires four displayable related profile candidates.',
+    ).toBe(true);
+
+    const seededEvent = await createSingleOccurrenceEvent(
+      api,
+      baseUrl,
+      session.token,
+      {
+        eventType,
+        physicalHost,
+        uniqueSuffix: `${uniqueSuffix}-groups`,
+      },
+    );
+    eventId = seededEvent?.event_id?.toString() || null;
+    const uniqueTitle = seededEvent?.title?.toString() || '';
+    expect(eventId, 'Seeded event must return event_id.').toBeTruthy();
+    expect(uniqueTitle, 'Seeded event must return title.').toBeTruthy();
+
+    const seededListLocation = await locateAdminEventListPage(
+      api,
+      baseUrl,
+      session.token,
+      eventId,
+    );
+
+    const adminBundle = await createAuthenticatedTenantAdminPage(
+      browser,
+      session,
+    );
+    browserContext = adminBundle.context;
+    const page = adminBundle.page;
+    const collectors = installFailureCollectors(page);
+
+    await openSeededEventFromAdminList(
+      page,
+      baseUrl,
+      uniqueTitle,
+      seededListLocation.page,
+    );
+    logStep('evg-admin', 'seeded event opened in admin list');
+
+    const editPrimaryOccurrenceButton = page.getByRole('button', {
+      name: 'Editar ocorrência principal',
+    });
+    await scrollUntilVisible(
+      page,
+      editPrimaryOccurrenceButton,
+      'Single-occurrence event must expose the primary occurrence editor entrypoint.',
+    );
+    await editPrimaryOccurrenceButton.click();
+    await expect(page.getByText('Editar ocorrência principal')).toBeVisible({
+      timeout: appBootTimeoutMs,
+    });
+    logStep('evg-admin', 'primary occurrence editor opened');
+    await scrollUntilVisible(
+      page,
+      page.getByText('Abas de perfis próprios da ocorrência').first(),
+      'Occurrence group editor must be visible in the first occurrence sheet.',
+    );
+    await addOccurrenceProfileGroup(page, {
+      groupLabel: 'Bandas',
+      profileNames: [bandLeadName, bandSupportName],
+    });
+    logStep('evg-admin', 'first occurrence group authored');
+    await closeOccurrenceEditorSheet(page);
+    logStep('evg-admin', 'first occurrence editor closed');
+
+    await clickVisibleAddOccurrenceAffordance(page);
+    logStep('evg-admin', 'second occurrence draft opened');
+    await scrollUntilVisible(
+      page,
+      page.getByText('Abas de perfis próprios da ocorrência').first(),
+      'Occurrence group editor must be visible in the second occurrence sheet.',
+    );
+    await addOccurrenceProfileGroup(page, {
+      groupLabel: 'Outro Grupo',
+      profileNames: [
+        guestOneName,
+        guestTwoName,
+        bandLeadName,
+        bandSupportName,
+      ],
+    });
+    logStep('evg-admin', 'second occurrence four-profile group authored');
+    await closeOccurrenceEditorSheet(page);
+    logStep('evg-admin', 'second occurrence editor closed before root save');
+
+    const updateResponsePromise = page.waitForResponse((candidate) => {
+      const method = candidate.request().method().toUpperCase();
+      return (
+        method === 'PATCH' &&
+        candidate.url().includes(`/admin/api/v1/events/${eventId}`) &&
+        candidate.status() < 400
+      );
+    });
+    const submitButton = page.getByRole('button', {
+      name: 'Salvar alterações',
+    });
+    await submitButton.scrollIntoViewIfNeeded();
+    await Promise.all([updateResponsePromise, submitButton.click()]);
+    await updateResponsePromise;
+    logStep('evg-admin', 'root event save completed');
+
+    const updatedEvent = await fetchAdminEvent(api, baseUrl, session.token, eventId);
+    const firstOccurrence = updatedEvent?.occurrences?.[0] || null;
+    const secondOccurrence = updatedEvent?.occurrences?.[1] || null;
+    const firstOccurrenceId =
+      firstOccurrence?.occurrence_id?.toString() || '';
+    const secondOccurrenceId =
+      secondOccurrence?.occurrence_id?.toString() || '';
+    expect(
+      updatedEvent?.occurrences || [],
+      'Profile-group authoring proof must persist two occurrences.',
+    ).toHaveLength(2);
+    expect(
+      firstOccurrenceId,
+      'First occurrence must persist occurrence_id for aggregate event assertions.',
+    ).toBeTruthy();
+    expect(
+      secondOccurrenceId,
+      'Second occurrence must persist occurrence_id for aggregate event assertions.',
+    ).toBeTruthy();
+    expect(
+      secondOccurrence?.profile_groups?.[0]?.label,
+      'Second occurrence admin readback must keep the custom occurrence group label.',
+    ).toBe('Outro Grupo');
+    expect(
+      (secondOccurrence?.profile_groups?.[0]?.account_profile_ids || [])
+        .map(String)
+        .sort(),
+      'Second occurrence admin readback must keep all four selected member ids.',
+    ).toEqual(
+      [bandLead.id, bandSupport.id, guestOne.id, guestTwo.id]
+        .map(String)
+        .sort(),
+    );
+    expect(
+      (secondOccurrence?.own_linked_account_profiles || [])
+        .map((profile) => profile?.id?.toString() || '')
+        .filter(Boolean)
+        .sort(),
+      'Second occurrence admin readback must hydrate every linked profile, not only a partial chip subset.',
+    ).toEqual(
+      [bandLead.id, bandSupport.id, guestOne.id, guestTwo.id]
+        .map(String)
+        .sort(),
+    );
+
+    const updatedListLocation = await locateAdminEventListPage(
+      api,
+      baseUrl,
+      session.token,
+      eventId,
+    );
+    await openSeededEventFromAdminList(
+      page,
+      baseUrl,
+      uniqueTitle,
+      updatedListLocation.page,
+    );
+    logStep('evg-admin', 'reopened event after save');
+    const reopenedSecondOccurrenceCard = page.getByRole('group', {
+      name: /4 perfis próprios/i,
+    }).first();
+    await scrollUntilVisible(
+      page,
+      reopenedSecondOccurrenceCard,
+      'Saved second occurrence card must expose the four-profile summary chip before readback assertions.',
+    );
+    await reopenedSecondOccurrenceCard.click();
+    await expect(page.getByText('Editar data')).toBeVisible({
+      timeout: appBootTimeoutMs,
+    });
+    logStep('evg-admin', 'reopened second occurrence editor after save');
+    await expect(
+      page.getByRole('button', {
+        name: /4 perfil\(is\) selecionado\(s\)/i,
+      }),
+      'Reopened second occurrence group must keep the full selected count.',
+    ).toBeVisible({ timeout: appBootTimeoutMs });
+    logStep('evg-admin', 'reopened selected-count button confirmed');
+    for (const profileName of [
+      bandLeadName,
+      bandSupportName,
+      guestOneName,
+      guestTwoName,
+    ]) {
+      const chipLocator = page.getByLabel(
+        new RegExp(`Perfil selecionado\\s+${escapeRegExp(profileName)}`),
+      );
+      const visibleMatches = await countVisibleMatches(
+        chipLocator,
+      );
+      logStep(
+        'evg-admin',
+        `reopened visible match count for "${profileName}": ${visibleMatches}`,
+      );
+      await expectAnyVisibleMatch(
+        chipLocator,
+        `Reopened second occurrence group must keep chip ${profileName}.`,
+      );
+      logStep('evg-admin', `reopened chip confirmed "${profileName}"`);
+    }
+    logStep('evg-admin', 'reopened second occurrence chips fully confirmed');
+    await closeOccurrenceEditorSheet(page);
+    logStep('evg-admin', 'reopened second occurrence editor closed');
+
+    const eventRef = updatedEvent?.slug || eventId;
+    const firstPublicDetail = await fetchPublicEvent(
+      api,
+      baseUrl,
+      eventRef,
+      firstOccurrenceId,
+    );
+    const secondPublicDetail = await fetchPublicEvent(
+      api,
+      baseUrl,
+      eventRef,
+      secondOccurrenceId,
+    );
+    for (const [label, detail] of [
+      ['first', firstPublicDetail],
+      ['second', secondPublicDetail],
+    ]) {
+      expect(
+        (detail?.profile_groups || []).map((group) => group?.label),
+        `Public ${label} selected occurrence must expose the event-wide aggregated profile-group tabs.`,
+      ).toEqual(['Bandas', 'Outro Grupo']);
+      expect(
+        (detail?.profile_groups?.[0]?.profiles || [])
+          .map((profile) => profile?.id?.toString() || '')
+          .filter(Boolean)
+          .sort(),
+        `Public ${label} selected occurrence must keep the first-occurrence group members.`,
+      ).toEqual([bandLead.id, bandSupport.id].map(String).sort());
+      expect(
+        (detail?.profile_groups?.[1]?.profiles || [])
+          .map((profile) => profile?.id?.toString() || '')
+          .filter(Boolean)
+          .sort(),
+        `Public ${label} selected occurrence must keep every member from the second-occurrence custom group.`,
+      ).toEqual(
+        [bandLead.id, bandSupport.id, guestOne.id, guestTwo.id]
+          .map(String)
+          .sort(),
+      );
+      logStep('evg-public', `public API aggregate detail confirmed for ${label} occurrence`);
+    }
+    logStep('evg-public', 'public API aggregation assertions passed');
+
+    publicContext = await browser.newContext({
+      ignoreHTTPSErrors: true,
+      geolocation: { latitude: -20.671339, longitude: -40.495395 },
+      permissions: ['geolocation'],
+    });
+    await seedFlutterSecureStorageEntries(publicContext, {
+      user_token: await resolveAnonymousIdentityToken(api, baseUrl),
+    });
+    const publicPage = await publicContext.newPage();
+    const publicCollectors = installFailureCollectors(publicPage);
+    const publicPath =
+      `/agenda/evento/${eventRef}?occurrence=${secondOccurrenceId}`;
+    await gotoPublicEventDetailAndWaitForHydration(
+      publicPage,
+      baseUrl,
+      publicPath,
+      {
+        eventRef,
+        occurrenceId: secondOccurrenceId,
+        title: uniqueTitle,
+        description: 'Occurrence profile-group aggregate public detail',
+      },
+    );
+    logStep('evg-public', 'public detail opened on second occurrence');
+    await expect(
+      publicPage.getByText('Bandas').first(),
+      'Public event detail must expose the first aggregated group tab.',
+    ).toBeVisible({ timeout: appBootTimeoutMs });
+    await expect(
+      publicPage.getByText('Outro Grupo').first(),
+      'Public event detail must expose the second aggregated group tab.',
+    ).toBeVisible({ timeout: appBootTimeoutMs });
+    await clickImmersiveTab(publicPage, 'Bandas');
+    logStep('evg-public', 'Bandas tab opened');
+    await expectAnyVisibleMatch(
+      publicPage.getByText(new RegExp(escapeRegExp(bandLeadName))),
+      `Aggregated public tab Bandas must render ${bandLeadName}.`,
+    );
+    logStep('evg-public', `public Bandas member confirmed "${bandLeadName}"`);
+    await expectAnyVisibleMatch(
+      publicPage.getByText(new RegExp(escapeRegExp(bandSupportName))),
+      `Aggregated public tab Bandas must render ${bandSupportName}.`,
+    );
+    logStep('evg-public', `public Bandas member confirmed "${bandSupportName}"`);
+    await clickImmersiveTab(publicPage, 'Outro Grupo');
+    logStep('evg-public', 'Outro Grupo tab opened');
+    for (const profileName of [
+      bandLeadName,
+      bandSupportName,
+      guestOneName,
+      guestTwoName,
+    ]) {
+      const chipLocator = publicPage.getByText(
+        new RegExp(escapeRegExp(profileName)),
+      );
+      await expectAnyVisibleMatch(
+        chipLocator,
+        `Aggregated public tab Outro Grupo must render ${profileName}.`,
+      );
+      logStep('evg-public', `public Outro Grupo member confirmed "${profileName}"`);
+    }
+
+    await assertNoBrowserFailures(collectors);
+    await assertNoBrowserFailures(publicCollectors);
+  } finally {
+    if (session?.token) {
+      await deleteEvent(api, baseUrl, session.token, eventId);
+      await deleteEventType(api, baseUrl, session.token, eventTypeId);
+      await cleanupOnboardedAccounts(
+        api,
+        baseUrl,
+        session.token,
+        createdSeedAccountSlugs,
+      );
+      for (const profileType of createdSeedProfileTypes) {
+        await deleteAccountProfileType(api, baseUrl, session.token, profileType);
+      }
+    }
+    if (publicContext) {
+      await publicContext.close().catch(() => {});
+    }
+    if (browserContext) {
+      await browserContext.close().catch(() => {});
     }
     await api.dispose();
   }

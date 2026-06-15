@@ -1,12 +1,23 @@
 const crypto = require('crypto');
 const { test, expect } = require('@playwright/test');
+const {
+  fixture,
+  filterOwnedEventRows,
+  filterOwnedProfileRows,
+  managedFixtureEnabled,
+} = require('./support/public_taxonomy_validation_fixture_contract');
 
 const tenantUrl = process.env.NAV_TENANT_URL;
 const appBootTimeoutMs = 90000;
 const publicListPageSize = 50;
 const publicListMaxPages = 25;
+const managedFixtureRun = managedFixtureEnabled;
 
 test.describe.configure({ timeout: 300000 });
+test.skip(
+  !managedFixtureRun,
+  'Managed taxonomy fixture proof is required; ambient public taxonomy data is not valid deterministic evidence.',
+);
 
 function requireTenantUrl() {
   expect(
@@ -173,21 +184,55 @@ async function enableAccessibilityIfNeeded(page) {
 }
 
 async function continueWithoutLocationIfPrompted(page) {
+  const permissionRoutePattern = /\/location\/permission/;
   const continueButton = page.getByRole('button', {
     name: /Continuar sem localizacao|Continuar sem localização/i,
   });
+  const continueText = page.getByText(/Continuar sem localizacao|Continuar sem localização/i)
+    .first();
+
+  await enableAccessibilityIfNeeded(page);
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    if (permissionRoutePattern.test(page.url()) || (await continueButton.count()) > 0) {
+      break;
+    }
+    await page.waitForTimeout(250);
+    await enableAccessibilityIfNeeded(page);
+  }
+
+  if (!permissionRoutePattern.test(page.url()) && (await continueButton.count()) === 0) {
+    return;
+  }
 
   await continueButton.first().waitFor({
     state: 'visible',
     timeout: 15000,
   }).catch(() => null);
 
-  if ((await continueButton.count()) === 0) {
-    return;
+  if (permissionRoutePattern.test(page.url()) && (await continueButton.count()) === 0) {
+    await enableAccessibilityIfNeeded(page);
+    await continueButton.first().waitFor({
+      state: 'visible',
+      timeout: 15000,
+    }).catch(() => null);
   }
 
-  await continueButton.first().click();
-  await expect(continueButton).toHaveCount(0, { timeout: appBootTimeoutMs });
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    if (!permissionRoutePattern.test(page.url())) {
+      break;
+    }
+    if ((await continueButton.count()) > 0) {
+      await continueButton.first().click();
+    } else if (await continueText.isVisible().catch(() => false)) {
+      await continueText.click();
+    } else {
+      break;
+    }
+    await page.waitForTimeout(400);
+  }
+  await expect(page).not.toHaveURL(permissionRoutePattern, {
+    timeout: appBootTimeoutMs,
+  });
   await assertAppBooted(page);
   await enableAccessibilityIfNeeded(page);
 }
@@ -201,6 +246,16 @@ async function fetchJson(page, url, description) {
     `${description} must return HTTP 2xx: ${url}`,
   ).toBeLessThan(300);
   return response.json();
+}
+
+async function fetchPublicEventDetail(page, routeRef) {
+  const baseUrl = requireTenantUrl();
+  const payload = await fetchJson(
+    page,
+    buildApiUrl(baseUrl, `/api/v1/events/${routeRef}`),
+    `Public event detail ${routeRef}`,
+  );
+  return payload?.data || payload;
 }
 
 async function fetchPagedRows(
@@ -452,8 +507,9 @@ function taxonomySnapshotDebug(rows) {
   return samples;
 }
 
-function findAccountProfileCandidate(rows) {
-  for (const profile of rows) {
+function findManagedAccountProfileCandidate(rows) {
+  const ownedRows = filterOwnedProfileRows(rows);
+  for (const profile of ownedRows) {
     const snapshot = findDisplaySnapshot(profile?.taxonomy_terms);
     const slug = normalizeText(profile?.slug);
     if (slug && snapshot) {
@@ -463,22 +519,9 @@ function findAccountProfileCandidate(rows) {
   return null;
 }
 
-function findEventCandidate(rows) {
-  for (const event of rows) {
-    const snapshot = findDisplaySnapshotInProfiles([
-      ...normalizeList(event?.linked_account_profiles),
-      ...normalizeList(event?.artists),
-    ]);
-    const slug = normalizeText(event?.slug);
-    if (slug && snapshot) {
-      return { event, snapshot, slug };
-    }
-  }
-  return null;
-}
-
-function findEventTaxonomyLeakCandidate(rows) {
-  for (const event of rows) {
+function findManagedEventTaxonomyLeakCandidate(rows) {
+  const ownedRows = filterOwnedEventRows(rows);
+  for (const event of ownedRows) {
     const snapshot = findDisplaySnapshot(event?.taxonomy_terms);
     const slug = normalizeText(event?.slug);
     if (slug && snapshot) {
@@ -496,6 +539,13 @@ function findDisplaySnapshotInProfiles(profiles) {
     }
   }
   return null;
+}
+
+function findDisplaySnapshotInEventRelatedProfiles(event) {
+  return findDisplaySnapshotInProfiles([
+    ...normalizeList(event?.linked_account_profiles),
+    ...normalizeList(event?.artists),
+  ]);
 }
 
 async function assertVisibleDisplayLabel(page, display, rawValue, contextLabel) {
@@ -553,12 +603,12 @@ test('@readonly taxonomy display snapshots render labels instead of slugs on pub
     '/api/v1/account_profiles',
     'Public account profiles list',
   );
-  const accountCandidate = findAccountProfileCandidate(accountProfilesPayload.rows);
+  const accountCandidate = findManagedAccountProfileCandidate(
+    accountProfilesPayload.rows,
+  );
   expect(
     accountCandidate,
-    'Seed/backfill at least one public account profile taxonomy snapshot where name/label differs from value. ' +
-      `Pages scanned: ${JSON.stringify(accountProfilesPayload.pageSummaries)}. ` +
-      `Snapshot samples: ${JSON.stringify(taxonomySnapshotDebug(accountProfilesPayload.rows))}`,
+    `Managed taxonomy fixture ${fixture.profileSlug} must be visible with canonical taxonomy display snapshot. Pages scanned: ${JSON.stringify(accountProfilesPayload.pageSummaries)}. Snapshot samples: ${JSON.stringify(taxonomySnapshotDebug(accountProfilesPayload.rows))}`,
   ).toBeTruthy();
 
   const accountDetailPayload = await fetchJson(
@@ -587,38 +637,64 @@ test('@readonly taxonomy display snapshots render labels instead of slugs on pub
     '/api/v1/events',
     'Public events list',
   );
-  const eventCandidate = findEventCandidate(eventsPayload.rows);
+  const eventDisplayCandidate = null;
   // Event-owned taxonomy terms are API snapshots; the public detail UI does not
-  // render them as chips in every layout, so they are valid for slug-leak checks
-  // but not for positive visibility assertions.
-  const eventTaxonomyLeakCandidate =
-    eventCandidate ?? findEventTaxonomyLeakCandidate(eventsPayload.rows);
+  // render them as chips in every layout, so the slug-leak assertion must target
+  // the same route under test instead of borrowing display assertions from a
+  // different event record.
+  const eventTaxonomyLeakCandidate = findManagedEventTaxonomyLeakCandidate(
+    eventsPayload.rows,
+  );
   expect(
     eventTaxonomyLeakCandidate,
-    'Seed/backfill at least one public event taxonomy snapshot where name/label differs from value. ' +
-      `Pages scanned: ${JSON.stringify(eventsPayload.pageSummaries)}. ` +
-      `Snapshot samples: ${JSON.stringify(taxonomySnapshotDebug(eventsPayload.rows))}`,
+    `Managed taxonomy event fixture ${fixture.eventTitle} must be visible with canonical taxonomy display snapshot. Pages scanned: ${JSON.stringify(eventsPayload.pageSummaries)}. Snapshot samples: ${JSON.stringify(taxonomySnapshotDebug(eventsPayload.rows))}`,
   ).toBeTruthy();
 
-  await page.goto(buildApiUrl(baseUrl, `/agenda/evento/${eventTaxonomyLeakCandidate.slug}`), {
-    waitUntil: 'domcontentloaded',
-  });
-  await assertAppBooted(page);
-  await enableAccessibilityIfNeeded(page);
-  if (eventCandidate) {
+  if (eventDisplayCandidate) {
+    await page.goto(buildApiUrl(baseUrl, `/agenda/evento/${eventDisplayCandidate.slug}`), {
+      waitUntil: 'domcontentloaded',
+    });
+    await assertAppBooted(page);
+    await enableAccessibilityIfNeeded(page);
     await assertVisibleDisplayLabel(
       page,
-      eventCandidate.snapshot.display,
-      eventCandidate.snapshot.value,
-      'Public event detail route',
-    );
-  } else {
-    await assertRawTaxonomyValueNotRendered(
-      page,
-      eventTaxonomyLeakCandidate.snapshot.value,
+      eventDisplayCandidate.snapshot.display,
+      eventDisplayCandidate.snapshot.value,
       'Public event detail route',
     );
   }
+  if (
+    !eventDisplayCandidate
+    || eventDisplayCandidate.slug !== eventTaxonomyLeakCandidate.slug
+  ) {
+    await page.goto(buildApiUrl(baseUrl, `/agenda/evento/${eventTaxonomyLeakCandidate.slug}`), {
+      waitUntil: 'domcontentloaded',
+    });
+    await assertAppBooted(page);
+    await enableAccessibilityIfNeeded(page);
+  }
+  const managedEventDetail = await fetchPublicEventDetail(
+    page,
+    eventTaxonomyLeakCandidate.slug,
+  );
+  const managedEventDisplaySnapshot = findDisplaySnapshotInEventRelatedProfiles(
+    managedEventDetail,
+  );
+  expect(
+    managedEventDisplaySnapshot,
+    `Managed taxonomy event fixture ${eventTaxonomyLeakCandidate.slug} must expose a positive related-profile taxonomy display snapshot on the event detail payload.`,
+  ).toBeTruthy();
+  await assertVisibleDisplayLabel(
+    page,
+    managedEventDisplaySnapshot.display,
+    managedEventDisplaySnapshot.value,
+    'Public event detail route',
+  );
+  await assertRawTaxonomyValueNotRendered(
+    page,
+    eventTaxonomyLeakCandidate.snapshot.value,
+    'Public event detail route',
+  );
 
   const mapFiltersPayload = await fetchJson(
     page,

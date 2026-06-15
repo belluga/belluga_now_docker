@@ -4,6 +4,10 @@ FROM nginx:stable-alpine
 # Instala o gettext (envsubst) e o OpenSSL para gerar certificado local.
 RUN apk update && apk add --no-cache gettext openssl
 
+# Reserve a project-owned overlay directory so reusable templates can include
+# downstream route files without baking project identity into the base template.
+RUN mkdir -p /etc/nginx/project
+
 # Certificado self-signed para servir HTTPS no origin quando APP_ENV != production.
 # Isso evita handshake failures (Cloudflare 521) em cenários com SSL mode "Full".
 RUN mkdir -p /etc/nginx/certs/local \

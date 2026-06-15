@@ -122,6 +122,7 @@ services:
     volumes:
       - ./laravel-app:/var/www
       - ./web-app:/var/www/flutter:ro
+      - ./project/nginx:/etc/nginx/project:ro
       - app-storage:/var/www/storage
       - certbot-data:/etc/letsencrypt
       - certbot-challenge:/var/www/certbot

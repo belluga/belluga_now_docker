@@ -48,6 +48,12 @@ Safe scripts (non-destructive; refuse to run if any submodule is dirty):
 * `tools/submodules/pin_to_superproject.sh`
 * `tools/submodules/track_lanes.sh <dev|stage|main>`
 
+These root commands are thin convenience wrappers over the canonical Delphi tooling:
+
+* `delphi-ai/tools/submodule_workspace_status.sh`
+* `delphi-ai/tools/submodule_workspace_pin.sh`
+* `delphi-ai/tools/submodule_workspace_track_lanes.sh <dev|stage|main>`
+
 ### Passo 1: Fork e Clone
 
 1.  **Fork** este repositório para a sua conta do GitHub.
@@ -185,6 +191,8 @@ curl -I http://localhost:8081/api/v1/environment
 
 The Flutter app now uses compile-time lane define files (`--dart-define-from-file`).
 Local runs default to the `dev` lane plus an optional local override file.
+Reusable example lane files live beside the project-owned tracked files under
+`flutter-app/config/defines/*.example.json`.
 
 Create your local override file once:
 
@@ -193,7 +201,7 @@ cd flutter-app
 cp config/defines/local.override.example.json config/defines/local.override.json
 ```
 
-Edit `config/defines/local.override.json` for your machine (for Android emulator, `10.0.2.2:8081` is typical).
+Edit `config/defines/local.override.json` for your machine. The tracked example intentionally uses a placeholder origin; use the exact browser-facing host you really open locally (`10.0.2.2:8081` is a common Android emulator case).
 
 ```bash
 cd flutter-app
@@ -216,6 +224,7 @@ Notes:
 - This flow does not require tunneling.
 - Flutter local bootstrap does not use `.env`; it is controlled by compile-time define files.
 - Lane files live in `flutter-app/config/defines/{dev,stage,main}.json`.
+- Matching reusable examples live in `flutter-app/config/defines/{dev,stage,main}.example.json`.
 - `flutter-app/config/defines/local.override.json` is gitignored and machine-specific.
 
 ### Optional: Local Cloudflare Tunnel (Local Only)
@@ -286,6 +295,24 @@ If real browser validation is required:
 - start the local tunnel profile with `make up-dev-tunnel`,
 - point Playwright/browser automation at the tunnel-exposed local domain so navigation evidence reflects the same integrated reconcile state,
 - derive the required browser/device journeys from the touched TODO set instead of guessing a generic smoke target on each run.
+
+### Pipeline Stage/Main Proof
+
+`run_reconcile_validation.sh` proves the integrated principal-checkout state. It is **not**
+the same thing as proving a published lane contract.
+
+`CI Equivalent` remains current-branch local product proof on the authoritative branch
+under evaluation and should resolve through local/dev topology.
+
+Published `stage` and `main` proof exist only in the pipeline.
+Do not try to execute published-lane proof locally: local branch topology, host/domain
+resolution, credentials, and provenance targets are different concerns and local wrappers
+for `stage`/`main` create drift instead of confidence.
+
+Keep the distinction explicit:
+- `CI Equivalent`: current-branch local product proof on the authoritative branch under evaluation.
+- `./scripts/delphi/run_reconcile_validation.sh`: package reconciliation against the principal checkout.
+- GitHub Actions `.github/workflows/orchestration-ci-cd.yml` stage/main jobs: published lane proof only.
 
 O ambiente é controlado pela variável `COMPOSE_PROFILES` no seu arquivo `.env`.
 
@@ -380,7 +407,12 @@ O Docker **não** executa o build do Flutter automaticamente. O NGINX serve apen
 
 1. Gere o bundle localmente (ou em CI) com o script auxiliar:
    ```bash
-   ./tools/flutter/build_web_bundle.sh       # saída padrão: ./web-app
+   FLUTTER_WEB_LANE=dev ./tools/flutter/build_web_bundle.sh       # saída padrão: ./web-app
+   FLUTTER_WEB_LANE=integration.tenant ./tools/flutter/build_web_bundle.sh
+   ```
+   O helper do root é um wrapper fino sobre o script canônico do Delphi:
+   ```bash
+   ./delphi-ai/scripts/flutter/build_web.sh  # mesmo contrato básico
    ```
 2. O script grava os artefatos na pasta `web-app/`, removendo `favicon.ico`, `manifest.json` e `icons/` (esses assets são servidos pelo backend) e protegendo apenas a governança básica do submódulo (`.github/`, `.gitignore`). Revise o diff do submódulo:
    ```bash
@@ -390,8 +422,8 @@ O Docker **não** executa o build do Flutter automaticamente. O NGINX serve apen
    Os testes de navegação web **não** são mais autorados dentro de `web-app/`: a fonte da verdade fica em `tools/flutter/web_app_tests/` e a execução deve ocorrer via:
    ```bash
    # Local (Docker/NGINX): ajuste URLs para suas origens browser-facing.
-   NAV_LANDLORD_URL="http://belluga.space" \
-   NAV_TENANT_URL="http://guarappari.belluga.space" \
+   NAV_LANDLORD_URL="http://landlord.example.test" \
+   NAV_TENANT_URL="http://tenant.example.test" \
    bash tools/flutter/run_web_navigation_smoke.sh readonly
 
    # Local/dev/stage/main (URLs injetadas pelo workflow fora do ambiente local):
@@ -399,7 +431,9 @@ O Docker **não** executa o build do Flutter automaticamente. O NGINX serve apen
    bash tools/flutter/run_web_navigation_smoke.sh mutation
    ```
    > Política canônica: `mutation` pode rodar em `local|dev|stage`, mas é sempre bloqueada em `main`.
-   Em ambiente local, o build do Flutter deve usar a origem browser-facing real do fluxo que será validado. Exemplo: se o navegador abre `https://belluga.space` / `https://guarappari.belluga.space` via Cloudflared, use `LANDLORD_DOMAIN=https://belluga.space` (sem porta interna). Só use `host:porta` quando essa for a origem efetivamente aberta no navegador. Não vaze `:8043` para fluxos públicos baseados em domínio.
+   Em ambiente local, o build do Flutter deve usar a origem browser-facing real do fluxo que será validado. Se o navegador abre hosts públicos/tunelados do projeto, mantenha esses valores apenas em `.env.local.navigation` e em `flutter-app/config/defines/local.override.json`, nunca como defaults versionados do Boilerplate.
+   Rotas públicas específicas de projeto agora vivem em `project/nginx/routes.conf`, enquanto o mecanismo reutilizável está documentado em `project/nginx/routes.conf.example`.
+   Os contratos de referência para `/.well-known/assetlinks.json` e `/.well-known/apple-app-site-association` ficam em `project/well-known/*.example.json`; a entrega runtime continua backend-owned.
 3. Quando estiver satisfeito, faça commit/push dentro do submódulo e depois atualize o repositório principal:
    ```bash
    cd web-app
