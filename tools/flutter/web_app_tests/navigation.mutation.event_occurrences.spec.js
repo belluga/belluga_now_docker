@@ -1716,10 +1716,41 @@ async function fillFlutterTextFieldByLocator(page, field, value, label) {
   let lastValue = '';
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     await field.click();
+    await field.focus().catch(() => {});
     const selectAll = process.platform === 'darwin' ? 'Meta+A' : 'Control+A';
-    await page.keyboard.press(selectAll);
-    await page.keyboard.press('Backspace');
-    await page.keyboard.type(value, { delay: 5 });
+    await field.press(selectAll).catch(async () => {
+      await page.keyboard.press(selectAll);
+    });
+    await field.press('Backspace').catch(async () => {
+      await page.keyboard.press('Backspace');
+    });
+
+    try {
+      await expect
+        .poll(
+          async () => {
+            try {
+              return await field.inputValue();
+            } catch (_) {
+              return '';
+            }
+          },
+          {
+            timeout: 3000,
+            message: `Expected Flutter text field "${label}" to clear before typing.`,
+          },
+        )
+        .toBe('');
+    } catch (_) {
+      await field.click({ clickCount: 3 }).catch(() => {});
+      await field.press('Backspace').catch(async () => {
+        await page.keyboard.press('Backspace');
+      });
+    }
+
+    await field.pressSequentially(value, { delay: 5 }).catch(async () => {
+      await page.keyboard.type(value, { delay: 5 });
+    });
 
     try {
       await expect
@@ -1791,6 +1822,15 @@ async function addOccurrenceProfileGroup(page, { groupLabel, profileNames = [] }
   };
 
   for (const [index, profileName] of profileNames.entries()) {
+    if (index > 0) {
+      await page.keyboard.press('Escape').catch(() => {});
+      await selectorButton.click();
+      await expect(
+        searchField,
+        'Occurrence profile selector search field must remain visible after reopening the selector.',
+      ).toBeVisible({ timeout: appBootTimeoutMs });
+    }
+
     await fillFlutterTextFieldByLocator(
       page,
       searchField,
