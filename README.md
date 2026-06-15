@@ -296,36 +296,23 @@ If real browser validation is required:
 - point Playwright/browser automation at the tunnel-exposed local domain so navigation evidence reflects the same integrated reconcile state,
 - derive the required browser/device journeys from the touched TODO set instead of guessing a generic smoke target on each run.
 
-### Published Stage-Equivalent Validation
+### Pipeline Stage/Main Proof
 
 `run_reconcile_validation.sh` proves the integrated principal-checkout state. It is **not**
-the same thing as proving the published `stage` lane contract.
+the same thing as proving a published lane contract.
 
-For the canonical local stage-equivalent gate, use the root workflow-owned runner:
+`CI Equivalent` remains current-branch local product proof on the authoritative branch
+under evaluation and should resolve through local/dev topology.
 
-```bash
-NAV_TENANT_URL_INPUT=https://guarappari.belluga.app \
-NAV_ADMIN_EMAIL=<stage_admin_email> \
-NAV_ADMIN_PASSWORD=<stage_admin_password> \
-bash .github/scripts/run_stage_ci_equivalent.sh
-```
-
-Rules:
-- This command is the authoritative local stage-equivalent surface for the root repo.
-- It does **not** read `.env.local.navigation`; stage target selection must stay explicit.
-- It reuses the same repo-owned validation entrypoints as the stage workflow:
-  - `.github/scripts/verify_environment_ci.sh`
-  - `.github/scripts/resolve_lane_navigation_targets.sh`
-  - `.github/scripts/probe_public_navigation_environment_over_https.sh`
-  - `.github/scripts/check_deployed_web_provenance.sh`
-  - `tools/flutter/web_app_tests/ensure_public_taxonomy_validation_fixture.cjs`
-  - `tools/flutter/run_web_navigation_smoke.sh readonly`
-  - `tools/flutter/run_web_navigation_smoke.sh mutation`
-- Optional `NAV_ORIGIN_IP=<stage_origin_ip>` enables temporary host overrides for origin-targeted smoke only.
+Published `stage` and `main` proof exist only in the pipeline.
+Do not try to execute published-lane proof locally: local branch topology, host/domain
+resolution, credentials, and provenance targets are different concerns and local wrappers
+for `stage`/`main` create drift instead of confidence.
 
 Keep the distinction explicit:
+- `CI Equivalent`: current-branch local product proof on the authoritative branch under evaluation.
 - `./scripts/delphi/run_reconcile_validation.sh`: package reconciliation against the principal checkout.
-- `bash .github/scripts/run_stage_ci_equivalent.sh`: published stage-lane contract proof.
+- GitHub Actions `.github/workflows/orchestration-ci-cd.yml` stage/main jobs: published lane proof only.
 
 O ambiente é controlado pela variável `COMPOSE_PROFILES` no seu arquivo `.env`.
 
