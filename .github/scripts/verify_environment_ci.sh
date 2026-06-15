@@ -731,7 +731,7 @@ if [[ -e .github/scripts/run_stage_published_validation.sh ]]; then
   exit 1
 fi
 
-if grep -Fq '### Published Stage Validation' README.md; then
+if grep -Eq '### Published Stage(-Equivalent)? Validation' README.md; then
   echo "ERROR: README must not describe a local published-stage validation workflow. Published stage/main proof is pipeline-only." >&2
   exit 1
 fi

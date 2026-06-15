@@ -405,8 +405,18 @@ function assertPublishedLaneProofRemainsPipelineOnly() {
     /run_stage_published_validation\.sh/,
     'root README must not advertise a local published-stage validation runner',
   );
+  assert.doesNotMatch(
+    readmeSource,
+    /### Published Stage(?:-Equivalent)? Validation/,
+    'root README must not restore the old local published-stage heading in either its exact or shortened form',
+  );
 
   const verifySource = fs.readFileSync(verifyEnvironmentCiScript, 'utf8');
+  assert.match(
+    verifySource,
+    /grep -Eq '### Published Stage\(-Equivalent\)\? Validation' README\.md/,
+    'verify_environment_ci must reject both historical published-stage heading variants in README',
+  );
   assert.match(
     verifySource,
     /\[\[ -e \.github\/scripts\/run_stage_published_validation\.sh \]\]/,
