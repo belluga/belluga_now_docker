@@ -11,6 +11,81 @@ const guardScript = path.join(__dirname, 'guard_web_navigation_policy.cjs');
 const shardsScript = path.join(__dirname, 'web_navigation_shards.cjs');
 const smokeScript = path.join(repoRoot, 'tools', 'flutter', 'run_web_navigation_smoke.sh');
 const verifyEnvironmentCiScript = path.join(repoRoot, '.github', 'scripts', 'verify_environment_ci.sh');
+const flutterWebArtifactWorkflow = path.join(
+  repoRoot,
+  'flutter-app',
+  '.github',
+  'workflows',
+  'web-artifact-publish.yml',
+);
+const ciContractRunnerScript = path.join(repoRoot, 'tools', 'ci', 'run_contract.sh');
+const stageFullContractManifest = path.join(
+  repoRoot,
+  'tools',
+  'ci',
+  'contracts',
+  'stage-full.json',
+);
+const mainProofContractManifest = path.join(
+  repoRoot,
+  'tools',
+  'ci',
+  'contracts',
+  'main-proof.json',
+);
+const browserPolicyContractManifest = path.join(
+  repoRoot,
+  'tools',
+  'ci',
+  'contracts',
+  'browser-policy.json',
+);
+const browserStageFullContractManifest = path.join(
+  repoRoot,
+  'tools',
+  'ci',
+  'contracts',
+  'browser-stage-full.json',
+);
+const flutterStageFullContractManifest = path.join(
+  repoRoot,
+  'flutter-app',
+  'tool',
+  'ci',
+  'contracts',
+  'stage-full.json',
+);
+const stageFullLocalPublicWrapper = path.join(
+  repoRoot,
+  'tools',
+  'ci',
+  'run_stage_full_local_public_web_contract.sh',
+);
+const flutterArchitectureGateWrapper = path.join(
+  repoRoot,
+  'flutter-app',
+  'tool',
+  'ci',
+  'run_stage_promotion_architecture_gate.sh',
+);
+const flutterWorkspaceTestWrapper = path.join(
+  repoRoot,
+  'flutter-app',
+  'tool',
+  'ci',
+  'run_workspace_test_contract.sh',
+);
+const projectConstitution = path.join(
+  repoRoot,
+  'foundation_documentation',
+  'project_constitution.md',
+);
+const flutterClientExperienceModule = path.join(
+  repoRoot,
+  'foundation_documentation',
+  'modules',
+  'flutter_client_experience_module.md',
+);
 const directPlaywrightContractProbe = path.join(
   repoRoot,
   'tools',
@@ -51,6 +126,85 @@ function run(command, args, env = {}) {
     },
     encoding: 'utf8',
   });
+}
+
+function gitOutput(args) {
+  const result = spawnSync('git', args, {
+    cwd: repoRoot,
+    encoding: 'utf8',
+  });
+
+  if (result.status !== 0) {
+    return null;
+  }
+
+  return result.stdout.trim();
+}
+
+function effectiveVerifyEnvEventName() {
+  return process.env.VERIFY_ENV_EVENT_NAME || process.env.GITHUB_EVENT_NAME || 'push';
+}
+
+function effectiveVerifyEnvBaseRef() {
+  return process.env.VERIFY_ENV_BASE_REF || process.env.GITHUB_BASE_REF || null;
+}
+
+function effectiveVerifyEnvBeforeSha() {
+  if (process.env.VERIFY_ENV_BEFORE_SHA) {
+    return process.env.VERIFY_ENV_BEFORE_SHA;
+  }
+
+  if (process.env.GITHUB_EVENT_BEFORE) {
+    return process.env.GITHUB_EVENT_BEFORE;
+  }
+
+  const eventPath = process.env.GITHUB_EVENT_PATH;
+  if (!eventPath || !fs.existsSync(eventPath)) {
+    return null;
+  }
+
+  try {
+    const payload = JSON.parse(fs.readFileSync(eventPath, 'utf8'));
+    return payload.before || null;
+  } catch {
+    return null;
+  }
+}
+
+function submoduleGitlinkMatchesRef(submodulePath, compareRef) {
+  const compareGitlinkSha = gitOutput(['rev-parse', `${compareRef}:${submodulePath}`]);
+  const headGitlinkSha = gitOutput(['rev-parse', `HEAD:${submodulePath}`]);
+
+  return Boolean(compareGitlinkSha && headGitlinkSha && compareGitlinkSha === headGitlinkSha);
+}
+
+function submoduleGitlinkRequiresWorkflowAudit(submodulePath) {
+  const eventName = effectiveVerifyEnvEventName();
+
+  if (eventName === 'pull_request') {
+    const baseRef = effectiveVerifyEnvBaseRef();
+    if (!baseRef) {
+      return true;
+    }
+
+    spawnSync('git', ['fetch', '--no-tags', '--prune', 'origin', baseRef], {
+      cwd: repoRoot,
+      stdio: 'ignore',
+    });
+
+    return !submoduleGitlinkMatchesRef(submodulePath, `origin/${baseRef}`);
+  }
+
+  if (eventName === 'push') {
+    const beforeSha = effectiveVerifyEnvBeforeSha();
+    if (!beforeSha || /^0+$/.test(beforeSha)) {
+      return true;
+    }
+
+    return !submoduleGitlinkMatchesRef(submodulePath, beforeSha);
+  }
+
+  return true;
 }
 
 function withTempDir(callback) {
@@ -294,6 +448,11 @@ function assertStageMutationWorkflowSuppliesRuntimeCredentials() {
   );
   assert.match(
     stepMatch[0],
+    /NAV_PUBLIC_TAXONOMY_MANAGED_FIXTURE:\s*['"]?1['"]?/,
+    'stage mutation smoke must opt into the managed taxonomy fixture explicitly',
+  );
+  assert.match(
+    stepMatch[0],
     /NAV_ADMIN_EMAIL:\s*\$\{\{\s*vars\.STAGE_NAV_ADMIN_EMAIL\s*\}\}/,
     'stage mutation smoke must supply NAV_ADMIN_EMAIL from stage variable',
   );
@@ -377,6 +536,11 @@ function assertStageMutationWorkflowSuppliesRuntimeCredentials() {
   assertStageRunIdIsolation(
     rollbackMutationStepMatch[0],
     'restored stage mutation smoke',
+  );
+  assert.match(
+    rollbackMutationStepMatch[0],
+    /NAV_PUBLIC_TAXONOMY_MANAGED_FIXTURE:\s*['"]?1['"]?/,
+    'restored stage mutation smoke must opt into the managed taxonomy fixture explicitly',
   );
 
   const rollbackCleanupStepMatch = source.match(
@@ -469,6 +633,224 @@ function assertPublishedLaneProofRemainsPipelineOnly() {
   assert.ok(
     !fs.existsSync(path.join(repoRoot, '.github', 'scripts', 'run_stage_ci_equivalent.sh')),
     'legacy run_stage_ci_equivalent.sh path must not exist after the hard cutoff',
+  );
+}
+
+function assertCiEquivalentContractSurfacesStayWired() {
+  assert.ok(fs.existsSync(ciContractRunnerScript), 'CI contract runner must exist');
+  assert.ok(fs.existsSync(stageFullContractManifest), 'stage-full manifest must exist');
+  assert.ok(fs.existsSync(mainProofContractManifest), 'main-proof manifest must exist');
+  assert.ok(fs.existsSync(browserPolicyContractManifest), 'browser-policy manifest must exist');
+  assert.ok(fs.existsSync(browserStageFullContractManifest), 'browser-stage-full manifest must exist');
+  assert.ok(fs.existsSync(flutterStageFullContractManifest), 'flutter stage-full manifest must exist');
+  assert.ok(fs.existsSync(stageFullLocalPublicWrapper), 'stage-full local-public wrapper must exist');
+  assert.ok(fs.existsSync(flutterArchitectureGateWrapper), 'flutter architecture gate wrapper must exist');
+  assert.ok(fs.existsSync(flutterWorkspaceTestWrapper), 'flutter workspace test wrapper must exist');
+
+  const stageFullManifest = JSON.parse(fs.readFileSync(stageFullContractManifest, 'utf8'));
+  assert.strictEqual(stageFullManifest.schema_version, 'ci-contract-v1');
+  assert.strictEqual(stageFullManifest.contract_id, 'stage-full');
+  assert.deepStrictEqual(
+    (stageFullManifest.imports || []).map((entry) => entry.path),
+    [
+      'root-invariants.json',
+      '../../../flutter-app/tool/ci/contracts/stage-full.json',
+      'browser-stage-full.json',
+    ],
+    'stage-full manifest must aggregate root invariants, flutter-app stage-full, and browser stage-full contracts',
+  );
+
+  const mainProofManifest = JSON.parse(fs.readFileSync(mainProofContractManifest, 'utf8'));
+  assert.strictEqual(mainProofManifest.schema_version, 'ci-contract-v1');
+  assert.strictEqual(mainProofManifest.contract_id, 'main-proof');
+  assert.deepStrictEqual(
+    (mainProofManifest.imports || []).map((entry) => entry.path),
+    ['root-invariants.json', 'browser-policy.json'],
+    'main-proof manifest must aggregate root invariants plus browser policy proof',
+  );
+
+  const browserPolicyManifest = JSON.parse(fs.readFileSync(browserPolicyContractManifest, 'utf8'));
+  assert.strictEqual(browserPolicyManifest.contract_id, 'browser-policy');
+  assert.deepStrictEqual(
+    browserPolicyManifest.entries?.[0]?.command,
+    ['node', '--test', 'tools/flutter/web_app_tests/navigation_harness_policy_test.cjs'],
+    'browser-policy manifest must execute the navigation harness policy test',
+  );
+
+  const browserStageFullManifest = JSON.parse(
+    fs.readFileSync(browserStageFullContractManifest, 'utf8'),
+  );
+  assert.strictEqual(browserStageFullManifest.contract_id, 'browser-stage-full');
+  assert.deepStrictEqual(
+    browserStageFullManifest.entries?.[0]?.command,
+    ['bash', 'tools/ci/run_stage_full_local_public_web_contract.sh', 'prepare'],
+    'browser-stage-full manifest must prepare the local-public web surface before browser smoke',
+  );
+  assert.deepStrictEqual(
+    browserStageFullManifest.entries?.[1]?.command,
+    ['bash', 'tools/ci/run_stage_full_local_public_web_contract.sh', 'readonly'],
+    'browser-stage-full manifest must run readonly browser smoke through the shared local-public wrapper',
+  );
+  assert.deepStrictEqual(
+    browserStageFullManifest.entries?.[2]?.command,
+    ['bash', 'tools/ci/run_stage_full_local_public_web_contract.sh', 'mutation'],
+    'browser-stage-full manifest must run mutation browser smoke through the shared local-public wrapper',
+  );
+
+  const flutterManifest = JSON.parse(fs.readFileSync(flutterStageFullContractManifest, 'utf8'));
+  assert.strictEqual(flutterManifest.contract_id, 'flutter-stage-full');
+  assert.deepStrictEqual(
+    flutterManifest.entries?.[0]?.command,
+    ['bash', 'tool/ci/run_stage_promotion_architecture_gate.sh', 'stage'],
+    'flutter stage-full manifest must use the shared promotion architecture gate wrapper',
+  );
+  assert.deepStrictEqual(
+    flutterManifest.entries?.[1]?.command,
+    ['bash', 'tool/ci/run_workspace_test_contract.sh', 'config/defines/stage.json'],
+    'flutter stage-full manifest must use the shared workspace test wrapper',
+  );
+
+  const workflowSource = fs.readFileSync(flutterWebArtifactWorkflow, 'utf8');
+  assert.match(
+    workflowSource,
+    /run:\s*bash tool\/ci\/run_stage_promotion_architecture_gate\.sh "\$\{\{ steps\.lane_defines\.outputs\.lane \}\}"/,
+    'flutter web workflow must use the shared promotion architecture gate wrapper',
+  );
+  assert.match(
+    workflowSource,
+    /run:\s*bash tool\/ci\/run_workspace_test_contract\.sh "\$\{\{ steps\.lane_defines\.outputs\.defines_file \}\}"/,
+    'flutter web workflow must use the shared workspace test wrapper',
+  );
+  assert.doesNotMatch(
+    workflowSource,
+    /fvm dart pub get --directory tool\/belluga_analysis_plugin\/test_fixtures\/lint_matrix/,
+    'flutter web workflow must not inline analyzer fixture bootstrap once wrapper parity exists',
+  );
+  assert.doesNotMatch(
+    workflowSource,
+    /bash tool\/belluga_analysis_plugin\/bin\/validate_rule_matrix\.sh/,
+    'flutter web workflow must not inline validate_rule_matrix.sh once wrapper parity exists',
+  );
+  assert.doesNotMatch(
+    workflowSource,
+    /fvm dart analyze --format machine/,
+    'flutter web workflow must not inline flutter analyze once wrapper parity exists',
+  );
+  assert.doesNotMatch(
+    workflowSource,
+    /bash tool\/run_workspace_flutter_tests\.sh/,
+    'flutter web workflow must not call run_workspace_flutter_tests.sh directly once wrapper parity exists',
+  );
+
+  const architectureWrapperSource = fs.readFileSync(flutterArchitectureGateWrapper, 'utf8');
+  assert.match(
+    architectureWrapperSource,
+    /fvm dart pub get --directory tool\/belluga_analysis_plugin\/test_fixtures\/lint_matrix/,
+    'architecture gate wrapper must bootstrap the analyzer fixture workspace',
+  );
+  assert.match(
+    architectureWrapperSource,
+    /bash tool\/belluga_analysis_plugin\/bin\/validate_rule_matrix\.sh/,
+    'architecture gate wrapper must run validate_rule_matrix.sh',
+  );
+  assert.match(
+    architectureWrapperSource,
+    /fvm dart analyze --format machine/,
+    'architecture gate wrapper must run flutter analyze',
+  );
+
+  const workspaceWrapperSource = fs.readFileSync(flutterWorkspaceTestWrapper, 'utf8');
+  assert.match(
+    workspaceWrapperSource,
+    /bash tool\/run_workspace_flutter_tests\.sh "\$\{DEFINES_FILE\}"/,
+    'workspace test wrapper must delegate to run_workspace_flutter_tests.sh',
+  );
+
+  const localPublicWrapperSource = fs.readFileSync(stageFullLocalPublicWrapper, 'utf8');
+  assert.match(
+    localPublicWrapperSource,
+    /CANONICAL_LANDLORD_URL="https:\/\/belluga\.space"/,
+    'stage-full local-public wrapper must pin the canonical landlord host',
+  );
+  assert.match(
+    localPublicWrapperSource,
+    /CANONICAL_TENANT_URL="https:\/\/guarappari\.belluga\.space"/,
+    'stage-full local-public wrapper must pin the canonical tenant host',
+  );
+  assert.match(
+    localPublicWrapperSource,
+    /bash scripts\/build_web\.sh \.\.\/web-app "\$\{CANONICAL_LOCAL_LANE\}" --clean-output/,
+    'stage-full local-public wrapper must rebuild the browser bundle before smoke proof',
+  );
+  assert.match(
+    localPublicWrapperSource,
+    /bash "\$\{ROOT_DIR\}\/tools\/flutter\/run_web_navigation_smoke\.sh" "\$\{suite\}"/,
+    'stage-full local-public wrapper must delegate browser smoke to the canonical runner',
+  );
+
+  const readmeSource = fs.readFileSync(rootReadme, 'utf8');
+  assert.match(
+    readmeSource,
+    /bash tools\/ci\/run_contract\.sh --profile stage-full/,
+    'root README must identify stage-full as the repo-owned CI Equivalent contract',
+  );
+  assert.match(
+    readmeSource,
+    /bash tools\/ci\/run_contract\.sh --profile main-proof/,
+    'root README must identify main-proof as the separate production-lane semantic proof surface',
+  );
+  assert.match(
+    readmeSource,
+    /`main-proof`: local production-lane semantic proof that preserves readonly-only production semantics and explicit `main` mutation rejection\./,
+    'root README must keep main-proof tied to readonly-only production semantics',
+  );
+
+  if (submoduleGitlinkRequiresWorkflowAudit('foundation_documentation')) {
+    const constitutionSource = fs.readFileSync(projectConstitution, 'utf8');
+    assert.match(
+      constitutionSource,
+      /The broadest local pre-promotion contract is `stage-full`;/,
+      'project constitution must promote stage-full as the local CI Equivalent contract',
+    );
+    assert.match(
+      constitutionSource,
+      /the separate `main-proof` surface exists only to prove production-lane semantics such as browser `mutation` being forbidden on `main`\./,
+      'project constitution must keep main-proof tied to the main mutation hard-block',
+    );
+
+    const moduleSource = fs.readFileSync(flutterClientExperienceModule, 'utf8');
+    assert.match(
+      moduleSource,
+      /Local contract note: the broad local CI Equivalent surface may consume browser policy through `stage-full`, but the separate `main-proof` surface must remain readonly-only/,
+      'flutter client experience module must preserve the stage-full/main-proof browser-policy split',
+    );
+  }
+
+  const verifySource = fs.readFileSync(verifyEnvironmentCiScript, 'utf8');
+  assert.match(
+    verifySource,
+    /required_ci_contract_files=\(/,
+    'verify_environment_ci must require the CI contract surfaces explicitly',
+  );
+  assert.match(
+    verifySource,
+    /tools\/ci\/contracts\/browser-stage-full\.json/,
+    'verify_environment_ci must require the browser-stage-full manifest',
+  );
+  assert.match(
+    verifySource,
+    /run: bash tool\/ci\/run_stage_promotion_architecture_gate\.sh "\$\{\{ steps\.lane_defines\.outputs\.lane \}\}"/,
+    'verify_environment_ci must enforce wrapper usage in the flutter web workflow',
+  );
+  assert.match(
+    verifySource,
+    /bash tools\/ci\/run_contract\.sh --profile stage-full/,
+    'verify_environment_ci must enforce README stage-full documentation',
+  );
+  assert.match(
+    verifySource,
+    /Local contract note: the broad local CI Equivalent surface may consume browser policy through `stage-full`/,
+    'verify_environment_ci must enforce the browser-policy documentation note',
   );
 }
 
@@ -706,6 +1088,35 @@ function assertFixtureBootstrapRequiresExplicitRunIdOnStage() {
       NAV_WEB_ALLOW_NONLOCAL_MUTATION_HOSTS: '1',
     },
     /require explicit NAV_TEST_RUN_ID/,
+  );
+}
+
+function assertFixtureBootstrapRequiresExplicitRunIdOnDev() {
+  assertScriptStartupGuard(
+    path.join('tools', 'flutter', 'web_app_tests', 'ensure_public_taxonomy_validation_fixture.cjs'),
+    {
+      NAV_DEPLOY_LANE: 'dev',
+      NAV_TENANT_URL: 'https://guarappari.belluga.space',
+      NAV_ADMIN_EMAIL: 'policy@example.test',
+      NAV_ADMIN_PASSWORD: 'policy-secret',
+      NAV_WEB_ALLOW_NONLOCAL_MUTATION_HOSTS: '1',
+    },
+    /require explicit NAV_TEST_RUN_ID/,
+  );
+}
+
+function assertFixtureBootstrapRejectsMainLane() {
+  assertScriptStartupGuard(
+    path.join('tools', 'flutter', 'web_app_tests', 'ensure_public_taxonomy_validation_fixture.cjs'),
+    {
+      NAV_DEPLOY_LANE: 'main',
+      NAV_TENANT_URL: 'https://guarappari.belluga.space',
+      NAV_ADMIN_EMAIL: 'policy@example.test',
+      NAV_ADMIN_PASSWORD: 'policy-secret',
+      NAV_WEB_ALLOW_NONLOCAL_MUTATION_HOSTS: '1',
+      NAV_TEST_RUN_ID: 'policy-main-bootstrap',
+    },
+    /restricted to NAV_DEPLOY_LANE=local\|dev\|stage/,
   );
 }
 
@@ -1552,6 +1963,26 @@ function assertStageFixturePaginationHelperIsExhaustive() {
     true,
     'pagination helper must continue when next_page_url exists',
   );
+  assert.strictEqual(
+    shouldContinuePagedFetch({
+      payload: { has_more: true },
+      pageRows: new Array(50).fill({ id: 1 }),
+      pageNumber: 1,
+      pageSize: 50,
+    }),
+    true,
+    'pagination helper must continue when has_more is true',
+  );
+  assert.strictEqual(
+    shouldContinuePagedFetch({
+      payload: { has_more: false },
+      pageRows: new Array(50).fill({ id: 1 }),
+      pageNumber: 1,
+      pageSize: 50,
+    }),
+    false,
+    'pagination helper must stop when has_more is false',
+  );
   assert.throws(
     () => shouldContinuePagedFetch({
       payload: {},
@@ -1639,6 +2070,7 @@ assertGuardPassesCleanFixture();
 assertStageMutationWorkflowSuppliesRuntimeCredentials();
 assertStageWorkflowIntentionallyOmitsDiagnosticSuite();
 assertPublishedLaneProofRemainsPipelineOnly();
+assertCiEquivalentContractSurfacesStayWired();
 assertLocalNavigationEnvAutomationIsSafe();
 assertInviteRecoverableFallbackPublishedSmokeIsRemoved();
 assertReadonlyFavoriteSpecMessageMatchesSuite();
@@ -1672,6 +2104,8 @@ assertDirectPlaywrightReadonlyRejectsGrepSubset();
 assertDirectPlaywrightReadonlyRejectsGrepInvertSuiteTrim();
 assertFixtureBootstrapRequiresExplicitMutationContract();
 assertFixtureBootstrapRequiresExplicitRunIdOnStage();
+assertFixtureBootstrapRequiresExplicitRunIdOnDev();
+assertFixtureBootstrapRejectsMainLane();
 assertLocalDiagnosticMutationHelperRequiresExplicitNonLocalOptIn();
 assertStageFixtureOwnedFiltersUseCanonicalKeysOnly();
 assertStageFixtureRunIdIsolation();

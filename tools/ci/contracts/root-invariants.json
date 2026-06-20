@@ -1,0 +1,19 @@
+{
+  "schema_version": "ci-contract-v1",
+  "contract_id": "root-invariants",
+  "description": "Mandatory root invariants that every local CI-equivalent contract must preserve.",
+  "entries": [
+    {
+      "id": "root-invariant-guard",
+      "repo": "belluga_now_docker",
+      "kind": "mandatory-root-invariant",
+      "cwd": "../../..",
+      "command": [
+        "bash",
+        "-lc",
+        "VERIFY_ENV_EVENT_NAME=\"${VERIFY_ENV_EVENT_NAME:-pull_request}\" VERIFY_ENV_BASE_REF=\"${VERIFY_ENV_BASE_REF:-dev}\" bash .github/scripts/verify_environment_ci.sh"
+      ],
+      "description": "Fail closed when root workflow/runtime/parity invariants drift."
+    }
+  ]
+}

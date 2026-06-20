@@ -193,8 +193,38 @@ async function runCleanupPreservingPrimaryError(primaryError, cleanup) {
   );
 }
 
+async function runCleanupSteps(steps) {
+  const errors = [];
+
+  for (const step of steps || []) {
+    if (typeof step !== 'function') {
+      continue;
+    }
+
+    try {
+      await step();
+    } catch (error) {
+      errors.push(error);
+    }
+  }
+
+  if (errors.length === 0) {
+    return;
+  }
+
+  if (errors.length === 1) {
+    throw errors[0];
+  }
+
+  throw new AggregateError(
+    errors,
+    `Failed to complete ${errors.length} cleanup step(s).`,
+  );
+}
+
 module.exports = {
   cleanupOnboardedAccount,
   cleanupOnboardedAccounts,
   runCleanupPreservingPrimaryError,
+  runCleanupSteps,
 };

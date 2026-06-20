@@ -474,6 +474,7 @@ jobs:
         env:
           NAV_DEPLOY_LANE: stage
           NAV_TEST_RUN_ID: stage-${{ github.run_id }}-${{ github.run_attempt }}
+          NAV_PUBLIC_TAXONOMY_MANAGED_FIXTURE: '1'
           NAV_WEB_TEST_TYPE: mutation
           NAV_LANDLORD_URL: ${{ steps.stage_nav_targets.outputs.landlord_url }}
           NAV_TENANT_URL: ${{ steps.stage_nav_targets.outputs.tenant_url }}
@@ -834,6 +835,7 @@ jobs:
         env:
           NAV_DEPLOY_LANE: stage
           NAV_TEST_RUN_ID: stage-${{ github.run_id }}-${{ github.run_attempt }}
+          NAV_PUBLIC_TAXONOMY_MANAGED_FIXTURE: '1'
           NAV_WEB_TEST_TYPE: mutation
           NAV_LANDLORD_URL: ${{ steps.stage_nav_targets.outputs.landlord_url }}
           NAV_TENANT_URL: ${{ steps.stage_nav_targets.outputs.tenant_url }}

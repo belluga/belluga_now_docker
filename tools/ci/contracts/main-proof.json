@@ -1,0 +1,16 @@
+{
+  "schema_version": "ci-contract-v1",
+  "contract_id": "main-proof",
+  "description": "Local proof surface for production-lane semantics, including the explicit main-lane mutation hard block.",
+  "imports": [
+    {
+      "repo": "belluga_now_docker",
+      "path": "root-invariants.json"
+    },
+    {
+      "repo": "belluga_now_docker",
+      "path": "browser-policy.json"
+    }
+  ],
+  "entries": []
+}

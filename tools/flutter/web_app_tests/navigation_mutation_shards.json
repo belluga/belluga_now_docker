@@ -14,13 +14,27 @@
         ]
       },
       "filters": {
-        "grep_extra": "(?:public Map keeps|public Map navigates|Home filters honor|Profile Discovery hides|event rich text)",
+        "grep_extra": "(?:public Map keeps|public Map navigates|event rich text)",
         "expected_titles": [
           "@mutation public Map keeps baseline primary filters without taxonomy subfilters and uses backend filtering",
           "@mutation public Map navigates configured canonical filters with and without marker override visuals",
+          "@mutation tenant-admin event rich text persists and renders in public Sobre"
+        ]
+      },
+      "v0208-closeout": {
+        "grep_extra": "(?:Home filters honor|Profile Discovery hides|gallery groups persist|gallery data stays dormant|home favorites preserve)",
+        "expected_titles": [
           "@mutation Home filters honor Event Type taxonomy compatibility, hide zero-taxonomy rows, and keep selected icon foreground aligned with the label",
           "@mutation Profile Discovery hides non-publicly-discoverable types and keeps selected icon foreground aligned with the label",
-          "@mutation tenant-admin event rich text persists and renders in public Sobre"
+          "@mutation tenant-admin account-profile gallery groups persist and render in the public modal",
+          "@mutation tenant-admin gallery data stays dormant when has_gallery is disabled",
+          "@mutation home favorites preserve backend order and expose event status halos"
+        ]
+      },
+      "gallery-capability-admin": {
+        "grep_extra": "T6-GALLERY-CAPABILITY",
+        "expected_titles": [
+          "@mutation T6-GALLERY-CAPABILITY tenant-admin account profile type gallery capability rehydrates and renders across edit list and detail"
         ]
       },
       "map-admin": {
