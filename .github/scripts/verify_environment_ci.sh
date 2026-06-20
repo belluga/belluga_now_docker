@@ -130,7 +130,7 @@ submodule_gitlink_requires_workflow_audit() {
     return 0
   fi
 
-  git fetch --no-tags --prune --depth=1 origin "${base_ref}" >/dev/null 2>&1 || true
+  git fetch --no-tags --prune origin "${base_ref}" >/dev/null 2>&1 || true
 
   if git diff --quiet --ignore-submodules=none "origin/${base_ref}...HEAD" -- "${submodule_path}"; then
     printf 'INFO: skipping workflow runtime audit for unchanged gitlink %s against origin/%s.\n' "${submodule_path}" "${base_ref}"
