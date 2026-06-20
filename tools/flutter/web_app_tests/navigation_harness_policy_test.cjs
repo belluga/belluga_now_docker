@@ -128,6 +128,85 @@ function run(command, args, env = {}) {
   });
 }
 
+function gitOutput(args) {
+  const result = spawnSync('git', args, {
+    cwd: repoRoot,
+    encoding: 'utf8',
+  });
+
+  if (result.status !== 0) {
+    return null;
+  }
+
+  return result.stdout.trim();
+}
+
+function effectiveVerifyEnvEventName() {
+  return process.env.VERIFY_ENV_EVENT_NAME || process.env.GITHUB_EVENT_NAME || 'push';
+}
+
+function effectiveVerifyEnvBaseRef() {
+  return process.env.VERIFY_ENV_BASE_REF || process.env.GITHUB_BASE_REF || null;
+}
+
+function effectiveVerifyEnvBeforeSha() {
+  if (process.env.VERIFY_ENV_BEFORE_SHA) {
+    return process.env.VERIFY_ENV_BEFORE_SHA;
+  }
+
+  if (process.env.GITHUB_EVENT_BEFORE) {
+    return process.env.GITHUB_EVENT_BEFORE;
+  }
+
+  const eventPath = process.env.GITHUB_EVENT_PATH;
+  if (!eventPath || !fs.existsSync(eventPath)) {
+    return null;
+  }
+
+  try {
+    const payload = JSON.parse(fs.readFileSync(eventPath, 'utf8'));
+    return payload.before || null;
+  } catch {
+    return null;
+  }
+}
+
+function submoduleGitlinkMatchesRef(submodulePath, compareRef) {
+  const compareGitlinkSha = gitOutput(['rev-parse', `${compareRef}:${submodulePath}`]);
+  const headGitlinkSha = gitOutput(['rev-parse', `HEAD:${submodulePath}`]);
+
+  return Boolean(compareGitlinkSha && headGitlinkSha && compareGitlinkSha === headGitlinkSha);
+}
+
+function submoduleGitlinkRequiresWorkflowAudit(submodulePath) {
+  const eventName = effectiveVerifyEnvEventName();
+
+  if (eventName === 'pull_request') {
+    const baseRef = effectiveVerifyEnvBaseRef();
+    if (!baseRef) {
+      return true;
+    }
+
+    spawnSync('git', ['fetch', '--no-tags', '--prune', 'origin', baseRef], {
+      cwd: repoRoot,
+      stdio: 'ignore',
+    });
+
+    return !submoduleGitlinkMatchesRef(submodulePath, `origin/${baseRef}`);
+  }
+
+  if (eventName === 'push') {
+    const beforeSha = effectiveVerifyEnvBeforeSha();
+    if (!beforeSha || /^0+$/.test(beforeSha)) {
+      return true;
+    }
+
+    return !submoduleGitlinkMatchesRef(submodulePath, beforeSha);
+  }
+
+  return true;
+}
+
 function withTempDir(callback) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'belluga-nav-policy-'));
   try {
@@ -726,24 +805,26 @@ function assertCiEquivalentContractSurfacesStayWired() {
     'root README must keep main-proof tied to readonly-only production semantics',
   );
 
-  const constitutionSource = fs.readFileSync(projectConstitution, 'utf8');
-  assert.match(
-    constitutionSource,
-    /The broadest local pre-promotion contract is `stage-full`;/,
-    'project constitution must promote stage-full as the local CI Equivalent contract',
-  );
-  assert.match(
-    constitutionSource,
-    /the separate `main-proof` surface exists only to prove production-lane semantics such as browser `mutation` being forbidden on `main`\./,
-    'project constitution must keep main-proof tied to the main mutation hard-block',
-  );
+  if (submoduleGitlinkRequiresWorkflowAudit('foundation_documentation')) {
+    const constitutionSource = fs.readFileSync(projectConstitution, 'utf8');
+    assert.match(
+      constitutionSource,
+      /The broadest local pre-promotion contract is `stage-full`;/,
+      'project constitution must promote stage-full as the local CI Equivalent contract',
+    );
+    assert.match(
+      constitutionSource,
+      /the separate `main-proof` surface exists only to prove production-lane semantics such as browser `mutation` being forbidden on `main`\./,
+      'project constitution must keep main-proof tied to the main mutation hard-block',
+    );
 
-  const moduleSource = fs.readFileSync(flutterClientExperienceModule, 'utf8');
-  assert.match(
-    moduleSource,
-    /Local contract note: the broad local CI Equivalent surface may consume browser policy through `stage-full`, but the separate `main-proof` surface must remain readonly-only/,
-    'flutter client experience module must preserve the stage-full/main-proof browser-policy split',
-  );
+    const moduleSource = fs.readFileSync(flutterClientExperienceModule, 'utf8');
+    assert.match(
+      moduleSource,
+      /Local contract note: the broad local CI Equivalent surface may consume browser policy through `stage-full`, but the separate `main-proof` surface must remain readonly-only/,
+      'flutter client experience module must preserve the stage-full/main-proof browser-policy split',
+    );
+  }
 
   const verifySource = fs.readFileSync(verifyEnvironmentCiScript, 'utf8');
   assert.match(

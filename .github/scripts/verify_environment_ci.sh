@@ -41,6 +41,43 @@ effective_verify_env_base_ref() {
   return 1
 }
 
+effective_verify_env_before_sha() {
+  if [[ -n "${VERIFY_ENV_BEFORE_SHA:-}" ]]; then
+    printf '%s\n' "${VERIFY_ENV_BEFORE_SHA}"
+    return 0
+  fi
+
+  if [[ -n "${GITHUB_EVENT_BEFORE:-}" ]]; then
+    printf '%s\n' "${GITHUB_EVENT_BEFORE}"
+    return 0
+  fi
+
+  if [[ -n "${GITHUB_EVENT_PATH:-}" ]] && [[ -f "${GITHUB_EVENT_PATH}" ]]; then
+    python3 - "${GITHUB_EVENT_PATH}" <<'PY'
+import json
+import sys
+
+event_path = sys.argv[1]
+before_sha = ""
+
+try:
+    with open(event_path, "r", encoding="utf-8") as handle:
+        before_sha = json.load(handle).get("before", "") or ""
+except Exception:
+    before_sha = ""
+
+if before_sha:
+    print(before_sha)
+    raise SystemExit(0)
+
+raise SystemExit(1)
+PY
+    return $?
+  fi
+
+  return 1
+}
+
 materialize_submodule_path_from_gitlink() {
   local submodule_path="$1"
   local relative_path="$2"
@@ -115,31 +152,53 @@ regex_search_stream() {
   grep -nP -- "${pattern}"
 }
 
+submodule_gitlink_matches_ref() {
+  local submodule_path="$1"
+  local compare_ref="$2"
+  local compare_label="$3"
+  local compare_gitlink_sha=""
+  local head_gitlink_sha=""
+
+  compare_gitlink_sha="$(git rev-parse "${compare_ref}:${submodule_path}" 2>/dev/null | tr -d '[:space:]' || true)"
+  head_gitlink_sha="$(git rev-parse "HEAD:${submodule_path}" 2>/dev/null | tr -d '[:space:]' || true)"
+
+  if [[ -n "${compare_gitlink_sha}" ]] && [[ -n "${head_gitlink_sha}" ]] && [[ "${compare_gitlink_sha}" == "${head_gitlink_sha}" ]]; then
+    printf 'INFO: skipping workflow runtime audit for unchanged gitlink %s against %s.\n' "${submodule_path}" "${compare_label}"
+    return 0
+  fi
+
+  return 1
+}
+
 submodule_gitlink_requires_workflow_audit() {
   local submodule_path="$1"
   local base_ref=""
+  local before_sha=""
   local event_name=""
-  local base_gitlink_sha=""
-  local head_gitlink_sha=""
 
   event_name="$(effective_verify_env_event_name)"
-  if [[ "${event_name}" != "pull_request" ]]; then
+
+  if [[ "${event_name}" == "pull_request" ]]; then
+    base_ref="$(effective_verify_env_base_ref || true)"
+    if [[ -z "${base_ref}" ]]; then
+      return 0
+    fi
+
+    git fetch --no-tags --prune origin "${base_ref}" >/dev/null 2>&1 || true
+    if submodule_gitlink_matches_ref "${submodule_path}" "origin/${base_ref}" "origin/${base_ref}"; then
+      return 1
+    fi
+
     return 0
   fi
 
-  base_ref="$(effective_verify_env_base_ref || true)"
-  if [[ -z "${base_ref}" ]]; then
-    return 0
-  fi
-
-  git fetch --no-tags --prune origin "${base_ref}" >/dev/null 2>&1 || true
-
-  base_gitlink_sha="$(git rev-parse "origin/${base_ref}:${submodule_path}" 2>/dev/null | tr -d '[:space:]' || true)"
-  head_gitlink_sha="$(git rev-parse "HEAD:${submodule_path}" 2>/dev/null | tr -d '[:space:]' || true)"
-
-  if [[ -n "${base_gitlink_sha}" ]] && [[ -n "${head_gitlink_sha}" ]] && [[ "${base_gitlink_sha}" == "${head_gitlink_sha}" ]]; then
-    printf 'INFO: skipping workflow runtime audit for unchanged gitlink %s against origin/%s.\n' "${submodule_path}" "${base_ref}"
-    return 1
+  if [[ "${event_name}" == "push" ]]; then
+    before_sha="$(effective_verify_env_before_sha || true)"
+    if [[ -n "${before_sha}" ]] && [[ ! "${before_sha}" =~ ^0+$ ]]; then
+      if submodule_gitlink_matches_ref "${submodule_path}" "${before_sha}" "${before_sha}"; then
+        return 1
+      fi
+    fi
   fi
 
   return 0
@@ -805,10 +864,6 @@ required_ci_contract_files=(
   "tools/ci/contracts/browser-stage-full.json"
   "tools/ci/contracts/stage-full.json"
   "tools/ci/contracts/main-proof.json"
-  "flutter-app/tool/ci/contracts/stage-full.json"
-  "flutter-app/tool/ci/run_stage_promotion_architecture_gate.sh"
-  "flutter-app/tool/ci/run_workspace_test_contract.sh"
-  "flutter-app/.github/workflows/web-artifact-publish.yml"
 )
 
 for file in "${required_ci_contract_files[@]}"; do
@@ -878,54 +933,75 @@ if ! grep -Fq 'bash "${ROOT_DIR}/tools/flutter/run_web_navigation_smoke.sh" "${s
   exit 1
 fi
 
-if ! grep -Fq 'run: bash tool/ci/run_stage_promotion_architecture_gate.sh "${{ steps.lane_defines.outputs.lane }}"' flutter-app/.github/workflows/web-artifact-publish.yml; then
-  echo "ERROR: flutter web workflow must use the shared promotion architecture gate wrapper." >&2
-  exit 1
+flutter_gitlink_workflow_audit_required=0
+if submodule_gitlink_requires_workflow_audit "flutter-app"; then
+  flutter_gitlink_workflow_audit_required=1
 fi
 
-if ! grep -Fq 'run: bash tool/ci/run_workspace_test_contract.sh "${{ steps.lane_defines.outputs.defines_file }}"' flutter-app/.github/workflows/web-artifact-publish.yml; then
-  echo "ERROR: flutter web workflow must use the shared workspace test wrapper." >&2
-  exit 1
-fi
+if [[ "${flutter_gitlink_workflow_audit_required}" -eq 1 ]]; then
+  required_flutter_ci_contract_files=(
+    "flutter-app/tool/ci/contracts/stage-full.json"
+    "flutter-app/tool/ci/run_stage_promotion_architecture_gate.sh"
+    "flutter-app/tool/ci/run_workspace_test_contract.sh"
+    "flutter-app/.github/workflows/web-artifact-publish.yml"
+  )
 
-if grep -Fq 'fvm dart pub get --directory tool/belluga_analysis_plugin/test_fixtures/lint_matrix' flutter-app/.github/workflows/web-artifact-publish.yml; then
-  echo "ERROR: flutter web workflow must not inline the analyzer fixture bootstrap once the shared wrapper exists." >&2
-  exit 1
-fi
+  for file in "${required_flutter_ci_contract_files[@]}"; do
+    if [[ ! -f "${file}" ]]; then
+      echo "ERROR: required Flutter CI contract surface missing: ${file}" >&2
+      exit 1
+    fi
+  done
 
-if grep -Fq 'bash tool/belluga_analysis_plugin/bin/validate_rule_matrix.sh' flutter-app/.github/workflows/web-artifact-publish.yml; then
-  echo "ERROR: flutter web workflow must not inline validate_rule_matrix.sh once the shared wrapper exists." >&2
-  exit 1
-fi
+  if ! grep -Fq 'run: bash tool/ci/run_stage_promotion_architecture_gate.sh "${{ steps.lane_defines.outputs.lane }}"' flutter-app/.github/workflows/web-artifact-publish.yml; then
+    echo "ERROR: flutter web workflow must use the shared promotion architecture gate wrapper." >&2
+    exit 1
+  fi
 
-if grep -Fq 'fvm dart analyze --format machine' flutter-app/.github/workflows/web-artifact-publish.yml; then
-  echo "ERROR: flutter web workflow must not inline flutter analyze once the shared wrapper exists." >&2
-  exit 1
-fi
+  if ! grep -Fq 'run: bash tool/ci/run_workspace_test_contract.sh "${{ steps.lane_defines.outputs.defines_file }}"' flutter-app/.github/workflows/web-artifact-publish.yml; then
+    echo "ERROR: flutter web workflow must use the shared workspace test wrapper." >&2
+    exit 1
+  fi
 
-if grep -Fq 'bash tool/run_workspace_flutter_tests.sh' flutter-app/.github/workflows/web-artifact-publish.yml; then
-  echo "ERROR: flutter web workflow must not call run_workspace_flutter_tests.sh directly once the shared wrapper exists." >&2
-  exit 1
-fi
+  if grep -Fq 'fvm dart pub get --directory tool/belluga_analysis_plugin/test_fixtures/lint_matrix' flutter-app/.github/workflows/web-artifact-publish.yml; then
+    echo "ERROR: flutter web workflow must not inline the analyzer fixture bootstrap once the shared wrapper exists." >&2
+    exit 1
+  fi
 
-if ! grep -Fq 'fvm dart pub get --directory tool/belluga_analysis_plugin/test_fixtures/lint_matrix' flutter-app/tool/ci/run_stage_promotion_architecture_gate.sh; then
-  echo "ERROR: run_stage_promotion_architecture_gate.sh must bootstrap the analyzer fixture workspace." >&2
-  exit 1
-fi
+  if grep -Fq 'bash tool/belluga_analysis_plugin/bin/validate_rule_matrix.sh' flutter-app/.github/workflows/web-artifact-publish.yml; then
+    echo "ERROR: flutter web workflow must not inline validate_rule_matrix.sh once the shared wrapper exists." >&2
+    exit 1
+  fi
 
-if ! grep -Fq 'bash tool/belluga_analysis_plugin/bin/validate_rule_matrix.sh' flutter-app/tool/ci/run_stage_promotion_architecture_gate.sh; then
-  echo "ERROR: run_stage_promotion_architecture_gate.sh must run validate_rule_matrix.sh." >&2
-  exit 1
-fi
+  if grep -Fq 'fvm dart analyze --format machine' flutter-app/.github/workflows/web-artifact-publish.yml; then
+    echo "ERROR: flutter web workflow must not inline flutter analyze once the shared wrapper exists." >&2
+    exit 1
+  fi
 
-if ! grep -Fq 'fvm dart analyze --format machine' flutter-app/tool/ci/run_stage_promotion_architecture_gate.sh; then
-  echo "ERROR: run_stage_promotion_architecture_gate.sh must run flutter analyze." >&2
-  exit 1
-fi
+  if grep -Fq 'bash tool/run_workspace_flutter_tests.sh' flutter-app/.github/workflows/web-artifact-publish.yml; then
+    echo "ERROR: flutter web workflow must not call run_workspace_flutter_tests.sh directly once the shared wrapper exists." >&2
+    exit 1
+  fi
 
-if ! grep -Fq 'bash tool/run_workspace_flutter_tests.sh "${DEFINES_FILE}"' flutter-app/tool/ci/run_workspace_test_contract.sh; then
-  echo "ERROR: run_workspace_test_contract.sh must delegate to run_workspace_flutter_tests.sh." >&2
-  exit 1
+  if ! grep -Fq 'fvm dart pub get --directory tool/belluga_analysis_plugin/test_fixtures/lint_matrix' flutter-app/tool/ci/run_stage_promotion_architecture_gate.sh; then
+    echo "ERROR: run_stage_promotion_architecture_gate.sh must bootstrap the analyzer fixture workspace." >&2
+    exit 1
+  fi
+
+  if ! grep -Fq 'bash tool/belluga_analysis_plugin/bin/validate_rule_matrix.sh' flutter-app/tool/ci/run_stage_promotion_architecture_gate.sh; then
+    echo "ERROR: run_stage_promotion_architecture_gate.sh must run validate_rule_matrix.sh." >&2
+    exit 1
+  fi
+
+  if ! grep -Fq 'fvm dart analyze --format machine' flutter-app/tool/ci/run_stage_promotion_architecture_gate.sh; then
+    echo "ERROR: run_stage_promotion_architecture_gate.sh must run flutter analyze." >&2
+    exit 1
+  fi
+
+  if ! grep -Fq 'bash tool/run_workspace_flutter_tests.sh "${DEFINES_FILE}"' flutter-app/tool/ci/run_workspace_test_contract.sh; then
+    echo "ERROR: run_workspace_test_contract.sh must delegate to run_workspace_flutter_tests.sh." >&2
+    exit 1
+  fi
 fi
 
 if grep -Eq '### Published Stage(-Equivalent)? Validation' README.md; then
