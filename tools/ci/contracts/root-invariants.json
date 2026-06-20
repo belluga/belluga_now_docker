@@ -8,7 +8,11 @@
       "repo": "belluga_now_docker",
       "kind": "mandatory-root-invariant",
       "cwd": "../../..",
-      "command": ["bash", ".github/scripts/verify_environment_ci.sh"],
+      "command": [
+        "bash",
+        "-lc",
+        "VERIFY_ENV_EVENT_NAME=\"${VERIFY_ENV_EVENT_NAME:-pull_request}\" VERIFY_ENV_BASE_REF=\"${VERIFY_ENV_BASE_REF:-dev}\" bash .github/scripts/verify_environment_ci.sh"
+      ],
       "description": "Fail closed when root workflow/runtime/parity invariants drift."
     }
   ]

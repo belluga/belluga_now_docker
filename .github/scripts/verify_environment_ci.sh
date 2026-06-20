@@ -13,6 +13,34 @@ cleanup_temp_artifact_dirs() {
 
 trap cleanup_temp_artifact_dirs EXIT
 
+effective_verify_env_event_name() {
+  if [[ -n "${VERIFY_ENV_EVENT_NAME:-}" ]]; then
+    printf '%s\n' "${VERIFY_ENV_EVENT_NAME}"
+    return 0
+  fi
+
+  if [[ -n "${GITHUB_EVENT_NAME:-}" ]]; then
+    printf '%s\n' "${GITHUB_EVENT_NAME}"
+    return 0
+  fi
+
+  printf 'push\n'
+}
+
+effective_verify_env_base_ref() {
+  if [[ -n "${VERIFY_ENV_BASE_REF:-}" ]]; then
+    printf '%s\n' "${VERIFY_ENV_BASE_REF}"
+    return 0
+  fi
+
+  if [[ -n "${GITHUB_BASE_REF:-}" ]]; then
+    printf '%s\n' "${GITHUB_BASE_REF}"
+    return 0
+  fi
+
+  return 1
+}
+
 materialize_submodule_path_from_gitlink() {
   local submodule_path="$1"
   local relative_path="$2"
@@ -44,11 +72,6 @@ materialize_submodule_path_from_gitlink() {
 resolve_submodule_path_for_workflow_audit() {
   local submodule_path="$1"
   local relative_path="$2"
-
-  if [[ -e "${submodule_path}/${relative_path}" ]]; then
-    printf '%s\n' "${submodule_path}/${relative_path}"
-    return 0
-  fi
 
   materialize_submodule_path_from_gitlink "${submodule_path}" "${relative_path}"
 }
@@ -95,12 +118,14 @@ regex_search_stream() {
 submodule_gitlink_requires_workflow_audit() {
   local submodule_path="$1"
   local base_ref=""
+  local event_name=""
 
-  if [[ "${GITHUB_EVENT_NAME:-}" != "pull_request" ]]; then
+  event_name="$(effective_verify_env_event_name)"
+  if [[ "${event_name}" != "pull_request" ]]; then
     return 0
   fi
 
-  base_ref="${GITHUB_BASE_REF:-}"
+  base_ref="$(effective_verify_env_base_ref || true)"
   if [[ -z "${base_ref}" ]]; then
     return 0
   fi
@@ -918,19 +943,24 @@ if ! grep -Fq 'bash tools/ci/run_contract.sh --profile main-proof' README.md; th
   exit 1
 fi
 
-if ! grep -Fq 'The broadest local pre-promotion contract is `stage-full`' foundation_documentation/project_constitution.md; then
-  echo "ERROR: project_constitution.md must promote stage-full as the local CI Equivalent contract." >&2
-  exit 1
-fi
+if submodule_gitlink_requires_workflow_audit "foundation_documentation"; then
+  foundation_project_constitution_path="$(resolve_submodule_path_for_workflow_audit "foundation_documentation" "project_constitution.md")"
+  foundation_flutter_client_experience_module_path="$(resolve_submodule_path_for_workflow_audit "foundation_documentation" "modules/flutter_client_experience_module.md")"
 
-if ! grep -Fq 'the separate `main-proof` surface exists only to prove production-lane semantics' foundation_documentation/project_constitution.md; then
-  echo "ERROR: project_constitution.md must describe main-proof as the production-semantic proof surface." >&2
-  exit 1
-fi
+  if ! grep -Fq 'The broadest local pre-promotion contract is `stage-full`' "${foundation_project_constitution_path}"; then
+    echo "ERROR: project_constitution.md must promote stage-full as the local CI Equivalent contract." >&2
+    exit 1
+  fi
 
-if ! grep -Fq 'Local contract note: the broad local CI Equivalent surface may consume browser policy through `stage-full`' foundation_documentation/modules/flutter_client_experience_module.md; then
-  echo "ERROR: flutter_client_experience_module.md must connect browser policy to the stage-full/main-proof local contract split." >&2
-  exit 1
+  if ! grep -Fq 'the separate `main-proof` surface exists only to prove production-lane semantics' "${foundation_project_constitution_path}"; then
+    echo "ERROR: project_constitution.md must describe main-proof as the production-semantic proof surface." >&2
+    exit 1
+  fi
+
+  if ! grep -Fq 'Local contract note: the broad local CI Equivalent surface may consume browser policy through `stage-full`' "${foundation_flutter_client_experience_module_path}"; then
+    echo "ERROR: flutter_client_experience_module.md must connect browser policy to the stage-full/main-proof local contract split." >&2
+    exit 1
+  fi
 fi
 
 if grep -Fq 'checkout_web_runtime_ref "origin/\${DEPLOY_LANE}"' .github/scripts/deploy_stage_over_ssh.sh; then
