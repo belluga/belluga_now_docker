@@ -1,6 +1,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const crypto = require('crypto');
 const zlib = require('zlib');
 const { test, expect, request } = require('@playwright/test');
 const {
@@ -9,6 +10,8 @@ const {
 const { selectDropdownOption } = require('./support/semantic_dropdown');
 const {
   cleanupOnboardedAccount,
+  runCleanupPreservingPrimaryError,
+  runCleanupSteps,
 } = require('./support/account_onboarding_cleanup');
 const {
   createFreshAuthenticatedTenantAdminPage,
@@ -23,6 +26,13 @@ const fixtureFaviconPath = path.resolve(
 const fallbackFixtureImageBase64 =
   'iVBORw0KGgoAAAANSUhEUgAAAQAAAAEACAYAAABccqhmAAADIElEQVR4nO3UIQEAIBDAwI9AZWKRDmIgduL81GadfYGm+R0A/GMAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEPYAluQiSDn9lCoAAAAASUVORK5CYII=';
 const appBootTimeoutMs = 90000;
+const favoriteChipAvatarFrameSize = 72;
+const favoriteChipHaloProbeCenterY = favoriteChipAvatarFrameSize / 2;
+const favoriteChipHaloProbeInnerRadius = favoriteChipAvatarFrameSize / 2 - 3;
+const favoriteChipHaloProbeOuterRadius = favoriteChipAvatarFrameSize / 2 + 3;
+const favoriteChipLiveVsUpcomingDiffFactor = 1.08;
+const favoriteChipUpcomingVsFallbackPixelDelta = 24;
+const favoriteChipUpcomingVsFallbackDiffDelta = 1200;
 let generatedFixtureImageBuffer = null;
 
 test.describe.configure({ timeout: 300000 });
@@ -187,6 +197,199 @@ function generatedFixtureImage() {
   return generatedFixtureImageBuffer;
 }
 
+function decodePng(buffer) {
+  const signature = '89504e470d0a1a0a';
+  expect(buffer.subarray(0, 8).toString('hex')).toBe(signature);
+
+  let offset = 8;
+  let width = 0;
+  let height = 0;
+  let bitDepth = 0;
+  let colorType = 0;
+  const idatChunks = [];
+
+  while (offset < buffer.length) {
+    const length = buffer.readUInt32BE(offset);
+    offset += 4;
+    const type = buffer.subarray(offset, offset + 4).toString('ascii');
+    offset += 4;
+    const data = buffer.subarray(offset, offset + length);
+    offset += length;
+    offset += 4;
+
+    if (type === 'IHDR') {
+      width = data.readUInt32BE(0);
+      height = data.readUInt32BE(4);
+      bitDepth = data.readUInt8(8);
+      colorType = data.readUInt8(9);
+    } else if (type === 'IDAT') {
+      idatChunks.push(data);
+    } else if (type === 'IEND') {
+      break;
+    }
+  }
+
+  expect(width, 'PNG width must be available.').toBeGreaterThan(0);
+  expect(height, 'PNG height must be available.').toBeGreaterThan(0);
+  expect(bitDepth, 'PNG screenshots must be 8-bit.').toBe(8);
+  expect(
+    [2, 6],
+    `Unsupported PNG color type ${colorType} in locator screenshot.`,
+  ).toContain(colorType);
+
+  const bytesPerPixel = colorType === 6 ? 4 : 3;
+  const stride = width * bytesPerPixel;
+  const inflated = zlib.inflateSync(Buffer.concat(idatChunks));
+  const reconstructed = Buffer.alloc(height * stride);
+
+  let sourceOffset = 0;
+  for (let row = 0; row < height; row += 1) {
+    const filterType = inflated[sourceOffset];
+    sourceOffset += 1;
+    const rowStart = row * stride;
+
+    for (let column = 0; column < stride; column += 1) {
+      const raw = inflated[sourceOffset + column];
+      const left = column >= bytesPerPixel
+        ? reconstructed[rowStart + column - bytesPerPixel]
+        : 0;
+      const up = row > 0 ? reconstructed[rowStart - stride + column] : 0;
+      const upLeft =
+        row > 0 && column >= bytesPerPixel
+          ? reconstructed[rowStart - stride + column - bytesPerPixel]
+          : 0;
+
+      let value = raw;
+      if (filterType === 1) {
+        value = (raw + left) & 0xff;
+      } else if (filterType === 2) {
+        value = (raw + up) & 0xff;
+      } else if (filterType === 3) {
+        value = (raw + Math.floor((left + up) / 2)) & 0xff;
+      } else if (filterType === 4) {
+        const predictor = paethPredictor(left, up, upLeft);
+        value = (raw + predictor) & 0xff;
+      } else {
+        expect(filterType, 'PNG filter type must be 0-4.').toBe(0);
+      }
+
+      reconstructed[rowStart + column] = value;
+    }
+
+    sourceOffset += stride;
+  }
+
+  const rgba = Buffer.alloc(width * height * 4);
+  for (let index = 0; index < width * height; index += 1) {
+    const sourceIndex = index * bytesPerPixel;
+    const targetIndex = index * 4;
+    rgba[targetIndex] = reconstructed[sourceIndex];
+    rgba[targetIndex + 1] = reconstructed[sourceIndex + 1];
+    rgba[targetIndex + 2] = reconstructed[sourceIndex + 2];
+    rgba[targetIndex + 3] = bytesPerPixel === 4 ? reconstructed[sourceIndex + 3] : 255;
+  }
+
+  return { width, height, rgba };
+}
+
+function paethPredictor(left, up, upLeft) {
+  const base = left + up - upLeft;
+  const leftDistance = Math.abs(base - left);
+  const upDistance = Math.abs(base - up);
+  const upLeftDistance = Math.abs(base - upLeft);
+  if (leftDistance <= upDistance && leftDistance <= upLeftDistance) {
+    return left;
+  }
+  if (upDistance <= upLeftDistance) {
+    return up;
+  }
+  return upLeft;
+}
+
+function readPixel(png, x, y) {
+  const clampedX = Math.max(0, Math.min(png.width - 1, x));
+  const clampedY = Math.max(0, Math.min(png.height - 1, y));
+  const index = (clampedY * png.width + clampedX) * 4;
+  return {
+    r: png.rgba[index],
+    g: png.rgba[index + 1],
+    b: png.rgba[index + 2],
+    a: png.rgba[index + 3],
+  };
+}
+
+function colorDistance(a, b) {
+  return Math.abs(a.r - b.r) + Math.abs(a.g - b.g) + Math.abs(a.b - b.b);
+}
+
+function quantizeColor(pixel) {
+  return {
+    r: Math.round(pixel.r / 16) * 16,
+    g: Math.round(pixel.g / 16) * 16,
+    b: Math.round(pixel.b / 16) * 16,
+  };
+}
+
+function measureFavoriteHaloSignature(png) {
+  const background = readPixel(png, 1, 1);
+  const centerX = Math.floor(png.width / 2);
+  // Tie the probe to FavoriteChip's canonical 72px avatar frame.
+  const centerY = favoriteChipHaloProbeCenterY;
+  const counts = new Map();
+  let coloredPixelCount = 0;
+  let diffSum = 0;
+
+  for (let y = 0; y < Math.min(png.height, favoriteChipAvatarFrameSize); y += 1) {
+    for (let x = 0; x < png.width; x += 1) {
+      const dx = x + 0.5 - centerX;
+      const dy = y + 0.5 - centerY;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+      if (
+        distance < favoriteChipHaloProbeInnerRadius ||
+        distance > favoriteChipHaloProbeOuterRadius
+      ) {
+        continue;
+      }
+
+      const pixel = readPixel(png, x, y);
+      if (pixel.a < 220) {
+        continue;
+      }
+
+      const diff = colorDistance(pixel, background);
+      if (diff < 22) {
+        continue;
+      }
+
+      coloredPixelCount += 1;
+      diffSum += diff;
+      const quantized = quantizeColor(pixel);
+      const key = `${quantized.r},${quantized.g},${quantized.b}`;
+      counts.set(key, (counts.get(key) || 0) + 1);
+    }
+  }
+
+  const winner = [...counts.entries()].sort((left, right) => right[1] - left[1])[0];
+  const dominantColor = winner
+    ? (() => {
+      const [r, g, b] = winner[0].split(',').map(Number);
+      return { r, g, b };
+    })()
+    : background;
+
+  return {
+    coloredPixelCount,
+    diffSum,
+    dominantColor,
+  };
+}
+
+async function resolveFavoriteHaloSignature(locator) {
+  return measureFavoriteHaloSignature(
+    decodePng(await locator.screenshot({ scale: 'css' })),
+  );
+}
+
 function fixtureImagePayload() {
   return {
     name: 'belluga-navigation-fixture.png',
@@ -226,6 +429,24 @@ async function assertNoBrowserFailures(collectors) {
     criticalConsoleErrors,
     `Critical console errors:\n${criticalConsoleErrors.join('\n')}`,
   ).toEqual([]);
+}
+
+async function disposeApiResponse(response) {
+  if (!response) {
+    return;
+  }
+
+  await response.dispose().catch(() => {});
+}
+
+function resetFailureCollectors(collectors) {
+  if (!collectors) {
+    return;
+  }
+
+  collectors.runtimeErrors.length = 0;
+  collectors.failedRequests.length = 0;
+  collectors.consoleErrors.length = 0;
 }
 
 async function assertAppBooted(page) {
@@ -441,7 +662,18 @@ async function loginTenantAdmin(api, baseUrl) {
   });
 }
 
-async function seedFlutterSecureStorage(context, session) {
+function normalizePayload(payload) {
+  if (payload?.data && typeof payload.data === 'object') {
+    return payload.data;
+  }
+  return payload;
+}
+
+function normalizeList(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+async function seedFlutterSecureStorage(context, entries) {
   await context.addInitScript(
     async ({ entries }) => {
       if (!['http:', 'https:'].includes(window.location.protocol)) {
@@ -520,11 +752,7 @@ async function seedFlutterSecureStorage(context, session) {
       }
     },
     {
-      entries: {
-        landlord_token: session.token,
-        landlord_user_id: session.userId,
-        active_mode: 'landlord',
-      },
+      entries,
     },
   );
 }
@@ -533,7 +761,11 @@ async function createAuthenticatedTenantAdminPage(browser, session) {
   const context = await browser.newContext({
     ignoreHTTPSErrors: true,
   });
-  await seedFlutterSecureStorage(context, session);
+  await seedFlutterSecureStorage(context, {
+    landlord_token: session.token,
+    landlord_user_id: session.userId,
+    active_mode: 'landlord',
+  });
   const page = await context.newPage();
   return { context, page };
 }
@@ -543,6 +775,219 @@ async function fetchPublicEnvironment(api, baseUrl) {
   expect(response.status(), 'Public environment payload must load.').toBe(200);
   const payload = await response.json();
   return payload?.data || payload;
+}
+
+async function createAnonymousIdentity(api, baseUrl, source) {
+  const fingerprintHash = crypto
+    .createHash('sha256')
+    .update(`${source}:${Date.now()}:${Math.random()}`)
+    .digest('hex');
+  const response = await api.post(
+    buildApiUrl(baseUrl, '/api/v1/anonymous/identities'),
+    {
+      headers: { Accept: 'application/json' },
+      data: {
+        device_name: `playwright-${source}`,
+        fingerprint: {
+          hash: fingerprintHash,
+          user_agent: `playwright-${source}`,
+          locale: 'pt-BR',
+        },
+        metadata: {
+          source,
+        },
+      },
+    },
+  );
+  expect(
+    [200, 201],
+    `Anonymous tenant identity bootstrap must succeed for ${source}. Status ${response.status()}`,
+  ).toContain(response.status());
+  const payload = normalizePayload(await response.json());
+  const token = payload?.token?.toString().trim() || '';
+  const userId = payload?.user_id?.toString().trim() || '';
+  expect(token, `${source} anonymous identity must return token.`).toBeTruthy();
+  expect(userId, `${source} anonymous identity must return user_id.`).toBeTruthy();
+  return { token, userId };
+}
+
+function liveOccurrenceWindow() {
+  const start = new Date(Date.now() - 30 * 60 * 1000);
+  const end = new Date(Date.now() + 90 * 60 * 1000);
+  return {
+    date_time_start: start.toISOString(),
+    date_time_end: end.toISOString(),
+  };
+}
+
+function futureOccurrenceWindow(daysFromNow) {
+  const start = new Date();
+  start.setDate(start.getDate() + daysFromNow);
+  start.setHours(20, 0, 0, 0);
+
+  const end = new Date(start);
+  end.setHours(end.getHours() + 2);
+
+  return {
+    date_time_start: start.toISOString(),
+    date_time_end: end.toISOString(),
+  };
+}
+
+async function createAccountProfileEvent(
+  api,
+  baseUrl,
+  token,
+  {
+    title,
+    eventType,
+    host,
+    occurrences,
+  },
+) {
+  const response = await api.post(
+    buildApiUrl(baseUrl, '/admin/api/v1/events'),
+    {
+      headers: authHeaders(token),
+      data: {
+        title,
+        content: `<p>${title}</p>`,
+        type: {
+          id: eventType.id,
+          name: eventType.name,
+          slug: eventType.slug,
+          description: eventType.description || 'Playwright favorites runtime event type',
+        },
+        location: {
+          mode: 'physical',
+        },
+        place_ref: {
+          type: 'account_profile',
+          id: host.profileId || host.id,
+        },
+        occurrences,
+        publication: {
+          status: 'published',
+          publish_at: new Date(Date.now() - 60 * 1000).toISOString(),
+        },
+      },
+    },
+  );
+  const payload = await response.json().catch(async () => ({
+    raw: await response.text().catch(() => ''),
+  }));
+  expect(
+    response.status(),
+    `Event ${title} must be created. Response: ${JSON.stringify(payload)}`,
+  ).toBe(201);
+  return normalizePayload(payload);
+}
+
+async function deleteEvent(api, baseUrl, token, eventId) {
+  if (!eventId) {
+    return;
+  }
+
+  await api.delete(
+    buildApiUrl(baseUrl, `/admin/api/v1/events/${eventId}`),
+    {
+      headers: authHeaders(token),
+      failOnStatusCode: false,
+    },
+  );
+}
+
+async function favoriteAccountProfile(api, baseUrl, token, profileId) {
+  const response = await api.post(
+    buildApiUrl(baseUrl, '/api/v1/favorites'),
+    {
+      headers: authHeaders(token),
+      data: {
+        target_id: profileId,
+        registry_key: 'account_profile',
+        target_type: 'account_profile',
+      },
+    },
+  );
+  expect(response.status(), `Favorite mutation must succeed for ${profileId}.`).toBe(200);
+  return response.json();
+}
+
+async function unfavoriteAccountProfile(api, baseUrl, token, profileId) {
+  if (!profileId) {
+    return;
+  }
+
+  const response = await api.delete(
+    buildApiUrl(baseUrl, '/api/v1/favorites'),
+    {
+      headers: authHeaders(token),
+      data: {
+        target_id: profileId,
+        registry_key: 'account_profile',
+        target_type: 'account_profile',
+      },
+      failOnStatusCode: false,
+    },
+  );
+  expect(
+    [200, 404],
+    `Favorite cleanup must succeed for ${profileId}.`,
+  ).toContain(response.status());
+}
+
+async function fetchFavoritesForIdentity(api, baseUrl, token) {
+  const response = await api.get(
+    buildApiUrl(
+      baseUrl,
+      '/api/v1/favorites?page=1&page_size=10&registry_key=account_profile&target_type=account_profile',
+    ),
+    {
+      headers: authHeaders(token),
+    },
+  );
+  expect(response.status(), 'Favorites index must load for runtime readback.').toBe(200);
+  return normalizePayload(await response.json());
+}
+
+async function fetchPublicProfile(api, baseUrl, token, profileSlug) {
+  await expect
+    .poll(
+      async () => {
+        const response = await api.get(
+          buildApiUrl(baseUrl, `/api/v1/account_profiles/${profileSlug}`),
+          {
+            headers: authHeaders(token),
+            failOnStatusCode: false,
+          },
+        );
+        return response.status();
+      },
+      {
+        timeout: appBootTimeoutMs,
+        message: `Public account profile ${profileSlug} must hydrate before runtime readback.`,
+      },
+    )
+    .toBe(200);
+
+  const response = await api.get(
+    buildApiUrl(baseUrl, `/api/v1/account_profiles/${profileSlug}`),
+    {
+      headers: authHeaders(token),
+    },
+  );
+  expect(response.status(), 'Public account profile readback must succeed.').toBe(200);
+  return normalizePayload(await response.json());
+}
+
+async function continueWithoutLocationIfPrompted(page) {
+  const continueButton = page.getByRole('button', {
+    name: /Continuar sem localizacao|Continuar sem localização/i,
+  });
+  if (!(await continueButton.count())) {
+    return;
+  }
+  await continueButton.first().click();
 }
 
 async function resolveImageCapableProfileType(
@@ -704,6 +1149,14 @@ async function createAccountProfileForType(
   return {
     accountSlug: created?.data?.account?.slug,
     profileId: created?.data?.account_profile?.id,
+    profileSlug:
+      created?.data?.account_profile?.slug ||
+      created?.data?.account?.slug ||
+      '',
+    displayName:
+      created?.data?.account_profile?.display_name ||
+      created?.data?.account?.name ||
+      name,
   };
 }
 
@@ -856,6 +1309,23 @@ async function createAccountProfileType(
   );
   expect(response.status(), `Account profile type ${type} must be created.`).toBe(
     201,
+  );
+  return response.json();
+}
+
+async function updateAccountProfileType(api, baseUrl, token, type, payload) {
+  const response = await api.patch(
+    buildApiUrl(
+      baseUrl,
+      `/admin/api/v1/account_profile_types/${encodeURIComponent(type)}`,
+    ),
+    {
+      headers: authHeaders(token),
+      data: payload,
+    },
+  );
+  expect(response.status(), `Account profile type ${type} must be updated.`).toBe(
+    200,
   );
   return response.json();
 }
@@ -1230,6 +1700,7 @@ test('@mutation tenant-admin account-profile cover upload persists and renders a
 
     const coverResponse = await api.get(coverUrl, { failOnStatusCode: false });
     expect(coverResponse.status(), 'Persisted cover URL must be readable.').toBeLessThan(400);
+    await disposeApiResponse(coverResponse);
 
     const verificationPage = await browserContext.newPage();
     const verificationCollectors = installFailureCollectors(verificationPage);
@@ -1359,6 +1830,7 @@ test('@mutation tenant-admin account-profile avatar upload persists and renders 
 
     const avatarResponse = await api.get(avatarUrl, { failOnStatusCode: false });
     expect(avatarResponse.status(), 'Persisted avatar URL must be readable.').toBeLessThan(400);
+    await disposeApiResponse(avatarResponse);
 
     const verificationPage = await browserContext.newPage();
     const verificationCollectors = installFailureCollectors(verificationPage);
@@ -1409,6 +1881,1185 @@ test('@mutation tenant-admin account-profile avatar upload persists and renders 
       await freshBrowser.close().catch(() => {});
     }
     await api.dispose();
+  }
+});
+
+test('@mutation tenant-admin account-profile gallery groups persist and render in the public modal', async ({
+  browser,
+}) => {
+  const baseUrl = requireTenantUrl();
+  const api = await createApiContext(baseUrl);
+  let browserContext;
+  let freshBrowser;
+  let publicContext;
+  let session = null;
+  let accountSlug = null;
+  let profileId = null;
+  let profileSlug = '';
+  let profileTypeKey = null;
+  let primaryError = null;
+
+  try {
+    session = await loginTenantAdmin(api, baseUrl);
+    const unique = Date.now();
+    const createdProfileType = (
+      await createAccountProfileType(api, baseUrl, session.token, {
+        type: `pw-gallery-${unique}`,
+        label: `PW Gallery ${unique}`,
+        allowedTaxonomies: [],
+        markerColor: '#0E7A6A',
+        capabilities: {
+          is_favoritable: false,
+          is_publicly_discoverable: true,
+          is_publicly_navigable: true,
+          has_content: true,
+          has_gallery: true,
+          has_avatar: false,
+          has_cover: false,
+          has_taxonomies: false,
+        },
+      })
+    )?.data;
+    profileTypeKey = createdProfileType?.type?.toString() || '';
+    expect(profileTypeKey, 'Gallery profile type must be created.').toBeTruthy();
+
+    const createdProfile = await createAccountProfileForType(
+      api,
+      baseUrl,
+      session.token,
+      {
+        name: `PW Gallery Profile ${unique}`,
+        profileType: createdProfileType,
+      },
+    );
+    accountSlug = createdProfile.accountSlug;
+    profileId = createdProfile.profileId?.toString() || null;
+    profileSlug = createdProfile.profileSlug?.toString() || '';
+    expect(accountSlug, 'Gallery onboarding must return account slug.').toBeTruthy();
+    expect(profileId, 'Gallery onboarding must return profile id.').toBeTruthy();
+    expect(profileSlug, 'Gallery onboarding must return public profile slug.').toBeTruthy();
+
+    const editUrl = buildApiUrl(
+      baseUrl,
+      `/admin/accounts/${accountSlug}/profiles/${profileId}/edit`,
+    );
+    const groupSubtitle = `Ambiente ${unique}`;
+    const photoDescription = `Vista para o palco ${unique}`;
+
+    const pageBundle = await createFreshAuthenticatedTenantAdminPage(session);
+    freshBrowser = pageBundle.browser;
+    browserContext = pageBundle.context;
+    const page = pageBundle.page;
+    const collectors = installFailureCollectors(page);
+
+    const response = await page.goto(editUrl, {
+      waitUntil: 'domcontentloaded',
+    });
+    expect(response, 'Gallery edit response should be available.').not.toBeNull();
+    expect(response.status()).toBeLessThan(400);
+    await assertAppBooted(page);
+    await enableAccessibilityIfNeeded(page);
+
+    await scrollUntilVisible(
+      page,
+      page.getByText('Galerias de fotos'),
+      'Expected gallery section for a content-capable account profile.',
+    );
+    await page.getByRole('button', { name: 'Adicionar grupo de fotos' }).click();
+    await fillFlutterTextField(page, 'Subtítulo do agrupamento', groupSubtitle);
+    await attachImageFromDevice(page, {
+      flow: 'gallery',
+      buttonName: 'Adicionar foto',
+      cropTitle: 'Ajustar foto da galeria',
+    });
+    await page.getByRole('button', { name: 'Usar' }).click();
+    await fillFlutterTextField(page, 'Descrição da foto', photoDescription);
+
+    const profileSaveResponsePromise = page.waitForResponse((candidate) => {
+      return (
+        candidate.request().method() === 'PATCH' &&
+        candidate.url().includes(`/admin/api/v1/account_profiles/${profileId}`) &&
+        candidate.status() < 400
+      );
+    });
+    const gallerySaveResponsePromise = page.waitForResponse((candidate) => {
+      return (
+        candidate.request().method() === 'POST' &&
+        candidate.url().includes(`/admin/api/v1/account_profiles/${profileId}/gallery`) &&
+        candidate.status() < 400
+      );
+    });
+    await clickSaveChanges(page);
+    await profileSaveResponsePromise;
+    const gallerySaveResponse = await gallerySaveResponsePromise;
+    const gallerySavePayload = normalizePayload(await gallerySaveResponse.json());
+    const savedGroups = normalizeList(gallerySavePayload?.gallery_groups);
+    expect(savedGroups).toHaveLength(1);
+    expect(savedGroups[0]?.subtitle).toBe(groupSubtitle);
+    expect(savedGroups[0]?.items?.[0]?.description).toBe(photoDescription);
+    expect(savedGroups[0]?.items?.[0]?.modal_url).toBeTruthy();
+
+    const anonymousIdentity = await createAnonymousIdentity(
+      api,
+      baseUrl,
+      'tenant-admin-gallery-public',
+    );
+    let publicProfile = null;
+    await expect
+      .poll(
+        async () => {
+          const publicProfileResponse = await api.get(
+            buildApiUrl(baseUrl, `/api/v1/account_profiles/${profileSlug}`),
+            {
+              headers: authHeaders(anonymousIdentity.token),
+              failOnStatusCode: false,
+            },
+          );
+          const status = publicProfileResponse.status();
+          if (status !== 200) {
+            await disposeApiResponse(publicProfileResponse);
+            return ['', '', false];
+          }
+
+          publicProfile = normalizePayload(await publicProfileResponse.json());
+          await disposeApiResponse(publicProfileResponse);
+          const publicGroup = normalizeList(publicProfile?.gallery_groups)[0];
+          const publicItem = normalizeList(publicGroup?.items)[0];
+
+          return [
+            publicGroup?.subtitle?.toString() || '',
+            publicItem?.description?.toString() || '',
+            Boolean(publicItem?.modal_url),
+          ];
+        },
+        {
+          timeout: appBootTimeoutMs,
+          message:
+            'Public gallery projection must settle with the grouped subtitle, description, and modal URL before runtime validation.',
+        },
+      )
+      .toEqual([groupSubtitle, photoDescription, true]);
+
+    const publicGroup = normalizeList(publicProfile?.gallery_groups)[0];
+    const publicItem = normalizeList(publicGroup?.items)[0];
+    const publicModalUrlPath = publicItem?.modal_url?.toString() || '';
+    expect(
+      publicModalUrlPath,
+      'Public gallery projection must expose a modal URL for runtime validation.',
+    ).toBeTruthy();
+    const publicModalUrl = resolveAbsoluteUrl(baseUrl, publicModalUrlPath);
+    const publicModalResponse = await api.get(publicModalUrl, {
+      failOnStatusCode: false,
+    });
+    expect(
+      publicModalResponse.status(),
+      'Public gallery modal URL must be directly readable once projection settles.',
+    ).toBeLessThan(400);
+    await disposeApiResponse(publicModalResponse);
+
+    publicContext = await browser.newContext({
+      ignoreHTTPSErrors: true,
+    });
+    await seedFlutterSecureStorage(publicContext, {
+      user_token: anonymousIdentity.token,
+      user_id: anonymousIdentity.userId,
+    });
+    const publicPage = await publicContext.newPage();
+    const publicCollectors = installFailureCollectors(publicPage);
+    const modalImageStatuses = [];
+
+    publicPage.on('response', (candidate) => {
+      if (urlsMatchIgnoringQuery(candidate.url(), publicModalUrl)) {
+        modalImageStatuses.push(candidate.status());
+      }
+    });
+
+    const publicResponse = await publicPage.goto(
+      buildApiUrl(baseUrl, `/parceiro/${profileSlug}`),
+      { waitUntil: 'domcontentloaded' },
+    );
+    expect(publicResponse, 'Public gallery detail response should be available.').not.toBeNull();
+    expect(publicResponse.status()).toBeLessThan(400);
+    await assertAppBooted(publicPage);
+    await enableAccessibilityIfNeeded(publicPage);
+
+    await scrollUntilVisible(
+      publicPage,
+      publicPage.getByText(groupSubtitle, { exact: true }),
+      'Expected public grouped gallery subtitle to render.',
+    );
+    modalImageStatuses.length = 0;
+    await publicPage.getByRole('button', {
+      name: `Abrir foto da galeria ${groupSubtitle}: ${photoDescription}`,
+    }).click();
+    await expect
+      .poll(() => modalImageStatuses.some((status) => status === 200), {
+        timeout: appBootTimeoutMs,
+        message: 'Expected the public gallery modal image request to succeed.',
+      })
+      .toBeTruthy();
+    await expect(publicPage.getByText(photoDescription, { exact: true }))
+      .toBeVisible({ timeout: appBootTimeoutMs });
+    await publicPage.getByRole('button', { name: /Fechar galeria/i }).click();
+    await expect(publicPage.getByText(photoDescription, { exact: true }))
+      .toHaveCount(0, { timeout: appBootTimeoutMs });
+
+    await assertNoBrowserFailures(collectors);
+    await assertNoBrowserFailures(publicCollectors);
+  } catch (error) {
+    primaryError = error;
+    throw error;
+  } finally {
+    await runCleanupPreservingPrimaryError(primaryError, async () => {
+      try {
+        await runCleanupSteps([
+          accountSlug
+            ? () => cleanupOnboardedAccount(api, baseUrl, session?.token, accountSlug)
+            : null,
+          profileTypeKey
+            ? () => deleteAccountProfileType(api, baseUrl, session?.token, profileTypeKey)
+            : null,
+        ]);
+      } finally {
+        if (publicContext) {
+          await publicContext.close().catch(() => {});
+        }
+        if (browserContext) {
+          await browserContext.close().catch(() => {});
+        }
+        if (freshBrowser) {
+          await freshBrowser.close().catch(() => {});
+        }
+        await api.dispose();
+      }
+    });
+  }
+});
+
+test('@mutation tenant-admin gallery data stays dormant when has_gallery is disabled', async ({
+  browser,
+}) => {
+  const baseUrl = requireTenantUrl();
+  const api = await createApiContext(baseUrl);
+  let browserContext;
+  let freshBrowser;
+  let publicContext;
+  let session = null;
+  let accountSlug = null;
+  let profileId = null;
+  let profileSlug = '';
+  let profileTypeKey = null;
+  let primaryError = null;
+
+  try {
+    session = await loginTenantAdmin(api, baseUrl);
+    const unique = Date.now();
+    logStep('gallery-dormant', `seed start ${unique}`);
+    const createdProfileType = (
+      await createAccountProfileType(api, baseUrl, session.token, {
+        type: `pw-gallery-cap-${unique}`,
+        label: `PW Gallery Cap ${unique}`,
+        allowedTaxonomies: [],
+        markerColor: '#136F63',
+        capabilities: {
+          is_favoritable: false,
+          is_publicly_discoverable: true,
+          is_publicly_navigable: true,
+          has_content: true,
+          has_gallery: true,
+          has_avatar: false,
+          has_cover: false,
+          has_taxonomies: false,
+        },
+      })
+    )?.data;
+    profileTypeKey = createdProfileType?.type?.toString() || '';
+    expect(profileTypeKey, 'Gallery capability profile type must be created.').toBeTruthy();
+
+    const createdProfile = await createAccountProfileForType(
+      api,
+      baseUrl,
+      session.token,
+      {
+        name: `PW Gallery Capability Profile ${unique}`,
+        profileType: createdProfileType,
+      },
+    );
+    accountSlug = createdProfile.accountSlug;
+    profileId = createdProfile.profileId?.toString() || null;
+    profileSlug = createdProfile.profileSlug?.toString() || '';
+    expect(accountSlug, 'Gallery capability onboarding must return account slug.').toBeTruthy();
+    expect(profileId, 'Gallery capability onboarding must return profile id.').toBeTruthy();
+    expect(
+      profileSlug,
+      'Gallery capability onboarding must return public profile slug.',
+    ).toBeTruthy();
+
+    const editUrl = buildApiUrl(
+      baseUrl,
+      `/admin/accounts/${accountSlug}/profiles/${profileId}/edit`,
+    );
+    const groupSubtitle = `Dormant ${unique}`;
+    const photoDescription = `Gallery dormant proof ${unique}`;
+
+    const pageBundle = await createFreshAuthenticatedTenantAdminPage(session);
+    freshBrowser = pageBundle.browser;
+    browserContext = pageBundle.context;
+    const page = pageBundle.page;
+    const collectors = installFailureCollectors(page);
+
+    const response = await page.goto(editUrl, {
+      waitUntil: 'domcontentloaded',
+    });
+    expect(response, 'Gallery capability edit response should be available.').not.toBeNull();
+    expect(response.status()).toBeLessThan(400);
+    await assertAppBooted(page);
+    await enableAccessibilityIfNeeded(page);
+
+    await scrollUntilVisible(
+      page,
+      page.getByText('Galerias de fotos'),
+      'Expected gallery section for a gallery-enabled account profile.',
+    );
+    await page.getByRole('button', { name: 'Adicionar grupo de fotos' }).click();
+    await fillFlutterTextField(page, 'Subtítulo do agrupamento', groupSubtitle);
+    await attachImageFromDevice(page, {
+      flow: 'gallery',
+      buttonName: 'Adicionar foto',
+      cropTitle: 'Ajustar foto da galeria',
+    });
+    await page.getByRole('button', { name: 'Usar' }).click();
+    await fillFlutterTextField(page, 'Descrição da foto', photoDescription);
+
+    const profileSaveResponsePromise = page.waitForResponse((candidate) => {
+      return (
+        candidate.request().method() === 'PATCH' &&
+        candidate.url().includes(`/admin/api/v1/account_profiles/${profileId}`) &&
+        candidate.status() < 400
+      );
+    });
+    const gallerySaveResponsePromise = page.waitForResponse((candidate) => {
+      return (
+        candidate.request().method() === 'POST' &&
+        candidate.url().includes(`/admin/api/v1/account_profiles/${profileId}/gallery`) &&
+        candidate.status() < 400
+      );
+    });
+    await clickSaveChanges(page);
+    await profileSaveResponsePromise;
+    const gallerySaveResponse = await gallerySaveResponsePromise;
+    const gallerySavePayload = normalizePayload(await gallerySaveResponse.json());
+    const savedGroups = normalizeList(gallerySavePayload?.gallery_groups);
+    expect(savedGroups).toHaveLength(1);
+    const savedGroup = savedGroups[0];
+    expect(savedGroup?.subtitle).toBe(groupSubtitle);
+    const savedItems = normalizeList(savedGroup?.items);
+    expect(savedItems).toHaveLength(1);
+    const savedItem = savedItems[0];
+    expect(savedItem?.description).toBe(photoDescription);
+    const savedItemModalUrl = savedItem?.modal_url?.toString() || '';
+    expect(
+      savedItemModalUrl,
+      'Gallery save response must expose a public modal URL for the saved item.',
+    ).toBeTruthy();
+
+    const disabledTypePayload = await updateAccountProfileType(
+      api,
+      baseUrl,
+      session.token,
+      profileTypeKey,
+      {
+        capabilities: {
+          has_gallery: false,
+        },
+      },
+    );
+    expect(
+      disabledTypePayload?.data?.capabilities?.has_gallery,
+      'Account profile type update must disable has_gallery.',
+    ).toBe(false);
+
+    const rejectedGalleryResponse = await api.post(
+      buildApiUrl(baseUrl, `/admin/api/v1/account_profiles/${profileId}/gallery`),
+      {
+        headers: authHeaders(session.token),
+        failOnStatusCode: false,
+        multipart: {
+          _method: 'PATCH',
+          gallery_groups: JSON.stringify([
+            {
+              group_id: savedGroup?.group_id,
+              subtitle: savedGroup?.subtitle,
+              order: savedGroup?.order,
+              items: [
+                {
+                  item_id: savedItem?.item_id,
+                  description: savedItem?.description,
+                  order: savedItem?.order,
+                },
+              ],
+            },
+          ]),
+        },
+      },
+    );
+    expect(
+      rejectedGalleryResponse.status(),
+      'Disabled gallery capability must reject gallery mutations.',
+    ).toBe(422);
+    const rejectedGalleryPayload = await rejectedGalleryResponse.json();
+    expect(
+      rejectedGalleryPayload?.errors?.gallery_groups,
+      'Disabled gallery mutation must report a gallery_groups validation error.',
+    ).toBeTruthy();
+    await disposeApiResponse(rejectedGalleryResponse);
+    const rejectedGalleryMediaResponse = await api.get(savedItemModalUrl, {
+      failOnStatusCode: false,
+    });
+    expect(
+      rejectedGalleryMediaResponse.status(),
+      'Disabled gallery capability must also suppress direct public gallery media access.',
+    ).toBe(404);
+    await disposeApiResponse(rejectedGalleryMediaResponse);
+    logStep(
+      'gallery-dormant',
+      `gallery mutation rejected and media suppressed for ${profileTypeKey}`,
+    );
+    logStep('gallery-dormant', 'wait for admin API catalog readback has_gallery=false');
+    await expect
+      .poll(
+        async () => {
+          const profileTypeReadback = await fetchAccountProfileTypeListEntry(
+            api,
+            baseUrl,
+            session.token,
+            profileTypeKey,
+          );
+          const hasGallery = profileTypeReadback?.capabilities?.has_gallery ?? null;
+          logStep(
+            'gallery-dormant',
+            `admin API catalog readback has_gallery=${hasGallery}`,
+          );
+          return hasGallery;
+        },
+        {
+          timeout: appBootTimeoutMs,
+          message: 'Expected account profile type catalog readback to refresh has_gallery=false before reopening the admin edit form.',
+        },
+      )
+      .toBe(false);
+
+    await assertNoBrowserFailures(collectors);
+    resetFailureCollectors(collectors);
+
+    const anonymousIdentity = await createAnonymousIdentity(
+      api,
+      baseUrl,
+      'tenant-admin-gallery-disabled-public',
+    );
+    logStep('gallery-dormant', 'wait for public projection to suppress gallery groups');
+    await expect
+      .poll(
+        async () => {
+          const publicProfileResponse = await api.get(
+            buildApiUrl(baseUrl, `/api/v1/account_profiles/${profileSlug}`),
+            {
+              headers: authHeaders(anonymousIdentity.token),
+              failOnStatusCode: false,
+            },
+          );
+          const status = publicProfileResponse.status();
+          let groupCount = -1;
+          if (status === 200) {
+            const publicProfile = normalizePayload(
+              await publicProfileResponse.json(),
+            );
+            groupCount = normalizeList(publicProfile?.gallery_groups).length;
+          }
+          await disposeApiResponse(publicProfileResponse);
+          logStep(
+            'gallery-dormant',
+            `public projection status=${status} gallery_groups=${groupCount}`,
+          );
+          return [status, groupCount];
+        },
+        {
+          timeout: appBootTimeoutMs,
+          message: 'Expected public gallery readback to stay suppressed when has_gallery=false.',
+        },
+      )
+      .toEqual([200, 0]);
+    logStep(
+      'gallery-dormant',
+      'wait for fresh admin edit sessions to stop rendering the gallery section',
+    );
+    await expect
+      .poll(
+        async () => {
+          const probeBundle = await createFreshAuthenticatedTenantAdminPage(
+            session,
+          );
+          try {
+            const probeResponse = await probeBundle.page.goto(editUrl, {
+              waitUntil: 'domcontentloaded',
+            });
+            if (!probeResponse || probeResponse.status() >= 400) {
+              logStep(
+                'gallery-dormant',
+                `fresh admin probe returned status=${probeResponse?.status() ?? 'null'}`,
+              );
+              return 1;
+            }
+            await assertAppBooted(probeBundle.page);
+            await enableAccessibilityIfNeeded(probeBundle.page);
+            await probeBundle.page.waitForTimeout(1200);
+            const browserCatalog = await probeBundle.page.evaluate(
+              async ({ token, typeKey }) => {
+                const response = await fetch(
+                  '/admin/api/v1/account_profile_types?page=1&page_size=500',
+                  {
+                    headers: {
+                      Authorization: `Bearer ${token}`,
+                      Accept: 'application/json',
+                    },
+                  },
+                );
+                const payload = await response.json().catch(() => ({}));
+                const rows = Array.isArray(payload?.data) ? payload.data : [];
+                const entry =
+                  rows.find((row) => row?.type?.toString() === typeKey) || null;
+                return {
+                  status: response.status,
+                  hasGallery: entry?.capabilities?.has_gallery ?? null,
+                };
+              },
+              {
+                token: session.token,
+                typeKey: profileTypeKey,
+              },
+            );
+            const galleryCount =
+              await probeBundle.page.getByText('Galerias de fotos').count();
+            logStep(
+              'gallery-dormant',
+              `fresh admin probe catalogStatus=${browserCatalog.status} has_gallery=${browserCatalog.hasGallery} uiGalleryCount=${galleryCount}`,
+            );
+            return galleryCount;
+          } finally {
+            await probeBundle.context.close().catch(() => {});
+            await probeBundle.browser.close().catch(() => {});
+          }
+        },
+        {
+          timeout: appBootTimeoutMs,
+          message: 'Expected fresh admin edit sessions to stop rendering the gallery section after has_gallery=false propagates.',
+        },
+      )
+      .toBe(0);
+
+    publicContext = await browser.newContext({
+      ignoreHTTPSErrors: true,
+    });
+    await seedFlutterSecureStorage(publicContext, {
+      user_token: anonymousIdentity.token,
+      user_id: anonymousIdentity.userId,
+    });
+    const publicPage = await publicContext.newPage();
+    const publicCollectors = installFailureCollectors(publicPage);
+
+    const publicResponse = await publicPage.goto(
+      buildApiUrl(baseUrl, `/parceiro/${profileSlug}`),
+      { waitUntil: 'domcontentloaded' },
+    );
+    expect(
+      publicResponse,
+      'Public disabled-gallery detail response should be available.',
+    ).not.toBeNull();
+    expect(publicResponse.status()).toBeLessThan(400);
+    await assertAppBooted(publicPage);
+    await enableAccessibilityIfNeeded(publicPage);
+    logStep('gallery-dormant', 'wait for final public page to converge without gallery content');
+    await expect
+      .poll(
+        async () => publicPage.getByText(groupSubtitle, { exact: true }).count(),
+        {
+          timeout: appBootTimeoutMs,
+          message:
+            'Expected the final public page to stop rendering the gallery subtitle after runtime convergence.',
+        },
+      )
+      .toBe(0);
+    await expect
+      .poll(
+        async () =>
+          publicPage
+            .getByRole('button', {
+              name: `Abrir foto da galeria ${groupSubtitle}: ${photoDescription}`,
+            })
+            .count(),
+        {
+          timeout: appBootTimeoutMs,
+          message:
+            'Expected the final public page to remove the gallery modal trigger after runtime convergence.',
+        },
+      )
+      .toBe(0);
+
+    await assertNoBrowserFailures(collectors);
+    await assertNoBrowserFailures(publicCollectors);
+  } catch (error) {
+    primaryError = error;
+    throw error;
+  } finally {
+    await runCleanupPreservingPrimaryError(primaryError, async () => {
+      try {
+        await runCleanupSteps([
+          accountSlug
+            ? () => cleanupOnboardedAccount(api, baseUrl, session?.token, accountSlug)
+            : null,
+          profileTypeKey
+            ? () => deleteAccountProfileType(api, baseUrl, session?.token, profileTypeKey)
+            : null,
+        ]);
+      } finally {
+        if (publicContext) {
+          await publicContext.close().catch(() => {});
+        }
+        if (browserContext) {
+          await browserContext.close().catch(() => {});
+        }
+        if (freshBrowser) {
+          await freshBrowser.close().catch(() => {});
+        }
+        await api.dispose();
+      }
+    });
+  }
+});
+
+test('@mutation home favorites preserve backend order and expose event status halos', async ({
+  browser,
+}) => {
+  const baseUrl = requireTenantUrl();
+  const api = await createApiContext(baseUrl);
+  let publicContext;
+  let fallbackPublicContext;
+  let session = null;
+  let anonymousIdentity = null;
+  let fallbackOnlyIdentity = null;
+  let profileTypeKey = null;
+  let eventTypeId = null;
+  const createdEvents = [];
+  const createdFavoriteProfileIds = [];
+  const createdFallbackFavoriteProfileIds = [];
+  const createdAccountSlugs = [];
+  let primaryError = null;
+
+  try {
+    session = await loginTenantAdmin(api, baseUrl);
+    const unique = Date.now();
+    const createdProfileType = (
+      await createAccountProfileType(api, baseUrl, session.token, {
+        type: `pw-favorites-${unique}`,
+        label: `PW Favorites ${unique}`,
+        allowedTaxonomies: [],
+        markerColor: '#225588',
+        capabilities: {
+          is_favoritable: true,
+          is_publicly_discoverable: true,
+          is_publicly_navigable: true,
+          is_poi_enabled: true,
+          has_events: true,
+          has_content: false,
+          has_avatar: false,
+          has_cover: false,
+          has_taxonomies: false,
+        },
+      })
+    )?.data;
+    profileTypeKey = createdProfileType?.type?.toString() || '';
+    expect(profileTypeKey, 'Favorites profile type must be created.').toBeTruthy();
+
+    // Create fixtures out of the eventual runtime order so the UI assertion
+    // catches unintended client-side sorting by title or creation time.
+    const fallbackProfile = await createAccountProfileForType(
+      api,
+      baseUrl,
+      session.token,
+      {
+        name: `Zulu Fav Fallback ${unique}`,
+        profileType: createdProfileType,
+      },
+    );
+    const upcomingLaterProfile = await createAccountProfileForType(
+      api,
+      baseUrl,
+      session.token,
+      {
+        name: `Bravo Fav Later ${unique}`,
+        profileType: createdProfileType,
+      },
+    );
+    const liveProfile = await createAccountProfileForType(
+      api,
+      baseUrl,
+      session.token,
+      {
+        name: `Lima Fav Live ${unique}`,
+        profileType: createdProfileType,
+      },
+    );
+    const upcomingSoonProfile = await createAccountProfileForType(
+      api,
+      baseUrl,
+      session.token,
+      {
+        name: `Echo Fav Soon ${unique}`,
+        profileType: createdProfileType,
+      },
+    );
+    createdAccountSlugs.push(
+      liveProfile.accountSlug,
+      upcomingSoonProfile.accountSlug,
+      upcomingLaterProfile.accountSlug,
+      fallbackProfile.accountSlug,
+    );
+
+    const createdEventType = await createEventType(api, baseUrl, session.token, {
+      name: `PW Favorites Event ${unique}`,
+      slug: `pw-favorites-event-${unique}`,
+      allowedTaxonomies: [],
+      icon: 'music_note',
+      color: '#B51E5B',
+    });
+    eventTypeId = createdEventType?.data?.id?.toString() || null;
+    expect(eventTypeId, 'Favorites event type must be created.').toBeTruthy();
+
+    const upcomingLaterEvent = await createAccountProfileEvent(
+      api,
+      baseUrl,
+      session.token,
+      {
+        title: `PW Favorites Later ${unique}`,
+        eventType: createdEventType.data,
+        host: upcomingLaterProfile,
+        occurrences: [futureOccurrenceWindow(3)],
+      },
+    );
+    const liveEvent = await createAccountProfileEvent(
+      api,
+      baseUrl,
+      session.token,
+      {
+        title: `PW Favorites Live ${unique}`,
+        eventType: createdEventType.data,
+        host: liveProfile,
+        occurrences: [liveOccurrenceWindow()],
+      },
+    );
+    const upcomingSoonEvent = await createAccountProfileEvent(
+      api,
+      baseUrl,
+      session.token,
+      {
+        title: `PW Favorites Soon ${unique}`,
+        eventType: createdEventType.data,
+        host: upcomingSoonProfile,
+        occurrences: [futureOccurrenceWindow(1)],
+      },
+    );
+    createdEvents.push(
+      liveEvent?.event_id?.toString() || '',
+      upcomingSoonEvent?.event_id?.toString() || '',
+      upcomingLaterEvent?.event_id?.toString() || '',
+    );
+
+    anonymousIdentity = await createAnonymousIdentity(
+      api,
+      baseUrl,
+      'tenant-home-favorites',
+    );
+    createdFavoriteProfileIds.push(
+      fallbackProfile.profileId,
+      upcomingLaterProfile.profileId,
+      liveProfile.profileId,
+      upcomingSoonProfile.profileId,
+    );
+    await favoriteAccountProfile(api, baseUrl, anonymousIdentity.token, fallbackProfile.profileId);
+    await favoriteAccountProfile(api, baseUrl, anonymousIdentity.token, upcomingLaterProfile.profileId);
+    await favoriteAccountProfile(api, baseUrl, anonymousIdentity.token, liveProfile.profileId);
+    await favoriteAccountProfile(api, baseUrl, anonymousIdentity.token, upcomingSoonProfile.profileId);
+    logStep('favorites', 'favorites seeded for anonymous identity');
+
+    const expectedIds = [
+      liveProfile.profileId?.toString(),
+      upcomingSoonProfile.profileId?.toString(),
+      upcomingLaterProfile.profileId?.toString(),
+      fallbackProfile.profileId?.toString(),
+    ];
+    await expect
+      .poll(
+        async () => {
+          const payload = await fetchFavoritesForIdentity(
+            api,
+            baseUrl,
+            anonymousIdentity.token,
+          );
+          return normalizeList(payload?.items).map((item) =>
+            item?.target_id?.toString() || '',
+          );
+        },
+        {
+          timeout: appBootTimeoutMs,
+          message:
+            'Favorites API must settle into the canonical live-now -> upcoming -> fallback order before runtime UI validation.',
+        },
+      )
+      .toEqual(expectedIds);
+    logStep('favorites', 'favorites API reached canonical order');
+
+    const favoritesPayload = await fetchFavoritesForIdentity(
+      api,
+      baseUrl,
+      anonymousIdentity.token,
+    );
+    const favoriteItems = normalizeList(favoritesPayload?.items);
+    const liveFavoritePayload = favoriteItems.find(
+      (item) => item?.target_id?.toString() === liveProfile.profileId?.toString(),
+    );
+    const fallbackFavoritePayload = favoriteItems.find(
+      (item) => item?.target_id?.toString() === fallbackProfile.profileId?.toString(),
+    );
+    const liveTargetPath =
+      liveFavoritePayload?.navigation?.target_path?.toString() || '';
+    const fallbackTargetPath =
+      fallbackFavoritePayload?.navigation?.target_path?.toString() || '';
+    expect(
+      liveFavoritePayload?.navigation?.kind,
+      'Live favorite must expose canonical event navigation in /favorites payload.',
+    ).toBe('event');
+    expect(
+      liveFavoritePayload?.navigation?.event_target_path,
+      'Live favorite must expose explicit event_target_path in /favorites payload.',
+    ).toBe(liveTargetPath);
+    expect(
+      liveFavoritePayload?.navigation?.event_occurrence_id?.toString() || '',
+      'Live favorite must expose event_occurrence_id in /favorites payload.',
+    ).toBeTruthy();
+    expect(
+      fallbackFavoritePayload?.navigation?.kind,
+      'Fallback favorite must keep canonical account-profile navigation in /favorites payload.',
+    ).toBe('account_profile');
+    expect(
+      fallbackFavoritePayload?.navigation?.profile_target_path,
+      'Fallback favorite must expose profile_target_path in /favorites payload.',
+    ).toBe(fallbackTargetPath);
+    expect(liveTargetPath, 'Live favorite target_path must be present.').toBeTruthy();
+    expect(
+      fallbackTargetPath,
+      'Fallback favorite target_path must be present.',
+    ).toBeTruthy();
+
+    publicContext = await browser.newContext({
+      ignoreHTTPSErrors: true,
+      geolocation: {
+        latitude: -20.671339,
+        longitude: -40.495395,
+      },
+      permissions: ['geolocation'],
+    });
+    await seedFlutterSecureStorage(publicContext, {
+      user_token: anonymousIdentity.token,
+      user_id: anonymousIdentity.userId,
+    });
+    const publicPage = await publicContext.newPage();
+    const collectors = installFailureCollectors(publicPage);
+    logStep('favorites', 'public context created');
+
+    const response = await publicPage.goto(buildApiUrl(baseUrl, '/'), {
+      waitUntil: 'domcontentloaded',
+    });
+    expect(response, 'Home response should be available.').not.toBeNull();
+    expect(response.status()).toBeLessThan(400);
+    await assertAppBooted(publicPage);
+    await enableAccessibilityIfNeeded(publicPage);
+    await continueWithoutLocationIfPrompted(publicPage);
+    logStep('favorites', 'public home booted');
+
+    const liveChipLabel = `${liveProfile.displayName}, TOCANDO AGORA`;
+    const upcomingSoonChipLabel = `${upcomingSoonProfile.displayName}, TEM EVENTO`;
+    const upcomingLaterChipLabel = `${upcomingLaterProfile.displayName}, TEM EVENTO`;
+    const fallbackChipLabel = fallbackProfile.displayName;
+
+    const liveChip = publicPage.getByRole('button', { name: liveChipLabel }).first();
+    const upcomingSoonChip = publicPage.getByRole('button', { name: upcomingSoonChipLabel }).first();
+    const upcomingLaterChip = publicPage.getByRole('button', { name: upcomingLaterChipLabel }).first();
+    const fallbackChip = publicPage.getByRole('button', { name: fallbackChipLabel }).first();
+
+    const ensureChipAccessible = async (chip, label) => {
+      await chip.evaluate((element) => {
+        let node = element;
+        while (node instanceof HTMLElement) {
+          const parent = node.parentElement;
+          if (!(parent instanceof HTMLElement)) {
+            break;
+          }
+
+          if (parent.scrollWidth > parent.clientWidth + 1) {
+            const parentRect = parent.getBoundingClientRect();
+            const nodeRect = node.getBoundingClientRect();
+            const hiddenLeft = parentRect.left - nodeRect.left;
+            const hiddenRight = nodeRect.right - parentRect.right;
+
+            if (hiddenLeft > 0) {
+              parent.scrollLeft -= hiddenLeft + 24;
+            } else if (hiddenRight > 0) {
+              parent.scrollLeft += hiddenRight + 24;
+            }
+          }
+
+          node = parent;
+        }
+      });
+      await chip.scrollIntoViewIfNeeded();
+      await expect(chip, `${label} must stay reachable inside the horizontal favorites strip.`)
+        .toBeVisible({ timeout: appBootTimeoutMs });
+    };
+
+    await ensureChipAccessible(liveChip, 'live favorite');
+    await ensureChipAccessible(upcomingSoonChip, 'upcoming-soon favorite');
+    await ensureChipAccessible(upcomingLaterChip, 'upcoming-later favorite');
+    await ensureChipAccessible(fallbackChip, 'fallback favorite');
+    await expect(liveChip).toBeVisible({ timeout: appBootTimeoutMs });
+    await expect(upcomingSoonChip).toBeVisible({ timeout: appBootTimeoutMs });
+    await expect(upcomingLaterChip).toBeVisible({ timeout: appBootTimeoutMs });
+    await expect(fallbackChip).toHaveCount(1);
+
+    const chipPositions = await Promise.all([
+      liveChip.boundingBox(),
+      upcomingSoonChip.boundingBox(),
+      upcomingLaterChip.boundingBox(),
+      fallbackChip.boundingBox(),
+    ]);
+    expect(
+      chipPositions.every((position) => position && Number.isFinite(position.x) && Number.isFinite(position.y)),
+      'Favorites runtime chips must expose stable positions for order validation.',
+    ).toBe(true);
+    expect(
+      chipPositions.every((position) => position.y === chipPositions[0].y),
+      'Favorites runtime chips must stay on the same row in the canonical desktop lane.',
+    ).toBe(true);
+    expect(chipPositions[0].x).toBeLessThan(chipPositions[1].x);
+    expect(chipPositions[1].x).toBeLessThan(chipPositions[2].x);
+    expect(chipPositions[2].x).toBeLessThan(chipPositions[3].x);
+    logStep('favorites', 'favorite strip order validated');
+
+    const liveHaloSignature = await resolveFavoriteHaloSignature(liveChip);
+    const upcomingSoonHaloSignature = await resolveFavoriteHaloSignature(
+      upcomingSoonChip,
+    );
+    const upcomingLaterHaloSignature = await resolveFavoriteHaloSignature(
+      upcomingLaterChip,
+    );
+    const fallbackHaloSignature = await resolveFavoriteHaloSignature(
+      fallbackChip,
+    );
+
+    expect(
+      liveHaloSignature.diffSum,
+      `Live favorite halo must stay visually stronger than upcoming halo in the served strip. live=${JSON.stringify(
+        liveHaloSignature,
+      )} upcoming=${JSON.stringify(upcomingSoonHaloSignature)}`,
+    ).toBeGreaterThan(
+      upcomingSoonHaloSignature.diffSum * favoriteChipLiveVsUpcomingDiffFactor,
+    );
+    expect(
+      upcomingSoonHaloSignature.coloredPixelCount,
+      `Upcoming favorites must keep a visible runtime halo beyond the no-event state. upcoming=${JSON.stringify(
+        upcomingSoonHaloSignature,
+      )} fallback=${JSON.stringify(fallbackHaloSignature)}`,
+    ).toBeGreaterThan(
+      fallbackHaloSignature.coloredPixelCount +
+        favoriteChipUpcomingVsFallbackPixelDelta,
+    );
+    expect(
+      upcomingSoonHaloSignature.diffSum,
+      `Upcoming favorites must keep a stronger ring signal than the no-event state. upcoming=${JSON.stringify(
+        upcomingSoonHaloSignature,
+      )} fallback=${JSON.stringify(fallbackHaloSignature)}`,
+    ).toBeGreaterThan(
+      fallbackHaloSignature.diffSum + favoriteChipUpcomingVsFallbackDiffDelta,
+    );
+    expect(
+      colorDistance(
+        upcomingSoonHaloSignature.dominantColor,
+        upcomingLaterHaloSignature.dominantColor,
+      ),
+      `Upcoming favorites must stay in the same halo family across multiple event chips. soon=${JSON.stringify(
+        upcomingSoonHaloSignature,
+      )} later=${JSON.stringify(upcomingLaterHaloSignature)}`,
+    ).toBeLessThanOrEqual(48);
+    logStep('favorites', 'favorite runtime halo signatures validated');
+
+    const clickChipSurface = async (
+      chip,
+      label,
+      {
+        requireReachable = true,
+      } = {},
+    ) => {
+      if (requireReachable) {
+        await ensureChipAccessible(
+          chip,
+          `${label} full-surface navigation target`,
+        );
+        await chip.click();
+      } else {
+        await expect(chip, `${label} must remain present in the favorites strip.`)
+          .toHaveCount(1);
+        await chip.dispatchEvent('click');
+      }
+    };
+    const currentPath = () => {
+      const current = new URL(publicPage.url());
+      return `${current.pathname}${current.search}`;
+    };
+
+    await clickChipSurface(liveChip, 'live favorite');
+    await expect
+      .poll(currentPath, {
+        timeout: appBootTimeoutMs,
+        message:
+          'Active-event favorite chip must open the canonical event detail path.',
+      })
+      .toBe(liveTargetPath);
+    logStep('favorites', 'live favorite navigated to event detail');
+
+    fallbackOnlyIdentity = await createAnonymousIdentity(
+      api,
+      baseUrl,
+      'tenant-home-favorites-fallback',
+    );
+    createdFallbackFavoriteProfileIds.push(fallbackProfile.profileId);
+    await favoriteAccountProfile(
+      api,
+      baseUrl,
+      fallbackOnlyIdentity.token,
+      fallbackProfile.profileId,
+    );
+    await expect
+      .poll(
+        async () => {
+          const payload = await fetchFavoritesForIdentity(
+            api,
+            baseUrl,
+            fallbackOnlyIdentity.token,
+          );
+          return normalizeList(payload?.items).map((item) =>
+            item?.target_id?.toString() || '',
+          );
+        },
+        {
+          timeout: appBootTimeoutMs,
+          message:
+            'Fallback-only identity must settle into a single canonical favorite before browser validation.',
+        },
+      )
+      .toEqual([fallbackProfile.profileId?.toString()]);
+    logStep('favorites', 'fallback-only identity prepared');
+
+    fallbackPublicContext = await browser.newContext({
+      ignoreHTTPSErrors: true,
+      geolocation: {
+        latitude: -20.671339,
+        longitude: -40.495395,
+      },
+      permissions: ['geolocation'],
+    });
+    await seedFlutterSecureStorage(fallbackPublicContext, {
+      user_token: fallbackOnlyIdentity.token,
+      user_id: fallbackOnlyIdentity.userId,
+    });
+    const fallbackPage = await fallbackPublicContext.newPage();
+    const fallbackCollectors = installFailureCollectors(fallbackPage);
+    const fallbackHomeResponse = await fallbackPage.goto(buildApiUrl(baseUrl, '/'), {
+      waitUntil: 'domcontentloaded',
+    });
+    expect(
+      fallbackHomeResponse,
+      'Fallback-only home response should be available.',
+    ).not.toBeNull();
+    expect(fallbackHomeResponse.status()).toBeLessThan(400);
+    await assertAppBooted(fallbackPage);
+    await enableAccessibilityIfNeeded(fallbackPage);
+    await continueWithoutLocationIfPrompted(fallbackPage);
+    logStep('favorites', 'fallback-only public home booted');
+
+    const fallbackOnlyChip = fallbackPage
+      .getByRole('button', { name: fallbackChipLabel })
+      .first();
+    await ensureChipAccessible(fallbackOnlyChip, 'fallback-only favorite');
+    await fallbackOnlyChip.click();
+    logStep('favorites', 'fallback-only favorite dispatched');
+    await expect
+      .poll(() => {
+        const current = new URL(fallbackPage.url());
+        return `${current.pathname}${current.search}`;
+      }, {
+        timeout: appBootTimeoutMs,
+        message:
+          'No-event favorite chip must open the canonical account-profile path.',
+      })
+      .toBe(fallbackTargetPath);
+    logStep('favorites', 'fallback favorite navigated to profile detail');
+
+    await assertNoBrowserFailures(collectors);
+    await assertNoBrowserFailures(fallbackCollectors);
+    logStep('favorites', 'favorite runtime assertions completed');
+  } catch (error) {
+    primaryError = error;
+    throw error;
+  } finally {
+    await runCleanupPreservingPrimaryError(primaryError, async () => {
+      logStep('favorites', 'cleanup start');
+      try {
+        await runCleanupSteps([
+          ...createdFavoriteProfileIds.filter(Boolean).map((profileId) =>
+            anonymousIdentity?.token
+              ? () => unfavoriteAccountProfile(api, baseUrl, anonymousIdentity.token, profileId)
+              : null
+          ),
+          ...createdFallbackFavoriteProfileIds.filter(Boolean).map((profileId) =>
+            fallbackOnlyIdentity?.token
+              ? () => unfavoriteAccountProfile(api, baseUrl, fallbackOnlyIdentity.token, profileId)
+              : null
+          ),
+          ...[...createdEvents].reverse().filter(Boolean).map((eventId) =>
+            () => deleteEvent(api, baseUrl, session?.token, eventId)
+          ),
+          ...createdAccountSlugs.filter(Boolean).map((accountSlug) =>
+            () => cleanupOnboardedAccount(api, baseUrl, session?.token, accountSlug)
+          ),
+          eventTypeId
+            ? () => deleteEventType(api, baseUrl, session?.token, eventTypeId)
+            : null,
+          profileTypeKey
+            ? () => deleteAccountProfileType(api, baseUrl, session?.token, profileTypeKey)
+            : null,
+        ]);
+        logStep('favorites', 'cleanup steps completed');
+      } finally {
+        if (fallbackPublicContext) {
+          await fallbackPublicContext.close().catch(() => {});
+        }
+        if (publicContext) {
+          await publicContext.close().catch(() => {});
+        }
+        logStep('favorites', 'public context closed');
+        await api.dispose();
+        logStep('favorites', 'api disposed');
+      }
+    });
   }
 });
 
@@ -1773,6 +3424,7 @@ test('@mutation tenant-admin event type type asset upload persists and renders a
       typeAssetResponse.status(),
       'Persisted type asset URL must be readable.',
     ).toBeLessThan(400);
+    await disposeApiResponse(typeAssetResponse);
 
     const primaryPageBundle = await createAuthenticatedTenantAdminPage(
       browser,
@@ -1942,11 +3594,13 @@ test('@mutation tenant-admin branding public default image and favicon persist a
       publicWebDefaultImageResponse.status(),
       'Published default public image must be readable.',
     ).toBeLessThan(400);
+    await disposeApiResponse(publicWebDefaultImageResponse);
 
     const faviconResponse = await api.get(faviconUrl, {
       failOnStatusCode: false,
     });
     expect(faviconResponse.status(), 'Published favicon route must be readable.').toBeLessThan(400);
+    await disposeApiResponse(faviconResponse);
 
     const verificationBundle = await createAuthenticatedTenantAdminPage(
       browser,

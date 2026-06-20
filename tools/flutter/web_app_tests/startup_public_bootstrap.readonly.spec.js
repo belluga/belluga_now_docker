@@ -1,6 +1,11 @@
 const crypto = require('crypto');
 const { test, expect, request } = require('@playwright/test');
 const { withFreshBrowserPage } = require('./support/fresh_browser_context');
+const {
+  fixture,
+  managedFixtureEnabled,
+  matchesCanonicalManagedSlug,
+} = require('./support/public_taxonomy_validation_fixture_contract');
 
 const tenantUrl = process.env.NAV_TENANT_URL;
 const appBootTimeoutMs = 120000;
@@ -388,7 +393,19 @@ async function fetchPublicEventCandidate(apiClient) {
     '/api/v1/agenda?page=1&page_size=50',
     'Public agenda list',
   );
-  const candidate = payloadRows(payload).find((row) => {
+  const rows = payloadRows(payload);
+  if (managedFixtureEnabled) {
+    const managedCandidate = rows.find((row) =>
+      matchesCanonicalManagedSlug(row?.slug, fixture.eventSlug),
+    );
+    expect(
+      managedCandidate,
+      `Managed public agenda fixture ${fixture.eventSlug} must be visible in /api/v1/agenda when NAV_PUBLIC_TAXONOMY_MANAGED_FIXTURE=1.`,
+    ).toBeTruthy();
+    return managedCandidate;
+  }
+
+  const candidate = rows.find((row) => {
     const routeRef = row?.slug?.toString().trim() || row?.event_id?.toString().trim();
     const title = row?.title?.toString().trim();
     return routeRef && title;

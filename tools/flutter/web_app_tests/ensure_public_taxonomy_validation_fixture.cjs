@@ -21,7 +21,7 @@ const {
 
 requireLiveMutationContract({
   scriptLabel: 'Public taxonomy validation fixture bootstrap',
-  allowedLanes: ['local', 'stage'],
+  allowedLanes: ['local', 'dev', 'stage'],
 });
 
 const tenantUrl = (process.env.NAV_TENANT_URL || '').trim();
@@ -29,6 +29,14 @@ const fixtureAction = (process.env.NAV_PUBLIC_TAXONOMY_FIXTURE_ACTION || 'ensure
   .toString()
   .trim()
   .toLowerCase();
+const stageValidationPrefixes = {
+  taxonomySlug: 'stage_validation_profile_style_',
+  profileType: 'stage_validation_public_profile_',
+  profileSlug: 'stage-validation-public-profile-',
+  relatedProfileSlug: 'stage-validation-related-profile-',
+  eventTypeSlug: 'stage_validation_public_event_type_',
+  eventSlug: 'stage-validation-public-event-',
+};
 let anonymousIdentityTokenPromise = null;
 let requestApi = null;
 let expectApi = null;
@@ -105,7 +113,15 @@ function normalizeRows(payload, label) {
   if (Array.isArray(payload?.data)) {
     return payload.data;
   }
-  throw new Error(`${label} must return the canonical top-level data array envelope.`);
+  if (Array.isArray(payload?.items)) {
+    return payload.items;
+  }
+  if (Array.isArray(payload)) {
+    return payload;
+  }
+  throw new Error(
+    `${label} must return a supported top-level array envelope (data/items).`,
+  );
 }
 
 async function fetchJson(response, label) {
@@ -676,6 +692,27 @@ async function fetchPublicEvents(api, baseUrl) {
   );
 }
 
+async function fetchPublicAgenda(api, baseUrl) {
+  const anonymousToken = await resolveAnonymousIdentityToken(api, baseUrl);
+  return fetchPagedRows(
+    api,
+    (pageNumber, pageSize) => {
+      const url = new URL(buildUrl(baseUrl, '/api/v1/agenda'));
+      url.searchParams.set('page', pageNumber.toString());
+      url.searchParams.set('page_size', pageSize.toString());
+      return url.toString();
+    },
+    {
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${anonymousToken}`,
+      },
+      label: 'Public agenda list',
+      pageSize: 50,
+    },
+  );
+}
+
 async function fetchPublicEventDetail(api, baseUrl, routeRef) {
   const anonymousToken = await resolveAnonymousIdentityToken(api, baseUrl);
   const response = await api.get(
@@ -743,7 +780,13 @@ function findDisplaySnapshot(terms) {
 
 async function resetOwnedFixtureArtifacts(api, baseUrl, token) {
   const adminEvents = await listAdminEvents(api, baseUrl, token);
-  const ownedEvents = filterOwnedEventRows(adminEvents);
+  const ownedEvents = adminEvents.filter((row) => {
+    const slug = row?.slug?.toString().trim() || '';
+    return (
+      filterOwnedEventRows([row]).length > 0 ||
+      slug.startsWith(stageValidationPrefixes.eventSlug)
+    );
+  });
 
   for (const row of ownedEvents) {
     const eventId = row?.event_id?.toString().trim() || row?.id?.toString().trim() || '';
@@ -751,7 +794,14 @@ async function resetOwnedFixtureArtifacts(api, baseUrl, token) {
   }
 
   const adminProfiles = await listAdminAccountProfiles(api, baseUrl, token);
-  const ownedProfiles = filterOwnedProfileRows(adminProfiles);
+  const ownedProfiles = adminProfiles.filter((row) => {
+    const slug = row?.slug?.toString().trim() || '';
+    return (
+      filterOwnedProfileRows([row]).length > 0 ||
+      slug.startsWith(stageValidationPrefixes.profileSlug) ||
+      slug.startsWith(stageValidationPrefixes.relatedProfileSlug)
+    );
+  });
   const adminAccounts = await listAdminAccounts(api, baseUrl, token);
   const accountSlugById = buildAccountSlugIndexById(adminAccounts);
   const ownedAccountSlugs = [];
@@ -773,7 +823,13 @@ async function resetOwnedFixtureArtifacts(api, baseUrl, token) {
 
   const eventTypes = await listEventTypes(api, baseUrl, token);
   const fixtureEventTypes = eventTypes.filter(
-    (row) => row?.slug?.toString().trim() === fixture.eventTypeSlug,
+    (row) => {
+      const slug = row?.slug?.toString().trim() || '';
+      return (
+        slug === fixture.eventTypeSlug ||
+        slug.startsWith(stageValidationPrefixes.eventTypeSlug)
+      );
+    },
   );
   for (const fixtureEventType of fixtureEventTypes) {
     await deleteEventType(api, baseUrl, token, fixtureEventType?.id?.toString() || '');
@@ -781,7 +837,13 @@ async function resetOwnedFixtureArtifacts(api, baseUrl, token) {
 
   const profileTypes = await listAccountProfileTypes(api, baseUrl, token);
   const fixtureTypes = profileTypes.filter(
-    (row) => row?.type?.toString().trim() === fixture.profileType,
+    (row) => {
+      const type = row?.type?.toString().trim() || '';
+      return (
+        type === fixture.profileType ||
+        type.startsWith(stageValidationPrefixes.profileType)
+      );
+    },
   );
   for (const fixtureType of fixtureTypes) {
     await deleteAccountProfileType(
@@ -794,7 +856,13 @@ async function resetOwnedFixtureArtifacts(api, baseUrl, token) {
 
   const taxonomies = await listTaxonomies(api, baseUrl, token);
   const fixtureTaxonomies = taxonomies.filter(
-    (row) => row?.slug?.toString().trim() === fixture.taxonomySlug,
+    (row) => {
+      const slug = row?.slug?.toString().trim() || '';
+      return (
+        slug === fixture.taxonomySlug ||
+        slug.startsWith(stageValidationPrefixes.taxonomySlug)
+      );
+    },
   );
   for (const fixtureTaxonomy of fixtureTaxonomies) {
     await deleteTaxonomy(api, baseUrl, token, fixtureTaxonomy?.id?.toString() || '');
@@ -880,6 +948,35 @@ async function verifyEventFixture(api, baseUrl, { eventId, eventSlug }) {
   ).toBe(listSnapshot.label || listSnapshot.name);
 }
 
+async function verifyAgendaFixture(api, baseUrl, { eventId, eventSlug }) {
+  const rows = await fetchPublicAgenda(api, baseUrl);
+  const candidate = rows.find((row) => {
+    const rowEventId = row?.event_id?.toString().trim();
+    const rowSlug = row?.slug?.toString().trim();
+    return rowEventId === eventId || rowSlug === eventSlug;
+  });
+
+  expect(
+    candidate,
+    `Public agenda fixture ${fixture.eventTitle} must be visible in /api/v1/agenda.`,
+  ).toBeTruthy();
+
+  const routeRef =
+    candidate?.slug?.toString().trim()
+    || candidate?.event_id?.toString().trim()
+    || '';
+  expect(
+    routeRef,
+    `Public agenda fixture ${fixture.eventTitle} must expose a public route reference through slug or event_id.`,
+  ).toBeTruthy();
+
+  const title = candidate?.title?.toString().trim() || '';
+  expect(
+    title,
+    `Public agenda fixture ${fixture.eventTitle} must expose a visible title in /api/v1/agenda.`,
+  ).toBeTruthy();
+}
+
 async function main() {
   const baseUrl = requireTenantUrl();
   const api = await createApiContext(baseUrl);
@@ -929,6 +1026,7 @@ async function main() {
       await verifyAccountProfileFixture(api, baseUrl, profileSlug);
       await verifyAccountProfileFixture(api, baseUrl, relatedProfileSlug);
       await verifyEventFixture(api, baseUrl, event);
+      await verifyAgendaFixture(api, baseUrl, event);
       console.log(
         `INFO: ensured public taxonomy validation fixtures ${profileSlug} and ${fixture.eventTitle} on ${baseUrl}.`,
       );

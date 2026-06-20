@@ -1,4 +1,9 @@
 const { test, expect } = require('@playwright/test');
+const {
+  fixture,
+  managedFixtureEnabled,
+  matchesCanonicalManagedSlug,
+} = require('./support/public_taxonomy_validation_fixture_contract');
 
 const landlordUrl = process.env.NAV_LANDLORD_URL;
 const tenantUrl = process.env.NAV_TENANT_URL;
@@ -26,6 +31,10 @@ function applicationOrigins() {
   return [landlordUrl, tenantUrl]
     .filter(Boolean)
     .map((value) => new URL(value).origin);
+}
+
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function isApplicationApiRequest(rawUrl) {
@@ -411,6 +420,9 @@ test('@mutation tenant agenda UI state matches tenant agenda API payload', async
           originLng: sampleBase.originLng,
           url: sampleBase.url,
           status: sampleBase.status,
+          fixtureVisible: items.some((row) =>
+            matchesCanonicalManagedSlug(row?.slug, fixture.eventSlug),
+          ),
         });
       }
     } catch (_) {
@@ -541,6 +553,25 @@ test('@mutation tenant agenda UI state matches tenant agenda API payload', async
       filteredEmptyStateText,
       'Agenda API returned items, but UI still shows filtered-empty state.',
     ).toHaveCount(0);
+  }
+
+  if (managedFixtureEnabled) {
+    const managedFixtureSample = payloadSamples.find((sample) => sample.fixtureVisible);
+    expect(
+      managedFixtureSample,
+      `Managed home agenda fixture ${fixture.eventSlug} must be visible in the canonical home /api/v1/agenda payload when NAV_PUBLIC_TAXONOMY_MANAGED_FIXTURE=1.\n` +
+        `Observed home payload samples:\n${JSON.stringify(payloadSamples, null, 2)}`,
+    ).toBeTruthy();
+
+    const managedFixtureTitle = page
+      .getByText(new RegExp(escapeRegExp(fixture.eventTitle), 'i'))
+      .first();
+    await expect(
+      managedFixtureTitle,
+      `Managed home agenda fixture ${fixture.eventTitle} must render on the tenant home surface when NAV_PUBLIC_TAXONOMY_MANAGED_FIXTURE=1.`,
+    ).toBeVisible({
+      timeout: appBootTimeoutMs,
+    });
   }
 
   const criticalFailedRequests = collectors.failedRequests.filter((entry) =>

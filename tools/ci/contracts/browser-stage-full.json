@@ -1,0 +1,31 @@
+{
+  "schema_version": "ci-contract-v1",
+  "contract_id": "browser-stage-full",
+  "description": "Local-public browser/runtime contract mirrored by the broad stage-full CI Equivalent surface.",
+  "entries": [
+    {
+      "id": "local-public-web-prepare",
+      "repo": "belluga_now_docker",
+      "kind": "workflow-parity",
+      "cwd": "../../..",
+      "command": ["bash", "tools/ci/run_stage_full_local_public_web_contract.sh", "prepare"],
+      "description": "Build the current local web bundle, prove local-public edge health, and verify served bundle provenance on canonical local-public hosts."
+    },
+    {
+      "id": "local-public-web-readonly",
+      "repo": "belluga_now_docker",
+      "kind": "workflow-parity",
+      "cwd": "../../..",
+      "command": ["bash", "tools/ci/run_stage_full_local_public_web_contract.sh", "readonly"],
+      "description": "Run the canonical readonly browser smoke suite against the local-public host pair."
+    },
+    {
+      "id": "local-public-web-mutation",
+      "repo": "belluga_now_docker",
+      "kind": "workflow-parity",
+      "cwd": "../../..",
+      "command": ["bash", "tools/ci/run_stage_full_local_public_web_contract.sh", "mutation"],
+      "description": "Run the canonical mutation browser smoke suite against the local-public host pair."
+    }
+  ]
+}

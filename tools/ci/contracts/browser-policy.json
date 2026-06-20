@@ -1,0 +1,15 @@
+{
+  "schema_version": "ci-contract-v1",
+  "contract_id": "browser-policy",
+  "description": "Canonical browser lane policy proof for readonly/mutation separation and main-lane hard blocking.",
+  "entries": [
+    {
+      "id": "browser-lane-policy",
+      "repo": "belluga_now_docker",
+      "kind": "policy-proof",
+      "cwd": "../../..",
+      "command": ["node", "--test", "tools/flutter/web_app_tests/navigation_harness_policy_test.cjs"],
+      "description": "Prove readonly/mutation lane policy and main-lane hard block semantics."
+    }
+  ]
+}

@@ -121,7 +121,7 @@ services:
       - "${NGINX_HOST_PORT_443}:443"
     volumes:
       - ./laravel-app:/var/www
-      - ./web-app:/var/www/flutter:ro
+      - ./web-app:/opt/flutter-web-shell:ro
       - ./project/nginx:/etc/nginx/project:ro
       - app-storage:/var/www/storage
       - certbot-data:/etc/letsencrypt
