@@ -119,6 +119,8 @@ submodule_gitlink_requires_workflow_audit() {
   local submodule_path="$1"
   local base_ref=""
   local event_name=""
+  local base_gitlink_sha=""
+  local head_gitlink_sha=""
 
   event_name="$(effective_verify_env_event_name)"
   if [[ "${event_name}" != "pull_request" ]]; then
@@ -132,7 +134,10 @@ submodule_gitlink_requires_workflow_audit() {
 
   git fetch --no-tags --prune origin "${base_ref}" >/dev/null 2>&1 || true
 
-  if git diff --quiet --ignore-submodules=none "origin/${base_ref}...HEAD" -- "${submodule_path}"; then
+  base_gitlink_sha="$(git rev-parse "origin/${base_ref}:${submodule_path}" 2>/dev/null | tr -d '[:space:]' || true)"
+  head_gitlink_sha="$(git rev-parse "HEAD:${submodule_path}" 2>/dev/null | tr -d '[:space:]' || true)"
+
+  if [[ -n "${base_gitlink_sha}" ]] && [[ -n "${head_gitlink_sha}" ]] && [[ "${base_gitlink_sha}" == "${head_gitlink_sha}" ]]; then
     printf 'INFO: skipping workflow runtime audit for unchanged gitlink %s against origin/%s.\n' "${submodule_path}" "${base_ref}"
     return 1
   fi
