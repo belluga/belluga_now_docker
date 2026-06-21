@@ -93,8 +93,7 @@ jobs:
         run: |
           git config --global --unset-all url.https://github.com/.insteadOf || true
           git config --global url."https://x-access-token:${SUBMODULE_TOKEN}@github.com/".insteadOf "https://github.com/"
-          git submodule sync --recursive
-          git submodule update --init --recursive
+          bash .github/scripts/checkout_ci_submodules.sh
 
       - name: Fail when missing submodule token
         if: steps.submodule_auth.outputs.has_token != 'true'
@@ -183,8 +182,7 @@ jobs:
         run: |
           git config --global --unset-all url.https://github.com/.insteadOf || true
           git config --global url."https://x-access-token:${SUBMODULE_TOKEN}@github.com/".insteadOf "https://github.com/"
-          git submodule sync --recursive
-          git submodule update --init --recursive
+          bash .github/scripts/checkout_ci_submodules.sh
 
       - name: Fail when missing submodule token
         if: steps.submodule_auth.outputs.has_token != 'true'
@@ -422,7 +420,6 @@ jobs:
         if: steps.stage_initialize_preflight.outputs.initialized == 'true' && steps.stage_untrusted_initialized_bootstrap_block.outcome != 'failure' && steps.stage_runtime_web_sha_check.outcome != 'failure' && steps.stage_public_edge_environment_probe.outcome != 'failure'
         continue-on-error: true
         env:
-          DEPLOY_LANE: stage
           NAV_LANDLORD_URL: ${{ steps.stage_nav_targets.outputs.landlord_url }}
           NAV_ORIGIN_IP: ${{ vars.STAGE_SSH_HOST }}
         run: bash .github/scripts/check_deployed_web_provenance.sh stage
@@ -1005,8 +1002,7 @@ jobs:
         run: |
           git config --global --unset-all url.https://github.com/.insteadOf || true
           git config --global url."https://x-access-token:${SUBMODULE_TOKEN}@github.com/".insteadOf "https://github.com/"
-          git submodule sync --recursive
-          git submodule update --init --recursive
+          bash .github/scripts/checkout_ci_submodules.sh
 
       - name: Fail when missing submodule token
         if: steps.submodule_auth.outputs.has_token != 'true'
