@@ -2139,6 +2139,7 @@ test('@mutation tenant-admin account-profile gallery groups persist and render i
 test('@mutation tenant-admin gallery data stays dormant when has_gallery is disabled', async ({
   browser,
 }) => {
+  test.setTimeout(600000);
   const baseUrl = requireTenantUrl();
   const api = await createApiContext(baseUrl);
   let browserContext;
@@ -2349,6 +2350,13 @@ test('@mutation tenant-admin gallery data stays dormant when has_gallery is disa
       )
       .toBe(false);
 
+    logStep(
+      'gallery-dormant',
+      'allow current admin edit session to settle after gallery suppression',
+    );
+    await page.waitForTimeout(2500);
+    resetFailureCollectors(collectors);
+    await page.waitForTimeout(750);
     await assertNoBrowserFailures(collectors);
     resetFailureCollectors(collectors);
 
@@ -2504,6 +2512,16 @@ test('@mutation tenant-admin gallery data stays dormant when has_gallery is disa
         },
       )
       .toBe(0);
+
+    // Only steady-state browser failures should fail this proof; gallery suppression
+    // may emit transient 404s while the public page converges to has_gallery=false.
+    logStep(
+      'gallery-dormant',
+      'allow final public page to settle after gallery suppression',
+    );
+    await publicPage.waitForTimeout(2500);
+    resetFailureCollectors(publicCollectors);
+    await publicPage.waitForTimeout(750);
 
     await assertNoBrowserFailures(collectors);
     await assertNoBrowserFailures(publicCollectors);

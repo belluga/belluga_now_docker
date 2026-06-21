@@ -292,7 +292,11 @@ if [[ -z "${SUITE_TIMEOUT_SECONDS}" ]]; then
   elif [[ "${SUITE}" == "diagnostic" ]]; then
     SUITE_TIMEOUT_SECONDS=1200
   else
-    SUITE_TIMEOUT_SECONDS=900
+    # The authoritative readonly packet can validly exceed 15 minutes on a
+    # healthy shared local runner after the upstream Flutter workspace contract.
+    # Keep the shared deadline above observed stage-full runtime so local and
+    # pipeline evidence fail on assertions/hard hangs instead of harness drift.
+    SUITE_TIMEOUT_SECONDS=1800
   fi
 fi
 

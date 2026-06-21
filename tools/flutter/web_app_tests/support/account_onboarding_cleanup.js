@@ -41,6 +41,42 @@ async function accountStillExists(
   );
 }
 
+async function normalizeLegacyOwnedAccountForCleanup(
+  api,
+  baseUrl,
+  token,
+  accountSlug,
+  { requestTimeoutMs = 30000 } = {},
+) {
+  const response = await api.patch(
+    buildUrl(baseUrl, `/admin/api/v1/accounts/${encodeURIComponent(accountSlug)}`),
+    {
+      headers: authHeaders(token),
+      data: {
+        ownership_state: 'unmanaged',
+      },
+      failOnStatusCode: false,
+      timeout: requestTimeoutMs,
+    },
+  );
+
+  const status = response.status();
+  if (status >= 200 && status < 300) {
+    console.warn(
+      `[cleanupOnboardedAccount] normalized legacy ownership_state to unmanaged for ${accountSlug}.`,
+    );
+    return true;
+  }
+
+  if (status !== 404) {
+    console.warn(
+      `[cleanupOnboardedAccount] legacy ownership normalization for ${accountSlug} returned HTTP ${status}.`,
+    );
+  }
+
+  return false;
+}
+
 async function cleanupOnboardedAccount(
   api,
   baseUrl,
@@ -77,6 +113,7 @@ async function cleanupOnboardedAccount(
       : 30000;
   let lastProbeError = null;
   let confirmedStillExists = false;
+  let legacyOwnershipNormalizationAttempted = false;
 
   for (let attempt = 1; attempt <= boundedAttempts; attempt += 1) {
     let response;
@@ -96,9 +133,35 @@ async function cleanupOnboardedAccount(
       await sleep(boundedBaseDelayMs * attempt);
       continue;
     }
-    const status = response.status();
+    let status = response.status();
     if (status === 404) {
       return;
+    }
+    if (status === 422 && !legacyOwnershipNormalizationAttempted) {
+      legacyOwnershipNormalizationAttempted = true;
+      const normalized = await normalizeLegacyOwnedAccountForCleanup(
+        api,
+        baseUrl,
+        token,
+        slug,
+        {
+          requestTimeoutMs: boundedRequestTimeoutMs,
+        },
+      );
+      if (normalized) {
+        response = await api.delete(
+          buildUrl(baseUrl, `/admin/api/v1/accounts/${encodeURIComponent(slug)}`),
+          {
+            headers: authHeaders(token),
+            failOnStatusCode: false,
+            timeout: boundedRequestTimeoutMs,
+          },
+        );
+        status = response.status();
+        if (status === 404) {
+          return;
+        }
+      }
     }
     if (status < 200 || status >= 300) {
       console.warn(

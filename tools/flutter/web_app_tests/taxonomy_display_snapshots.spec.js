@@ -5,6 +5,7 @@ const {
   filterOwnedEventRows,
   filterOwnedProfileRows,
   managedFixtureEnabled,
+  withManagedFixtureRunKeyScope,
 } = require('./support/public_taxonomy_validation_fixture_contract');
 
 const tenantUrl = process.env.NAV_TENANT_URL;
@@ -304,7 +305,7 @@ let anonymousIdentityToken = null;
 function anonymousFingerprintHash(baseUrl) {
   return crypto
     .createHash('sha256')
-    .update(`taxonomy-display-snapshots:${baseUrl}`)
+    .update(withManagedFixtureRunKeyScope(`taxonomy-display-snapshots:${baseUrl}`))
     .digest('hex');
 }
 

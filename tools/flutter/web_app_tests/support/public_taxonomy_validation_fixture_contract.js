@@ -89,6 +89,19 @@ function shouldContinuePagedFetch({ payload, pageRows, pageNumber, pageSize }) {
   return false;
 }
 
+function withManagedFixtureRunKeyScope(seed) {
+  const normalizedSeed = seed?.toString().trim();
+  if (!normalizedSeed) {
+    throw new Error('Managed public taxonomy fixture fingerprint seed requires a non-empty value.');
+  }
+
+  if (!managedFixtureEnabled) {
+    return normalizedSeed;
+  }
+
+  return `${normalizedSeed}:${runKey}`;
+}
+
 function matchesCanonicalManagedSlug(actualSlug, canonicalSlug) {
   const actual = actualSlug?.toString().trim();
   const canonical = canonicalSlug?.toString().trim();
@@ -127,4 +140,5 @@ module.exports = {
   runKey,
   sanitizeRunId,
   shouldContinuePagedFetch,
+  withManagedFixtureRunKeyScope,
 };
