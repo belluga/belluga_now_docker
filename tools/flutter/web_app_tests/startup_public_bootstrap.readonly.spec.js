@@ -5,6 +5,9 @@ const {
   fixture,
   managedFixtureEnabled,
   matchesCanonicalManagedSlug,
+  rowFingerprint,
+  shouldContinuePagedFetch,
+  withManagedFixtureRunKeyScope,
 } = require('./support/public_taxonomy_validation_fixture_contract');
 
 const tenantUrl = process.env.NAV_TENANT_URL;
@@ -306,7 +309,7 @@ function attachStartupCapture(page, { protectedReadMatchers = defaultProtectedRe
 function anonymousFingerprintHash(baseUrl) {
   return crypto
     .createHash('sha256')
-    .update(`startup-public-bootstrap:${baseUrl}`)
+    .update(withManagedFixtureRunKeyScope(`startup-public-bootstrap:${baseUrl}`))
     .digest('hex');
 }
 
@@ -321,6 +324,18 @@ function payloadRows(payload) {
     return payload;
   }
   return [];
+}
+
+function buildPagedPath(pathName, params) {
+  const url = new URL(pathName, 'https://navigation.invalid');
+  for (const [key, value] of Object.entries(params)) {
+    if (value != null && value !== '') {
+      url.searchParams.set(key, value.toString());
+    }
+  }
+
+  const search = url.searchParams.toString();
+  return search ? `${url.pathname}?${search}` : url.pathname;
 }
 
 async function createReadonlyPublicApiClient() {
@@ -373,45 +388,113 @@ async function createReadonlyPublicApiClient() {
   };
 }
 
+async function fetchPublicCandidateFromPagedList(apiClient, {
+  description,
+  pathName,
+  pageSize = 50,
+  pageSizeParam,
+  predicate,
+}) {
+  const pageSummaries = [];
+  let previousFingerprint = null;
+
+  for (let pageNumber = 1; pageNumber <= 100; pageNumber += 1) {
+    const payload = await apiClient.fetchJson(
+      buildPagedPath(pathName, {
+        page: pageNumber,
+        [pageSizeParam]: pageSize,
+      }),
+      `${description} page ${pageNumber}`,
+    );
+    const rows = payloadRows(payload);
+    pageSummaries.push({
+      page: pageNumber,
+      count: rows.length,
+      currentPage: payload?.current_page ?? null,
+      lastPage: payload?.last_page ?? null,
+      nextPageUrl: payload?.next_page_url ?? null,
+    });
+
+    const candidate = rows.find(predicate);
+    if (candidate) {
+      return { candidate, pageSummaries };
+    }
+
+    const fingerprint = JSON.stringify(rows.map(rowFingerprint));
+    if (pageNumber > 1 && fingerprint === previousFingerprint) {
+      throw new Error(`${description} repeated the same page payload without advancing pagination.`);
+    }
+    previousFingerprint = fingerprint;
+
+    if (!shouldContinuePagedFetch({
+      payload,
+      pageRows: rows,
+      pageNumber,
+      pageSize,
+    })) {
+      break;
+    }
+  }
+
+  return { candidate: null, pageSummaries };
+}
+
 async function fetchPublicAccountCandidate(apiClient) {
-  const payload = await apiClient.fetchJson(
-    '/api/v1/account_profiles?per_page=50',
-    'Public account profiles list',
+  const { candidate, pageSummaries } = await fetchPublicCandidateFromPagedList(
+    apiClient,
+    {
+      description: 'Public account profiles list',
+      pathName: '/api/v1/account_profiles',
+      pageSize: 50,
+      pageSizeParam: 'per_page',
+      predicate: (row) => {
+        const slug = row?.slug?.toString().trim();
+        const label = row?.display_name?.toString().trim()
+          || row?.account_name?.toString().trim();
+        return slug && label;
+      },
+    },
   );
-  const candidate = payloadRows(payload).find((row) => {
-    const slug = row?.slug?.toString().trim();
-    const label = row?.display_name?.toString().trim()
-      || row?.account_name?.toString().trim();
-    return slug && label;
-  });
-  expect(candidate, 'Readonly startup proof requires one public account profile route.').toBeTruthy();
+  expect(
+    candidate,
+    `Readonly startup proof requires one public account profile route. Pages scanned: ${JSON.stringify(pageSummaries)}`,
+  ).toBeTruthy();
   return candidate;
 }
 
 async function fetchPublicEventCandidate(apiClient) {
-  const payload = await apiClient.fetchJson(
-    '/api/v1/agenda?page=1&page_size=50',
-    'Public agenda list',
+  const { candidate: managedCandidate, pageSummaries } = await fetchPublicCandidateFromPagedList(
+    apiClient,
+    {
+      description: 'Public agenda list',
+      pathName: '/api/v1/agenda',
+      pageSize: 50,
+      pageSizeParam: 'page_size',
+      predicate: (row) => {
+        if (managedFixtureEnabled) {
+          return matchesCanonicalManagedSlug(row?.slug, fixture.eventSlug);
+        }
+
+        const routeRef = row?.slug?.toString().trim() || row?.event_id?.toString().trim();
+        const title = row?.title?.toString().trim();
+        return routeRef && title;
+      },
+    },
   );
-  const rows = payloadRows(payload);
+
   if (managedFixtureEnabled) {
-    const managedCandidate = rows.find((row) =>
-      matchesCanonicalManagedSlug(row?.slug, fixture.eventSlug),
-    );
     expect(
       managedCandidate,
-      `Managed public agenda fixture ${fixture.eventSlug} must be visible in /api/v1/agenda when NAV_PUBLIC_TAXONOMY_MANAGED_FIXTURE=1.`,
+      `Managed public agenda fixture ${fixture.eventSlug} must be visible in /api/v1/agenda when NAV_PUBLIC_TAXONOMY_MANAGED_FIXTURE=1. Pages scanned: ${JSON.stringify(pageSummaries)}`,
     ).toBeTruthy();
     return managedCandidate;
   }
 
-  const candidate = rows.find((row) => {
-    const routeRef = row?.slug?.toString().trim() || row?.event_id?.toString().trim();
-    const title = row?.title?.toString().trim();
-    return routeRef && title;
-  });
-  expect(candidate, 'Readonly startup proof requires one public event route.').toBeTruthy();
-  return candidate;
+  expect(
+    managedCandidate,
+    `Readonly startup proof requires one public event route. Pages scanned: ${JSON.stringify(pageSummaries)}`,
+  ).toBeTruthy();
+  return managedCandidate;
 }
 
 async function assertNoPromotionUiVisible(page, contextLabel) {

@@ -14,20 +14,37 @@ function response(status) {
   };
 }
 
-function fakeApi({ deleteStatuses, getStatuses }) {
+function fakeApi({ deleteStatuses, getStatuses, patchStatuses = [] }) {
   let deleteIndex = 0;
   let getIndex = 0;
+  let patchIndex = 0;
+
+  const deleteCalls = [];
+  const patchCalls = [];
 
   return {
     async delete() {
       const status = deleteStatuses[Math.min(deleteIndex, deleteStatuses.length - 1)];
       deleteIndex += 1;
+      deleteCalls.push(status);
       return response(status);
     },
     async get() {
       const status = getStatuses[Math.min(getIndex, getStatuses.length - 1)];
       getIndex += 1;
       return response(status);
+    },
+    async patch() {
+      const status = patchStatuses[Math.min(patchIndex, patchStatuses.length - 1)];
+      patchIndex += 1;
+      patchCalls.push(status);
+      return response(status);
+    },
+    stats() {
+      return {
+        deleteCalls: deleteCalls.slice(),
+        patchCalls: patchCalls.slice(),
+      };
     },
   };
 }
@@ -71,6 +88,26 @@ async function assertProbeFailureDoesNotMasqueradeAsPresentAccount() {
     cleanupOnboardedAccount(api, 'https://example.test', 'token', 'probe-failure'),
     /probe for probe-failure returned HTTP 500\./,
   );
+}
+
+async function assertLegacyTenantOwnedAccountsAreNormalizedBeforeRetryingDelete() {
+  const api = fakeApi({
+    deleteStatuses: [422, 204],
+    getStatuses: [404],
+    patchStatuses: [200],
+  });
+
+  await cleanupOnboardedAccount(
+    api,
+    'https://example.test',
+    'token',
+    'legacy-tenant-owned-account',
+  );
+
+  assert.deepStrictEqual(api.stats(), {
+    deleteCalls: [422, 204],
+    patchCalls: [200],
+  });
 }
 
 async function assertBlankSlugFailsClosedInStrictMode() {
@@ -122,6 +159,7 @@ async function assertCleanupFailureIsSurfacedAlongsidePrimaryFailure() {
   await assertDefaultStrictThrowsWhenCleanupCannotRemoveAccount();
   await assertExplicitNonStrictReturnsFalse();
   await assertProbeFailureDoesNotMasqueradeAsPresentAccount();
+  await assertLegacyTenantOwnedAccountsAreNormalizedBeforeRetryingDelete();
   await assertBlankSlugFailsClosedInStrictMode();
   await assertBatchCleanupAggregatesAllFailures();
   await assertCleanupFailureIsSurfacedAlongsidePrimaryFailure();

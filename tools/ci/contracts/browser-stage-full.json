@@ -1,31 +1,111 @@
 {
   "schema_version": "ci-contract-v1",
   "contract_id": "browser-stage-full",
-  "description": "Local-public browser/runtime contract mirrored by the broad stage-full CI Equivalent surface.",
+  "description": "Local-public browser/runtime contract that mirrors the explicit stage pipeline browser sequence through the same leaf scripts and step order.",
   "entries": [
     {
-      "id": "local-public-web-prepare",
+      "id": "local-public-web-build",
       "repo": "belluga_now_docker",
       "kind": "workflow-parity",
       "cwd": "../../..",
-      "command": ["bash", "tools/ci/run_stage_full_local_public_web_contract.sh", "prepare"],
-      "description": "Build the current local web bundle, prove local-public edge health, and verify served bundle provenance on canonical local-public hosts."
+      "command": ["bash", "tools/ci/run_stage_browser_contract.sh", "local-public", "build"],
+      "description": "Build the local-public web surface through the shared leaf runner before browser parity validation."
     },
     {
-      "id": "local-public-web-readonly",
+      "id": "local-public-host-overrides-reset-pre",
       "repo": "belluga_now_docker",
       "kind": "workflow-parity",
       "cwd": "../../..",
-      "command": ["bash", "tools/ci/run_stage_full_local_public_web_contract.sh", "readonly"],
-      "description": "Run the canonical readonly browser smoke suite against the local-public host pair."
+      "command": ["bash", "tools/ci/run_stage_browser_contract.sh", "local-public", "host-overrides-reset"],
+      "description": "Reset managed navigation host overrides before the public-edge probe, mirroring the stage workflow precondition."
     },
     {
-      "id": "local-public-web-mutation",
+      "id": "local-public-public-edge-probe",
       "repo": "belluga_now_docker",
       "kind": "workflow-parity",
       "cwd": "../../..",
-      "command": ["bash", "tools/ci/run_stage_full_local_public_web_contract.sh", "mutation"],
-      "description": "Run the canonical mutation browser smoke suite against the local-public host pair."
+      "command": ["bash", "tools/ci/run_stage_browser_contract.sh", "local-public", "probe-public-edge"],
+      "description": "Probe the public local-public environment through the same public-edge script the stage workflow uses."
+    },
+    {
+      "id": "local-public-navigation-deps",
+      "repo": "belluga_now_docker",
+      "kind": "workflow-parity",
+      "cwd": "../../..",
+      "command": ["bash", "tools/ci/run_stage_browser_contract.sh", "local-public", "install-deps"],
+      "description": "Install web navigation dependencies via the shared smoke-runner workspace."
+    },
+    {
+      "id": "local-public-browser-verify",
+      "repo": "belluga_now_docker",
+      "kind": "workflow-parity",
+      "cwd": "../../..",
+      "command": ["bash", "tools/ci/run_stage_browser_contract.sh", "local-public", "verify-browser"],
+      "description": "Verify Playwright browser availability through the canonical resolver."
+    },
+    {
+      "id": "local-public-warmup",
+      "repo": "belluga_now_docker",
+      "kind": "workflow-parity",
+      "cwd": "../../..",
+      "command": ["bash", "tools/ci/run_stage_browser_contract.sh", "local-public", "warmup"],
+      "description": "Warm up environment endpoints through the same warmup script the stage workflow uses."
+    },
+    {
+      "id": "local-public-provenance",
+      "repo": "belluga_now_docker",
+      "kind": "workflow-parity",
+      "cwd": "../../..",
+      "command": ["bash", "tools/ci/run_stage_browser_contract.sh", "local-public", "provenance"],
+      "description": "Validate deployed web provenance through the same provenance script used by the stage workflow."
+    },
+    {
+      "id": "local-public-taxonomy-fixture-ensure",
+      "repo": "belluga_now_docker",
+      "kind": "workflow-parity",
+      "cwd": "../../..",
+      "command": ["bash", "tools/ci/run_stage_browser_contract.sh", "local-public", "fixture-ensure"],
+      "description": "Bootstrap the managed public taxonomy validation fixture."
+    },
+    {
+      "id": "local-public-host-overrides-apply",
+      "repo": "belluga_now_docker",
+      "kind": "workflow-parity",
+      "cwd": "../../..",
+      "command": ["bash", "tools/ci/run_stage_browser_contract.sh", "local-public", "host-overrides-apply"],
+      "description": "Apply managed navigation host overrides to the local-public target."
+    },
+    {
+      "id": "local-public-readonly-smoke",
+      "repo": "belluga_now_docker",
+      "kind": "workflow-parity",
+      "cwd": "../../..",
+      "command": ["bash", "tools/ci/run_stage_browser_contract.sh", "local-public", "readonly"],
+      "description": "Run readonly web navigation smoke through the canonical runner."
+    },
+    {
+      "id": "local-public-mutation-smoke",
+      "repo": "belluga_now_docker",
+      "kind": "workflow-parity",
+      "cwd": "../../..",
+      "command": ["bash", "tools/ci/run_stage_browser_contract.sh", "local-public", "mutation"],
+      "description": "Run mutation web navigation smoke through the canonical runner."
+    },
+    {
+      "id": "local-public-taxonomy-fixture-cleanup",
+      "repo": "belluga_now_docker",
+      "kind": "workflow-parity",
+      "cwd": "../../..",
+      "command": ["bash", "tools/ci/run_stage_browser_contract.sh", "local-public", "fixture-cleanup"],
+      "description": "Clean up the managed public taxonomy validation fixture after the local-public parity run."
+    },
+    {
+      "id": "local-public-host-overrides-reset-post",
+      "repo": "belluga_now_docker",
+      "kind": "workflow-parity",
+      "cwd": "../../..",
+      "command": ["bash", "tools/ci/run_stage_browser_contract.sh", "local-public", "host-overrides-reset"],
+      "description": "Reset managed navigation host overrides after the local-public parity run."
     }
   ]
 }

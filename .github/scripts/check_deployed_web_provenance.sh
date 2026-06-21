@@ -3,7 +3,7 @@ set -euo pipefail
 
 lane="${1:-${DEPLOY_LANE:-}}"
 if [[ -z "${lane}" ]]; then
-  echo "ERROR: usage: DEPLOY_LANE=<stage|main> NAV_LANDLORD_URL=<url> [NAV_ORIGIN_IP=<ip>] $0 [lane]" >&2
+  echo "ERROR: usage: DEPLOY_LANE=<dev|stage|main> NAV_LANDLORD_URL=<url> [NAV_ORIGIN_IP=<ip>] $0 [lane]" >&2
   exit 1
 fi
 
@@ -15,6 +15,7 @@ fi
 
 repo_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 expected_flutter_sha_override="$(printf '%s' "${EXPECTED_FLUTTER_SHA:-}" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')"
+expected_landlord_domain_override="$(printf '%s' "${LANDLORD_DOMAIN:-}" | xargs || true)"
 expected_flutter_sha_source="local-checkout"
 if [[ -n "${expected_flutter_sha_override}" ]]; then
   expected_flutter_sha="${expected_flutter_sha_override}"
@@ -210,14 +211,25 @@ PY
     return 1
   fi
 
-  lane_defines_file="${repo_root}/flutter-app/config/defines/${lane}.json"
-  if [[ ! -f "${lane_defines_file}" ]]; then
-    echo "ERROR: lane defines file not found for '${lane}': ${lane_defines_file}" >&2
-    return 1
-  fi
+  if [[ -n "${expected_landlord_domain_override}" ]]; then
+    expected_landlord_host="$(
+      python3 - <<'PY' "${expected_landlord_domain_override}"
+import sys
+from urllib.parse import urlparse
 
-  expected_landlord_host="$(
-    python3 - <<'PY' "${lane_defines_file}"
+host = (urlparse(sys.argv[1]).hostname or "").strip().lower()
+print(host)
+PY
+    )"
+  else
+    lane_defines_file="${repo_root}/flutter-app/config/defines/${lane}.json"
+    if [[ ! -f "${lane_defines_file}" ]]; then
+      echo "ERROR: lane defines file not found for '${lane}': ${lane_defines_file}" >&2
+      return 1
+    fi
+
+    expected_landlord_host="$(
+      python3 - <<'PY' "${lane_defines_file}"
 import json
 import sys
 from urllib.parse import urlparse
@@ -229,10 +241,15 @@ domain = str(payload.get("LANDLORD_DOMAIN") or "").strip()
 host = (urlparse(domain).hostname or "").strip().lower()
 print(host)
 PY
-  )"
+    )"
+  fi
   expected_landlord_host="$(echo "${expected_landlord_host}" | tr -d '[:space:]')"
   if [[ -z "${expected_landlord_host}" ]]; then
-    echo "ERROR: could not resolve expected landlord host from ${lane_defines_file}." >&2
+    if [[ -n "${expected_landlord_domain_override}" ]]; then
+      echo "ERROR: could not resolve expected landlord host from LANDLORD_DOMAIN override '${expected_landlord_domain_override}'." >&2
+    else
+      echo "ERROR: could not resolve expected landlord host from ${lane_defines_file}." >&2
+    fi
     return 1
   fi
 
