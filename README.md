@@ -302,7 +302,16 @@ If real browser validation is required:
 the same thing as proving a published lane contract.
 
 `CI Equivalent` remains current-branch local product proof on the authoritative branch
-under evaluation and should resolve through local/dev topology.
+under evaluation and should resolve through local/dev topology. In this repository,
+the broadest local pre-promotion CI Equivalent contract is
+`bash tools/ci/run_contract.sh --profile stage-full`.
+It includes repo-owned local-public web publish/provenance proof plus readonly and
+mutation browser smoke on `belluga.space` / `guarappari.belluga.space`.
+
+`main-proof` is a separate local production-lane semantic proof surface:
+`bash tools/ci/run_contract.sh --profile main-proof`. It exists to prove
+production-lane guards such as browser `mutation` being forbidden on `main`;
+it is not published-lane execution.
 
 Published `stage` and `main` proof exist only in the pipeline.
 Do not try to execute published-lane proof locally: local branch topology, host/domain
@@ -310,7 +319,8 @@ resolution, credentials, and provenance targets are different concerns and local
 for `stage`/`main` create drift instead of confidence.
 
 Keep the distinction explicit:
-- `CI Equivalent`: current-branch local product proof on the authoritative branch under evaluation.
+- `CI Equivalent` / `stage-full`: the broadest local pre-promotion proof on the authoritative branch under evaluation, executed through repo-owned local/dev contract wrappers.
+- `main-proof`: local production-lane semantic proof that preserves readonly-only production semantics and explicit `main` mutation rejection.
 - `./scripts/delphi/run_reconcile_validation.sh`: package reconciliation against the principal checkout.
 - GitHub Actions `.github/workflows/orchestration-ci-cd.yml` stage/main jobs: published lane proof only.
 

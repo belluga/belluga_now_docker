@@ -13,6 +13,71 @@ cleanup_temp_artifact_dirs() {
 
 trap cleanup_temp_artifact_dirs EXIT
 
+effective_verify_env_event_name() {
+  if [[ -n "${VERIFY_ENV_EVENT_NAME:-}" ]]; then
+    printf '%s\n' "${VERIFY_ENV_EVENT_NAME}"
+    return 0
+  fi
+
+  if [[ -n "${GITHUB_EVENT_NAME:-}" ]]; then
+    printf '%s\n' "${GITHUB_EVENT_NAME}"
+    return 0
+  fi
+
+  printf 'push\n'
+}
+
+effective_verify_env_base_ref() {
+  if [[ -n "${VERIFY_ENV_BASE_REF:-}" ]]; then
+    printf '%s\n' "${VERIFY_ENV_BASE_REF}"
+    return 0
+  fi
+
+  if [[ -n "${GITHUB_BASE_REF:-}" ]]; then
+    printf '%s\n' "${GITHUB_BASE_REF}"
+    return 0
+  fi
+
+  return 1
+}
+
+effective_verify_env_before_sha() {
+  if [[ -n "${VERIFY_ENV_BEFORE_SHA:-}" ]]; then
+    printf '%s\n' "${VERIFY_ENV_BEFORE_SHA}"
+    return 0
+  fi
+
+  if [[ -n "${GITHUB_EVENT_BEFORE:-}" ]]; then
+    printf '%s\n' "${GITHUB_EVENT_BEFORE}"
+    return 0
+  fi
+
+  if [[ -n "${GITHUB_EVENT_PATH:-}" ]] && [[ -f "${GITHUB_EVENT_PATH}" ]]; then
+    python3 - "${GITHUB_EVENT_PATH}" <<'PY'
+import json
+import sys
+
+event_path = sys.argv[1]
+before_sha = ""
+
+try:
+    with open(event_path, "r", encoding="utf-8") as handle:
+        before_sha = json.load(handle).get("before", "") or ""
+except Exception:
+    before_sha = ""
+
+if before_sha:
+    print(before_sha)
+    raise SystemExit(0)
+
+raise SystemExit(1)
+PY
+    return $?
+  fi
+
+  return 1
+}
+
 materialize_submodule_path_from_gitlink() {
   local submodule_path="$1"
   local relative_path="$2"
@@ -39,6 +104,13 @@ materialize_submodule_path_from_gitlink() {
   fi
 
   printf '%s\n' "${scratch_dir}/${relative_path}"
+}
+
+resolve_submodule_path_for_workflow_audit() {
+  local submodule_path="$1"
+  local relative_path="$2"
+
+  materialize_submodule_path_from_gitlink "${submodule_path}" "${relative_path}"
 }
 
 have_rg_binary() {
@@ -80,24 +152,53 @@ regex_search_stream() {
   grep -nP -- "${pattern}"
 }
 
+submodule_gitlink_matches_ref() {
+  local submodule_path="$1"
+  local compare_ref="$2"
+  local compare_label="$3"
+  local compare_gitlink_sha=""
+  local head_gitlink_sha=""
+
+  compare_gitlink_sha="$(git rev-parse "${compare_ref}:${submodule_path}" 2>/dev/null | tr -d '[:space:]' || true)"
+  head_gitlink_sha="$(git rev-parse "HEAD:${submodule_path}" 2>/dev/null | tr -d '[:space:]' || true)"
+
+  if [[ -n "${compare_gitlink_sha}" ]] && [[ -n "${head_gitlink_sha}" ]] && [[ "${compare_gitlink_sha}" == "${head_gitlink_sha}" ]]; then
+    printf 'INFO: skipping workflow runtime audit for unchanged gitlink %s against %s.\n' "${submodule_path}" "${compare_label}"
+    return 0
+  fi
+
+  return 1
+}
+
 submodule_gitlink_requires_workflow_audit() {
   local submodule_path="$1"
   local base_ref=""
+  local before_sha=""
+  local event_name=""
 
-  if [[ "${GITHUB_EVENT_NAME:-}" != "pull_request" ]]; then
+  event_name="$(effective_verify_env_event_name)"
+
+  if [[ "${event_name}" == "pull_request" ]]; then
+    base_ref="$(effective_verify_env_base_ref || true)"
+    if [[ -z "${base_ref}" ]]; then
+      return 0
+    fi
+
+    git fetch --no-tags --prune origin "${base_ref}" >/dev/null 2>&1 || true
+    if submodule_gitlink_matches_ref "${submodule_path}" "origin/${base_ref}" "origin/${base_ref}"; then
+      return 1
+    fi
+
     return 0
   fi
 
-  base_ref="${GITHUB_BASE_REF:-}"
-  if [[ -z "${base_ref}" ]]; then
-    return 0
-  fi
-
-  git fetch --no-tags --prune --depth=1 origin "${base_ref}" >/dev/null 2>&1 || true
-
-  if git diff --quiet --ignore-submodules=none "origin/${base_ref}...HEAD" -- "${submodule_path}"; then
-    printf 'INFO: skipping workflow runtime audit for unchanged gitlink %s against origin/%s.\n' "${submodule_path}" "${base_ref}"
-    return 1
+  if [[ "${event_name}" == "push" ]]; then
+    before_sha="$(effective_verify_env_before_sha || true)"
+    if [[ -n "${before_sha}" ]] && [[ ! "${before_sha}" =~ ^0+$ ]]; then
+      if submodule_gitlink_matches_ref "${submodule_path}" "${before_sha}" "${before_sha}"; then
+        return 1
+      fi
+    fi
   fi
 
   return 0
@@ -269,6 +370,30 @@ for compose_image_ref in \
   'image: ${NGINX_IMAGE:-belluga-now-nginx:local}'; do
   if ! grep -Fq "${compose_image_ref}" docker-compose.yml; then
     echo "ERROR: docker-compose.yml must expose runtime image override '${compose_image_ref}'." >&2
+    exit 1
+  fi
+done
+
+for compose_mount in \
+  './web-app:/opt/flutter-web-shell:ro'; do
+  if ! grep -Fq "${compose_mount}" docker-compose.yml; then
+    echo "ERROR: docker-compose.yml must mount web-app at '${compose_mount}' for runtime web-shell parity." >&2
+    exit 1
+  fi
+done
+
+if grep -Fq './web-app:/var/www/flutter:ro' docker-compose.yml; then
+  echo "ERROR: docker-compose.yml must not mount web-app into /var/www/flutter; nested bind mounts there can hide the runtime bundle." >&2
+  exit 1
+fi
+
+for nginx_template in docker/nginx/local.conf.template docker/nginx/prod.conf.template; do
+  if ! grep -Fq 'root /opt/flutter-web-shell;' "${nginx_template}"; then
+    echo "ERROR: ${nginx_template} must serve Flutter assets from /opt/flutter-web-shell." >&2
+    exit 1
+  fi
+  if grep -Fq 'root /var/www/flutter;' "${nginx_template}"; then
+    echo "ERROR: ${nginx_template} must not serve Flutter assets from /var/www/flutter." >&2
     exit 1
   fi
 done
@@ -657,16 +782,16 @@ submodule_workflow_dirs=()
 laravel_workflows_dir=""
 
 if submodule_gitlink_requires_workflow_audit "flutter-app"; then
-  submodule_workflow_dirs+=("$(materialize_submodule_path_from_gitlink "flutter-app" ".github/workflows")")
+  submodule_workflow_dirs+=("$(resolve_submodule_path_for_workflow_audit "flutter-app" ".github/workflows")")
 fi
 
 if submodule_gitlink_requires_workflow_audit "laravel-app"; then
-  laravel_workflows_dir="$(materialize_submodule_path_from_gitlink "laravel-app" ".github/workflows")"
+  laravel_workflows_dir="$(resolve_submodule_path_for_workflow_audit "laravel-app" ".github/workflows")"
   submodule_workflow_dirs+=("${laravel_workflows_dir}")
 fi
 
 if submodule_gitlink_requires_workflow_audit "web-app"; then
-  submodule_workflow_dirs+=("$(materialize_submodule_path_from_gitlink "web-app" ".github/workflows")")
+  submodule_workflow_dirs+=("$(resolve_submodule_path_for_workflow_audit "web-app" ".github/workflows")")
 fi
 
 if ((${#submodule_workflow_dirs[@]} > 0)); then
@@ -731,6 +856,154 @@ if [[ -e .github/scripts/run_stage_published_validation.sh ]]; then
   exit 1
 fi
 
+required_ci_contract_files=(
+  "tools/ci/run_contract.sh"
+  "tools/ci/run_stage_full_local_public_web_contract.sh"
+  "tools/ci/contracts/root-invariants.json"
+  "tools/ci/contracts/browser-policy.json"
+  "tools/ci/contracts/browser-stage-full.json"
+  "tools/ci/contracts/stage-full.json"
+  "tools/ci/contracts/main-proof.json"
+)
+
+for file in "${required_ci_contract_files[@]}"; do
+  if [[ ! -f "${file}" ]]; then
+    echo "ERROR: required CI contract surface missing: ${file}" >&2
+    exit 1
+  fi
+done
+
+if ! grep -Fq '"path": "root-invariants.json"' tools/ci/contracts/stage-full.json; then
+  echo "ERROR: stage-full manifest must import root-invariants.json." >&2
+  exit 1
+fi
+
+if ! grep -Fq '"path": "../../../flutter-app/tool/ci/contracts/stage-full.json"' tools/ci/contracts/stage-full.json; then
+  echo "ERROR: stage-full manifest must import the flutter-app stage-full contract." >&2
+  exit 1
+fi
+
+if ! grep -Fq '"path": "browser-stage-full.json"' tools/ci/contracts/stage-full.json; then
+  echo "ERROR: stage-full manifest must import browser-stage-full.json." >&2
+  exit 1
+fi
+
+if ! grep -Fq '"path": "root-invariants.json"' tools/ci/contracts/main-proof.json; then
+  echo "ERROR: main-proof manifest must import root-invariants.json." >&2
+  exit 1
+fi
+
+if ! grep -Fq '"path": "browser-policy.json"' tools/ci/contracts/main-proof.json; then
+  echo "ERROR: main-proof manifest must import browser-policy.json." >&2
+  exit 1
+fi
+
+if ! grep -Fq '"command": ["bash", "tools/ci/run_stage_full_local_public_web_contract.sh", "prepare"]' tools/ci/contracts/browser-stage-full.json; then
+  echo "ERROR: browser-stage-full manifest must run the local-public prepare wrapper." >&2
+  exit 1
+fi
+
+if ! grep -Fq '"command": ["bash", "tools/ci/run_stage_full_local_public_web_contract.sh", "readonly"]' tools/ci/contracts/browser-stage-full.json; then
+  echo "ERROR: browser-stage-full manifest must run the local-public readonly wrapper." >&2
+  exit 1
+fi
+
+if ! grep -Fq '"command": ["bash", "tools/ci/run_stage_full_local_public_web_contract.sh", "mutation"]' tools/ci/contracts/browser-stage-full.json; then
+  echo "ERROR: browser-stage-full manifest must run the local-public mutation wrapper." >&2
+  exit 1
+fi
+
+if ! grep -Fq 'CANONICAL_LANDLORD_URL="https://belluga.space"' tools/ci/run_stage_full_local_public_web_contract.sh; then
+  echo "ERROR: local-public stage-full wrapper must enforce the canonical landlord host." >&2
+  exit 1
+fi
+
+if ! grep -Fq 'CANONICAL_TENANT_URL="https://guarappari.belluga.space"' tools/ci/run_stage_full_local_public_web_contract.sh; then
+  echo "ERROR: local-public stage-full wrapper must enforce the canonical tenant host." >&2
+  exit 1
+fi
+
+if ! grep -Fq 'bash scripts/build_web.sh ../web-app "${CANONICAL_LOCAL_LANE}" --clean-output' tools/ci/run_stage_full_local_public_web_contract.sh; then
+  echo "ERROR: local-public stage-full wrapper must rebuild the local web bundle via scripts/build_web.sh." >&2
+  exit 1
+fi
+
+if ! grep -Fq 'bash "${ROOT_DIR}/tools/flutter/run_web_navigation_smoke.sh" "${suite}"' tools/ci/run_stage_full_local_public_web_contract.sh; then
+  echo "ERROR: local-public stage-full wrapper must delegate browser smoke to run_web_navigation_smoke.sh." >&2
+  exit 1
+fi
+
+flutter_gitlink_workflow_audit_required=0
+if submodule_gitlink_requires_workflow_audit "flutter-app"; then
+  flutter_gitlink_workflow_audit_required=1
+fi
+
+if [[ "${flutter_gitlink_workflow_audit_required}" -eq 1 ]]; then
+  required_flutter_ci_contract_files=(
+    "flutter-app/tool/ci/contracts/stage-full.json"
+    "flutter-app/tool/ci/run_stage_promotion_architecture_gate.sh"
+    "flutter-app/tool/ci/run_workspace_test_contract.sh"
+    "flutter-app/.github/workflows/web-artifact-publish.yml"
+  )
+
+  for file in "${required_flutter_ci_contract_files[@]}"; do
+    if [[ ! -f "${file}" ]]; then
+      echo "ERROR: required Flutter CI contract surface missing: ${file}" >&2
+      exit 1
+    fi
+  done
+
+  if ! grep -Fq 'run: bash tool/ci/run_stage_promotion_architecture_gate.sh "${{ steps.lane_defines.outputs.lane }}"' flutter-app/.github/workflows/web-artifact-publish.yml; then
+    echo "ERROR: flutter web workflow must use the shared promotion architecture gate wrapper." >&2
+    exit 1
+  fi
+
+  if ! grep -Fq 'run: bash tool/ci/run_workspace_test_contract.sh "${{ steps.lane_defines.outputs.defines_file }}"' flutter-app/.github/workflows/web-artifact-publish.yml; then
+    echo "ERROR: flutter web workflow must use the shared workspace test wrapper." >&2
+    exit 1
+  fi
+
+  if grep -Fq 'fvm dart pub get --directory tool/belluga_analysis_plugin/test_fixtures/lint_matrix' flutter-app/.github/workflows/web-artifact-publish.yml; then
+    echo "ERROR: flutter web workflow must not inline the analyzer fixture bootstrap once the shared wrapper exists." >&2
+    exit 1
+  fi
+
+  if grep -Fq 'bash tool/belluga_analysis_plugin/bin/validate_rule_matrix.sh' flutter-app/.github/workflows/web-artifact-publish.yml; then
+    echo "ERROR: flutter web workflow must not inline validate_rule_matrix.sh once the shared wrapper exists." >&2
+    exit 1
+  fi
+
+  if grep -Fq 'fvm dart analyze --format machine' flutter-app/.github/workflows/web-artifact-publish.yml; then
+    echo "ERROR: flutter web workflow must not inline flutter analyze once the shared wrapper exists." >&2
+    exit 1
+  fi
+
+  if grep -Fq 'bash tool/run_workspace_flutter_tests.sh' flutter-app/.github/workflows/web-artifact-publish.yml; then
+    echo "ERROR: flutter web workflow must not call run_workspace_flutter_tests.sh directly once the shared wrapper exists." >&2
+    exit 1
+  fi
+
+  if ! grep -Fq 'fvm dart pub get --directory tool/belluga_analysis_plugin/test_fixtures/lint_matrix' flutter-app/tool/ci/run_stage_promotion_architecture_gate.sh; then
+    echo "ERROR: run_stage_promotion_architecture_gate.sh must bootstrap the analyzer fixture workspace." >&2
+    exit 1
+  fi
+
+  if ! grep -Fq 'bash tool/belluga_analysis_plugin/bin/validate_rule_matrix.sh' flutter-app/tool/ci/run_stage_promotion_architecture_gate.sh; then
+    echo "ERROR: run_stage_promotion_architecture_gate.sh must run validate_rule_matrix.sh." >&2
+    exit 1
+  fi
+
+  if ! grep -Fq 'fvm dart analyze --format machine' flutter-app/tool/ci/run_stage_promotion_architecture_gate.sh; then
+    echo "ERROR: run_stage_promotion_architecture_gate.sh must run flutter analyze." >&2
+    exit 1
+  fi
+
+  if ! grep -Fq 'bash tool/run_workspace_flutter_tests.sh "${DEFINES_FILE}"' flutter-app/tool/ci/run_workspace_test_contract.sh; then
+    echo "ERROR: run_workspace_test_contract.sh must delegate to run_workspace_flutter_tests.sh." >&2
+    exit 1
+  fi
+fi
+
 if grep -Eq '### Published Stage(-Equivalent)? Validation' README.md; then
   echo "ERROR: README must not describe a local published-stage validation workflow. Published stage/main proof is pipeline-only." >&2
   exit 1
@@ -739,6 +1012,36 @@ fi
 if grep -Fq 'run_stage_published_validation.sh' README.md; then
   echo "ERROR: README must not advertise run_stage_published_validation.sh. Published stage/main proof is pipeline-only." >&2
   exit 1
+fi
+
+if ! grep -Fq 'bash tools/ci/run_contract.sh --profile stage-full' README.md; then
+  echo "ERROR: README must identify stage-full as the repo-owned local CI Equivalent contract." >&2
+  exit 1
+fi
+
+if ! grep -Fq 'bash tools/ci/run_contract.sh --profile main-proof' README.md; then
+  echo "ERROR: README must identify main-proof as the separate production-lane semantic proof surface." >&2
+  exit 1
+fi
+
+if submodule_gitlink_requires_workflow_audit "foundation_documentation"; then
+  foundation_project_constitution_path="$(resolve_submodule_path_for_workflow_audit "foundation_documentation" "project_constitution.md")"
+  foundation_flutter_client_experience_module_path="$(resolve_submodule_path_for_workflow_audit "foundation_documentation" "modules/flutter_client_experience_module.md")"
+
+  if ! grep -Fq 'The broadest local pre-promotion contract is `stage-full`' "${foundation_project_constitution_path}"; then
+    echo "ERROR: project_constitution.md must promote stage-full as the local CI Equivalent contract." >&2
+    exit 1
+  fi
+
+  if ! grep -Fq 'the separate `main-proof` surface exists only to prove production-lane semantics' "${foundation_project_constitution_path}"; then
+    echo "ERROR: project_constitution.md must describe main-proof as the production-semantic proof surface." >&2
+    exit 1
+  fi
+
+  if ! grep -Fq 'Local contract note: the broad local CI Equivalent surface may consume browser policy through `stage-full`' "${foundation_flutter_client_experience_module_path}"; then
+    echo "ERROR: flutter_client_experience_module.md must connect browser policy to the stage-full/main-proof local contract split." >&2
+    exit 1
+  fi
 fi
 
 if grep -Fq 'checkout_web_runtime_ref "origin/\${DEPLOY_LANE}"' .github/scripts/deploy_stage_over_ssh.sh; then

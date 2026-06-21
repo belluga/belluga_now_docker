@@ -78,40 +78,40 @@ server {
     # Flutter core bootstrap files must always revalidate so cached bundles do
     # not survive a deploy and bypass the canonical anonymous bootstrap path.
     location = /index.html {
-        root /var/www/flutter;
+        root /opt/flutter-web-shell;
         try_files $uri =404;
         add_header Cache-Control "no-cache" always;
     }
     location = /main.dart.js {
-        root /var/www/flutter;
+        root /opt/flutter-web-shell;
         try_files $uri =404;
         add_header Cache-Control "no-cache" always;
     }
     location = /flutter_bootstrap.js {
-        root /var/www/flutter;
+        root /opt/flutter-web-shell;
         try_files $uri =404;
         add_header Cache-Control "no-cache" always;
     }
     location = /flutter_service_worker.js {
-        root /var/www/flutter;
+        root /opt/flutter-web-shell;
         try_files $uri =404;
         add_header Cache-Control "no-cache" always;
     }
     location = /version.json {
-        root /var/www/flutter;
+        root /opt/flutter-web-shell;
         try_files $uri =404;
         add_header Cache-Control "no-cache" always;
     }
 
     location ^~ /assets/ {
-        root /var/www/flutter;
+        root /opt/flutter-web-shell;
         try_files $uri =404;
         expires 1y;
         add_header Cache-Control "public, immutable" always;
     }
 
     location ~* \.(?:js|css|png|jpg|jpeg|gif|svg|webp|json|map|wasm|txt)$ {
-        root /var/www/flutter;
+        root /opt/flutter-web-shell;
         try_files $uri =404;
         expires 1y;
         add_header Cache-Control "public, immutable" always;
@@ -148,18 +148,18 @@ server {
     }
     include /etc/nginx/project/*.conf;
     location = /admin {
-        root /var/www/flutter;
+        root /opt/flutter-web-shell;
         try_files /index.html =404;
         add_header Cache-Control "no-cache" always;
     }
     location ^~ /admin/ {
-        root /var/www/flutter;
+        root /opt/flutter-web-shell;
         try_files /index.html =404;
         add_header Cache-Control "no-cache" always;
     }
 
     location / {
-        root /var/www/flutter;
+        root /opt/flutter-web-shell;
         try_files $uri $uri/ /index.html;
     }
 
