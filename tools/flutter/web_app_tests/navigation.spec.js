@@ -214,7 +214,6 @@ async function scrollPageUntilLocatorVisible(
   } = {},
 ) {
   const deadline = Date.now() + timeout;
-  let stagnantScrolls = 0;
 
   while (Date.now() < deadline) {
     const candidate = locator.first();
@@ -236,30 +235,33 @@ async function scrollPageUntilLocatorVisible(
             (right.scrollHeight - right.clientHeight) -
             (left.scrollHeight - left.clientHeight),
         );
-      const target =
-        candidates[0] ||
-        document.scrollingElement ||
-        document.documentElement;
-      if (!target) {
+      const targets = [
+        ...candidates,
+        document.scrollingElement,
+        document.documentElement,
+      ].filter(Boolean);
+      if (targets.length === 0) {
         return false;
       }
 
-      const previousTop = target.scrollTop;
-      target.scrollBy({ top: delta, behavior: 'auto' });
-      return Math.abs(target.scrollTop - previousTop) > 1;
+      let movedAnyTarget = false;
+      for (const target of targets) {
+        const previousTop = target.scrollTop;
+        target.scrollBy({ top: delta, behavior: 'auto' });
+        if (Math.abs(target.scrollTop - previousTop) > 1) {
+          movedAnyTarget = true;
+        }
+      }
+
+      return movedAnyTarget;
     }, step).catch(() => false);
 
-    await page.waitForTimeout(settleMs);
-
-    if (!moved) {
-      stagnantScrolls += 1;
-    } else {
-      stagnantScrolls = 0;
-    }
-
-    if (stagnantScrolls >= 3) {
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) {
       break;
     }
+
+    await page.waitForTimeout(moved ? Math.min(settleMs, remainingMs) : Math.min(500, remainingMs));
   }
 
   return null;

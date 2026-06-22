@@ -313,6 +313,14 @@ function spawnSmokeScriptForPolicyTest(suite, env) {
   }
 }
 
+function assertUnknownMutationShardFailure(output, message) {
+  assert.match(
+    output,
+    /Unknown mutation shard/,
+    message,
+  );
+}
+
 function directPlaywrightEnv(overrides = {}) {
   const env = {
     ...process.env,
@@ -1349,6 +1357,10 @@ function assertSmokeRunnerLoadsLocalNavigationEnv() {
       /requires NAV_ADMIN_EMAIL(?: and NAV_ADMIN_PASSWORD)?/,
       'local navigation env should satisfy the mutation credential guard',
     );
+    assertUnknownMutationShardFailure(
+      combinedOutput,
+      'unknown shard should remain the explicit post-policy abort reason after env loads',
+    );
     assert.ok(
       fs.existsSync(path.join(outputDir, 'policy-guard.log')),
       'runner should materialize the policy-guard artifact before shard resolution aborts',
@@ -1404,6 +1416,10 @@ function assertSmokeRunnerPreservesExplicitNonLocalOptIn() {
       combinedOutput,
       /refuses non-local host|requires NAV_ADMIN_EMAIL(?: and NAV_ADMIN_PASSWORD)?/,
       'explicit shell opt-in should prevent host/credential guards from failing first',
+    );
+    assertUnknownMutationShardFailure(
+      combinedOutput,
+      'unknown shard should remain the explicit post-policy abort reason after preserving non-local opt-in',
     );
     assert.ok(
       fs.existsSync(path.join(outputDir, 'policy-guard.log')),
@@ -1571,6 +1587,10 @@ function assertNonLocalMutationHostsRequireExplicitOptIn() {
       allowedOutput,
       /refuses non-local host|requires NAV_ADMIN_EMAIL(?: and NAV_ADMIN_PASSWORD)?/,
       'explicit host opt-in should prevent host/credential guards from failing first',
+    );
+    assertUnknownMutationShardFailure(
+      allowedOutput,
+      'unknown shard should remain the explicit post-policy abort reason after host opt-in',
     );
     assert.ok(
       fs.existsSync(path.join(outputDir, 'policy-guard.log')),
@@ -1828,6 +1848,10 @@ function assertIpv6LoopbackCountsAsLocalHostForRunner() {
   assert.doesNotMatch(
     combinedOutput,
     /refuses non-local host|requires an explicit NAV_DEPLOY_LANE contract/,
+  );
+  assertUnknownMutationShardFailure(
+    combinedOutput,
+    'synthetic IPv6 loopback probe should still abort on the explicit missing-shard sentinel',
   );
   assert.ok(
     fs.existsSync(path.join(outputDir, 'policy-guard.log')),
