@@ -204,6 +204,49 @@ async function enableAccessibilityIfNeeded(page) {
   }
 }
 
+async function scrollPageUntilLocatorVisible(
+  page,
+  locator,
+  {
+    timeout = appBootTimeoutMs,
+    step = 900,
+    settleMs = 300,
+  } = {},
+) {
+  const viewport =
+    page.viewportSize() ||
+    (await page.evaluate(() => ({
+      width: window.innerWidth,
+      height: window.innerHeight,
+    })));
+  await page.mouse.move(viewport.width * 0.62, viewport.height * 0.72).catch(() => {});
+  const deadline = Date.now() + timeout;
+
+  while (Date.now() < deadline) {
+    const candidate = locator.first();
+    const count = await candidate.count().catch(() => 0);
+    if (count > 0) {
+      await candidate.scrollIntoViewIfNeeded({
+        timeout: Math.min(2000, Math.max(deadline - Date.now(), 250)),
+      }).catch(() => {});
+      if (await candidate.isVisible().catch(() => false)) {
+        return candidate;
+      }
+    }
+
+    await page.mouse.wheel(0, step).catch(() => {});
+
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) {
+      break;
+    }
+
+    await page.waitForTimeout(Math.min(settleMs, remainingMs));
+  }
+
+  return null;
+}
+
 test('@readonly landlord domain bootstraps as landlord and navigates', async ({ page }) => {
   const { landlordUrl } = requireNavigationUrls();
   const collectors = installFailureCollectors(page);
@@ -566,8 +609,19 @@ test('@mutation tenant agenda UI state matches tenant agenda API payload', async
     const managedFixtureTitle = page
       .getByText(new RegExp(escapeRegExp(fixture.eventTitle), 'i'))
       .first();
-    await expect(
+    const visibleManagedFixtureTitle = await scrollPageUntilLocatorVisible(
+      page,
       managedFixtureTitle,
+      {
+        timeout: appBootTimeoutMs,
+      },
+    );
+    expect(
+      visibleManagedFixtureTitle,
+      `Managed home agenda fixture ${fixture.eventTitle} must render somewhere in the tenant home agenda feed when NAV_PUBLIC_TAXONOMY_MANAGED_FIXTURE=1.`,
+    ).toBeTruthy();
+    await expect(
+      visibleManagedFixtureTitle,
       `Managed home agenda fixture ${fixture.eventTitle} must render on the tenant home surface when NAV_PUBLIC_TAXONOMY_MANAGED_FIXTURE=1.`,
     ).toBeVisible({
       timeout: appBootTimeoutMs,
