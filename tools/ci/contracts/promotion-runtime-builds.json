@@ -1,0 +1,15 @@
+{
+  "schema_version": "ci-contract-v1",
+  "contract_id": "promotion-runtime-builds",
+  "description": "Local execution of the promotion runtime build preflight that the protected stage/main pipeline runs before remote mutation.",
+  "entries": [
+    {
+      "id": "promotion-runtime-builds-stage",
+      "repo": "belluga_now_docker",
+      "kind": "workflow-parity",
+      "cwd": "../../..",
+      "command": ["bash", ".github/scripts/preflight_promotion_runtime_builds.sh", "stage"],
+      "description": "Build the pinned runtime images locally through the same promotion preflight script the protected stage pipeline uses."
+    }
+  ]
+}

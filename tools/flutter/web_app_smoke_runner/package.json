@@ -2,6 +2,9 @@
   "name": "belluga-now-web-navigation-smoke-runner",
   "version": "1.0.0",
   "private": true,
+  "engines": {
+    "node": "24.x"
+  },
   "devDependencies": {
     "@playwright/test": "^1.58.2"
   }
