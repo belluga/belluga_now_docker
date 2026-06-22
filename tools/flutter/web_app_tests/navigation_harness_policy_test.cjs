@@ -1311,6 +1311,7 @@ function assertAdminSessionSecretsAreDerivedFromLogin() {
 function assertSmokeRunnerLoadsLocalNavigationEnv() {
   withTempDir((dir) => {
     const envFile = path.join(dir, '.env.local.navigation');
+    const outputDir = path.join(dir, 'runner-output');
     fs.writeFileSync(
       envFile,
       [
@@ -1330,16 +1331,31 @@ function assertSmokeRunnerLoadsLocalNavigationEnv() {
       NAV_WEB_TEST_TYPE: 'mutation',
       NAV_DEPLOY_LANE: 'orchestrator',
       NAV_WEB_SHARD: 'missing',
+      NAV_WEB_OUTPUT_DIR: outputDir,
     };
     delete env.NAV_ADMIN_EMAIL;
     delete env.NAV_ADMIN_PASSWORD;
 
     const result = spawnSmokeScriptForPolicyTest('mutation', env);
+    const combinedOutput = `${result.stdout}\n${result.stderr}`;
     assert.notStrictEqual(result.status, 0, 'unknown shard should fail after env loads');
     assert.match(
-      `${result.stdout}\n${result.stderr}`,
-      /Unknown mutation shard/,
-      'local navigation env should satisfy credential guard before shard validation fails',
+      combinedOutput,
+      /Web navigation policy check passed \(lane=orchestrator, suite=mutation\)\./,
+      'local navigation env should load before the runner reaches shard validation',
+    );
+    assert.doesNotMatch(
+      combinedOutput,
+      /requires NAV_ADMIN_EMAIL(?: and NAV_ADMIN_PASSWORD)?/,
+      'local navigation env should satisfy the mutation credential guard',
+    );
+    assert.ok(
+      fs.existsSync(path.join(outputDir, 'policy-guard.log')),
+      'runner should materialize the policy-guard artifact before shard resolution aborts',
+    );
+    assert.ok(
+      !fs.existsSync(path.join(outputDir, 'selected-tests.txt')),
+      'unknown shard should abort before Playwright selection output is written',
     );
   });
 }
@@ -1347,6 +1363,7 @@ function assertSmokeRunnerLoadsLocalNavigationEnv() {
 function assertSmokeRunnerPreservesExplicitNonLocalOptIn() {
   withTempDir((dir) => {
     const envFile = path.join(dir, '.env.local.navigation');
+    const outputDir = path.join(dir, 'runner-output');
     fs.writeFileSync(
       envFile,
       [
@@ -1368,18 +1385,33 @@ function assertSmokeRunnerPreservesExplicitNonLocalOptIn() {
         NAV_DEPLOY_LANE: 'dev',
         NAV_WEB_ALLOW_NONLOCAL_MUTATION_HOSTS: '1',
         NAV_WEB_SHARD: 'missing',
+        NAV_WEB_OUTPUT_DIR: outputDir,
         PLAYWRIGHT_IGNORE_HTTPS_ERRORS: 'true',
       },
     );
+    const combinedOutput = `${result.stdout}\n${result.stderr}`;
     assert.notStrictEqual(
       result.status,
       0,
       'unknown shard should still fail after preserving explicit non-local mutation opt-in',
     );
     assert.match(
-      `${result.stdout}\n${result.stderr}`,
-      /Unknown mutation shard/,
-      'explicit shell opt-in must win over env-file stale values so validation reaches shard selection',
+      combinedOutput,
+      /Web navigation policy check passed \(lane=dev, suite=mutation\)\./,
+      'explicit shell opt-in must win over env-file stale values before shard resolution aborts',
+    );
+    assert.doesNotMatch(
+      combinedOutput,
+      /refuses non-local host|requires NAV_ADMIN_EMAIL(?: and NAV_ADMIN_PASSWORD)?/,
+      'explicit shell opt-in should prevent host/credential guards from failing first',
+    );
+    assert.ok(
+      fs.existsSync(path.join(outputDir, 'policy-guard.log')),
+      'runner should materialize the policy-guard artifact before shard resolution aborts',
+    );
+    assert.ok(
+      !fs.existsSync(path.join(outputDir, 'selected-tests.txt')),
+      'unknown shard should still abort before Playwright selection output is written',
     );
   });
 }
@@ -1488,6 +1520,7 @@ function assertDiagnosticSuiteRejectsEnvFileOnlyContract() {
 function assertNonLocalMutationHostsRequireExplicitOptIn() {
   withTempDir((dir) => {
     const envFile = path.join(dir, '.env.local.navigation');
+    const outputDir = path.join(dir, 'runner-output');
     fs.writeFileSync(
       envFile,
       [
@@ -1522,14 +1555,30 @@ function assertNonLocalMutationHostsRequireExplicitOptIn() {
         NAV_WEB_TEST_TYPE: 'mutation',
         NAV_DEPLOY_LANE: 'dev',
         NAV_WEB_SHARD: 'missing',
+        NAV_WEB_OUTPUT_DIR: outputDir,
         PLAYWRIGHT_IGNORE_HTTPS_ERRORS: 'true',
         NAV_WEB_ALLOW_NONLOCAL_MUTATION_HOSTS: '1',
       },
     );
+    const allowedOutput = `${allowed.stdout}\n${allowed.stderr}`;
     assert.notStrictEqual(allowed.status, 0, 'unknown shard should still fail after explicit host opt-in');
     assert.match(
-      `${allowed.stdout}\n${allowed.stderr}`,
-      /Unknown mutation shard/,
+      allowedOutput,
+      /Web navigation policy check passed \(lane=dev, suite=mutation\)\./,
+      'explicit host opt-in should let the runner progress past the policy guard before shard resolution aborts',
+    );
+    assert.doesNotMatch(
+      allowedOutput,
+      /refuses non-local host|requires NAV_ADMIN_EMAIL(?: and NAV_ADMIN_PASSWORD)?/,
+      'explicit host opt-in should prevent host/credential guards from failing first',
+    );
+    assert.ok(
+      fs.existsSync(path.join(outputDir, 'policy-guard.log')),
+      'runner should materialize the policy-guard artifact before shard resolution aborts',
+    );
+    assert.ok(
+      !fs.existsSync(path.join(outputDir, 'selected-tests.txt')),
+      'unknown shard should still abort before Playwright selection output is written',
     );
   });
 }
@@ -1747,6 +1796,10 @@ function assertIpv6LoopbackCountsAsLocalHostForRunner() {
     os.tmpdir(),
     `belluga-nav-policy-ipv6-runner-${process.pid}-${Date.now()}.env`,
   );
+  const outputDir = path.join(
+    os.tmpdir(),
+    `belluga-nav-policy-ipv6-runner-output-${process.pid}-${Date.now()}`,
+  );
   const result = spawnSmokeScriptForPolicyTest(
     'mutation',
     {
@@ -1758,21 +1811,33 @@ function assertIpv6LoopbackCountsAsLocalHostForRunner() {
       NAV_ADMIN_PASSWORD: 'policy-secret',
       PLAYWRIGHT_IGNORE_HTTPS_ERRORS: 'true',
       NAV_WEB_SHARD: 'missing',
+      NAV_WEB_OUTPUT_DIR: outputDir,
     },
   );
+  const combinedOutput = `${result.stdout}\n${result.stderr}`;
   assert.notStrictEqual(
     result.status,
     0,
     'IPv6 loopback runner probe should still fail on the synthetic missing shard',
   );
   assert.match(
-    `${result.stdout}\n${result.stderr}`,
-    /Unknown mutation shard/,
+    combinedOutput,
+    /Web navigation policy check passed \(lane=local, suite=mutation\)\./,
+    'IPv6 loopback runner probe should reach shard resolution after treating ::1 as local',
   );
   assert.doesNotMatch(
-    `${result.stdout}\n${result.stderr}`,
+    combinedOutput,
     /refuses non-local host|requires an explicit NAV_DEPLOY_LANE contract/,
   );
+  assert.ok(
+    fs.existsSync(path.join(outputDir, 'policy-guard.log')),
+    'runner should materialize the policy-guard artifact before shard resolution aborts',
+  );
+  assert.ok(
+    !fs.existsSync(path.join(outputDir, 'selected-tests.txt')),
+    'synthetic missing shard should still abort before Playwright selection output is written',
+  );
+  fs.rmSync(outputDir, { recursive: true, force: true });
 }
 
 function assertIpv6LoopbackCountsAsLocalHostForDirectPlaywright() {

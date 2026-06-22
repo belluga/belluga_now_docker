@@ -204,6 +204,67 @@ async function enableAccessibilityIfNeeded(page) {
   }
 }
 
+async function scrollPageUntilLocatorVisible(
+  page,
+  locator,
+  {
+    timeout = appBootTimeoutMs,
+    step = 480,
+    settleMs = 250,
+  } = {},
+) {
+  const deadline = Date.now() + timeout;
+  let stagnantScrolls = 0;
+
+  while (Date.now() < deadline) {
+    const candidate = locator.first();
+    const count = await candidate.count().catch(() => 0);
+    if (count > 0) {
+      await candidate.scrollIntoViewIfNeeded({
+        timeout: Math.min(2000, Math.max(deadline - Date.now(), 250)),
+      }).catch(() => {});
+      if (await candidate.isVisible().catch(() => false)) {
+        return candidate;
+      }
+    }
+
+    const moved = await page.evaluate((delta) => {
+      const candidates = Array.from(document.querySelectorAll('flt-semantics'))
+        .filter((element) => element.scrollHeight > element.clientHeight + 20)
+        .sort(
+          (left, right) =>
+            (right.scrollHeight - right.clientHeight) -
+            (left.scrollHeight - left.clientHeight),
+        );
+      const target =
+        candidates[0] ||
+        document.scrollingElement ||
+        document.documentElement;
+      if (!target) {
+        return false;
+      }
+
+      const previousTop = target.scrollTop;
+      target.scrollBy({ top: delta, behavior: 'auto' });
+      return Math.abs(target.scrollTop - previousTop) > 1;
+    }, step).catch(() => false);
+
+    await page.waitForTimeout(settleMs);
+
+    if (!moved) {
+      stagnantScrolls += 1;
+    } else {
+      stagnantScrolls = 0;
+    }
+
+    if (stagnantScrolls >= 3) {
+      break;
+    }
+  }
+
+  return null;
+}
+
 test('@readonly landlord domain bootstraps as landlord and navigates', async ({ page }) => {
   const { landlordUrl } = requireNavigationUrls();
   const collectors = installFailureCollectors(page);
@@ -566,8 +627,19 @@ test('@mutation tenant agenda UI state matches tenant agenda API payload', async
     const managedFixtureTitle = page
       .getByText(new RegExp(escapeRegExp(fixture.eventTitle), 'i'))
       .first();
-    await expect(
+    const visibleManagedFixtureTitle = await scrollPageUntilLocatorVisible(
+      page,
       managedFixtureTitle,
+      {
+        timeout: appBootTimeoutMs,
+      },
+    );
+    expect(
+      visibleManagedFixtureTitle,
+      `Managed home agenda fixture ${fixture.eventTitle} must render somewhere in the tenant home agenda feed when NAV_PUBLIC_TAXONOMY_MANAGED_FIXTURE=1.`,
+    ).toBeTruthy();
+    await expect(
+      visibleManagedFixtureTitle,
       `Managed home agenda fixture ${fixture.eventTitle} must render on the tenant home surface when NAV_PUBLIC_TAXONOMY_MANAGED_FIXTURE=1.`,
     ).toBeVisible({
       timeout: appBootTimeoutMs,

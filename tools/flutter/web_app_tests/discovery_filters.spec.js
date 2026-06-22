@@ -1621,7 +1621,31 @@ function readPixel(png, x, y) {
 }
 
 async function expectSelectedChipIconAndLabelForegroundParity(locator) {
-  const image = decodePng(await locator.screenshot());
+  let image = null;
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      await expect(locator).toBeVisible({ timeout: appBootTimeoutMs });
+      image = decodePng(await locator.screenshot({
+        animations: 'disabled',
+        timeout: 15000,
+      }));
+      break;
+    } catch (error) {
+      lastError = error;
+      const message = `${error}`;
+      const retryable =
+        message.includes('locator.screenshot: Element is not attached to the DOM')
+        || (message.includes('locator.screenshot:') && message.includes('Timeout'));
+      if (!retryable || attempt === 3) {
+        throw error;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+  }
+
+  expect(image, `Expected a stable selected chip screenshot. Last error=${lastError}`).toBeTruthy();
   const iconColor = dominantForegroundColor(image, {
     xStart: Math.floor(image.width * 0.04),
     xEnd: Math.max(1, Math.floor(image.width * 0.24)),
