@@ -209,10 +209,17 @@ async function scrollPageUntilLocatorVisible(
   locator,
   {
     timeout = appBootTimeoutMs,
-    step = 480,
-    settleMs = 250,
+    step = 900,
+    settleMs = 300,
   } = {},
 ) {
+  const viewport =
+    page.viewportSize() ||
+    (await page.evaluate(() => ({
+      width: window.innerWidth,
+      height: window.innerHeight,
+    })));
+  await page.mouse.move(viewport.width * 0.62, viewport.height * 0.72).catch(() => {});
   const deadline = Date.now() + timeout;
 
   while (Date.now() < deadline) {
@@ -227,41 +234,14 @@ async function scrollPageUntilLocatorVisible(
       }
     }
 
-    const moved = await page.evaluate((delta) => {
-      const candidates = Array.from(document.querySelectorAll('flt-semantics'))
-        .filter((element) => element.scrollHeight > element.clientHeight + 20)
-        .sort(
-          (left, right) =>
-            (right.scrollHeight - right.clientHeight) -
-            (left.scrollHeight - left.clientHeight),
-        );
-      const targets = [
-        ...candidates,
-        document.scrollingElement,
-        document.documentElement,
-      ].filter(Boolean);
-      if (targets.length === 0) {
-        return false;
-      }
-
-      let movedAnyTarget = false;
-      for (const target of targets) {
-        const previousTop = target.scrollTop;
-        target.scrollBy({ top: delta, behavior: 'auto' });
-        if (Math.abs(target.scrollTop - previousTop) > 1) {
-          movedAnyTarget = true;
-        }
-      }
-
-      return movedAnyTarget;
-    }, step).catch(() => false);
+    await page.mouse.wheel(0, step).catch(() => {});
 
     const remainingMs = deadline - Date.now();
     if (remainingMs <= 0) {
       break;
     }
 
-    await page.waitForTimeout(moved ? Math.min(settleMs, remainingMs) : Math.min(500, remainingMs));
+    await page.waitForTimeout(Math.min(settleMs, remainingMs));
   }
 
   return null;

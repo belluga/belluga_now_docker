@@ -1432,6 +1432,71 @@ function assertSmokeRunnerPreservesExplicitNonLocalOptIn() {
   });
 }
 
+function assertUnknownShardClearsReusedOutputDir() {
+  withTempDir((dir) => {
+    const envFile = path.join(dir, '.env.local.navigation');
+    const outputDir = path.join(dir, 'runner-output');
+    const policyGuardLogPath = path.join(outputDir, 'policy-guard.log');
+    const selectedTestsPath = path.join(outputDir, 'selected-tests.txt');
+    fs.mkdirSync(outputDir, { recursive: true });
+    fs.writeFileSync(
+      envFile,
+      [
+        'NAV_LANDLORD_URL=https://belluga.space',
+        'NAV_TENANT_URL=https://guarappari.belluga.space',
+        'NAV_DEPLOY_LANE=dev',
+        'NAV_ADMIN_EMAIL=policy@example.test',
+        'NAV_ADMIN_PASSWORD=policy-secret',
+        '',
+      ].join('\n'),
+    );
+    fs.writeFileSync(policyGuardLogPath, 'stale-policy-guard');
+    fs.writeFileSync(selectedTestsPath, 'stale-selected-tests');
+
+    const result = spawnSmokeScriptForPolicyTest(
+      'mutation',
+      {
+        NAV_LOCAL_ENV_FILE: envFile,
+        NAV_WEB_TEST_TYPE: 'mutation',
+        NAV_DEPLOY_LANE: 'dev',
+        NAV_WEB_ALLOW_NONLOCAL_MUTATION_HOSTS: '1',
+        NAV_WEB_SHARD: 'missing',
+        NAV_WEB_OUTPUT_DIR: outputDir,
+        PLAYWRIGHT_IGNORE_HTTPS_ERRORS: 'true',
+      },
+    );
+    const combinedOutput = `${result.stdout}\n${result.stderr}`;
+    assert.notStrictEqual(
+      result.status,
+      0,
+      'reused output-dir probe should still fail on the synthetic missing shard',
+    );
+    assertUnknownMutationShardFailure(
+      combinedOutput,
+      'reused output-dir probe should still abort on the explicit missing-shard sentinel',
+    );
+    assert.ok(
+      fs.existsSync(policyGuardLogPath),
+      'runner should recreate policy-guard.log after clearing a reused output dir',
+    );
+    assert.ok(
+      !fs.existsSync(selectedTestsPath),
+      'runner should clear stale selected-tests.txt before an unknown-shard abort can reuse it',
+    );
+    const refreshedPolicyGuardLog = fs.readFileSync(policyGuardLogPath, 'utf8');
+    assert.doesNotMatch(
+      refreshedPolicyGuardLog,
+      /stale-policy-guard/,
+      'runner should replace stale policy-guard content when reusing an explicit output dir',
+    );
+    assert.match(
+      refreshedPolicyGuardLog,
+      /Web navigation policy check passed \(lane=dev, suite=mutation\)\./,
+      'runner should materialize fresh policy-guard output when reusing an explicit output dir',
+    );
+  });
+}
+
 function assertRunWithTimeoutPropagatesWrappedExitStatus() {
   const source = fs.readFileSync(smokeScript, 'utf8');
   const match = source.match(/run_with_timeout\(\) \{[\s\S]*?\n\}/);
@@ -2500,6 +2565,7 @@ assertLocalDiagnosticMutationHelperUsesExplicitArtisanCommand();
 assertAdminSessionSecretsAreDerivedFromLogin();
 assertSmokeRunnerLoadsLocalNavigationEnv();
 assertSmokeRunnerPreservesExplicitNonLocalOptIn();
+assertUnknownShardClearsReusedOutputDir();
 assertRunWithTimeoutPropagatesWrappedExitStatus();
 assertDiagnosticSuiteRequiresExplicitLocalMutationContract();
 assertDiagnosticSuiteRejectsEnvFileOnlyContract();

@@ -1623,25 +1623,57 @@ function readPixel(png, x, y) {
 async function expectSelectedChipIconAndLabelForegroundParity(locator) {
   let image = null;
   let lastError = null;
+  let lastStableBox = null;
+  let stableBoxSamples = 0;
+  const deadline = Date.now() + appBootTimeoutMs;
 
-  for (let attempt = 1; attempt <= 3; attempt += 1) {
+  while (Date.now() < deadline) {
     try {
-      await expect(locator).toBeVisible({ timeout: appBootTimeoutMs });
+      await expect(locator).toBeVisible({
+        timeout: Math.min(appBootTimeoutMs, Math.max(deadline - Date.now(), 250)),
+      });
+      const box = await locator.boundingBox();
+      if (box == null || box.width <= 0 || box.height <= 0) {
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        continue;
+      }
+
+      const normalizedBox = {
+        x: Math.round(box.x),
+        y: Math.round(box.y),
+        width: Math.round(box.width),
+        height: Math.round(box.height),
+      };
+      if (
+        lastStableBox != null &&
+        Math.abs(lastStableBox.x - normalizedBox.x) <= 1 &&
+        Math.abs(lastStableBox.y - normalizedBox.y) <= 1 &&
+        Math.abs(lastStableBox.width - normalizedBox.width) <= 1 &&
+        Math.abs(lastStableBox.height - normalizedBox.height) <= 1
+      ) {
+        stableBoxSamples += 1;
+      } else {
+        stableBoxSamples = 1;
+      }
+      lastStableBox = normalizedBox;
+      if (stableBoxSamples < 2) {
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        continue;
+      }
+
       image = decodePng(await locator.screenshot({
         animations: 'disabled',
-        timeout: 15000,
+        timeout: Math.min(15000, Math.max(deadline - Date.now(), 250)),
       }));
       break;
     } catch (error) {
       lastError = error;
-      const message = `${error}`;
-      const retryable =
-        message.includes('locator.screenshot: Element is not attached to the DOM')
-        || (message.includes('locator.screenshot:') && message.includes('Timeout'));
-      if (!retryable || attempt === 3) {
-        throw error;
+      if (Date.now() >= deadline) {
+        throw lastError;
       }
-      await new Promise((resolve) => setTimeout(resolve, 250));
+      stableBoxSamples = 0;
+      lastStableBox = null;
+      await new Promise((resolve) => setTimeout(resolve, 200));
     }
   }
 
