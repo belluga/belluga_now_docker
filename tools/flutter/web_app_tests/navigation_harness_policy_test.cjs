@@ -26,6 +26,13 @@ const stageFullContractManifest = path.join(
   'contracts',
   'stage-full.json',
 );
+const promotionRuntimeBuildsContractManifest = path.join(
+  repoRoot,
+  'tools',
+  'ci',
+  'contracts',
+  'promotion-runtime-builds.json',
+);
 const mainProofContractManifest = path.join(
   repoRoot,
   'tools',
@@ -677,6 +684,10 @@ function assertPublishedLaneProofRemainsPipelineOnly() {
 function assertCiEquivalentContractSurfacesStayWired() {
   assert.ok(fs.existsSync(ciContractRunnerScript), 'CI contract runner must exist');
   assert.ok(fs.existsSync(stageFullContractManifest), 'stage-full manifest must exist');
+  assert.ok(
+    fs.existsSync(promotionRuntimeBuildsContractManifest),
+    'promotion runtime builds manifest must exist',
+  );
   assert.ok(fs.existsSync(mainProofContractManifest), 'main-proof manifest must exist');
   assert.ok(fs.existsSync(browserPolicyContractManifest), 'browser-policy manifest must exist');
   assert.ok(fs.existsSync(browserStageFullContractManifest), 'browser-stage-full manifest must exist');
@@ -692,10 +703,21 @@ function assertCiEquivalentContractSurfacesStayWired() {
     (stageFullManifest.imports || []).map((entry) => entry.path),
     [
       'root-invariants.json',
+      'promotion-runtime-builds.json',
       '../../../flutter-app/tool/ci/contracts/stage-full.json',
       'browser-stage-full.json',
     ],
-    'stage-full manifest must aggregate root invariants, flutter-app stage-full, and browser stage-full contracts',
+    'stage-full manifest must aggregate root invariants, runtime-build preflight, flutter-app stage-full, and browser stage-full contracts',
+  );
+
+  const promotionRuntimeBuildsManifest = JSON.parse(
+    fs.readFileSync(promotionRuntimeBuildsContractManifest, 'utf8'),
+  );
+  assert.strictEqual(promotionRuntimeBuildsManifest.contract_id, 'promotion-runtime-builds');
+  assert.deepStrictEqual(
+    promotionRuntimeBuildsManifest.entries?.[0]?.command,
+    ['bash', '.github/scripts/preflight_promotion_runtime_builds.sh', 'stage'],
+    'promotion runtime builds manifest must execute the protected stage runtime build preflight locally',
   );
 
   const mainProofManifest = JSON.parse(fs.readFileSync(mainProofContractManifest, 'utf8'));
@@ -914,6 +936,21 @@ function assertCiEquivalentContractSurfacesStayWired() {
     localPublicWrapperSource,
     /LANDLORD_DOMAIN="\$\{NAV_LANDLORD_URL\}" DEPLOY_LANE="\$\{LOCAL_BUILD_LANE\}"[\s\S]*?check_deployed_web_provenance\.sh" "\$\{LOCAL_BUILD_LANE\}"/,
     'stage browser wrapper must validate local-public provenance through the canonical deployed-provenance script',
+  );
+  assert.match(
+    localPublicWrapperSource,
+    /readonly REQUIRED_NODE_MAJOR="\$\{REQUIRED_NODE_MAJOR:-24\}"/,
+    'stage browser wrapper must pin the local Node major to 24 so local parity uses the same runtime major as the protected pipeline',
+  );
+  assert.match(
+    localPublicWrapperSource,
+    /node_version="\$\(node --version 2>\/dev\/null \| tr -d '\\r\\n' \|\| true\)"/,
+    'stage browser wrapper must resolve the local Node version before installing navigation dependencies',
+  );
+  assert.match(
+    localPublicWrapperSource,
+    /stage browser contract requires Node major \$\{REQUIRED_NODE_MAJOR\} to match the protected pipeline/,
+    'stage browser wrapper must fail closed when the local Node major diverges from the protected pipeline runtime',
   );
   assert.match(
     localPublicWrapperSource,
