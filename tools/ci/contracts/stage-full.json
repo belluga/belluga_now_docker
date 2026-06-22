@@ -8,6 +8,10 @@
       "path": "root-invariants.json"
     },
     {
+      "repo": "belluga_now_docker",
+      "path": "promotion-runtime-builds.json"
+    },
+    {
       "repo": "flutter-app",
       "path": "../../../flutter-app/tool/ci/contracts/stage-full.json"
     },

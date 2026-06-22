@@ -861,6 +861,7 @@ required_ci_contract_files=(
   "tools/ci/run_contract.sh"
   "tools/ci/run_stage_browser_contract.sh"
   "tools/ci/contracts/root-invariants.json"
+  "tools/ci/contracts/promotion-runtime-builds.json"
   "tools/ci/contracts/browser-policy.json"
   "tools/ci/contracts/browser-stage-full.json"
   "tools/ci/contracts/stage-full.json"
@@ -915,6 +916,11 @@ if ! grep -Fq '"path": "root-invariants.json"' tools/ci/contracts/stage-full.jso
   exit 1
 fi
 
+if ! grep -Fq '"path": "promotion-runtime-builds.json"' tools/ci/contracts/stage-full.json; then
+  echo "ERROR: stage-full manifest must import promotion-runtime-builds.json." >&2
+  exit 1
+fi
+
 if ! grep -Fq '"path": "../../../flutter-app/tool/ci/contracts/stage-full.json"' tools/ci/contracts/stage-full.json; then
   echo "ERROR: stage-full manifest must import the flutter-app stage-full contract." >&2
   exit 1
@@ -937,6 +943,11 @@ fi
 
 if ! grep -Fq '"command": ["bash", "tools/ci/run_stage_browser_contract.sh", "local-public", "build"]' tools/ci/contracts/browser-stage-full.json; then
   echo "ERROR: browser-stage-full manifest must build the local-public web bundle through the shared stage browser wrapper." >&2
+  exit 1
+fi
+
+if ! grep -Fq '"command": ["bash", ".github/scripts/preflight_promotion_runtime_builds.sh", "stage"]' tools/ci/contracts/promotion-runtime-builds.json; then
+  echo "ERROR: promotion-runtime-builds manifest must execute the protected stage runtime build preflight locally." >&2
   exit 1
 fi
 
@@ -978,6 +989,16 @@ fi
 
 if ! grep -Fq 'working-directory: tools/flutter/web_app_smoke_runner' .github/workflows/orchestration-ci-cd.yml; then
   echo "ERROR: orchestration stage workflow must install fixture/smoke dependencies from tools/flutter/web_app_smoke_runner." >&2
+  exit 1
+fi
+
+if ! grep -Fq 'readonly REQUIRED_NODE_MAJOR="${REQUIRED_NODE_MAJOR:-24}"' tools/ci/run_stage_browser_contract.sh; then
+  echo "ERROR: run_stage_browser_contract.sh must pin local browser parity to Node major 24." >&2
+  exit 1
+fi
+
+if ! grep -Fq 'stage browser contract requires Node major ${REQUIRED_NODE_MAJOR} to match the protected pipeline' tools/ci/run_stage_browser_contract.sh; then
+  echo "ERROR: run_stage_browser_contract.sh must fail closed when the local Node major diverges from the protected pipeline." >&2
   exit 1
 fi
 

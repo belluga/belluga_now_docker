@@ -8,6 +8,7 @@ SMOKE_RUNNER_DIR="${ROOT_DIR}/tools/flutter/web_app_smoke_runner"
 LOCAL_NAV_ENV_FILE="${NAV_LOCAL_ENV_FILE:-${ROOT_DIR}/.env.local.navigation}"
 
 readonly LOCAL_BUILD_LANE="dev"
+readonly REQUIRED_NODE_MAJOR="${REQUIRED_NODE_MAJOR:-24}"
 readonly CONTRACT_STATE_HASH="$(printf '%s' "${ROOT_DIR}" | sha256sum | awk '{print substr($1,1,16)}')"
 readonly CONTRACT_STATE_DIR="${TMPDIR:-/tmp}/belluga-stage-browser-contract-${CONTRACT_STATE_HASH}"
 readonly LOCAL_PUBLIC_RUN_ID_FILE="${CONTRACT_STATE_DIR}/local-public.run-id"
@@ -221,6 +222,23 @@ run_local_public_build() {
 }
 
 install_navigation_deps() {
+  local node_version=""
+  local node_major=""
+
+  if ! command -v node >/dev/null 2>&1; then
+    echo "ERROR: node is required for the stage browser contract." >&2
+    exit 1
+  fi
+
+  node_version="$(node --version 2>/dev/null | tr -d '\r\n' || true)"
+  node_major="${node_version#v}"
+  node_major="${node_major%%.*}"
+
+  if [[ -z "${node_major}" || "${node_major}" != "${REQUIRED_NODE_MAJOR}" ]]; then
+    echo "ERROR: stage browser contract requires Node major ${REQUIRED_NODE_MAJOR} to match the protected pipeline (found ${node_version:-<missing>})." >&2
+    exit 1
+  fi
+
   (
     cd "${SMOKE_RUNNER_DIR}"
     npm ci
