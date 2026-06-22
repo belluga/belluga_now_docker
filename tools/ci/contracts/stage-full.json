@@ -1,0 +1,24 @@
+{
+  "schema_version": "ci-contract-v1",
+  "contract_id": "stage-full",
+  "description": "Broadest local pre-promotion CI-equivalent contract for the current stage gate using local/dev topology only.",
+  "imports": [
+    {
+      "repo": "belluga_now_docker",
+      "path": "root-invariants.json"
+    },
+    {
+      "repo": "belluga_now_docker",
+      "path": "promotion-runtime-builds.json"
+    },
+    {
+      "repo": "flutter-app",
+      "path": "../../../flutter-app/tool/ci/contracts/stage-full.json"
+    },
+    {
+      "repo": "belluga_now_docker",
+      "path": "browser-stage-full.json"
+    }
+  ],
+  "entries": []
+}

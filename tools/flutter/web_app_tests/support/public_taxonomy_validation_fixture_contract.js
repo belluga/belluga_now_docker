@@ -11,12 +11,13 @@ function sanitizeRunId(raw) {
 const managedFixtureEnabled =
   (process.env.NAV_PUBLIC_TAXONOMY_MANAGED_FIXTURE || '').toString().trim() === '1';
 const deployLane = (process.env.NAV_DEPLOY_LANE || '').toString().trim().toLowerCase();
-const requiresExplicitRunId = managedFixtureEnabled || deployLane === 'stage';
+const requiresExplicitRunId =
+  managedFixtureEnabled || deployLane === 'dev' || deployLane === 'stage';
 const runKey = sanitizeRunId(process.env.NAV_TEST_RUN_ID);
 const isPlaywrightListProbe = process.argv.includes('--list');
 if (requiresExplicitRunId && runKey === 'default' && !isPlaywrightListProbe) {
   throw new Error(
-    'Managed public taxonomy fixtures on stage require explicit NAV_TEST_RUN_ID; the default run key is forbidden.',
+    'Managed public taxonomy fixtures on dev/stage require explicit NAV_TEST_RUN_ID; the default run key is forbidden.',
   );
 }
 
@@ -70,6 +71,10 @@ function shouldContinuePagedFetch({ payload, pageRows, pageNumber, pageSize }) {
     return pageNumber < lastPage;
   }
 
+  if (typeof payload?.has_more === 'boolean') {
+    return payload.has_more;
+  }
+
   const nextPageUrl = paginationNextPageUrl(payload);
   if (nextPageUrl) {
     return true;
@@ -82,6 +87,19 @@ function shouldContinuePagedFetch({ payload, pageRows, pageNumber, pageSize }) {
   }
 
   return false;
+}
+
+function withManagedFixtureRunKeyScope(seed) {
+  const normalizedSeed = seed?.toString().trim();
+  if (!normalizedSeed) {
+    throw new Error('Managed public taxonomy fixture fingerprint seed requires a non-empty value.');
+  }
+
+  if (!managedFixtureEnabled) {
+    return normalizedSeed;
+  }
+
+  return `${normalizedSeed}:${runKey}`;
 }
 
 function matchesCanonicalManagedSlug(actualSlug, canonicalSlug) {
@@ -114,6 +132,7 @@ module.exports = {
   filterOwnedEventRows,
   filterOwnedProfileRows,
   managedFixtureEnabled,
+  matchesCanonicalManagedSlug,
   requiresExplicitRunId,
   paginationLastPage,
   paginationNextPageUrl,
@@ -121,4 +140,5 @@ module.exports = {
   runKey,
   sanitizeRunId,
   shouldContinuePagedFetch,
+  withManagedFixtureRunKeyScope,
 };

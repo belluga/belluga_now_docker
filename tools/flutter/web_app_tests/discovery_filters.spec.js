@@ -245,7 +245,13 @@ async function expectAbsentRuntimeTitle(page, title) {
 
 async function activateSemanticToggle(locator) {
   await expect(locator).toBeVisible({ timeout: appBootTimeoutMs });
-  await locator.click();
+  await locator.scrollIntoViewIfNeeded().catch(() => {});
+  try {
+    await locator.dispatchEvent('click');
+  } catch (_) {
+    await locator.focus();
+    await locator.press('Space');
+  }
 }
 
 function installFailureCollectors(page) {
@@ -911,33 +917,22 @@ function firstTaxonomyTerm(catalog, filter = null) {
   return null;
 }
 
-async function assertFilterPanelHidesOnScroll(page, visibleButtonLabel) {
+async function assertFilterPanelStaysVisibleOnScroll(
+  page,
+  panel,
+  legacyButtonLabel = null,
+) {
   await page.mouse.wheel(0, 900);
-  await expect(
-    page.getByRole('button', { name: visibleButtonLabel }),
-  ).toHaveCount(0, { timeout: appBootTimeoutMs });
-  await expect(page.getByRole('button', { name: /Filtros ativos/i }))
-    .toBeVisible({ timeout: appBootTimeoutMs });
+  await expect(panel).toBeVisible({ timeout: appBootTimeoutMs });
+  if (legacyButtonLabel) {
+    await expect(
+      page.getByRole('button', { name: legacyButtonLabel }),
+    ).toHaveCount(0, { timeout: appBootTimeoutMs });
+  }
 }
 
 function filterPanel(page, label) {
   return page.getByLabel(label);
-}
-
-function filterActionPattern(baseLabel) {
-  return new RegExp(`(${baseLabel}|Filtros ativos)`, 'i');
-}
-
-async function ensureFilterPanelVisible(page, actionLocator, panelLocator) {
-  if (await panelLocator.isVisible().catch(() => false)) {
-    return;
-  }
-
-  const action = actionLocator.first();
-  await action.scrollIntoViewIfNeeded().catch(() => {});
-  await expect(action).toBeVisible({ timeout: appBootTimeoutMs });
-  await action.click();
-  await expect(panelLocator).toBeVisible({ timeout: appBootTimeoutMs });
 }
 
 function filterOption(panel, label) {
@@ -1626,7 +1621,63 @@ function readPixel(png, x, y) {
 }
 
 async function expectSelectedChipIconAndLabelForegroundParity(locator) {
-  const image = decodePng(await locator.screenshot());
+  let image = null;
+  let lastError = null;
+  let lastStableBox = null;
+  let stableBoxSamples = 0;
+  const deadline = Date.now() + appBootTimeoutMs;
+
+  while (Date.now() < deadline) {
+    try {
+      await expect(locator).toBeVisible({
+        timeout: Math.min(appBootTimeoutMs, Math.max(deadline - Date.now(), 250)),
+      });
+      const box = await locator.boundingBox();
+      if (box == null || box.width <= 0 || box.height <= 0) {
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        continue;
+      }
+
+      const normalizedBox = {
+        x: Math.round(box.x),
+        y: Math.round(box.y),
+        width: Math.round(box.width),
+        height: Math.round(box.height),
+      };
+      if (
+        lastStableBox != null &&
+        Math.abs(lastStableBox.x - normalizedBox.x) <= 1 &&
+        Math.abs(lastStableBox.y - normalizedBox.y) <= 1 &&
+        Math.abs(lastStableBox.width - normalizedBox.width) <= 1 &&
+        Math.abs(lastStableBox.height - normalizedBox.height) <= 1
+      ) {
+        stableBoxSamples += 1;
+      } else {
+        stableBoxSamples = 1;
+      }
+      lastStableBox = normalizedBox;
+      if (stableBoxSamples < 2) {
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        continue;
+      }
+
+      image = decodePng(await locator.screenshot({
+        animations: 'disabled',
+        timeout: Math.min(15000, Math.max(deadline - Date.now(), 250)),
+      }));
+      break;
+    } catch (error) {
+      lastError = error;
+      if (Date.now() >= deadline) {
+        throw lastError;
+      }
+      stableBoxSamples = 0;
+      lastStableBox = null;
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+  }
+
+  expect(image, `Expected a stable selected chip screenshot. Last error=${lastError}`).toBeTruthy();
   const iconColor = dominantForegroundColor(image, {
     xStart: Math.floor(image.width * 0.04),
     xEnd: Math.max(1, Math.floor(image.width * 0.24)),
@@ -2060,19 +2111,22 @@ test('@mutation Home filters honor Event Type taxonomy compatibility, hide zero-
 
     await grantNavigationGeolocation(page, baseUrl);
     await openTenantPath(page, baseUrl, '/');
-    const filterAction = page.getByRole('button', {
-      name: filterActionPattern('Filtrar eventos'),
-    });
-    await expect(filterAction).toBeVisible({ timeout: appBootTimeoutMs });
-    await filterAction.click();
-
     const panel = filterPanel(page, /Painel de filtros de eventos/i);
     await expect(panel).toBeVisible({ timeout: appBootTimeoutMs });
+    await expect(
+      page.getByRole('button', { name: /Filtrar eventos/i }),
+      'Home must expose the always-visible event filter panel without the legacy toggle button.',
+    ).toHaveCount(0, { timeout: appBootTimeoutMs });
+    await assertFilterPanelStaysVisibleOnScroll(
+      page,
+      panel,
+      /Filtrar eventos/i,
+    );
     const typeAOption = await revealFilterOption(page, panel, typeALabel);
-    const typeBOption = await revealFilterOption(page, panel, typeBLabel);
-    const typeCOption = await revealFilterOption(page, panel, typeCLabel);
     await expectFilterChipShowsVisibleLabel(typeAOption);
+    const typeBOption = await revealFilterOption(page, panel, typeBLabel);
     await expectFilterChipShowsVisibleLabel(typeBOption);
+    const typeCOption = await revealFilterOption(page, panel, typeCLabel);
     await expectFilterChipShowsVisibleLabel(typeCOption);
     await expect(
       filterOption(panel, typeDLabel),
@@ -2091,19 +2145,17 @@ test('@mutation Home filters honor Event Type taxonomy compatibility, hide zero-
       name: 'type',
       value: `hd10-show-${unique}`,
     });
+    const typeASelectionOption = await revealFilterOption(page, panel, typeALabel);
     await clickUntilFilteredRequest({
-      locator: typeAOption,
+      locator: typeASelectionOption,
       tracker: homeShowTracker,
       message: 'Home primary filter click must trigger agenda request for selected Event Type',
     });
     homeShowTracker.dispose();
     await expectSelectedChipIconAndLabelForegroundParity(
-      typeAOption.first(),
+      typeASelectionOption.first(),
     );
-    await expect(page.getByRole('button', { name: /Filtros ativos/i })).toBeVisible({
-      timeout: appBootTimeoutMs,
-    });
-    await ensureFilterPanelVisible(page, filterAction, panel);
+    await expect(panel).toBeVisible({ timeout: appBootTimeoutMs });
     await expectAccessibleGroupContains(panel, taxonomyA.name);
     await expect(filterOption(panel, `Rock ${unique}`))
       .toBeVisible({ timeout: appBootTimeoutMs });
@@ -2112,13 +2164,9 @@ test('@mutation Home filters honor Event Type taxonomy compatibility, hide zero-
       'Home runtime taxonomy facets must hide terms with zero eligible events under the selected type universe.',
     ).toHaveCount(0, { timeout: appBootTimeoutMs });
     await expectAccessibleGroupNotContains(panel, taxonomyB.name, appBootTimeoutMs);
-    await filterAction.click();
-    await expect(panel).toHaveCount(0, { timeout: appBootTimeoutMs });
     await expectVisibleRuntimeTitle(page, eventA.title);
     await expectAbsentRuntimeTitle(page, eventB.title);
     await expectAbsentRuntimeTitle(page, eventC.title);
-    await filterAction.click();
-    await expect(panel).toBeVisible({ timeout: appBootTimeoutMs });
 
     const homeTalkTracker = trackFilteredRequests(page, '/api/v1/agenda', {
       name: 'type',
@@ -2134,18 +2182,14 @@ test('@mutation Home filters honor Event Type taxonomy compatibility, hide zero-
     await expectSelectedChipIconAndLabelForegroundParity(
       typeBSelectionOption.first(),
     );
-    await ensureFilterPanelVisible(page, filterAction, panel);
+    await expect(panel).toBeVisible({ timeout: appBootTimeoutMs });
     await expectAccessibleGroupContains(panel, taxonomyB.name);
     await expect(filterOption(panel, `Chef ${unique}`))
       .toBeVisible({ timeout: appBootTimeoutMs });
     await expectAccessibleGroupNotContains(panel, taxonomyA.name, appBootTimeoutMs);
-    await filterAction.click();
-    await expect(panel).toHaveCount(0, { timeout: appBootTimeoutMs });
     await expectVisibleRuntimeTitle(page, eventB.title);
     await expectAbsentRuntimeTitle(page, eventA.title);
     await expectAbsentRuntimeTitle(page, eventC.title);
-    await filterAction.click();
-    await expect(panel).toBeVisible({ timeout: appBootTimeoutMs });
 
     const homeEmptyTracker = trackFilteredRequests(page, '/api/v1/agenda', {
       name: 'type',
@@ -2161,7 +2205,7 @@ test('@mutation Home filters honor Event Type taxonomy compatibility, hide zero-
     await expectSelectedChipIconAndLabelForegroundParity(
       typeCSelectionOption.first(),
     );
-    await ensureFilterPanelVisible(page, filterAction, panel);
+    await expect(panel).toBeVisible({ timeout: appBootTimeoutMs });
     await expectAccessibleGroupNotContains(panel, taxonomyA.name, appBootTimeoutMs);
     await expectAccessibleGroupNotContains(panel, taxonomyB.name, appBootTimeoutMs);
     await expect(filterOption(panel, `Rock ${unique}`))
@@ -2170,8 +2214,6 @@ test('@mutation Home filters honor Event Type taxonomy compatibility, hide zero-
       .toHaveCount(0, { timeout: appBootTimeoutMs });
     await expect(filterOption(panel, `Chef ${unique}`))
       .toHaveCount(0, { timeout: appBootTimeoutMs });
-    await filterAction.click();
-    await expect(panel).toHaveCount(0, { timeout: appBootTimeoutMs });
     await expectVisibleRuntimeTitle(page, eventC.title);
     await expectAbsentRuntimeTitle(page, eventA.title);
     await expectAbsentRuntimeTitle(page, eventB.title);
@@ -2335,14 +2377,17 @@ test('@mutation Profile Discovery hides non-publicly-discoverable types and keep
     await expect(page.getByText('Descubra', { exact: true }))
       .toBeVisible({ timeout: appBootTimeoutMs });
 
-    const filterAction = page.getByRole('button', {
-      name: filterActionPattern('Filtrar perfis'),
-    });
-    await expect(filterAction).toBeVisible({ timeout: appBootTimeoutMs });
-    await filterAction.click();
-
     const panel = filterPanel(page, /Painel de filtros de perfis/i);
     await expect(panel).toBeVisible({ timeout: appBootTimeoutMs });
+    await expect(
+      page.getByRole('button', { name: /Filtrar perfis/i }),
+      'Discovery must expose the always-visible profile filter panel without the legacy toggle button.',
+    ).toHaveCount(0, { timeout: appBootTimeoutMs });
+    await assertFilterPanelStaysVisibleOnScroll(
+      page,
+      panel,
+      /Filtrar perfis/i,
+    );
     await expectFilterChipShowsVisibleLabel(filterOption(panel, visibleTypeLabel));
     await expect(filterOption(panel, visibleTypeLabel))
       .toBeVisible({ timeout: appBootTimeoutMs });
@@ -2375,7 +2420,7 @@ test('@mutation Profile Discovery hides non-publicly-discoverable types and keep
     await expectSelectedChipIconAndLabelForegroundParity(
       filterOption(panel, visibleTypeLabel).first(),
     );
-    await ensureFilterPanelVisible(page, filterAction, panel);
+    await expect(panel).toBeVisible({ timeout: appBootTimeoutMs });
     await expectAccessibleGroupContains(panel, taxonomy.name);
     await expect(filterOption(panel, `Japonesa ${unique}`))
       .toBeVisible({ timeout: appBootTimeoutMs });
@@ -2385,10 +2430,18 @@ test('@mutation Profile Discovery hides non-publicly-discoverable types and keep
     ).toHaveCount(0, { timeout: 5000 });
     await expect(filterOption(panel, hiddenTypeLabel))
       .toHaveCount(0, { timeout: 5000 });
-    await filterAction.click();
-    await expect(panel).toHaveCount(0, { timeout: appBootTimeoutMs });
     await expectVisibleRuntimeTitle(page, visibleProfile.displayName);
     await expectAbsentRuntimeTitle(page, hiddenProfile.displayName);
+    await page.getByRole('button', { name: /Buscar perfis/i }).click();
+    await expect(page.getByLabel('Buscar artistas, locais...'))
+      .toBeVisible({ timeout: appBootTimeoutMs });
+    await expect(page.getByText('Descubra', { exact: true }))
+      .toHaveCount(0, { timeout: appBootTimeoutMs });
+    await expect(panel).toHaveCount(0, { timeout: appBootTimeoutMs });
+    await page.getByRole('button', { name: /Fechar busca/i }).click();
+    await expect(page.getByText('Descubra', { exact: true }))
+      .toBeVisible({ timeout: appBootTimeoutMs });
+    await expect(panel).toBeVisible({ timeout: appBootTimeoutMs });
 
     await assertNoCriticalBrowserFailures(collectors);
   } catch (error) {

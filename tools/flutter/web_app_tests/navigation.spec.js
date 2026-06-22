@@ -1,4 +1,9 @@
 const { test, expect } = require('@playwright/test');
+const {
+  fixture,
+  managedFixtureEnabled,
+  matchesCanonicalManagedSlug,
+} = require('./support/public_taxonomy_validation_fixture_contract');
 
 const landlordUrl = process.env.NAV_LANDLORD_URL;
 const tenantUrl = process.env.NAV_TENANT_URL;
@@ -26,6 +31,10 @@ function applicationOrigins() {
   return [landlordUrl, tenantUrl]
     .filter(Boolean)
     .map((value) => new URL(value).origin);
+}
+
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function isApplicationApiRequest(rawUrl) {
@@ -193,6 +202,49 @@ async function enableAccessibilityIfNeeded(page) {
 
     await page.waitForTimeout(200);
   }
+}
+
+async function scrollPageUntilLocatorVisible(
+  page,
+  locator,
+  {
+    timeout = appBootTimeoutMs,
+    step = 900,
+    settleMs = 300,
+  } = {},
+) {
+  const viewport =
+    page.viewportSize() ||
+    (await page.evaluate(() => ({
+      width: window.innerWidth,
+      height: window.innerHeight,
+    })));
+  await page.mouse.move(viewport.width * 0.62, viewport.height * 0.72).catch(() => {});
+  const deadline = Date.now() + timeout;
+
+  while (Date.now() < deadline) {
+    const candidate = locator.first();
+    const count = await candidate.count().catch(() => 0);
+    if (count > 0) {
+      await candidate.scrollIntoViewIfNeeded({
+        timeout: Math.min(2000, Math.max(deadline - Date.now(), 250)),
+      }).catch(() => {});
+      if (await candidate.isVisible().catch(() => false)) {
+        return candidate;
+      }
+    }
+
+    await page.mouse.wheel(0, step).catch(() => {});
+
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) {
+      break;
+    }
+
+    await page.waitForTimeout(Math.min(settleMs, remainingMs));
+  }
+
+  return null;
 }
 
 test('@readonly landlord domain bootstraps as landlord and navigates', async ({ page }) => {
@@ -411,6 +463,9 @@ test('@mutation tenant agenda UI state matches tenant agenda API payload', async
           originLng: sampleBase.originLng,
           url: sampleBase.url,
           status: sampleBase.status,
+          fixtureVisible: items.some((row) =>
+            matchesCanonicalManagedSlug(row?.slug, fixture.eventSlug),
+          ),
         });
       }
     } catch (_) {
@@ -541,6 +596,36 @@ test('@mutation tenant agenda UI state matches tenant agenda API payload', async
       filteredEmptyStateText,
       'Agenda API returned items, but UI still shows filtered-empty state.',
     ).toHaveCount(0);
+  }
+
+  if (managedFixtureEnabled) {
+    const managedFixtureSample = payloadSamples.find((sample) => sample.fixtureVisible);
+    expect(
+      managedFixtureSample,
+      `Managed home agenda fixture ${fixture.eventSlug} must be visible in the canonical home /api/v1/agenda payload when NAV_PUBLIC_TAXONOMY_MANAGED_FIXTURE=1.\n` +
+        `Observed home payload samples:\n${JSON.stringify(payloadSamples, null, 2)}`,
+    ).toBeTruthy();
+
+    const managedFixtureTitle = page
+      .getByText(new RegExp(escapeRegExp(fixture.eventTitle), 'i'))
+      .first();
+    const visibleManagedFixtureTitle = await scrollPageUntilLocatorVisible(
+      page,
+      managedFixtureTitle,
+      {
+        timeout: appBootTimeoutMs,
+      },
+    );
+    expect(
+      visibleManagedFixtureTitle,
+      `Managed home agenda fixture ${fixture.eventTitle} must render somewhere in the tenant home agenda feed when NAV_PUBLIC_TAXONOMY_MANAGED_FIXTURE=1.`,
+    ).toBeTruthy();
+    await expect(
+      visibleManagedFixtureTitle,
+      `Managed home agenda fixture ${fixture.eventTitle} must render on the tenant home surface when NAV_PUBLIC_TAXONOMY_MANAGED_FIXTURE=1.`,
+    ).toBeVisible({
+      timeout: appBootTimeoutMs,
+    });
   }
 
   const criticalFailedRequests = collectors.failedRequests.filter((entry) =>
