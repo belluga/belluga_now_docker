@@ -875,8 +875,8 @@ function assertCiEquivalentContractSurfacesStayWired() {
   );
   assert.match(
     architectureWrapperSource,
-    /fvm dart analyze --format machine/,
-    'architecture gate wrapper must run flutter analyze',
+    /fvm dart analyze "\$\{ANALYZE_PATHS\[@\]\}" --format machine/,
+    'architecture gate wrapper must run flutter analyze over the canonical explicit Dart surface',
   );
 
   const workspaceWrapperSource = fs.readFileSync(flutterWorkspaceTestWrapper, 'utf8');

@@ -921,6 +921,11 @@ if ! grep -Fq '"path": "promotion-runtime-builds.json"' tools/ci/contracts/stage
   exit 1
 fi
 
+if ! grep -Fq 'bash tools/ci/run_promotable_stage_full.sh' README.md; then
+  echo "ERROR: README must document the promotable stage-full wrapper for direct promotion lanes." >&2
+  exit 1
+fi
+
 if ! grep -Fq '"path": "../../../flutter-app/tool/ci/contracts/stage-full.json"' tools/ci/contracts/stage-full.json; then
   echo "ERROR: stage-full manifest must import the flutter-app stage-full contract." >&2
   exit 1
@@ -1182,8 +1187,8 @@ if [[ "${flutter_gitlink_workflow_audit_required}" -eq 1 ]]; then
     exit 1
   fi
 
-  if ! grep -Fq 'fvm dart analyze --format machine' flutter-app/tool/ci/run_stage_promotion_architecture_gate.sh; then
-    echo "ERROR: run_stage_promotion_architecture_gate.sh must run flutter analyze." >&2
+  if ! grep -Fq 'fvm dart analyze "${ANALYZE_PATHS[@]}" --format machine' flutter-app/tool/ci/run_stage_promotion_architecture_gate.sh; then
+    echo "ERROR: run_stage_promotion_architecture_gate.sh must run flutter analyze over the canonical explicit Dart surface." >&2
     exit 1
   fi
 

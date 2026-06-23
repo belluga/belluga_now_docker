@@ -307,6 +307,12 @@ the broadest local pre-promotion CI Equivalent contract is
 `bash tools/ci/run_contract.sh --profile stage-full`.
 It includes repo-owned local-public web publish/provenance proof plus readonly and
 mutation browser smoke on `belluga.space` / `guarappari.belluga.space`.
+When the next step is to send that exact evaluated state into the remote promotion
+lane, use `bash tools/ci/run_promotable_stage_full.sh --report <report-path>` instead
+of calling `stage-full` directly. That wrapper proves clean worktrees, governing
+package/source authority when applicable, and source preflight readiness immediately
+before delegating to `stage-full`. Diagnostic or reconcile-only `stage-full` runs do
+not require the wrapper.
 
 `main-proof` is a separate local production-lane semantic proof surface:
 `bash tools/ci/run_contract.sh --profile main-proof`. It exists to prove
@@ -320,6 +326,7 @@ for `stage`/`main` create drift instead of confidence.
 
 Keep the distinction explicit:
 - `CI Equivalent` / `stage-full`: the broadest local pre-promotion proof on the authoritative branch under evaluation, executed through repo-owned local/dev contract wrappers.
+- `Promotable stage-full`: the direct-promotion wrapper `bash tools/ci/run_promotable_stage_full.sh --report <report-path>`, required only when the next step is to send the evaluated state into the remote promotion lane.
 - `main-proof`: local production-lane semantic proof that preserves readonly-only production semantics and explicit `main` mutation rejection.
 - `./scripts/delphi/run_reconcile_validation.sh`: package reconciliation against the principal checkout.
 - GitHub Actions `.github/workflows/orchestration-ci-cd.yml` stage/main jobs: published lane proof only.
