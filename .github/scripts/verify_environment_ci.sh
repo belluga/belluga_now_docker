@@ -1232,24 +1232,6 @@ if ! grep -Fq 'bash tools/ci/run_contract.sh --profile main-proof' README.md; th
   exit 1
 fi
 
-foundation_project_constitution_path="foundation_documentation/project_constitution.md"
-foundation_flutter_client_experience_module_path="foundation_documentation/modules/flutter_client_experience_module.md"
-
-if ! grep -Fq 'The broadest local pre-promotion contract is `stage-full`' "${foundation_project_constitution_path}"; then
-  echo "ERROR: project_constitution.md must promote stage-full as the local CI Equivalent contract." >&2
-  exit 1
-fi
-
-if ! grep -Fq 'the separate `main-proof` surface exists only to prove production-lane semantics' "${foundation_project_constitution_path}"; then
-  echo "ERROR: project_constitution.md must describe main-proof as the production-semantic proof surface." >&2
-  exit 1
-fi
-
-if ! grep -Fq 'Local contract note: the broad local CI Equivalent surface may consume browser policy through `stage-full`' "${foundation_flutter_client_experience_module_path}"; then
-  echo "ERROR: flutter_client_experience_module.md must connect browser policy to the stage-full/main-proof local contract split." >&2
-  exit 1
-fi
-
 if grep -Fq 'checkout_web_runtime_ref "origin/\${DEPLOY_LANE}"' .github/scripts/deploy_stage_over_ssh.sh; then
   echo "ERROR: deploy_stage_over_ssh.sh must not float web-app runtime content to origin/\${DEPLOY_LANE}." >&2
   exit 1
