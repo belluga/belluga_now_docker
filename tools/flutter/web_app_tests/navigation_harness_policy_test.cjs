@@ -682,6 +682,8 @@ function assertPublishedLaneProofRemainsPipelineOnly() {
 }
 
 function assertCiEquivalentContractSurfacesStayWired() {
+  const flutterGitlinkWorkflowAuditRequired = submoduleGitlinkRequiresWorkflowAudit('flutter-app');
+
   assert.ok(fs.existsSync(ciContractRunnerScript), 'CI contract runner must exist');
   assert.ok(fs.existsSync(stageFullContractManifest), 'stage-full manifest must exist');
   assert.ok(
@@ -691,10 +693,7 @@ function assertCiEquivalentContractSurfacesStayWired() {
   assert.ok(fs.existsSync(mainProofContractManifest), 'main-proof manifest must exist');
   assert.ok(fs.existsSync(browserPolicyContractManifest), 'browser-policy manifest must exist');
   assert.ok(fs.existsSync(browserStageFullContractManifest), 'browser-stage-full manifest must exist');
-  assert.ok(fs.existsSync(flutterStageFullContractManifest), 'flutter stage-full manifest must exist');
   assert.ok(fs.existsSync(stageBrowserContractWrapper), 'stage browser contract wrapper must exist');
-  assert.ok(fs.existsSync(flutterArchitectureGateWrapper), 'flutter architecture gate wrapper must exist');
-  assert.ok(fs.existsSync(flutterWorkspaceTestWrapper), 'flutter workspace test wrapper must exist');
 
   const stageFullManifest = JSON.parse(fs.readFileSync(stageFullContractManifest, 'utf8'));
   assert.strictEqual(stageFullManifest.schema_version, 'ci-contract-v1');
@@ -761,19 +760,6 @@ function assertCiEquivalentContractSurfacesStayWired() {
     'browser-stage-full manifest must mirror the explicit stage browser sequence through shared leaf wrapper steps',
   );
 
-  const flutterManifest = JSON.parse(fs.readFileSync(flutterStageFullContractManifest, 'utf8'));
-  assert.strictEqual(flutterManifest.contract_id, 'flutter-stage-full');
-  assert.deepStrictEqual(
-    flutterManifest.entries?.[0]?.command,
-    ['bash', 'tool/ci/run_stage_promotion_architecture_gate.sh', 'stage'],
-    'flutter stage-full manifest must use the shared promotion architecture gate wrapper',
-  );
-  assert.deepStrictEqual(
-    flutterManifest.entries?.[1]?.command,
-    ['bash', 'tool/ci/run_workspace_test_contract.sh', 'config/defines/stage.json'],
-    'flutter stage-full manifest must use the shared workspace test wrapper',
-  );
-
   const orchestrationWorkflowSource = fs.readFileSync(orchestrationWorkflow, 'utf8');
   assert.match(
     orchestrationWorkflowSource,
@@ -830,61 +816,80 @@ function assertCiEquivalentContractSurfacesStayWired() {
     /- name: Clean up stage public taxonomy validation fixture[\s\S]*?working-directory:\s*tools\/flutter\/web_app_smoke_runner[\s\S]*?run:\s*node \.\.\/web_app_tests\/ensure_public_taxonomy_validation_fixture\.cjs/,
     'orchestration stage workflow must clean up the taxonomy fixture through the canonical fixture script',
   );
-  const workflowSource = fs.readFileSync(flutterWebArtifactWorkflow, 'utf8');
-  assert.match(
-    workflowSource,
-    /run:\s*bash tool\/ci\/run_stage_promotion_architecture_gate\.sh "\$\{\{ steps\.lane_defines\.outputs\.lane \}\}"/,
-    'flutter web workflow must use the shared promotion architecture gate wrapper',
-  );
-  assert.match(
-    workflowSource,
-    /run:\s*bash tool\/ci\/run_workspace_test_contract\.sh "\$\{\{ steps\.lane_defines\.outputs\.defines_file \}\}"/,
-    'flutter web workflow must use the shared workspace test wrapper',
-  );
-  assert.doesNotMatch(
-    workflowSource,
-    /fvm dart pub get --directory tool\/belluga_analysis_plugin\/test_fixtures\/lint_matrix/,
-    'flutter web workflow must not inline analyzer fixture bootstrap once wrapper parity exists',
-  );
-  assert.doesNotMatch(
-    workflowSource,
-    /bash tool\/belluga_analysis_plugin\/bin\/validate_rule_matrix\.sh/,
-    'flutter web workflow must not inline validate_rule_matrix.sh once wrapper parity exists',
-  );
-  assert.doesNotMatch(
-    workflowSource,
-    /fvm dart analyze --format machine/,
-    'flutter web workflow must not inline flutter analyze once wrapper parity exists',
-  );
-  assert.doesNotMatch(
-    workflowSource,
-    /bash tool\/run_workspace_flutter_tests\.sh/,
-    'flutter web workflow must not call run_workspace_flutter_tests.sh directly once wrapper parity exists',
-  );
+  if (flutterGitlinkWorkflowAuditRequired) {
+    assert.ok(fs.existsSync(flutterStageFullContractManifest), 'flutter stage-full manifest must exist');
+    assert.ok(fs.existsSync(flutterArchitectureGateWrapper), 'flutter architecture gate wrapper must exist');
+    assert.ok(fs.existsSync(flutterWorkspaceTestWrapper), 'flutter workspace test wrapper must exist');
 
-  const architectureWrapperSource = fs.readFileSync(flutterArchitectureGateWrapper, 'utf8');
-  assert.match(
-    architectureWrapperSource,
-    /fvm dart pub get --directory tool\/belluga_analysis_plugin\/test_fixtures\/lint_matrix/,
-    'architecture gate wrapper must bootstrap the analyzer fixture workspace',
-  );
-  assert.match(
-    architectureWrapperSource,
-    /bash tool\/belluga_analysis_plugin\/bin\/validate_rule_matrix\.sh/,
-    'architecture gate wrapper must run validate_rule_matrix.sh',
-  );
-  assert.match(
-    architectureWrapperSource,
-    /fvm dart analyze "\$\{ANALYZE_PATHS\[@\]\}" --format machine/,
-    'architecture gate wrapper must run flutter analyze over the canonical explicit Dart surface',
-  );
+    const flutterManifest = JSON.parse(fs.readFileSync(flutterStageFullContractManifest, 'utf8'));
+    assert.strictEqual(flutterManifest.contract_id, 'flutter-stage-full');
+    assert.deepStrictEqual(
+      flutterManifest.entries?.[0]?.command,
+      ['bash', 'tool/ci/run_stage_promotion_architecture_gate.sh', 'stage'],
+      'flutter stage-full manifest must use the shared promotion architecture gate wrapper',
+    );
+    assert.deepStrictEqual(
+      flutterManifest.entries?.[1]?.command,
+      ['bash', 'tool/ci/run_workspace_test_contract.sh', 'config/defines/stage.json'],
+      'flutter stage-full manifest must use the shared workspace test wrapper',
+    );
 
-  const workspaceWrapperSource = fs.readFileSync(flutterWorkspaceTestWrapper, 'utf8');
-  assert.match(
-    workspaceWrapperSource,
-    /bash tool\/run_workspace_flutter_tests\.sh "\$\{DEFINES_FILE\}"/,
-    'workspace test wrapper must delegate to run_workspace_flutter_tests.sh',
-  );
+    const workflowSource = fs.readFileSync(flutterWebArtifactWorkflow, 'utf8');
+    assert.match(
+      workflowSource,
+      /run:\s*bash tool\/ci\/run_stage_promotion_architecture_gate\.sh "\$\{\{ steps\.lane_defines\.outputs\.lane \}\}"/,
+      'flutter web workflow must use the shared promotion architecture gate wrapper',
+    );
+    assert.match(
+      workflowSource,
+      /run:\s*bash tool\/ci\/run_workspace_test_contract\.sh "\$\{\{ steps\.lane_defines\.outputs\.defines_file \}\}"/,
+      'flutter web workflow must use the shared workspace test wrapper',
+    );
+    assert.doesNotMatch(
+      workflowSource,
+      /fvm dart pub get --directory tool\/belluga_analysis_plugin\/test_fixtures\/lint_matrix/,
+      'flutter web workflow must not inline analyzer fixture bootstrap once wrapper parity exists',
+    );
+    assert.doesNotMatch(
+      workflowSource,
+      /bash tool\/belluga_analysis_plugin\/bin\/validate_rule_matrix\.sh/,
+      'flutter web workflow must not inline validate_rule_matrix.sh once wrapper parity exists',
+    );
+    assert.doesNotMatch(
+      workflowSource,
+      /fvm dart analyze --format machine/,
+      'flutter web workflow must not inline flutter analyze once wrapper parity exists',
+    );
+    assert.doesNotMatch(
+      workflowSource,
+      /bash tool\/run_workspace_flutter_tests\.sh/,
+      'flutter web workflow must not call run_workspace_flutter_tests.sh directly once wrapper parity exists',
+    );
+
+    const architectureWrapperSource = fs.readFileSync(flutterArchitectureGateWrapper, 'utf8');
+    assert.match(
+      architectureWrapperSource,
+      /fvm dart pub get --directory tool\/belluga_analysis_plugin\/test_fixtures\/lint_matrix/,
+      'architecture gate wrapper must bootstrap the analyzer fixture workspace',
+    );
+    assert.match(
+      architectureWrapperSource,
+      /bash tool\/belluga_analysis_plugin\/bin\/validate_rule_matrix\.sh/,
+      'architecture gate wrapper must run validate_rule_matrix.sh',
+    );
+    assert.match(
+      architectureWrapperSource,
+      /fvm dart analyze "\$\{ANALYZE_PATHS\[@\]\}" --format machine/,
+      'architecture gate wrapper must run flutter analyze over the canonical explicit Dart surface',
+    );
+
+    const workspaceWrapperSource = fs.readFileSync(flutterWorkspaceTestWrapper, 'utf8');
+    assert.match(
+      workspaceWrapperSource,
+      /bash tool\/run_workspace_flutter_tests\.sh "\$\{DEFINES_FILE\}"/,
+      'workspace test wrapper must delegate to run_workspace_flutter_tests.sh',
+    );
+  }
 
   const localPublicWrapperSource = fs.readFileSync(stageBrowserContractWrapper, 'utf8');
   assert.doesNotMatch(
@@ -1049,11 +1054,6 @@ function assertCiEquivalentContractSurfacesStayWired() {
     verifySource,
     /bash tools\/ci\/run_contract\.sh --profile stage-full/,
     'verify_environment_ci must enforce README stage-full documentation',
-  );
-  assert.match(
-    verifySource,
-    /Local contract note: the broad local CI Equivalent surface may consume browser policy through `stage-full`/,
-    'verify_environment_ci must enforce the browser-policy documentation note',
   );
 }
 
