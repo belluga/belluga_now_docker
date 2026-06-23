@@ -91,6 +91,14 @@ materialize_submodule_path_from_gitlink() {
   fi
 
   if ! git -C "${submodule_path}" cat-file -e "${gitlink_sha}^{commit}" 2>/dev/null; then
+    git -C "${submodule_path}" fetch --no-tags origin "${gitlink_sha}" >/dev/null 2>&1 || true
+  fi
+
+  if ! git -C "${submodule_path}" cat-file -e "${gitlink_sha}^{commit}" 2>/dev/null; then
+    git -C "${submodule_path}" fetch --no-tags origin '+refs/heads/*:refs/remotes/origin/*' >/dev/null 2>&1 || true
+  fi
+
+  if ! git -C "${submodule_path}" cat-file -e "${gitlink_sha}^{commit}" 2>/dev/null; then
     echo "ERROR: submodule '${submodule_path}' is missing gitlink commit ${gitlink_sha} locally; fetch the candidate commit before running verify_environment_ci.sh." >&2
     exit 1
   fi
