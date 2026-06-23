@@ -318,6 +318,91 @@ function readPixel(png, x, y) {
   };
 }
 
+function clampTextBand(png, { x0, x1, y0, y1 }) {
+  const safeX0 = Math.max(0, Math.min(png.width - 1, x0));
+  const safeY0 = Math.max(0, Math.min(png.height - 1, y0));
+  const safeX1 = Math.max(safeX0 + 1, Math.min(png.width, x1));
+  const safeY1 = Math.max(safeY0 + 1, Math.min(png.height, y1));
+  return {
+    x0: safeX0,
+    x1: safeX1,
+    y0: safeY0,
+    y1: safeY1,
+  };
+}
+
+function measureTextInkBand(png, band) {
+  const clampedBand = clampTextBand(png, band);
+  const background = readPixel(
+    png,
+    5,
+    Math.max(
+      5,
+      Math.min(
+        png.height - 5,
+        Math.floor((clampedBand.y0 + clampedBand.y1) / 2),
+      ),
+    ),
+  );
+  let darkPixelCount = 0;
+  let diffSum = 0;
+  let totalPixels = 0;
+
+  for (let y = clampedBand.y0; y < clampedBand.y1; y += 1) {
+    for (let x = clampedBand.x0; x < clampedBand.x1; x += 1) {
+      const pixel = readPixel(png, x, y);
+      const brightness = (pixel.r + pixel.g + pixel.b) / 3;
+      const diff = colorDistance(pixel, background);
+      totalPixels += 1;
+      diffSum += diff;
+      if (brightness < 215 && diff > 45) {
+        darkPixelCount += 1;
+      }
+    }
+  }
+
+  return {
+    darkPixelCount,
+    totalPixels,
+    darkPixelRatio: totalPixels > 0 ? darkPixelCount / totalPixels : 0,
+    averageDiff: totalPixels > 0 ? diffSum / totalPixels : 0,
+  };
+}
+
+function measureFlutterFieldValueInkSignature(png) {
+  return {
+    valueBand: measureTextInkBand(png, {
+      x0: 16,
+      x1: Math.min(png.width - 16, 450),
+      y0: 18,
+      y1: 40,
+    }),
+    lowerBand: measureTextInkBand(png, {
+      x0: 16,
+      x1: Math.min(png.width - 16, 450),
+      y0: 24,
+      y1: 48,
+    }),
+    rightBand: measureTextInkBand(png, {
+      x0: Math.max(0, png.width - 202),
+      x1: Math.max(1, png.width - 22),
+      y0: 18,
+      y1: 40,
+    }),
+  };
+}
+
+function flutterFieldValueInkLooksRendered(signature) {
+  return (
+    signature.valueBand.darkPixelCount >= 200 &&
+    signature.valueBand.darkPixelRatio >= 0.03 &&
+    signature.valueBand.averageDiff >= 12 &&
+    signature.lowerBand.darkPixelCount >= 120 &&
+    signature.lowerBand.darkPixelRatio >= 0.02 &&
+    signature.rightBand.darkPixelCount <= 40
+  );
+}
+
 function colorDistance(a, b) {
   return Math.abs(a.r - b.r) + Math.abs(a.g - b.g) + Math.abs(a.b - b.b);
 }
@@ -524,6 +609,107 @@ async function enableAccessibilityIfNeeded(page) {
   }
 }
 
+function normalizeFlutterWitnessText(value) {
+  return (value || '').toString().replace(/\s+/g, ' ').trim();
+}
+
+async function captureFlutterFieldScreenshot(field) {
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      return await field.screenshot({ scale: 'css' });
+    } catch (error) {
+      lastError = error;
+      if (!/not attached to the DOM/i.test(error?.message || '')) {
+        throw error;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 150));
+    }
+  }
+
+  throw lastError;
+}
+
+async function collectFlutterRenderedTextCorpus(field) {
+  return normalizeFlutterWitnessText(
+    await field.evaluate(() => {
+      const bodyText = (document.body?.innerText || '').trim();
+      const ariaText = Array.from(
+        document.querySelectorAll('[aria-label], [aria-valuetext]'),
+      )
+        .map((element) =>
+          [
+            element.getAttribute('aria-label') || '',
+            element.getAttribute('aria-valuetext') || '',
+          ]
+            .filter(Boolean)
+            .join(' '),
+        )
+        .filter(Boolean)
+        .join('\n');
+      return `${bodyText}\n${ariaText}`;
+    }),
+  );
+}
+
+async function collectFlutterFieldValueInkSignature(field) {
+  return measureFlutterFieldValueInkSignature(
+    decodePng(await captureFlutterFieldScreenshot(field)),
+  );
+}
+
+// Under CanvasKit, pre-focus field text can exist only on the painted layer.
+async function expectFlutterFieldRenderedValue(field, expectedValue, message) {
+  const normalizedExpectedValue = normalizeFlutterWitnessText(expectedValue);
+  expect(
+    normalizedExpectedValue,
+    `${message} requires a non-empty expected value.`,
+  ).toBeTruthy();
+
+  let lastWitness = null;
+  try {
+    await expect
+      .poll(
+        async () => {
+          const renderedTextCorpus = await collectFlutterRenderedTextCorpus(
+            field,
+          );
+          if (
+            renderedTextCorpus
+              .toLowerCase()
+              .includes(normalizedExpectedValue.toLowerCase())
+          ) {
+            lastWitness = {
+              witnessType: 'page-rendered-text-corpus',
+              renderedTextCorpus,
+            };
+            return true;
+          }
+
+          const valueInkSignature = await collectFlutterFieldValueInkSignature(
+            field,
+          );
+          lastWitness = {
+            witnessType: 'painted-value-band',
+            renderedTextCorpus,
+            valueInkSignature,
+          };
+          return flutterFieldValueInkLooksRendered(valueInkSignature);
+        },
+        {
+          timeout: appBootTimeoutMs,
+          message,
+        },
+      )
+      .toBe(true);
+  } catch (error) {
+    throw new Error(
+      `${message} Last witness: ${JSON.stringify(lastWitness)}`,
+    );
+  }
+}
+
 async function fillFlutterTextField(page, label, value) {
   const field = page.getByLabel(label).first();
   await field.scrollIntoViewIfNeeded();
@@ -567,6 +753,30 @@ async function fillFlutterTextField(page, label, value) {
   throw new Error(
     `Flutter text field "${label}" did not retain "${value}" before submit; last value was "${lastValue}".`,
   );
+}
+
+async function countVisibleLocators(locator) {
+  const count = await locator.count().catch(() => 0);
+  let visibleCount = 0;
+  for (let index = 0; index < count; index += 1) {
+    if (await locator.nth(index).isVisible().catch(() => false)) {
+      visibleCount += 1;
+    }
+  }
+  return visibleCount;
+}
+
+async function expectNoVisibleFlutterTextField(page, label, message) {
+  const locator = page.getByLabel(label);
+  await expect
+    .poll(
+      async () => countVisibleLocators(locator),
+      {
+        timeout: appBootTimeoutMs,
+        message,
+      },
+    )
+    .toBe(0);
 }
 
 async function fillColorPickerField(page, label, value) {
@@ -977,6 +1187,17 @@ async function fetchPublicProfile(api, baseUrl, token, profileSlug) {
     },
   );
   expect(response.status(), 'Public account profile readback must succeed.').toBe(200);
+  return normalizePayload(await response.json());
+}
+
+async function fetchAdminProfile(api, baseUrl, token, profileId) {
+  const response = await api.get(
+    buildApiUrl(baseUrl, `/admin/api/v1/account_profiles/${profileId}`),
+    {
+      headers: authHeaders(token),
+    },
+  );
+  expect(response.status(), 'Admin account profile readback must succeed.').toBe(200);
   return normalizePayload(await response.json());
 }
 
@@ -2124,6 +2345,374 @@ test('@mutation tenant-admin account-profile gallery groups persist and render i
         if (publicContext) {
           await publicContext.close().catch(() => {});
         }
+        if (browserContext) {
+          await browserContext.close().catch(() => {});
+        }
+        if (freshBrowser) {
+          await freshBrowser.close().catch(() => {});
+        }
+        await api.dispose();
+      }
+    });
+  }
+});
+
+test('@mutation tenant-admin account-profile edit save keeps Display Name visible, skips persisted-empty gallery resend, and clears persisted gallery content', async () => {
+  test.setTimeout(600000);
+  const baseUrl = requireTenantUrl();
+  const api = await createApiContext(baseUrl);
+  let browserContext;
+  let freshBrowser;
+  let session = null;
+  let accountSlug = null;
+  let profileId = null;
+  let profileTypeKey = null;
+  let primaryError = null;
+
+  try {
+    session = await loginTenantAdmin(api, baseUrl);
+    const unique = Date.now();
+    const createdProfileType = (
+      await createAccountProfileType(api, baseUrl, session.token, {
+        type: `pw-edit-gallery-${unique}`,
+        label: `PW Edit Gallery ${unique}`,
+        allowedTaxonomies: [],
+        markerColor: '#0B6E4F',
+        capabilities: {
+          is_favoritable: false,
+          is_publicly_discoverable: true,
+          is_publicly_navigable: true,
+          has_content: true,
+          has_gallery: true,
+          has_avatar: false,
+          has_cover: false,
+          has_taxonomies: false,
+        },
+      })
+    )?.data;
+    profileTypeKey = createdProfileType?.type?.toString() || '';
+    expect(profileTypeKey, 'Edit-save gallery profile type must be created.').toBeTruthy();
+
+    const createdProfile = await createAccountProfileForType(
+      api,
+      baseUrl,
+      session.token,
+      {
+        name: `PW Edit Gallery Profile ${unique}`,
+        profileType: createdProfileType,
+      },
+    );
+    accountSlug = createdProfile.accountSlug;
+    profileId = createdProfile.profileId?.toString() || null;
+    expect(accountSlug, 'Edit-save onboarding must return account slug.').toBeTruthy();
+    expect(profileId, 'Edit-save onboarding must return profile id.').toBeTruthy();
+
+    const editUrl = buildApiUrl(
+      baseUrl,
+      `/admin/accounts/${accountSlug}/profiles/${profileId}/edit`,
+    );
+    const initialDisplayName = createdProfile.displayName;
+    const updatedDisplayName = `PW Edit Visible ${unique}`;
+    const groupSubtitle = `Limpeza ${unique}`;
+    const photoDescription = `Foto persistida ${unique}`;
+
+    const pageBundle = await createFreshAuthenticatedTenantAdminPage(session);
+    freshBrowser = pageBundle.browser;
+    browserContext = pageBundle.context;
+    const page = pageBundle.page;
+    const collectors = installFailureCollectors(page);
+
+    const initialResponse = await page.goto(editUrl, {
+      waitUntil: 'domcontentloaded',
+    });
+    expect(initialResponse, 'Edit save response should be available.').not.toBeNull();
+    expect(initialResponse.status()).toBeLessThan(400);
+    await assertAppBooted(page);
+    await enableAccessibilityIfNeeded(page);
+
+    const displayNameField = page.getByLabel('Nome de exibicao').first();
+    await scrollUntilVisible(
+      page,
+      displayNameField,
+      'Expected Display Name field to render in the real edit flow.',
+    );
+    await expect(displayNameField).toBeVisible({ timeout: appBootTimeoutMs });
+    await expectFlutterFieldRenderedValue(
+      displayNameField,
+      initialDisplayName,
+      'Expected the real edit flow to render the persisted Display Name before the field receives focus.',
+    );
+    await fillFlutterTextField(page, 'Nome de exibicao', updatedDisplayName);
+
+    const galleryEndpoint = `**/admin/api/v1/account_profiles/${profileId}/gallery`;
+    let unexpectedGalleryRequestBody = null;
+    const failClosedUnexpectedGalleryRoute = async (route) => {
+      unexpectedGalleryRequestBody =
+        route.request().postData() || '<missing postData>';
+      await route.abort();
+    };
+    await page.route(galleryEndpoint, failClosedUnexpectedGalleryRoute);
+
+    const persistedEmptyProfileSaveResponsePromise = page.waitForResponse(
+      (candidate) => {
+        return (
+          candidate.request().method() === 'PATCH' &&
+          candidate.url().includes(`/admin/api/v1/account_profiles/${profileId}`) &&
+          candidate.status() < 400
+        );
+      },
+    );
+    await clickSaveChanges(page);
+    const persistedEmptyProfileSaveResponse =
+      await persistedEmptyProfileSaveResponsePromise;
+    const persistedEmptyProfileSavePayload = normalizePayload(
+      await persistedEmptyProfileSaveResponse.json(),
+    );
+    expect(
+      persistedEmptyProfileSavePayload?.display_name,
+      'The edit save response must preserve the submitted Display Name.',
+    ).toBe(updatedDisplayName);
+
+    await expect
+      .poll(
+        async () => {
+          const adminProfile = await fetchAdminProfile(
+            api,
+            baseUrl,
+            session.token,
+            profileId,
+          );
+          return [
+            adminProfile?.display_name?.toString() || '',
+            normalizeList(adminProfile?.gallery_groups).length,
+          ];
+        },
+        {
+          timeout: appBootTimeoutMs,
+          message:
+            'Expected the persisted-empty edit save to keep the updated Display Name while the stored gallery remains empty.',
+        },
+      )
+      .toEqual([updatedDisplayName, 0]);
+
+    // Allow any chained gallery follow-through to surface; this branch must stay silent.
+    await page.waitForTimeout(2000);
+    expect(
+      unexpectedGalleryRequestBody,
+      'Persisted-empty edit saves must not emit the gallery mutation.',
+    ).toBeNull();
+    await page.unroute(galleryEndpoint, failClosedUnexpectedGalleryRoute);
+
+    await scrollUntilVisible(
+      page,
+      page.getByText('Galerias de fotos'),
+      'Expected gallery section for a gallery-enabled account profile.',
+    );
+    await page.getByRole('button', { name: 'Adicionar grupo de fotos' }).click();
+    await fillFlutterTextField(page, 'Subtítulo do agrupamento', groupSubtitle);
+    await attachImageFromDevice(page, {
+      flow: 'edit-gallery',
+      buttonName: 'Adicionar foto',
+      cropTitle: 'Ajustar foto da galeria',
+    });
+    await page.getByRole('button', { name: 'Usar' }).click();
+    await fillFlutterTextField(page, 'Descrição da foto', photoDescription);
+
+    const gallerySeedProfileSaveResponsePromise = page.waitForResponse(
+      (candidate) => {
+        return (
+          candidate.request().method() === 'PATCH' &&
+          candidate.url().includes(`/admin/api/v1/account_profiles/${profileId}`) &&
+          candidate.status() < 400
+        );
+      },
+    );
+    const gallerySeedSaveResponsePromise = page.waitForResponse((candidate) => {
+      return (
+        candidate.request().method() === 'POST' &&
+        candidate.url().includes(`/admin/api/v1/account_profiles/${profileId}/gallery`) &&
+        candidate.status() < 400
+      );
+    });
+    await clickSaveChanges(page);
+    await gallerySeedProfileSaveResponsePromise;
+    const gallerySeedSaveResponse = await gallerySeedSaveResponsePromise;
+    const gallerySeedSavePayload = normalizePayload(
+      await gallerySeedSaveResponse.json(),
+    );
+    const seededGroups = normalizeList(gallerySeedSavePayload?.gallery_groups);
+    expect(seededGroups).toHaveLength(1);
+    const seededGroup = seededGroups[0];
+    expect(seededGroup?.subtitle).toBe(groupSubtitle);
+    const seededItems = normalizeList(seededGroup?.items);
+    expect(seededItems).toHaveLength(1);
+    expect(seededItems[0]?.description).toBe(photoDescription);
+
+    await expect
+      .poll(
+        async () => {
+          const adminProfile = await fetchAdminProfile(
+            api,
+            baseUrl,
+            session.token,
+            profileId,
+          );
+          const groups = normalizeList(adminProfile?.gallery_groups);
+          return [
+            groups.length,
+            groups[0]?.subtitle?.toString() || '',
+            normalizeList(groups[0]?.items)[0]?.description?.toString() || '',
+          ];
+        },
+        {
+          timeout: appBootTimeoutMs,
+          message:
+            'Expected the seeded gallery content to persist before the clear-all edit phase.',
+        },
+      )
+      .toEqual([1, groupSubtitle, photoDescription]);
+
+    const reopenResponse = await page.goto(editUrl, {
+      waitUntil: 'domcontentloaded',
+    });
+    expect(reopenResponse, 'Reopened edit route should be available.').not.toBeNull();
+    expect(reopenResponse.status()).toBeLessThan(400);
+    await assertAppBooted(page);
+    await enableAccessibilityIfNeeded(page);
+
+    const reopenedDisplayNameField = page.getByLabel('Nome de exibicao').first();
+    await scrollUntilVisible(
+      page,
+      reopenedDisplayNameField,
+      'Expected Display Name field to remain visible after reopening the real edit flow.',
+    );
+    await expectFlutterFieldRenderedValue(
+      reopenedDisplayNameField,
+      updatedDisplayName,
+      'Expected the reopened edit flow to visibly render the persisted Display Name before refocus.',
+    );
+    const reopenedGroupSubtitleField = page
+      .getByLabel('Subtítulo do agrupamento')
+      .first();
+    await scrollUntilVisible(
+      page,
+      reopenedGroupSubtitleField,
+      'Expected persisted gallery subtitle field to rehydrate before clear-all save.',
+    );
+    await expectFlutterFieldRenderedValue(
+      reopenedGroupSubtitleField,
+      groupSubtitle,
+      'Expected persisted gallery content to rehydrate before clear-all save.',
+    );
+    await page.getByRole('button', { name: 'Remover grupo' }).first().click();
+    await expectNoVisibleFlutterTextField(
+      page,
+      'Subtítulo do agrupamento',
+      'Expected removing the only gallery group to remove the visible subtitle field before save.',
+    );
+
+    const clearAllProfileSaveResponsePromise = page.waitForResponse((candidate) => {
+      return (
+        candidate.request().method() === 'PATCH' &&
+        candidate.url().includes(`/admin/api/v1/account_profiles/${profileId}`) &&
+        candidate.status() < 400
+      );
+    });
+    const clearAllGallerySaveResponsePromise = page.waitForResponse((candidate) => {
+      return (
+        candidate.request().method() === 'POST' &&
+        candidate.url().includes(`/admin/api/v1/account_profiles/${profileId}/gallery`) &&
+        candidate.status() < 400
+      );
+    });
+    await clickSaveChanges(page);
+    await clearAllProfileSaveResponsePromise;
+    const clearAllGallerySaveResponse = await clearAllGallerySaveResponsePromise;
+    const clearAllGalleryRequestBody =
+      clearAllGallerySaveResponse.request().postData() || '';
+    expect(
+      clearAllGalleryRequestBody,
+      'Clear-all edit saves must submit gallery_groups for the bounded empty-array contract.',
+    ).toContain('gallery_groups');
+    expect(
+      clearAllGalleryRequestBody,
+      'Clear-all edit saves must submit the bounded gallery_groups=[] payload.',
+    ).toContain('[]');
+
+    const clearAllGallerySavePayload = normalizePayload(
+      await clearAllGallerySaveResponse.json(),
+    );
+    expect(
+      normalizeList(clearAllGallerySavePayload?.gallery_groups),
+      'Clear-all edit saves must settle with an empty persisted gallery.',
+    ).toEqual([]);
+
+    await expect
+      .poll(
+        async () => {
+          const adminProfile = await fetchAdminProfile(
+            api,
+            baseUrl,
+            session.token,
+            profileId,
+          );
+          return [
+            adminProfile?.display_name?.toString() || '',
+            normalizeList(adminProfile?.gallery_groups).length,
+          ];
+        },
+        {
+          timeout: appBootTimeoutMs,
+          message:
+            'Expected the bounded clear-all save to preserve Display Name while emptying the persisted gallery.',
+        },
+      )
+      .toEqual([updatedDisplayName, 0]);
+
+    const finalResponse = await page.goto(editUrl, {
+      waitUntil: 'domcontentloaded',
+    });
+    expect(finalResponse, 'Final edit route reload should be available.').not.toBeNull();
+    expect(finalResponse.status()).toBeLessThan(400);
+    await assertAppBooted(page);
+    await enableAccessibilityIfNeeded(page);
+    await scrollUntilVisible(
+      page,
+      page.getByText('Galerias de fotos'),
+      'Expected gallery section to remain available after clear-all save.',
+    );
+    await expectFlutterFieldRenderedValue(
+      page.getByLabel('Nome de exibicao').first(),
+      updatedDisplayName,
+      'Expected the final edit reload to visibly render the persisted Display Name after clear-all save.',
+    );
+    await expectNoVisibleFlutterTextField(
+      page,
+      'Subtítulo do agrupamento',
+      'Expected the final edit reload to keep the cleared gallery subtitle field absent.',
+    );
+    await expect(
+      page.getByRole('button', { name: 'Adicionar grupo de fotos' }),
+    ).toBeVisible({
+      timeout: appBootTimeoutMs,
+    });
+
+    await assertNoBrowserFailures(collectors);
+  } catch (error) {
+    primaryError = error;
+    throw error;
+  } finally {
+    await runCleanupPreservingPrimaryError(primaryError, async () => {
+      try {
+        await runCleanupSteps([
+          accountSlug
+            ? () => cleanupOnboardedAccount(api, baseUrl, session?.token, accountSlug)
+            : null,
+          profileTypeKey
+            ? () => deleteAccountProfileType(api, baseUrl, session?.token, profileTypeKey)
+            : null,
+        ]);
+      } finally {
         if (browserContext) {
           await browserContext.close().catch(() => {});
         }

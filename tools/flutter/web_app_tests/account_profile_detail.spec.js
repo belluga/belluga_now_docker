@@ -101,6 +101,35 @@ function textValue(...values) {
   return '';
 }
 
+function humanizedSlugLabel(rawSlug) {
+  const normalized = textValue(rawSlug)
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!normalized) {
+    return '';
+  }
+  return normalized
+    .split(' ')
+    .filter(Boolean)
+    .map((part) => `${part[0].toUpperCase()}${part.slice(1).toLowerCase()}`)
+    .join(' ');
+}
+
+function canonicalPublicVisibleName(row, { routeSlug = '', allowSentinel = false } = {}) {
+  const displayName = textValue(row?.display_name);
+  if (displayName.length >= 3) {
+    return displayName;
+  }
+
+  const slugLabel = humanizedSlugLabel(row?.slug || routeSlug);
+  if (slugLabel) {
+    return slugLabel;
+  }
+
+  return allowSentinel ? 'Perfil indisponível' : '';
+}
+
 function hasFiniteCoordinate(value) {
   if (value == null || value === '') {
     return false;
@@ -691,7 +720,7 @@ async function findVisibleDiscoveryProfileAction(page, rows) {
 
   while (Date.now() < deadline) {
     for (const row of rows) {
-      const name = textValue(row?.display_name, row?.name, row?.legal_name);
+      const name = canonicalPublicVisibleName(row);
       if (!name) {
         continue;
       }
@@ -815,14 +844,20 @@ test('@readonly NAV-APD-02..06 and NAV-APD-10 hero, taxonomy, tabs, social remov
   await openTenantPath(page, baseUrl, `/parceiro/${profile.slug}`);
   await assertVisibleTextOrSemanticLabel(
     page,
-    textValue(profile.display_name, profile.name),
+    canonicalPublicVisibleName(profile, {
+      routeSlug: profile.slug,
+      allowSentinel: true,
+    }),
     'Account Profile detail hero',
   );
 
   await page.mouse.wheel(0, 900);
   await assertVisibleTextOrSemanticLabel(
     page,
-    textValue(profile.display_name, profile.name),
+    canonicalPublicVisibleName(profile, {
+      routeSlug: profile.slug,
+      allowSentinel: true,
+    }),
     'Account Profile detail sticky/readable hero after scroll',
   );
   await expect(page.getByText(/seguidores|curtidas|87/i)).toHaveCount(0);
@@ -876,16 +911,19 @@ test('@readonly NAV-APD-12 mobile breakpoint keeps title and taxonomy chips read
   await page.setViewportSize({ width: 390, height: 844 });
   const { rows } = await loadRuntimeProfiles(page.request, baseUrl);
   const candidates = rows
-    .filter((row) => textValue(row?.display_name, row?.name, row?.title))
+    .filter((row) => canonicalPublicVisibleName(row))
     .sort((left, right) => (
-      textValue(right?.display_name, right?.name, right?.title).length
-      - textValue(left?.display_name, left?.name, left?.title).length
+      canonicalPublicVisibleName(right).length
+      - canonicalPublicVisibleName(left).length
     ));
   const profile = candidates.find((row) => taxonomySnapshot(row)) || candidates[0];
   expect(profile, 'Seed at least one public Account Profile for NAV-APD-12.')
     .toBeTruthy();
 
-  const profileName = textValue(profile.display_name, profile.name, profile.title);
+  const profileName = canonicalPublicVisibleName(profile, {
+    routeSlug: profile.slug,
+    allowSentinel: true,
+  });
   // NAV-APD-12 verifies mobile readability, not cold-route bootstrap.
   // Direct profile-route boot is already exercised by the other readonly detail tests.
   await openTenantPath(page, baseUrl, '/');
