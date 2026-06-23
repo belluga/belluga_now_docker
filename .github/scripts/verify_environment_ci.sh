@@ -99,6 +99,12 @@ materialize_submodule_path_from_gitlink() {
   fi
 
   if ! git -C "${submodule_path}" cat-file -e "${gitlink_sha}^{commit}" 2>/dev/null; then
+    if [[ "$(git -C "${submodule_path}" rev-parse --is-shallow-repository 2>/dev/null || printf false)" == "true" ]]; then
+      git -C "${submodule_path}" fetch --no-tags --unshallow origin >/dev/null 2>&1 || true
+    fi
+  fi
+
+  if ! git -C "${submodule_path}" cat-file -e "${gitlink_sha}^{commit}" 2>/dev/null; then
     echo "ERROR: submodule '${submodule_path}' is missing gitlink commit ${gitlink_sha} locally; fetch the candidate commit before running verify_environment_ci.sh." >&2
     exit 1
   fi
