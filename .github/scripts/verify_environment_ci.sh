@@ -1166,6 +1166,11 @@ if [[ "${flutter_gitlink_workflow_audit_required}" -eq 1 ]]; then
     exit 1
   fi
 
+  if ! grep -Fq 'run: fvm flutter pub get' flutter-app/.github/workflows/web-artifact-publish.yml; then
+    echo "ERROR: flutter web workflow must keep the explicit Flutter dependency bootstrap step." >&2
+    exit 1
+  fi
+
   if ! grep -Fq 'run: bash tool/ci/run_workspace_test_contract.sh "${{ steps.lane_defines.outputs.defines_file }}"' flutter-app/.github/workflows/web-artifact-publish.yml; then
     echo "ERROR: flutter web workflow must use the shared workspace test wrapper." >&2
     exit 1
@@ -1208,6 +1213,16 @@ if [[ "${flutter_gitlink_workflow_audit_required}" -eq 1 ]]; then
 
   if ! grep -Fq 'bash tool/run_workspace_flutter_tests.sh "${DEFINES_FILE}"' flutter-app/tool/ci/run_workspace_test_contract.sh; then
     echo "ERROR: run_workspace_test_contract.sh must delegate to run_workspace_flutter_tests.sh." >&2
+    exit 1
+  fi
+
+  if ! grep -Fq '"id": "flutter-dependencies"' flutter-app/tool/ci/contracts/stage-full.json; then
+    echo "ERROR: flutter stage-full contract must contain the Flutter dependency bootstrap entry." >&2
+    exit 1
+  fi
+
+  if ! grep -Fq '"command": ["fvm", "flutter", "pub", "get"]' flutter-app/tool/ci/contracts/stage-full.json; then
+    echo "ERROR: flutter stage-full contract must bootstrap workspace dependencies with fvm flutter pub get before analysis/tests." >&2
     exit 1
   fi
 fi

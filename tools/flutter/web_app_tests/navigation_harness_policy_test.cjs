@@ -825,16 +825,26 @@ function assertCiEquivalentContractSurfacesStayWired() {
     assert.strictEqual(flutterManifest.contract_id, 'flutter-stage-full');
     assert.deepStrictEqual(
       flutterManifest.entries?.[0]?.command,
+      ['fvm', 'flutter', 'pub', 'get'],
+      'flutter stage-full manifest must bootstrap Flutter workspace dependencies before architecture/tests',
+    );
+    assert.deepStrictEqual(
+      flutterManifest.entries?.[1]?.command,
       ['bash', 'tool/ci/run_stage_promotion_architecture_gate.sh', 'stage'],
       'flutter stage-full manifest must use the shared promotion architecture gate wrapper',
     );
     assert.deepStrictEqual(
-      flutterManifest.entries?.[1]?.command,
+      flutterManifest.entries?.[2]?.command,
       ['bash', 'tool/ci/run_workspace_test_contract.sh', 'config/defines/stage.json'],
       'flutter stage-full manifest must use the shared workspace test wrapper',
     );
 
     const workflowSource = fs.readFileSync(flutterWebArtifactWorkflow, 'utf8');
+    assert.match(
+      workflowSource,
+      /run:\s*fvm flutter pub get/,
+      'flutter web workflow must keep the explicit Flutter dependency bootstrap step',
+    );
     assert.match(
       workflowSource,
       /run:\s*bash tool\/ci\/run_stage_promotion_architecture_gate\.sh "\$\{\{ steps\.lane_defines\.outputs\.lane \}\}"/,
