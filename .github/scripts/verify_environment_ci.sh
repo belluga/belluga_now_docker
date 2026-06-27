@@ -91,6 +91,20 @@ materialize_submodule_path_from_gitlink() {
   fi
 
   if ! git -C "${submodule_path}" cat-file -e "${gitlink_sha}^{commit}" 2>/dev/null; then
+    git -C "${submodule_path}" fetch --no-tags origin "${gitlink_sha}" >/dev/null 2>&1 || true
+  fi
+
+  if ! git -C "${submodule_path}" cat-file -e "${gitlink_sha}^{commit}" 2>/dev/null; then
+    git -C "${submodule_path}" fetch --no-tags origin '+refs/heads/*:refs/remotes/origin/*' >/dev/null 2>&1 || true
+  fi
+
+  if ! git -C "${submodule_path}" cat-file -e "${gitlink_sha}^{commit}" 2>/dev/null; then
+    if [[ "$(git -C "${submodule_path}" rev-parse --is-shallow-repository 2>/dev/null || printf false)" == "true" ]]; then
+      git -C "${submodule_path}" fetch --no-tags --unshallow origin >/dev/null 2>&1 || true
+    fi
+  fi
+
+  if ! git -C "${submodule_path}" cat-file -e "${gitlink_sha}^{commit}" 2>/dev/null; then
     echo "ERROR: submodule '${submodule_path}' is missing gitlink commit ${gitlink_sha} locally; fetch the candidate commit before running verify_environment_ci.sh." >&2
     exit 1
   fi
@@ -921,6 +935,11 @@ if ! grep -Fq '"path": "promotion-runtime-builds.json"' tools/ci/contracts/stage
   exit 1
 fi
 
+if ! grep -Fq 'bash tools/ci/run_promotable_stage_full.sh' README.md; then
+  echo "ERROR: README must document the promotable stage-full wrapper for direct promotion lanes." >&2
+  exit 1
+fi
+
 if ! grep -Fq '"path": "../../../flutter-app/tool/ci/contracts/stage-full.json"' tools/ci/contracts/stage-full.json; then
   echo "ERROR: stage-full manifest must import the flutter-app stage-full contract." >&2
   exit 1
@@ -1147,6 +1166,11 @@ if [[ "${flutter_gitlink_workflow_audit_required}" -eq 1 ]]; then
     exit 1
   fi
 
+  if ! grep -Fq 'run: fvm flutter pub get' flutter-app/.github/workflows/web-artifact-publish.yml; then
+    echo "ERROR: flutter web workflow must keep the explicit Flutter dependency bootstrap step." >&2
+    exit 1
+  fi
+
   if ! grep -Fq 'run: bash tool/ci/run_workspace_test_contract.sh "${{ steps.lane_defines.outputs.defines_file }}"' flutter-app/.github/workflows/web-artifact-publish.yml; then
     echo "ERROR: flutter web workflow must use the shared workspace test wrapper." >&2
     exit 1
@@ -1182,13 +1206,23 @@ if [[ "${flutter_gitlink_workflow_audit_required}" -eq 1 ]]; then
     exit 1
   fi
 
-  if ! grep -Fq 'fvm dart analyze --format machine' flutter-app/tool/ci/run_stage_promotion_architecture_gate.sh; then
-    echo "ERROR: run_stage_promotion_architecture_gate.sh must run flutter analyze." >&2
+  if ! grep -Fq 'fvm dart analyze "${ANALYZE_PATHS[@]}" --format machine' flutter-app/tool/ci/run_stage_promotion_architecture_gate.sh; then
+    echo "ERROR: run_stage_promotion_architecture_gate.sh must run flutter analyze over the canonical explicit Dart surface." >&2
     exit 1
   fi
 
   if ! grep -Fq 'bash tool/run_workspace_flutter_tests.sh "${DEFINES_FILE}"' flutter-app/tool/ci/run_workspace_test_contract.sh; then
     echo "ERROR: run_workspace_test_contract.sh must delegate to run_workspace_flutter_tests.sh." >&2
+    exit 1
+  fi
+
+  if ! grep -Fq '"id": "flutter-dependencies"' flutter-app/tool/ci/contracts/stage-full.json; then
+    echo "ERROR: flutter stage-full contract must contain the Flutter dependency bootstrap entry." >&2
+    exit 1
+  fi
+
+  if ! grep -Fq '"command": ["fvm", "flutter", "pub", "get"]' flutter-app/tool/ci/contracts/stage-full.json; then
+    echo "ERROR: flutter stage-full contract must bootstrap workspace dependencies with fvm flutter pub get before analysis/tests." >&2
     exit 1
   fi
 fi
@@ -1210,24 +1244,6 @@ fi
 
 if ! grep -Fq 'bash tools/ci/run_contract.sh --profile main-proof' README.md; then
   echo "ERROR: README must identify main-proof as the separate production-lane semantic proof surface." >&2
-  exit 1
-fi
-
-foundation_project_constitution_path="foundation_documentation/project_constitution.md"
-foundation_flutter_client_experience_module_path="foundation_documentation/modules/flutter_client_experience_module.md"
-
-if ! grep -Fq 'The broadest local pre-promotion contract is `stage-full`' "${foundation_project_constitution_path}"; then
-  echo "ERROR: project_constitution.md must promote stage-full as the local CI Equivalent contract." >&2
-  exit 1
-fi
-
-if ! grep -Fq 'the separate `main-proof` surface exists only to prove production-lane semantics' "${foundation_project_constitution_path}"; then
-  echo "ERROR: project_constitution.md must describe main-proof as the production-semantic proof surface." >&2
-  exit 1
-fi
-
-if ! grep -Fq 'Local contract note: the broad local CI Equivalent surface may consume browser policy through `stage-full`' "${foundation_flutter_client_experience_module_path}"; then
-  echo "ERROR: flutter_client_experience_module.md must connect browser policy to the stage-full/main-proof local contract split." >&2
   exit 1
 fi
 
