@@ -233,6 +233,8 @@ function logStep(flow, message) {
   console.log(`[event-occurrences][${flow}] ${message}`);
 }
 
+const adminEventEditRoutePattern = /\/admin\/events\/[^/]+\/edit(?:\?.*)?$/;
+
 async function logAdminEventsListResponse(flow, response, note = '') {
   try {
     const payload = await response.json();
@@ -2286,7 +2288,7 @@ async function openSeededEventFromAdminList(
     await expect(
       page,
       `Accessible admin event card activation must open "${uniqueTitle}" edit route.`,
-    ).toHaveURL(/\/admin\/events\/edit/, {
+    ).toHaveURL(adminEventEditRoutePattern, {
       timeout: appBootTimeoutMs,
     });
     return;
@@ -2296,7 +2298,7 @@ async function openSeededEventFromAdminList(
     `accessible edit button unavailable for "${uniqueTitle}"; using the resolved title locator without coordinate fallback`,
   );
   await title.click({ timeout: appBootTimeoutMs });
-  await expect(page).toHaveURL(/\/admin\/events\/edit/, {
+  await expect(page).toHaveURL(adminEventEditRoutePattern, {
     timeout: appBootTimeoutMs,
   });
 }
@@ -4018,7 +4020,7 @@ test('@mutation tenant-admin event occurrence FAB persists second occurrence and
         futureLaterTitle,
         futureLaterListLocation.page,
       );
-      await expect(page).toHaveURL(/\/admin\/events\/edit/, {
+      await expect(page).toHaveURL(adminEventEditRoutePattern, {
         timeout: appBootTimeoutMs,
       });
     });

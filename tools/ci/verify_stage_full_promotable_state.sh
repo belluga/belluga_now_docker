@@ -60,6 +60,37 @@ run_source_preflight() {
   )
 }
 
+root_gitlink_matches_base() {
+  local submodule_path="$1"
+  local head_gitlink_sha=""
+  local base_gitlink_sha=""
+
+  head_gitlink_sha="$(git -C "${ROOT_DIR}" rev-parse "HEAD:${submodule_path}" 2>/dev/null | tr -d '[:space:]' || true)"
+  base_gitlink_sha="$(git -C "${ROOT_DIR}" rev-parse "${DEFAULT_BASE_REF}:${submodule_path}" 2>/dev/null | tr -d '[:space:]' || true)"
+
+  [[ -n "${head_gitlink_sha}" ]] \
+    && [[ -n "${base_gitlink_sha}" ]] \
+    && [[ "${head_gitlink_sha}" == "${base_gitlink_sha}" ]]
+}
+
+repo_requires_source_preflight() {
+  local repo_key="$1"
+
+  case "${repo_key}" in
+    root)
+      return 0
+      ;;
+    flutter-app|laravel-app)
+      if root_gitlink_matches_base "${repo_key}"; then
+        return 1
+      fi
+      return 0
+      ;;
+  esac
+
+  return 0
+}
+
 main() {
   local root_branch=""
   root_branch="$(git -C "${ROOT_DIR}" branch --show-current)"
@@ -100,7 +131,12 @@ main() {
     echo "INFO: promotable-state validating ${repo_label} on branch ${source_branch:-<detached>}."
     ensure_clean_repo "${repo_path}" "${repo_label}"
     run_source_authority "${repo_selector}" "${repo_key}" "${source_branch}" "${governing_todo}"
-    run_source_preflight "${repo_path}" "${repo_key}" "${source_branch}" "${governing_todo}"
+    if repo_requires_source_preflight "${repo_key}"; then
+      run_source_preflight "${repo_path}" "${repo_key}" "${source_branch}" "${governing_todo}"
+      continue
+    fi
+
+    echo "INFO: skipping promotable-state source preflight for ${repo_label} because root gitlink matches ${DEFAULT_BASE_REF}; this stage-full rerun is root-only for that repo."
   done
 
   echo "OK: stage-full promotable-state validation passed."

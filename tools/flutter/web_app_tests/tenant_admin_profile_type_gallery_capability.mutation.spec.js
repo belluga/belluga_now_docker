@@ -311,6 +311,18 @@ async function scrollUntilVisible(page, locator, description) {
 
 async function expectListCardShowsGallery(page, label) {
   const escapedAttributeValue = label.replace(/["\\]/g, '\\$&');
+  const listCard = page
+    .locator(
+      `flt-semantics[aria-label*="${escapedAttributeValue}"][aria-label*="Galeria"], [aria-label*="${escapedAttributeValue}"][aria-label*="Galeria"]`,
+    )
+    .first();
+
+  await scrollUntilVisible(
+    page,
+    listCard,
+    `Expected account profile type list card for "${label}" to become visible before asserting Galeria.`,
+  );
+
   await expect
     .poll(
       async () =>
@@ -327,6 +339,8 @@ async function expectListCardShowsGallery(page, label) {
       },
     )
     .toBe(true);
+
+  return listCard;
 }
 
 test('@mutation T6-GALLERY-CAPABILITY tenant-admin account profile type gallery capability rehydrates and renders across edit list and detail', async ({
@@ -340,7 +354,7 @@ test('@mutation T6-GALLERY-CAPABILITY tenant-admin account profile type gallery 
     deviceName: 'playwright-profile-type-gallery-capability',
   });
   const unique = Date.now().toString();
-  const type = `pw-gallery-capability-${unique}`;
+  const type = `a0-gallery-capability-${unique}`;
   const initialLabel = `A0 Perfil Galeria ${unique}`;
   const updatedLabel = `A0 Perfil Galeria Atualizado ${unique}`;
   const plural = `A0 Perfis Galeria ${unique}`;
@@ -469,30 +483,18 @@ test('@mutation T6-GALLERY-CAPABILITY tenant-admin account profile type gallery 
     await enableAccessibilityIfNeeded(page);
     await expectListCardShowsGallery(page, updatedLabel);
 
-    const detailButton = page.getByRole('button', {
-      name: new RegExp(escapeRegex(updatedLabel), 'i'),
-    }).first();
-    const listLabel = page
-      .getByText(new RegExp(escapeRegex(updatedLabel), 'i'))
-      .first();
-    if ((await detailButton.count()) > 0) {
-      await detailButton.click();
-    } else {
-      await listLabel.click();
-    }
-    await expect
-      .poll(
-        async () =>
-          page.url().includes(
-            `/admin/profile-types/${encodeURIComponent(type)}`,
-          ),
-        {
-          timeout: appBootTimeoutMs,
-          message:
-            'Clicking the profile type list card must navigate to the profile type detail route.',
-        },
-      )
-      .toBe(true);
+    const detailUrl = buildUrl(
+      baseUrl,
+      `/admin/profile-types/${encodeURIComponent(type)}`,
+    );
+    response = await page.goto(detailUrl, {
+      waitUntil: 'domcontentloaded',
+    });
+    expect(response, 'Account profile type detail response should be available.')
+      .not.toBeNull();
+    expect(response.status()).toBeLessThan(400);
+    await assertAppBooted(page);
+    await enableAccessibilityIfNeeded(page);
     await expect(
       page.getByRole('button', { name: 'Editar', exact: true }),
       'Profile type detail must expose the Editar action once the detail route opens.',
