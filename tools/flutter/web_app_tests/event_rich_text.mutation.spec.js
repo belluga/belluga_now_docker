@@ -552,7 +552,7 @@ async function openSeededEventFromAdminList(
   if (card) {
     await card.locator.scrollIntoViewIfNeeded({ timeout: appBootTimeoutMs }).catch(() => {});
     await card.locator.click({ timeout: appBootTimeoutMs });
-    await expect(page).toHaveURL(/\/admin\/events\/edit/, {
+    await expect(page).toHaveURL(/\/admin\/events\/[^/]+\/edit(?:\?.*)?$/, {
       timeout: appBootTimeoutMs,
     });
     await expectAdminEditFormForEvent(page, uniqueTitle, uniqueRichHeading);
