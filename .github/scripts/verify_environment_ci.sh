@@ -967,6 +967,16 @@ if ! grep -Fq '"command": ["bash", ".github/scripts/prove_flutter_release_tag_co
   exit 1
 fi
 
+if ! grep -Fq "cancel-in-progress: \${{ github.event_name != 'push' || github.ref_name != 'main' }}" .github/workflows/orchestration-ci-cd.yml; then
+  echo "ERROR: orchestration workflow must serialize push runs on main so post-main flutter tag emission cannot be canceled by a later main push." >&2
+  exit 1
+fi
+
+if ! grep -Fq 'FLUTTER_RELEASE_REPO_TOKEN: ${{ secrets.FLUTTER_RELEASE_REPO_TOKEN }}' .github/workflows/orchestration-ci-cd.yml; then
+  echo "ERROR: emit_flutter_release_tag must require FLUTTER_RELEASE_REPO_TOKEN as the dedicated flutter-app tag write secret." >&2
+  exit 1
+fi
+
 if ! grep -Fq '"command": ["bash", "tools/ci/run_stage_browser_contract.sh", "local-public", "build"]' tools/ci/contracts/browser-stage-full.json; then
   echo "ERROR: browser-stage-full manifest must build the local-public web bundle through the shared stage browser wrapper." >&2
   exit 1

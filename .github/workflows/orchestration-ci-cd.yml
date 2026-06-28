@@ -20,7 +20,7 @@ on:
 
 concurrency:
   group: orchestration-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name != 'push' || github.ref_name != 'main' }}
 
 permissions:
   contents: read
@@ -159,13 +159,9 @@ jobs:
       - name: Resolve submodule checkout auth
         id: submodule_auth
         env:
-          SUBMODULES_REPO_TOKEN: ${{ secrets.SUBMODULES_REPO_TOKEN }}
-          WEB_APP_REPO_TOKEN: ${{ secrets.WEB_APP_REPO_TOKEN }}
+          FLUTTER_RELEASE_REPO_TOKEN: ${{ secrets.FLUTTER_RELEASE_REPO_TOKEN }}
         run: |
-          token="${SUBMODULES_REPO_TOKEN:-}"
-          if [[ -z "$token" ]]; then
-            token="${WEB_APP_REPO_TOKEN:-}"
-          fi
+          token="${FLUTTER_RELEASE_REPO_TOKEN:-}"
 
           if [[ -n "$token" ]]; then
             echo "::add-mask::$token"
@@ -187,8 +183,8 @@ jobs:
       - name: Fail when missing submodule token
         if: steps.submodule_auth.outputs.has_token != 'true'
         run: |
-          echo "ERROR: missing required secret for private submodule checkout." >&2
-          echo "Set SUBMODULES_REPO_TOKEN (recommended) or WEB_APP_REPO_TOKEN in this repository secrets." >&2
+          echo "ERROR: missing required FLUTTER_RELEASE_REPO_TOKEN secret for flutter-app tag checkout/push." >&2
+          echo "Set FLUTTER_RELEASE_REPO_TOKEN in this repository secrets with write access to the flutter-app repository tags." >&2
           exit 1
 
       - name: Resolve stage web-app runtime SHA

@@ -3,9 +3,30 @@ set -euo pipefail
 
 repo_root="$(git rev-parse --show-toplevel)"
 emit_script="${repo_root}/.github/scripts/emit_flutter_release_tag.sh"
+workflow_file="${repo_root}/.github/workflows/orchestration-ci-cd.yml"
 
 if [[ ! -f "${emit_script}" ]]; then
   echo "ERROR: emit_flutter_release_tag.sh is required for the flutter release tag contract proof." >&2
+  exit 1
+fi
+
+if [[ ! -f "${workflow_file}" ]]; then
+  echo "ERROR: orchestration-ci-cd.yml is required for the flutter release tag workflow proof." >&2
+  exit 1
+fi
+
+if ! grep -Fq "cancel-in-progress: \${{ github.event_name != 'push' || github.ref_name != 'main' }}" "${workflow_file}"; then
+  echo "ERROR: main push runs must serialize instead of canceling in-progress post-main tag emission." >&2
+  exit 1
+fi
+
+if ! grep -Fq 'FLUTTER_RELEASE_REPO_TOKEN: ${{ secrets.FLUTTER_RELEASE_REPO_TOKEN }}' "${workflow_file}"; then
+  echo "ERROR: emit_flutter_release_tag must require the dedicated FLUTTER_RELEASE_REPO_TOKEN secret." >&2
+  exit 1
+fi
+
+if ! grep -Fq 'Set FLUTTER_RELEASE_REPO_TOKEN in this repository secrets with write access to the flutter-app repository tags.' "${workflow_file}"; then
+  echo "ERROR: emit_flutter_release_tag must document the dedicated flutter-app tag write secret contract explicitly." >&2
   exit 1
 fi
 
