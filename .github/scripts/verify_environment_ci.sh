@@ -972,11 +972,6 @@ if ! grep -Fq "cancel-in-progress: \${{ github.event_name != 'push' || github.re
   exit 1
 fi
 
-if ! grep -Fq 'FLUTTER_RELEASE_REPO_TOKEN: ${{ secrets.FLUTTER_RELEASE_REPO_TOKEN }}' .github/workflows/orchestration-ci-cd.yml; then
-  echo "ERROR: emit_flutter_release_tag must require FLUTTER_RELEASE_REPO_TOKEN as the dedicated flutter-app tag write secret." >&2
-  exit 1
-fi
-
 if ! grep -Fq '"command": ["bash", "tools/ci/run_stage_browser_contract.sh", "local-public", "build"]' tools/ci/contracts/browser-stage-full.json; then
   echo "ERROR: browser-stage-full manifest must build the local-public web bundle through the shared stage browser wrapper." >&2
   exit 1
@@ -2156,6 +2151,21 @@ fi
 
 if ! grep -Fq 'run: bash .github/scripts/emit_flutter_release_tag.sh' <<<"${emit_flutter_release_tag_job}"; then
   echo "ERROR: emit_flutter_release_tag must invoke the canonical flutter release tag script." >&2
+  exit 1
+fi
+
+if ! grep -Fq 'FLUTTER_RELEASE_REPO_TOKEN: ${{ secrets.FLUTTER_RELEASE_REPO_TOKEN }}' <<<"${emit_flutter_release_tag_job}"; then
+  echo "ERROR: emit_flutter_release_tag must require FLUTTER_RELEASE_REPO_TOKEN as the dedicated flutter-app tag write secret." >&2
+  exit 1
+fi
+
+if grep -Fq 'SUBMODULES_REPO_TOKEN:' <<<"${emit_flutter_release_tag_job}" || grep -Fq 'WEB_APP_REPO_TOKEN:' <<<"${emit_flutter_release_tag_job}"; then
+  echo "ERROR: emit_flutter_release_tag must not fall back to the legacy submodule/web-app tokens." >&2
+  exit 1
+fi
+
+if ! grep -Fq 'Set FLUTTER_RELEASE_REPO_TOKEN in this repository secrets with write access to the flutter-app repository tags.' <<<"${emit_flutter_release_tag_job}"; then
+  echo "ERROR: emit_flutter_release_tag must fail with the explicit FLUTTER_RELEASE_REPO_TOKEN write-contract message." >&2
   exit 1
 fi
 

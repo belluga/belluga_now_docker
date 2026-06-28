@@ -15,17 +15,33 @@ if [[ ! -f "${workflow_file}" ]]; then
   exit 1
 fi
 
+emit_flutter_release_tag_job="$(awk '
+  /^  emit_flutter_release_tag:$/ { in_block=1 }
+  in_block && /^  [A-Za-z0-9_-]+:$/ && $0 !~ /^  emit_flutter_release_tag:$/ { exit }
+  in_block { print }
+' "${workflow_file}")"
+
+if [[ -z "${emit_flutter_release_tag_job}" ]]; then
+  echo "ERROR: orchestration-ci-cd.yml must define an emit_flutter_release_tag post-main job." >&2
+  exit 1
+fi
+
 if ! grep -Fq "cancel-in-progress: \${{ github.event_name != 'push' || github.ref_name != 'main' }}" "${workflow_file}"; then
   echo "ERROR: main push runs must serialize instead of canceling in-progress post-main tag emission." >&2
   exit 1
 fi
 
-if ! grep -Fq 'FLUTTER_RELEASE_REPO_TOKEN: ${{ secrets.FLUTTER_RELEASE_REPO_TOKEN }}' "${workflow_file}"; then
+if ! grep -Fq 'FLUTTER_RELEASE_REPO_TOKEN: ${{ secrets.FLUTTER_RELEASE_REPO_TOKEN }}' <<<"${emit_flutter_release_tag_job}"; then
   echo "ERROR: emit_flutter_release_tag must require the dedicated FLUTTER_RELEASE_REPO_TOKEN secret." >&2
   exit 1
 fi
 
-if ! grep -Fq 'Set FLUTTER_RELEASE_REPO_TOKEN in this repository secrets with write access to the flutter-app repository tags.' "${workflow_file}"; then
+if grep -Fq 'SUBMODULES_REPO_TOKEN:' <<<"${emit_flutter_release_tag_job}" || grep -Fq 'WEB_APP_REPO_TOKEN:' <<<"${emit_flutter_release_tag_job}"; then
+  echo "ERROR: emit_flutter_release_tag must not fall back to the legacy submodule/web-app tokens." >&2
+  exit 1
+fi
+
+if ! grep -Fq 'Set FLUTTER_RELEASE_REPO_TOKEN in this repository secrets with write access to the flutter-app repository tags.' <<<"${emit_flutter_release_tag_job}"; then
   echo "ERROR: emit_flutter_release_tag must document the dedicated flutter-app tag write secret contract explicitly." >&2
   exit 1
 fi
