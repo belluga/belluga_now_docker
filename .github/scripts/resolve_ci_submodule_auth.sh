@@ -27,7 +27,7 @@ token_can_read_repo() {
 
   local remote_url
   remote_url="https://x-access-token:${token}@github.com/${repo}.git"
-  git ls-remote "$remote_url" HEAD >/dev/null 2>&1
+  git -c http.https://github.com/.extraheader= ls-remote "$remote_url" HEAD >/dev/null 2>&1
 }
 
 write_output() {
