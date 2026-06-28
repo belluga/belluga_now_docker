@@ -46,8 +46,13 @@ if grep -Fq 'SUBMODULES_REPO_TOKEN:' <<<"${emit_flutter_release_tag_job}" || gre
   exit 1
 fi
 
-if ! grep -Fq 'Set FLUTTER_RELEASE_REPO_TOKEN in this repository secrets with write access to the flutter-app repository tags.' <<<"${emit_flutter_release_tag_job}"; then
-  echo "ERROR: emit_flutter_release_tag must document the dedicated flutter-app tag write secret contract explicitly." >&2
+if ! grep -Fq 'SUBMODULE_PATHS: flutter-app' <<<"${emit_flutter_release_tag_job}"; then
+  echo "ERROR: emit_flutter_release_tag must scope submodule checkout to flutter-app only." >&2
+  exit 1
+fi
+
+if ! grep -Fq 'Set FLUTTER_RELEASE_REPO_TOKEN in this repository secrets with flutter-app read access and flutter-app tag write access.' <<<"${emit_flutter_release_tag_job}"; then
+  echo "ERROR: emit_flutter_release_tag must document the dedicated flutter-app read/tag-write secret contract explicitly." >&2
   exit 1
 fi
 
