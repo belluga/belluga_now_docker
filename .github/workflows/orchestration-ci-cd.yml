@@ -72,29 +72,8 @@ jobs:
         env:
           SUBMODULES_REPO_TOKEN: ${{ secrets.SUBMODULES_REPO_TOKEN }}
           WEB_APP_REPO_TOKEN: ${{ secrets.WEB_APP_REPO_TOKEN }}
-        run: |
-          submodule_token="${SUBMODULES_REPO_TOKEN:-}"
-          if [[ -z "$submodule_token" ]]; then
-            submodule_token="${WEB_APP_REPO_TOKEN:-}"
-          fi
-
-          web_repo_token="${WEB_APP_REPO_TOKEN:-}"
-          if [[ -z "$web_repo_token" ]]; then
-            web_repo_token="$submodule_token"
-          fi
-
-          if [[ -n "$submodule_token" ]]; then
-            echo "::add-mask::$submodule_token"
-            if [[ -n "$web_repo_token" && "$web_repo_token" != "$submodule_token" ]]; then
-              echo "::add-mask::$web_repo_token"
-            fi
-            echo "has_token=true" >> "$GITHUB_OUTPUT"
-            echo "token=$submodule_token" >> "$GITHUB_OUTPUT"
-            echo "submodule_token=$submodule_token" >> "$GITHUB_OUTPUT"
-            echo "web_repo_token=$web_repo_token" >> "$GITHUB_OUTPUT"
-          else
-            echo "has_token=false" >> "$GITHUB_OUTPUT"
-          fi
+          WEB_APP_REPO: ${{ vars.WEB_APP_REPO }}
+        run: bash .github/scripts/resolve_ci_submodule_auth.sh
 
       - name: Checkout submodules
         if: steps.submodule_auth.outputs.has_token == 'true'
@@ -171,29 +150,8 @@ jobs:
         env:
           SUBMODULES_REPO_TOKEN: ${{ secrets.SUBMODULES_REPO_TOKEN }}
           WEB_APP_REPO_TOKEN: ${{ secrets.WEB_APP_REPO_TOKEN }}
-        run: |
-          submodule_token="${SUBMODULES_REPO_TOKEN:-}"
-          if [[ -z "$submodule_token" ]]; then
-            submodule_token="${WEB_APP_REPO_TOKEN:-}"
-          fi
-
-          web_repo_token="${WEB_APP_REPO_TOKEN:-}"
-          if [[ -z "$web_repo_token" ]]; then
-            web_repo_token="$submodule_token"
-          fi
-
-          if [[ -n "$submodule_token" ]]; then
-            echo "::add-mask::$submodule_token"
-            if [[ -n "$web_repo_token" && "$web_repo_token" != "$submodule_token" ]]; then
-              echo "::add-mask::$web_repo_token"
-            fi
-            echo "has_token=true" >> "$GITHUB_OUTPUT"
-            echo "token=$submodule_token" >> "$GITHUB_OUTPUT"
-            echo "submodule_token=$submodule_token" >> "$GITHUB_OUTPUT"
-            echo "web_repo_token=$web_repo_token" >> "$GITHUB_OUTPUT"
-          else
-            echo "has_token=false" >> "$GITHUB_OUTPUT"
-          fi
+          WEB_APP_REPO: ${{ vars.WEB_APP_REPO }}
+        run: bash .github/scripts/resolve_ci_submodule_auth.sh
 
       - name: Checkout submodules
         if: steps.submodule_auth.outputs.has_token == 'true'
@@ -1001,29 +959,8 @@ jobs:
         env:
           SUBMODULES_REPO_TOKEN: ${{ secrets.SUBMODULES_REPO_TOKEN }}
           WEB_APP_REPO_TOKEN: ${{ secrets.WEB_APP_REPO_TOKEN }}
-        run: |
-          submodule_token="${SUBMODULES_REPO_TOKEN:-}"
-          if [[ -z "$submodule_token" ]]; then
-            submodule_token="${WEB_APP_REPO_TOKEN:-}"
-          fi
-
-          web_repo_token="${WEB_APP_REPO_TOKEN:-}"
-          if [[ -z "$web_repo_token" ]]; then
-            web_repo_token="$submodule_token"
-          fi
-
-          if [[ -n "$submodule_token" ]]; then
-            echo "::add-mask::$submodule_token"
-            if [[ -n "$web_repo_token" && "$web_repo_token" != "$submodule_token" ]]; then
-              echo "::add-mask::$web_repo_token"
-            fi
-            echo "has_token=true" >> "$GITHUB_OUTPUT"
-            echo "token=$submodule_token" >> "$GITHUB_OUTPUT"
-            echo "submodule_token=$submodule_token" >> "$GITHUB_OUTPUT"
-            echo "web_repo_token=$web_repo_token" >> "$GITHUB_OUTPUT"
-          else
-            echo "has_token=false" >> "$GITHUB_OUTPUT"
-          fi
+          WEB_APP_REPO: ${{ vars.WEB_APP_REPO }}
+        run: bash .github/scripts/resolve_ci_submodule_auth.sh
 
       - name: Checkout submodules
         if: steps.submodule_auth.outputs.has_token == 'true'

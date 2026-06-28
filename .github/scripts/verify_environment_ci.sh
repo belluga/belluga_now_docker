@@ -229,6 +229,7 @@ required_files=(
   ".github/scripts/prove_rollback_queue_parity.sh"
   ".github/scripts/capture_successful_release_tuple_over_ssh.sh"
   ".github/scripts/publish_runtime_images_to_ghcr.sh"
+  ".github/scripts/resolve_ci_submodule_auth.sh"
   ".github/scripts/resolve_web_app_runtime_sha.sh"
   ".github/scripts/rollback_remote.sh"
 )
