@@ -20,7 +20,7 @@ on:
 
 concurrency:
   group: orchestration-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name != 'push' || github.ref_name != 'main' }}
 
 permissions:
   contents: read
@@ -72,19 +72,8 @@ jobs:
         env:
           SUBMODULES_REPO_TOKEN: ${{ secrets.SUBMODULES_REPO_TOKEN }}
           WEB_APP_REPO_TOKEN: ${{ secrets.WEB_APP_REPO_TOKEN }}
-        run: |
-          token="${SUBMODULES_REPO_TOKEN:-}"
-          if [[ -z "$token" ]]; then
-            token="${WEB_APP_REPO_TOKEN:-}"
-          fi
-
-          if [[ -n "$token" ]]; then
-            echo "::add-mask::$token"
-            echo "has_token=true" >> "$GITHUB_OUTPUT"
-            echo "token=$token" >> "$GITHUB_OUTPUT"
-          else
-            echo "has_token=false" >> "$GITHUB_OUTPUT"
-          fi
+          WEB_APP_REPO: ${{ vars.WEB_APP_REPO }}
+        run: bash .github/scripts/resolve_ci_submodule_auth.sh
 
       - name: Checkout submodules
         if: steps.submodule_auth.outputs.has_token == 'true'
@@ -116,7 +105,7 @@ jobs:
 
       - name: Validate web/flutter metadata compatibility
         env:
-          GH_TOKEN: ${{ steps.submodule_auth.outputs.token }}
+          GH_TOKEN: ${{ steps.submodule_auth.outputs.web_repo_token }}
           WEB_APP_REPO: ${{ vars.WEB_APP_REPO }}
         run: bash .github/scripts/check_web_flutter_metadata.sh "${{ steps.lane.outputs.branch }}"
 
@@ -161,19 +150,8 @@ jobs:
         env:
           SUBMODULES_REPO_TOKEN: ${{ secrets.SUBMODULES_REPO_TOKEN }}
           WEB_APP_REPO_TOKEN: ${{ secrets.WEB_APP_REPO_TOKEN }}
-        run: |
-          token="${SUBMODULES_REPO_TOKEN:-}"
-          if [[ -z "$token" ]]; then
-            token="${WEB_APP_REPO_TOKEN:-}"
-          fi
-
-          if [[ -n "$token" ]]; then
-            echo "::add-mask::$token"
-            echo "has_token=true" >> "$GITHUB_OUTPUT"
-            echo "token=$token" >> "$GITHUB_OUTPUT"
-          else
-            echo "has_token=false" >> "$GITHUB_OUTPUT"
-          fi
+          WEB_APP_REPO: ${{ vars.WEB_APP_REPO }}
+        run: bash .github/scripts/resolve_ci_submodule_auth.sh
 
       - name: Checkout submodules
         if: steps.submodule_auth.outputs.has_token == 'true'
@@ -196,7 +174,7 @@ jobs:
         env:
           DEPLOY_LANE: stage
           WEB_APP_REPO: ${{ vars.WEB_APP_REPO }}
-          GH_TOKEN: ${{ steps.submodule_auth.outputs.token }}
+          GH_TOKEN: ${{ steps.submodule_auth.outputs.web_repo_token }}
         run: bash .github/scripts/resolve_web_app_runtime_sha.sh
 
       - name: Publish stage runtime images to GHCR
@@ -981,19 +959,8 @@ jobs:
         env:
           SUBMODULES_REPO_TOKEN: ${{ secrets.SUBMODULES_REPO_TOKEN }}
           WEB_APP_REPO_TOKEN: ${{ secrets.WEB_APP_REPO_TOKEN }}
-        run: |
-          token="${SUBMODULES_REPO_TOKEN:-}"
-          if [[ -z "$token" ]]; then
-            token="${WEB_APP_REPO_TOKEN:-}"
-          fi
-
-          if [[ -n "$token" ]]; then
-            echo "::add-mask::$token"
-            echo "has_token=true" >> "$GITHUB_OUTPUT"
-            echo "token=$token" >> "$GITHUB_OUTPUT"
-          else
-            echo "has_token=false" >> "$GITHUB_OUTPUT"
-          fi
+          WEB_APP_REPO: ${{ vars.WEB_APP_REPO }}
+        run: bash .github/scripts/resolve_ci_submodule_auth.sh
 
       - name: Checkout submodules
         if: steps.submodule_auth.outputs.has_token == 'true'
@@ -1016,7 +983,7 @@ jobs:
         env:
           DEPLOY_LANE: main
           WEB_APP_REPO: ${{ vars.WEB_APP_REPO }}
-          GH_TOKEN: ${{ steps.submodule_auth.outputs.token }}
+          GH_TOKEN: ${{ steps.submodule_auth.outputs.web_repo_token }}
         run: bash .github/scripts/resolve_web_app_runtime_sha.sh
 
       - name: Publish production runtime images to GHCR
@@ -1737,3 +1704,51 @@ jobs:
             echo "ERROR: production navigation smoke failed; external rollback restored the previous healthy tuple and post-rollback proof passed." >&2
           fi
           exit 1
+
+  emit_flutter_release_tag:
+    name: Emit Flutter Release Tag
+    runs-on: ubuntu-latest
+    needs:
+      - deploy_main
+    if: ${{ github.event_name == 'push' && github.ref_name == 'main' && needs.deploy_main.result == 'success' }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Resolve submodule checkout auth
+        id: submodule_auth
+        env:
+          FLUTTER_RELEASE_REPO_TOKEN: ${{ secrets.FLUTTER_RELEASE_REPO_TOKEN }}
+        run: |
+          token="${FLUTTER_RELEASE_REPO_TOKEN:-}"
+
+          if [[ -n "$token" ]]; then
+            echo "::add-mask::$token"
+            echo "has_token=true" >> "$GITHUB_OUTPUT"
+            echo "token=$token" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_token=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout submodules
+        if: steps.submodule_auth.outputs.has_token == 'true'
+        env:
+          SUBMODULE_TOKEN: ${{ steps.submodule_auth.outputs.token }}
+          SUBMODULE_PATHS: flutter-app
+        run: |
+          git config --global --unset-all url.https://github.com/.insteadOf || true
+          git config --global url."https://x-access-token:${SUBMODULE_TOKEN}@github.com/".insteadOf "https://github.com/"
+          bash .github/scripts/checkout_ci_submodules.sh
+
+      - name: Fail when missing submodule token
+        if: steps.submodule_auth.outputs.has_token != 'true'
+        run: |
+          echo "ERROR: missing required FLUTTER_RELEASE_REPO_TOKEN secret for flutter-app tag checkout/push." >&2
+          echo "Set FLUTTER_RELEASE_REPO_TOKEN in this repository secrets with flutter-app read access and flutter-app tag write access." >&2
+          exit 1
+
+      - name: Emit post-main flutter-app release tag
+        run: bash .github/scripts/emit_flutter_release_tag.sh

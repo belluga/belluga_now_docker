@@ -12,5 +12,14 @@
       "path": "browser-policy.json"
     }
   ],
-  "entries": []
+  "entries": [
+    {
+      "id": "post-main-flutter-release-tag-proof",
+      "repo": "belluga_now_docker",
+      "kind": "release-signal-proof",
+      "cwd": "../../..",
+      "command": ["bash", ".github/scripts/prove_flutter_release_tag_contract.sh"],
+      "description": "Prove the immutable post-main flutter-app release tag contract and its no-op/fail-closed semantics."
+    }
+  ]
 }

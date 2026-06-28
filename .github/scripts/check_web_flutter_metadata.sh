@@ -65,7 +65,7 @@ resolve_lane_web_sha() {
 
   local remote_url
   remote_url="https://x-access-token:${GH_TOKEN}@github.com/${repo}.git"
-  git ls-remote "$remote_url" "refs/heads/${lane}" | awk '{print $1}' | head -n 1 | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]'
+  git -c http.https://github.com/.extraheader= ls-remote "$remote_url" "refs/heads/${lane}" | awk '{print $1}' | head -n 1 | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]'
 }
 
 get_remote_file_content() {

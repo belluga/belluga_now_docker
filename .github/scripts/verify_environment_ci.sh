@@ -229,6 +229,7 @@ required_files=(
   ".github/scripts/prove_rollback_queue_parity.sh"
   ".github/scripts/capture_successful_release_tuple_over_ssh.sh"
   ".github/scripts/publish_runtime_images_to_ghcr.sh"
+  ".github/scripts/resolve_ci_submodule_auth.sh"
   ".github/scripts/resolve_web_app_runtime_sha.sh"
   ".github/scripts/rollback_remote.sh"
 )
@@ -872,6 +873,8 @@ fi
 
 required_ci_contract_files=(
   ".github/scripts/checkout_ci_submodules.sh"
+  ".github/scripts/emit_flutter_release_tag.sh"
+  ".github/scripts/prove_flutter_release_tag_contract.sh"
   "tools/ci/run_contract.sh"
   "tools/ci/run_stage_browser_contract.sh"
   "tools/ci/contracts/root-invariants.json"
@@ -915,7 +918,7 @@ if ! grep -Fq 'git -C foundation_documentation checkout --detach "origin/${FOUND
 fi
 
 checkout_ci_submodule_calls="$(grep -Fc 'bash .github/scripts/checkout_ci_submodules.sh' .github/workflows/orchestration-ci-cd.yml || true)"
-if [[ "${checkout_ci_submodule_calls}" -lt 3 ]]; then
+if [[ "${checkout_ci_submodule_calls}" -lt 4 ]]; then
   echo "ERROR: orchestration-ci-cd.yml must use checkout_ci_submodules.sh for every submodule checkout block." >&2
   exit 1
 fi
@@ -957,6 +960,16 @@ fi
 
 if ! grep -Fq '"path": "browser-policy.json"' tools/ci/contracts/main-proof.json; then
   echo "ERROR: main-proof manifest must import browser-policy.json." >&2
+  exit 1
+fi
+
+if ! grep -Fq '"command": ["bash", ".github/scripts/prove_flutter_release_tag_contract.sh"]' tools/ci/contracts/main-proof.json; then
+  echo "ERROR: main-proof manifest must execute the flutter release tag contract proof." >&2
+  exit 1
+fi
+
+if ! grep -Fq "cancel-in-progress: \${{ github.event_name != 'push' || github.ref_name != 'main' }}" .github/workflows/orchestration-ci-cd.yml; then
+  echo "ERROR: orchestration workflow must serialize push runs on main so post-main flutter tag emission cannot be canceled by a later main push." >&2
   exit 1
 fi
 
@@ -2116,6 +2129,52 @@ if ! grep -Fq "steps.main_rollback_navigation_smoke.outcome == 'failure'" <<<"${
   exit 1
 fi
 
+emit_flutter_release_tag_job="$(awk '
+  /^  emit_flutter_release_tag:$/ { in_block=1 }
+  in_block && /^  [A-Za-z0-9_-]+:$/ && $0 !~ /^  emit_flutter_release_tag:$/ { exit }
+  in_block { print }
+' .github/workflows/orchestration-ci-cd.yml)"
+
+if [[ -z "${emit_flutter_release_tag_job}" ]]; then
+  echo "ERROR: orchestration-ci-cd.yml must define an emit_flutter_release_tag post-main job." >&2
+  exit 1
+fi
+
+if ! grep -Fq '      - deploy_main' <<<"${emit_flutter_release_tag_job}"; then
+  echo "ERROR: emit_flutter_release_tag must depend on deploy_main success." >&2
+  exit 1
+fi
+
+if ! grep -Fq "if: \${{ github.event_name == 'push' && github.ref_name == 'main' && needs.deploy_main.result == 'success' }}" <<<"${emit_flutter_release_tag_job}"; then
+  echo "ERROR: emit_flutter_release_tag must run only after authoritative push/main deploy_main success." >&2
+  exit 1
+fi
+
+if ! grep -Fq 'run: bash .github/scripts/emit_flutter_release_tag.sh' <<<"${emit_flutter_release_tag_job}"; then
+  echo "ERROR: emit_flutter_release_tag must invoke the canonical flutter release tag script." >&2
+  exit 1
+fi
+
+if ! grep -Fq 'FLUTTER_RELEASE_REPO_TOKEN: ${{ secrets.FLUTTER_RELEASE_REPO_TOKEN }}' <<<"${emit_flutter_release_tag_job}"; then
+  echo "ERROR: emit_flutter_release_tag must require FLUTTER_RELEASE_REPO_TOKEN as the dedicated flutter-app tag write secret." >&2
+  exit 1
+fi
+
+if grep -Fq 'SUBMODULES_REPO_TOKEN:' <<<"${emit_flutter_release_tag_job}" || grep -Fq 'WEB_APP_REPO_TOKEN:' <<<"${emit_flutter_release_tag_job}"; then
+  echo "ERROR: emit_flutter_release_tag must not fall back to the legacy submodule/web-app tokens." >&2
+  exit 1
+fi
+
+if ! grep -Fq 'SUBMODULE_PATHS: flutter-app' <<<"${emit_flutter_release_tag_job}"; then
+  echo "ERROR: emit_flutter_release_tag must scope submodule checkout to flutter-app only." >&2
+  exit 1
+fi
+
+if ! grep -Fq 'Set FLUTTER_RELEASE_REPO_TOKEN in this repository secrets with flutter-app read access and flutter-app tag write access.' <<<"${emit_flutter_release_tag_job}"; then
+  echo "ERROR: emit_flutter_release_tag must fail with the explicit flutter-app read/tag-write contract message." >&2
+  exit 1
+fi
+
 required_runtime_mutation_workflow_markers=(
   "steps.stage_deploy_remote.outputs.runtime_mutated"
   "steps.main_deploy_remote.outputs.runtime_mutated"
@@ -2176,6 +2235,7 @@ fi
 node --test tools/flutter/web_app_tests/navigation_harness_policy_test.cjs >/dev/null
 
 bash .github/scripts/prove_web_metadata_main_contract.sh >/dev/null
+bash .github/scripts/prove_flutter_release_tag_contract.sh >/dev/null
 bash .github/scripts/prove_rollback_queue_parity.sh >/dev/null
 
 echo "OK: CI environment invariants validated."
