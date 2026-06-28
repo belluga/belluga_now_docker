@@ -73,15 +73,25 @@ jobs:
           SUBMODULES_REPO_TOKEN: ${{ secrets.SUBMODULES_REPO_TOKEN }}
           WEB_APP_REPO_TOKEN: ${{ secrets.WEB_APP_REPO_TOKEN }}
         run: |
-          token="${SUBMODULES_REPO_TOKEN:-}"
-          if [[ -z "$token" ]]; then
-            token="${WEB_APP_REPO_TOKEN:-}"
+          submodule_token="${SUBMODULES_REPO_TOKEN:-}"
+          if [[ -z "$submodule_token" ]]; then
+            submodule_token="${WEB_APP_REPO_TOKEN:-}"
           fi
 
-          if [[ -n "$token" ]]; then
-            echo "::add-mask::$token"
+          web_repo_token="${WEB_APP_REPO_TOKEN:-}"
+          if [[ -z "$web_repo_token" ]]; then
+            web_repo_token="$submodule_token"
+          fi
+
+          if [[ -n "$submodule_token" ]]; then
+            echo "::add-mask::$submodule_token"
+            if [[ -n "$web_repo_token" && "$web_repo_token" != "$submodule_token" ]]; then
+              echo "::add-mask::$web_repo_token"
+            fi
             echo "has_token=true" >> "$GITHUB_OUTPUT"
-            echo "token=$token" >> "$GITHUB_OUTPUT"
+            echo "token=$submodule_token" >> "$GITHUB_OUTPUT"
+            echo "submodule_token=$submodule_token" >> "$GITHUB_OUTPUT"
+            echo "web_repo_token=$web_repo_token" >> "$GITHUB_OUTPUT"
           else
             echo "has_token=false" >> "$GITHUB_OUTPUT"
           fi
@@ -116,7 +126,7 @@ jobs:
 
       - name: Validate web/flutter metadata compatibility
         env:
-          GH_TOKEN: ${{ steps.submodule_auth.outputs.token }}
+          GH_TOKEN: ${{ steps.submodule_auth.outputs.web_repo_token }}
           WEB_APP_REPO: ${{ vars.WEB_APP_REPO }}
         run: bash .github/scripts/check_web_flutter_metadata.sh "${{ steps.lane.outputs.branch }}"
 
@@ -162,15 +172,25 @@ jobs:
           SUBMODULES_REPO_TOKEN: ${{ secrets.SUBMODULES_REPO_TOKEN }}
           WEB_APP_REPO_TOKEN: ${{ secrets.WEB_APP_REPO_TOKEN }}
         run: |
-          token="${SUBMODULES_REPO_TOKEN:-}"
-          if [[ -z "$token" ]]; then
-            token="${WEB_APP_REPO_TOKEN:-}"
+          submodule_token="${SUBMODULES_REPO_TOKEN:-}"
+          if [[ -z "$submodule_token" ]]; then
+            submodule_token="${WEB_APP_REPO_TOKEN:-}"
           fi
 
-          if [[ -n "$token" ]]; then
-            echo "::add-mask::$token"
+          web_repo_token="${WEB_APP_REPO_TOKEN:-}"
+          if [[ -z "$web_repo_token" ]]; then
+            web_repo_token="$submodule_token"
+          fi
+
+          if [[ -n "$submodule_token" ]]; then
+            echo "::add-mask::$submodule_token"
+            if [[ -n "$web_repo_token" && "$web_repo_token" != "$submodule_token" ]]; then
+              echo "::add-mask::$web_repo_token"
+            fi
             echo "has_token=true" >> "$GITHUB_OUTPUT"
-            echo "token=$token" >> "$GITHUB_OUTPUT"
+            echo "token=$submodule_token" >> "$GITHUB_OUTPUT"
+            echo "submodule_token=$submodule_token" >> "$GITHUB_OUTPUT"
+            echo "web_repo_token=$web_repo_token" >> "$GITHUB_OUTPUT"
           else
             echo "has_token=false" >> "$GITHUB_OUTPUT"
           fi
@@ -196,7 +216,7 @@ jobs:
         env:
           DEPLOY_LANE: stage
           WEB_APP_REPO: ${{ vars.WEB_APP_REPO }}
-          GH_TOKEN: ${{ steps.submodule_auth.outputs.token }}
+          GH_TOKEN: ${{ steps.submodule_auth.outputs.web_repo_token }}
         run: bash .github/scripts/resolve_web_app_runtime_sha.sh
 
       - name: Publish stage runtime images to GHCR
@@ -982,15 +1002,25 @@ jobs:
           SUBMODULES_REPO_TOKEN: ${{ secrets.SUBMODULES_REPO_TOKEN }}
           WEB_APP_REPO_TOKEN: ${{ secrets.WEB_APP_REPO_TOKEN }}
         run: |
-          token="${SUBMODULES_REPO_TOKEN:-}"
-          if [[ -z "$token" ]]; then
-            token="${WEB_APP_REPO_TOKEN:-}"
+          submodule_token="${SUBMODULES_REPO_TOKEN:-}"
+          if [[ -z "$submodule_token" ]]; then
+            submodule_token="${WEB_APP_REPO_TOKEN:-}"
           fi
 
-          if [[ -n "$token" ]]; then
-            echo "::add-mask::$token"
+          web_repo_token="${WEB_APP_REPO_TOKEN:-}"
+          if [[ -z "$web_repo_token" ]]; then
+            web_repo_token="$submodule_token"
+          fi
+
+          if [[ -n "$submodule_token" ]]; then
+            echo "::add-mask::$submodule_token"
+            if [[ -n "$web_repo_token" && "$web_repo_token" != "$submodule_token" ]]; then
+              echo "::add-mask::$web_repo_token"
+            fi
             echo "has_token=true" >> "$GITHUB_OUTPUT"
-            echo "token=$token" >> "$GITHUB_OUTPUT"
+            echo "token=$submodule_token" >> "$GITHUB_OUTPUT"
+            echo "submodule_token=$submodule_token" >> "$GITHUB_OUTPUT"
+            echo "web_repo_token=$web_repo_token" >> "$GITHUB_OUTPUT"
           else
             echo "has_token=false" >> "$GITHUB_OUTPUT"
           fi
@@ -1016,7 +1046,7 @@ jobs:
         env:
           DEPLOY_LANE: main
           WEB_APP_REPO: ${{ vars.WEB_APP_REPO }}
-          GH_TOKEN: ${{ steps.submodule_auth.outputs.token }}
+          GH_TOKEN: ${{ steps.submodule_auth.outputs.web_repo_token }}
         run: bash .github/scripts/resolve_web_app_runtime_sha.sh
 
       - name: Publish production runtime images to GHCR
