@@ -2,9 +2,20 @@
 set -euo pipefail
 
 FOUNDATION_DOCS_BRANCH="${FOUNDATION_DOCS_BRANCH:-main}"
+SUBMODULE_PATHS="${SUBMODULE_PATHS:-}"
+
+submodule_paths=()
+if [[ -n "${SUBMODULE_PATHS}" ]]; then
+  # Space-delimited paths keep the workflow contract readable and deterministic.
+  read -r -a submodule_paths <<<"${SUBMODULE_PATHS}"
+fi
 
 git submodule sync --recursive
-git submodule update --init --recursive
+if [[ "${#submodule_paths[@]}" -gt 0 ]]; then
+  git submodule update --init --recursive "${submodule_paths[@]}"
+else
+  git submodule update --init --recursive
+fi
 
 if [[ ! -d "foundation_documentation/.git" && ! -f "foundation_documentation/.git" ]]; then
   echo "INFO: foundation_documentation submodule is not initialized; skipping canonical branch alignment."

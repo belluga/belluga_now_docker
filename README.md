@@ -512,7 +512,8 @@ Em ambos os casos, o `Preflight Validation` precisa passar antes do deploy.
 Pré-requisitos no repositório GitHub (`Settings > Secrets and variables > Actions`):
 
 `Secrets`:
-* `SUBMODULES_REPO_TOKEN` (acesso de leitura aos submódulos privados).
+* `SUBMODULES_REPO_TOKEN` (acesso de leitura aos submódulos privados; `WEB_APP_REPO_TOKEN` pode continuar como fallback legado de leitura se o workflow já o usar).
+* `FLUTTER_RELEASE_REPO_TOKEN` (acesso de escrita ao repositório `flutter-app` para o job pós-`main` criar a tag imutável `v<pubspec-version>` no SHA validado).
 * `STAGE_SSH_PRIVATE_KEY` (chave privada usada pelo GitHub Actions).
 * `STAGE_SSH_KNOWN_HOSTS` (saída do `ssh-keyscan -H <ip-ou-host-stage>`).
 
