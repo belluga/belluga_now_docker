@@ -36,6 +36,11 @@ if ! grep -Fq 'FLUTTER_RELEASE_REPO_TOKEN: ${{ secrets.FLUTTER_RELEASE_REPO_TOKE
   exit 1
 fi
 
+if ! grep -Fq "github.event_name == 'push'" <<<"${emit_flutter_release_tag_job}" || ! grep -Fq "needs.deploy_main.result == 'success'" <<<"${emit_flutter_release_tag_job}"; then
+  echo "ERROR: emit_flutter_release_tag must remain gated on authoritative post-main push success." >&2
+  exit 1
+fi
+
 if grep -Fq 'SUBMODULES_REPO_TOKEN:' <<<"${emit_flutter_release_tag_job}" || grep -Fq 'WEB_APP_REPO_TOKEN:' <<<"${emit_flutter_release_tag_job}"; then
   echo "ERROR: emit_flutter_release_tag must not fall back to the legacy submodule/web-app tokens." >&2
   exit 1
@@ -147,6 +152,21 @@ if ! grep -Fq "explicit no-op" "${positive_output}"; then
   cat "${positive_output}" >&2 || true
   exit 1
 fi
+
+gitlink_mismatch_case_info="$(create_case "gitlink-mismatch" $'name: proof_app\nversion: 0.2.2+10')"
+gitlink_mismatch_root_dir="$(printf '%s\n' "${gitlink_mismatch_case_info}" | sed -n '1p')"
+gitlink_mismatch_flutter_work="$(printf '%s\n' "${gitlink_mismatch_case_info}" | sed -n '2p')"
+printf 'mismatch\n' >"${gitlink_mismatch_flutter_work}/mismatch.txt"
+git_commit_all "${gitlink_mismatch_flutter_work}" "create gitlink mismatch descendant"
+git -C "${gitlink_mismatch_flutter_work}" push -q origin main
+git -C "${gitlink_mismatch_root_dir}/flutter-app" fetch -q origin main
+git -C "${gitlink_mismatch_root_dir}/flutter-app" checkout -q origin/main
+
+gitlink_mismatch_output="${scratch_dir}/gitlink-mismatch.out"
+run_failure_case \
+  "${gitlink_mismatch_root_dir}" \
+  "${gitlink_mismatch_output}" \
+  "does not match root gitlink"
 
 printf 'collision\n' >"${positive_flutter_work}/collision.txt"
 git_commit_all "${positive_flutter_work}" "create same-version descendant"

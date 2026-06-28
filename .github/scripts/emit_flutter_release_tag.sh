@@ -85,6 +85,13 @@ if [[ "${flutter_version}" == *[[:space:]]* ]]; then
 fi
 
 tag_name="v${flutter_version}"
+push_stderr="$(mktemp)"
+
+cleanup_push_stderr() {
+  rm -f "${push_stderr}"
+}
+
+trap cleanup_push_stderr EXIT
 
 record_output "flutter_sha" "${flutter_sha}"
 record_output "flutter_version" "${flutter_version}"
@@ -109,7 +116,7 @@ fi
 git -C "${FLUTTER_REPO_DIR}" tag -d "${tag_name}" >/dev/null 2>&1 || true
 git -C "${FLUTTER_REPO_DIR}" tag "${tag_name}" "${flutter_sha}"
 
-if git -C "${FLUTTER_REPO_DIR}" push origin "refs/tags/${tag_name}" >/dev/null 2>&1; then
+if git -C "${FLUTTER_REPO_DIR}" push origin "refs/tags/${tag_name}" >/dev/null 2>"${push_stderr}"; then
   echo "INFO: created flutter-app release tag '${tag_name}' on '${flutter_sha}'."
   record_output "created" "true"
   record_output "action" "created"
@@ -122,6 +129,11 @@ if [[ "${post_push_target}" == "${flutter_sha}" ]]; then
   record_output "created" "false"
   record_output "action" "noop_race_same_sha"
   exit 0
+fi
+
+push_error_detail="$(tr '\n' ' ' <"${push_stderr}" | sed 's/[[:space:]]\+/ /g' | xargs || true)"
+if [[ -n "${push_error_detail}" ]]; then
+  fail "failed to push flutter-app release tag '${tag_name}'. Git reported: ${push_error_detail}"
 fi
 
 fail "failed to push flutter-app release tag '${tag_name}'. Check token write access and remote tag protection."
