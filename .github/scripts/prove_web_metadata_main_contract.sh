@@ -36,8 +36,13 @@ cat >"${fake_bin}/git" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ "${1:-}" == "ls-remote" && "${2:-}" == https://x-access-token:*@github.com/proof/web.git ]]; then
-  lane_ref="${3:-}"
+args=("$@")
+if [[ "${args[0]:-}" == "-c" && "${args[1]:-}" == http.https://github.com/.extraheader=* ]]; then
+  args=("${args[@]:2}")
+fi
+
+if [[ "${args[0]:-}" == "ls-remote" && "${args[1]:-}" == https://x-access-token:*@github.com/proof/web.git ]]; then
+  lane_ref="${args[2]:-}"
   lane="${lane_ref#refs/heads/}"
   if [[ -z "${PROOF_WEB_REPO_PATH:-}" || -z "${REAL_GIT:-}" ]]; then
     exit 1
