@@ -255,21 +255,35 @@ function runStageBrowserWrapperProbe(tempScriptPath, body, env = {}) {
 
 function spawnSmokeScriptForPolicyTest(suite, env) {
   const source = fs.readFileSync(smokeScript, 'utf8');
-  const harnessSelfTestInvocation =
-    /run_with_timeout "web navigation harness policy self-test" "\$\{PRECHECK_TIMEOUT_SECONDS\}" \\\n\s*bash -lc "set -euo pipefail; node \.\.\/web_app_tests\/navigation_harness_policy_test\.cjs 2>&1 \| tee \\"\$\{DEFAULT_OUTPUT_DIR\}\/policy-harness\.log\\""/m;
-  assert.match(
-    source,
-    harnessSelfTestInvocation,
+  const sourceLines = source.split('\n');
+  const harnessLineIndex = sourceLines.findIndex((line) =>
+    line.includes('run_with_timeout "web navigation harness policy self-test"'),
+  );
+  assert.notStrictEqual(
+    harnessLineIndex,
+    -1,
     'runner must invoke the navigation harness policy test directly',
   );
-  const rewritten = source.replace(
-    harnessSelfTestInvocation,
-    ': # stripped during navigation_harness_policy_test self-execution',
+  assert.ok(
+    sourceLines[harnessLineIndex + 1]?.includes(
+      'node ../web_app_tests/navigation_harness_policy_test.cjs',
+    ),
+    'runner harness self-test block must remain the expected two-line invocation',
   );
+  const rewritten = [
+    ...sourceLines.slice(0, harnessLineIndex),
+    ': # stripped during navigation_harness_policy_test self-execution',
+    ...sourceLines.slice(harnessLineIndex + 2),
+  ].join('\n');
   assert.notStrictEqual(
     rewritten,
     source,
     'policy self-test runner copy must remove the recursive harness-policy invocation',
+  );
+  assert.doesNotMatch(
+    rewritten,
+    /run_with_timeout "web navigation harness policy self-test"/,
+    'policy self-test runner copy must not keep the recursive harness-policy invocation',
   );
 
   const tempSmokeScript = path.join(
