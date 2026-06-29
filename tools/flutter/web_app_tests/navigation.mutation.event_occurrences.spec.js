@@ -2890,9 +2890,13 @@ test('@mutation NAV-ADM-LOC-01..08 admin occurrence programming and event-level 
 
       await fillFlutterTextField(page, 'Horário', '13:00');
       await fillFlutterTextField(page, 'Título (opcional)', adminProgrammingTitle);
-      await selectDropdownOption(page, {
-        fieldLabel: 'Local da programação',
+      await selectLocationPickerSheetOption(page, {
+        trigger: page
+          .getByRole('button', { name: /Local da programação/i })
+          .first(),
         optionText: programmingHost.display_name,
+        flow: 'evg-admin',
+        logStep,
       });
       await page.getByRole('button', { name: 'Salvar item' }).click();
 
@@ -2938,9 +2942,13 @@ test('@mutation NAV-ADM-LOC-01..08 admin occurrence programming and event-level 
         page.getByRole('button', { name: /Local da programação/i }).first(),
         'Programming location selector must be visible before clearing the selected location.',
       );
-      await selectDropdownOption(page, {
-        fieldLabel: 'Local da programação',
+      await selectLocationPickerSheetOption(page, {
+        trigger: page
+          .getByRole('button', { name: /Local da programação/i })
+          .first(),
         optionText: 'Sem local específico',
+        flow: 'evg-admin',
+        logStep,
       });
       await page.getByRole('button', { name: 'Salvar item' }).click();
 
@@ -3295,9 +3303,13 @@ test('@mutation tenant-admin event occurrence FAB persists second occurrence and
 
       await fillFlutterTextField(page, 'Horário', '13:00');
       await fillFlutterTextField(page, 'Título (opcional)', adminProgrammingTitle);
-      await selectDropdownOption(page, {
-        fieldLabel: 'Local da programação',
+      await selectLocationPickerSheetOption(page, {
+        trigger: page
+          .getByRole('button', { name: /Local da programação/i })
+          .first(),
         optionText: programmingHost.display_name,
+        flow: 'evg-admin',
+        logStep,
       });
       await page.getByRole('button', { name: 'Salvar item' }).click();
       await expect(
@@ -3333,9 +3345,13 @@ test('@mutation tenant-admin event occurrence FAB persists second occurrence and
       await expect(page.getByText('Editar item de programação')).toBeVisible({
         timeout: appBootTimeoutMs,
       });
-      await selectDropdownOption(page, {
-        fieldLabel: 'Local da programação',
+      await selectLocationPickerSheetOption(page, {
+        trigger: page
+          .getByRole('button', { name: /Local da programação/i })
+          .first(),
         optionText: 'Sem local específico',
+        flow: 'evg-admin',
+        logStep,
       });
       await page.getByRole('button', { name: 'Salvar item' }).click();
 
