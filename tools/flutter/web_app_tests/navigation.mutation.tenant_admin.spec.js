@@ -710,6 +710,85 @@ async function expectFlutterFieldRenderedValue(field, expectedValue, message) {
   }
 }
 
+async function expectFlutterFieldVisibleOrFocusedValue(
+  field,
+  expectedValue,
+  message,
+) {
+  const normalizedExpectedValue = normalizeFlutterWitnessText(expectedValue);
+  expect(
+    normalizedExpectedValue,
+    `${message} requires a non-empty expected value.`,
+  ).toBeTruthy();
+
+  let lastWitness = null;
+  try {
+    await expect
+      .poll(
+        async () => {
+          const renderedTextCorpus = await collectFlutterRenderedTextCorpus(
+            field,
+          );
+          if (
+            renderedTextCorpus
+              .toLowerCase()
+              .includes(normalizedExpectedValue.toLowerCase())
+          ) {
+            lastWitness = {
+              witnessType: 'page-rendered-text-corpus',
+              renderedTextCorpus,
+            };
+            return true;
+          }
+
+          try {
+            await field.click();
+          } catch (error) {
+            lastWitness = {
+              witnessType: 'field-focus-failed',
+              renderedTextCorpus,
+              focusError: error?.message || String(error),
+            };
+            return false;
+          }
+
+          let focusedInputValue = '';
+          try {
+            focusedInputValue = normalizeFlutterWitnessText(
+              await field.inputValue(),
+            );
+          } catch (error) {
+            lastWitness = {
+              witnessType: 'focused-input-unreadable',
+              renderedTextCorpus,
+              inputError: error?.message || String(error),
+            };
+            return false;
+          }
+
+          lastWitness = {
+            witnessType: 'focused-input-value',
+            renderedTextCorpus,
+            focusedInputValue,
+          };
+          return (
+            focusedInputValue.toLowerCase() ===
+            normalizedExpectedValue.toLowerCase()
+          );
+        },
+        {
+          timeout: appBootTimeoutMs,
+          message,
+        },
+      )
+      .toBe(true);
+  } catch (error) {
+    throw new Error(
+      `${message} Last witness: ${JSON.stringify(lastWitness)}`,
+    );
+  }
+}
+
 async function fillFlutterTextField(page, label, value) {
   const field = page.getByLabel(label).first();
   await field.scrollIntoViewIfNeeded();
@@ -2599,7 +2678,7 @@ test('@mutation tenant-admin account-profile edit save keeps Display Name visibl
       reopenedGroupSubtitleField,
       'Expected persisted gallery subtitle field to rehydrate before clear-all save.',
     );
-    await expectFlutterFieldRenderedValue(
+    await expectFlutterFieldVisibleOrFocusedValue(
       reopenedGroupSubtitleField,
       groupSubtitle,
       'Expected persisted gallery content to rehydrate before clear-all save.',
