@@ -1842,6 +1842,107 @@ async function fillFlutterTextField(page, label, value) {
   );
 }
 
+async function listVisibleLocatorEntries(locator) {
+  const count = await locator.count().catch(() => 0);
+  const visibleEntries = [];
+
+  for (let index = 0; index < count; index += 1) {
+    const candidate = locator.nth(index);
+    const isVisible = await candidate.isVisible().catch(() => false);
+    if (!isVisible) {
+      continue;
+    }
+
+    const box = await candidate.boundingBox().catch(() => null);
+    if (!box) {
+      continue;
+    }
+
+    visibleEntries.push({ index, box });
+  }
+
+  return visibleEntries;
+}
+
+async function waitForActiveLocationPickerSearchField(
+  page,
+  previouslyVisibleIndices,
+  message,
+  timeout,
+) {
+  const searchFields = page.getByRole('textbox', {
+    name: /Buscar local/i,
+  });
+  const deadline = Date.now() + timeout;
+
+  while (Date.now() < deadline) {
+    const visibleEntries = await listVisibleLocatorEntries(searchFields);
+    const newlyVisibleEntries = visibleEntries.filter(
+      ({ index }) => !previouslyVisibleIndices.has(index),
+    );
+    const activeEntry =
+      newlyVisibleEntries[newlyVisibleEntries.length - 1] ||
+      visibleEntries[visibleEntries.length - 1] ||
+      null;
+
+    if (activeEntry) {
+      return searchFields.nth(activeEntry.index);
+    }
+
+    await page.waitForTimeout(150);
+  }
+
+  throw new Error(message);
+}
+
+async function waitForLocationPickerOptionNearField(
+  page,
+  activeSearchField,
+  optionText,
+) {
+  const optionCandidates = page.getByRole('button', {
+    name: new RegExp(escapeRegExp(optionText), 'i'),
+  });
+  const deadline = Date.now() + appBootTimeoutMs;
+
+  while (Date.now() < deadline) {
+    const searchFieldBox =
+      await activeSearchField.boundingBox().catch(() => null);
+    if (searchFieldBox != null) {
+      const visibleOptions = await listVisibleLocatorEntries(optionCandidates);
+      const scopedOptions = visibleOptions
+        .filter(({ box }) => {
+          const overlapsHorizontally =
+            box.x <= searchFieldBox.x + searchFieldBox.width &&
+            box.x + box.width >= searchFieldBox.x;
+          const isBelowSearchField =
+            box.y + box.height >= searchFieldBox.y - 12;
+          return overlapsHorizontally && isBelowSearchField;
+        })
+        .sort((left, right) => {
+          const verticalDistance =
+            Math.abs(left.box.y - searchFieldBox.y) -
+            Math.abs(right.box.y - searchFieldBox.y);
+          if (verticalDistance !== 0) {
+            return verticalDistance;
+          }
+          return left.box.x - right.box.x;
+        });
+
+      const chosenEntry = scopedOptions[0] || visibleOptions[0] || null;
+      if (chosenEntry) {
+        return optionCandidates.nth(chosenEntry.index);
+      }
+    }
+
+    await page.waitForTimeout(150);
+  }
+
+  throw new Error(
+    `Picker option "${optionText}" must become visible near the active location search field.`,
+  );
+}
+
 async function selectLocationPickerSheetOption(
   page,
   {
@@ -1856,11 +1957,23 @@ async function selectLocationPickerSheetOption(
       logStep(flow, message);
     }
   };
-  const searchField = page.getByRole('textbox', {
-    name: /Buscar local/i,
-  }).last();
+  const visibleSearchFieldIndicesBefore = new Set(
+    (
+      await listVisibleLocatorEntries(
+        page.getByRole('textbox', {
+          name: /Buscar local/i,
+        }),
+      )
+    ).map(({ index }) => index),
+  );
+  let activeSearchField = null;
   const waitForSearchFieldVisible = async (message, timeout) => {
-    await expect(searchField, message).toBeVisible({ timeout });
+    activeSearchField = await waitForActiveLocationPickerSearchField(
+      page,
+      visibleSearchFieldIndicesBefore,
+      message,
+      timeout,
+    );
   };
 
   record(`open picker for ${optionText}`);
@@ -1897,18 +2010,24 @@ async function selectLocationPickerSheetOption(
 
   record(`filter picker options with search ${optionText}`);
   const selectAll = process.platform === 'darwin' ? 'Meta+A' : 'Control+A';
-  await searchField.click();
-  await page.keyboard.press(selectAll);
-  await page.keyboard.press('Backspace');
-  await page.keyboard.type(optionText, { delay: 5 });
+  await activeSearchField.click();
+  await activeSearchField.press(selectAll).catch(async () => {
+    await page.keyboard.press(selectAll);
+  });
+  await activeSearchField.press('Backspace').catch(async () => {
+    await page.keyboard.press('Backspace');
+  });
+  await activeSearchField.pressSequentially(optionText, { delay: 5 }).catch(
+    async () => {
+      await page.keyboard.type(optionText, { delay: 5 });
+    },
+  );
 
-  const option = page.getByRole('button', {
-    name: new RegExp(escapeRegExp(optionText), 'i'),
-  }).last();
-  await expect(
-    option,
-    `Picker option "${optionText}" must become visible after filtering.`,
-  ).toBeVisible({ timeout: appBootTimeoutMs });
+  const option = await waitForLocationPickerOptionNearField(
+    page,
+    activeSearchField,
+    optionText,
+  );
 
   record(`select picker option ${optionText}`);
   await option.click();
@@ -2890,9 +3009,13 @@ test('@mutation NAV-ADM-LOC-01..08 admin occurrence programming and event-level 
 
       await fillFlutterTextField(page, 'Horário', '13:00');
       await fillFlutterTextField(page, 'Título (opcional)', adminProgrammingTitle);
-      await selectDropdownOption(page, {
-        fieldLabel: 'Local da programação',
+      await selectLocationPickerSheetOption(page, {
+        trigger: page
+          .getByRole('button', { name: /Local da programação/i })
+          .first(),
         optionText: programmingHost.display_name,
+        flow: 'evg-admin',
+        logStep,
       });
       await page.getByRole('button', { name: 'Salvar item' }).click();
 
@@ -2938,9 +3061,13 @@ test('@mutation NAV-ADM-LOC-01..08 admin occurrence programming and event-level 
         page.getByRole('button', { name: /Local da programação/i }).first(),
         'Programming location selector must be visible before clearing the selected location.',
       );
-      await selectDropdownOption(page, {
-        fieldLabel: 'Local da programação',
+      await selectLocationPickerSheetOption(page, {
+        trigger: page
+          .getByRole('button', { name: /Local da programação/i })
+          .first(),
         optionText: 'Sem local específico',
+        flow: 'evg-admin',
+        logStep,
       });
       await page.getByRole('button', { name: 'Salvar item' }).click();
 
@@ -3295,9 +3422,13 @@ test('@mutation tenant-admin event occurrence FAB persists second occurrence and
 
       await fillFlutterTextField(page, 'Horário', '13:00');
       await fillFlutterTextField(page, 'Título (opcional)', adminProgrammingTitle);
-      await selectDropdownOption(page, {
-        fieldLabel: 'Local da programação',
+      await selectLocationPickerSheetOption(page, {
+        trigger: page
+          .getByRole('button', { name: /Local da programação/i })
+          .first(),
         optionText: programmingHost.display_name,
+        flow: 'evg-admin',
+        logStep,
       });
       await page.getByRole('button', { name: 'Salvar item' }).click();
       await expect(
@@ -3333,9 +3464,13 @@ test('@mutation tenant-admin event occurrence FAB persists second occurrence and
       await expect(page.getByText('Editar item de programação')).toBeVisible({
         timeout: appBootTimeoutMs,
       });
-      await selectDropdownOption(page, {
-        fieldLabel: 'Local da programação',
+      await selectLocationPickerSheetOption(page, {
+        trigger: page
+          .getByRole('button', { name: /Local da programação/i })
+          .first(),
         optionText: 'Sem local específico',
+        flow: 'evg-admin',
+        logStep,
       });
       await page.getByRole('button', { name: 'Salvar item' }).click();
 
