@@ -710,7 +710,7 @@ async function expectFlutterFieldRenderedValue(field, expectedValue, message) {
   }
 }
 
-async function expectFlutterFieldVisibleOrFocusedValue(
+async function expectFlutterFieldRenderedAndFocusedValue(
   field,
   expectedValue,
   message,
@@ -721,6 +721,8 @@ async function expectFlutterFieldVisibleOrFocusedValue(
     `${message} requires a non-empty expected value.`,
   ).toBeTruthy();
 
+  await expectFlutterFieldRenderedValue(field, expectedValue, message);
+
   let lastWitness = null;
   try {
     await expect
@@ -729,17 +731,9 @@ async function expectFlutterFieldVisibleOrFocusedValue(
           const renderedTextCorpus = await collectFlutterRenderedTextCorpus(
             field,
           );
-          if (
-            renderedTextCorpus
-              .toLowerCase()
-              .includes(normalizedExpectedValue.toLowerCase())
-          ) {
-            lastWitness = {
-              witnessType: 'page-rendered-text-corpus',
-              renderedTextCorpus,
-            };
-            return true;
-          }
+          const valueInkSignature = await collectFlutterFieldValueInkSignature(
+            field,
+          );
 
           try {
             await field.click();
@@ -747,6 +741,7 @@ async function expectFlutterFieldVisibleOrFocusedValue(
             lastWitness = {
               witnessType: 'field-focus-failed',
               renderedTextCorpus,
+              valueInkSignature,
               focusError: error?.message || String(error),
             };
             return false;
@@ -761,14 +756,16 @@ async function expectFlutterFieldVisibleOrFocusedValue(
             lastWitness = {
               witnessType: 'focused-input-unreadable',
               renderedTextCorpus,
+              valueInkSignature,
               inputError: error?.message || String(error),
             };
             return false;
           }
 
           lastWitness = {
-            witnessType: 'focused-input-value',
+            witnessType: 'rendered-and-focused-input-value',
             renderedTextCorpus,
+            valueInkSignature,
             focusedInputValue,
           };
           return (
@@ -2678,7 +2675,7 @@ test('@mutation tenant-admin account-profile edit save keeps Display Name visibl
       reopenedGroupSubtitleField,
       'Expected persisted gallery subtitle field to rehydrate before clear-all save.',
     );
-    await expectFlutterFieldVisibleOrFocusedValue(
+    await expectFlutterFieldRenderedAndFocusedValue(
       reopenedGroupSubtitleField,
       groupSubtitle,
       'Expected persisted gallery content to rehydrate before clear-all save.',
