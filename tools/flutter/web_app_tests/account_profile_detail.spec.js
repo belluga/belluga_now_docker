@@ -715,34 +715,53 @@ async function clickLocatorCenter(page, locator, description) {
   await locator.click({ timeout: appBootTimeoutMs });
 }
 
-async function findVisibleDiscoveryProfileAction(page, rows) {
+async function findVisibleDiscoveryProfileActions(page, rows) {
   const deadline = Date.now() + appBootTimeoutMs;
 
   while (Date.now() < deadline) {
+    const visibleActions = [];
+    const seenLabels = new Set();
+
     for (const row of rows) {
       const name = canonicalPublicVisibleName(row);
       if (!name) {
         continue;
       }
       const prefix = name.slice(0, Math.min(name.length, 18));
-      const namedButton = page
-        .getByRole('button', {
-          name: new RegExp(`Abrir perfil\\s+${escapeRegExp(prefix)}`, 'i'),
-        })
-        .first();
-      if (await namedButton.isVisible().catch(() => false)) {
-        return namedButton;
+      const namedButtons = page.getByRole('button', {
+        name: new RegExp(`Abrir perfil\\s+${escapeRegExp(prefix)}`, 'i'),
+      });
+      const count = await namedButtons.count();
+      for (let index = count - 1; index >= 0; index -= 1) {
+        const namedButton = namedButtons.nth(index);
+        if (!(await namedButton.isVisible().catch(() => false))) {
+          continue;
+        }
+        const semanticLabel =
+          (await namedButton.getAttribute('aria-label').catch(() => null))
+          || `${prefix}:${index}`;
+        if (seenLabels.has(semanticLabel)) {
+          continue;
+        }
+        seenLabels.add(semanticLabel);
+        visibleActions.push(namedButton);
       }
     }
+
+    if (visibleActions.length > 0) {
+      return visibleActions;
+    }
+
     await page.waitForTimeout(300);
   }
 
-  return null;
+  return [];
 }
 
 async function clickDiscoveryProfileCardAndWaitForDetail(page, rows) {
-  const visibleProfileAction = await findVisibleDiscoveryProfileAction(page, rows);
-  if (visibleProfileAction) {
+  const visibleProfileActions =
+    await findVisibleDiscoveryProfileActions(page, rows);
+  for (const visibleProfileAction of visibleProfileActions) {
     await clickLocatorCenter(
       page,
       visibleProfileAction,

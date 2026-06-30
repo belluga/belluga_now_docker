@@ -25,7 +25,7 @@ if ! [[ "${repo_slug}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
 fi
 
 remote_url="https://x-access-token:${GH_TOKEN}@github.com/${repo_slug}.git"
-runtime_sha="$(git ls-remote "${remote_url}" "refs/heads/${DEPLOY_LANE}" | awk '{print $1}' | head -n 1 | tr -d '[:space:]')"
+runtime_sha="$(git -c http.https://github.com/.extraheader= ls-remote "${remote_url}" "refs/heads/${DEPLOY_LANE}" | awk '{print $1}' | head -n 1 | tr -d '[:space:]')"
 
 if ! [[ "${runtime_sha}" =~ ^[0-9a-fA-F]{40}$ ]]; then
   echo "ERROR: unable to resolve web-app runtime SHA from ${repo_slug}@${DEPLOY_LANE}." >&2

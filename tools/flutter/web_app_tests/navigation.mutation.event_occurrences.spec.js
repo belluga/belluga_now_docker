@@ -1,5 +1,6 @@
 const { test, expect, request } = require('@playwright/test');
 const crypto = require('crypto');
+const zlib = require('zlib');
 const {
   loginTenantAdmin: loginTenantAdminWithRequiredCredentials,
 } = require('./support/tenant_admin_auth');
@@ -16,6 +17,9 @@ const tenantUrl = process.env.NAV_TENANT_URL;
 const appBootTimeoutMs = 90000;
 const apiRequestTimeoutMs = 30000;
 const navigationRunId = (process.env.NAV_TEST_RUN_ID || 'local').trim();
+const fallbackFixtureImageBase64 =
+  'iVBORw0KGgoAAAANSUhEUgAAAQAAAAEACAYAAABccqhmAAADIElEQVR4nO3UIQEAIBDAwI9AZWKRDmIgduL81GadfYGm+R0A/GMAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEPYAluQiSDn9lCoAAAAASUVORK5CYII=';
+let generatedFixtureImageBuffer = null;
 let anonymousIdentityToken = null;
 
 test.describe.configure({ timeout: 300000 });
@@ -41,6 +45,78 @@ function buildApiUrl(baseUrl, pathName) {
 
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function crc32(buffer) {
+  let crc = 0xffffffff;
+  for (const byte of buffer) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit += 1) {
+      crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0);
+    }
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function pngChunk(type, data = Buffer.alloc(0)) {
+  const typeBuffer = Buffer.from(type, 'ascii');
+  const length = Buffer.alloc(4);
+  length.writeUInt32BE(data.length, 0);
+  const crc = Buffer.alloc(4);
+  crc.writeUInt32BE(crc32(Buffer.concat([typeBuffer, data])), 0);
+  return Buffer.concat([length, typeBuffer, data, crc]);
+}
+
+function createFixturePngBuffer() {
+  const width = 1024;
+  const height = 768;
+  const bytesPerPixel = 4;
+  const stride = width * bytesPerPixel + 1;
+  const raw = Buffer.alloc(stride * height);
+
+  for (let y = 0; y < height; y += 1) {
+    const rowOffset = y * stride;
+    raw[rowOffset] = 0;
+    for (let x = 0; x < width; x += 1) {
+      const offset = rowOffset + 1 + x * bytesPerPixel;
+      raw[offset] = 32 + Math.floor((x / width) * 160);
+      raw[offset + 1] = 96 + Math.floor((y / height) * 96);
+      raw[offset + 2] =
+        180 - Math.floor(((x + y) / (width + height)) * 80);
+      raw[offset + 3] = 255;
+    }
+  }
+
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = 8;
+  ihdr[9] = 6;
+  ihdr[10] = 0;
+  ihdr[11] = 0;
+  ihdr[12] = 0;
+
+  return Buffer.concat([
+    Buffer.from('89504e470d0a1a0a', 'hex'),
+    pngChunk('IHDR', ihdr),
+    pngChunk('IDAT', zlib.deflateSync(raw, { level: 9 })),
+    pngChunk('IEND'),
+  ]);
+}
+
+function generatedFixtureImage() {
+  if (!generatedFixtureImageBuffer) {
+    generatedFixtureImageBuffer = createFixturePngBuffer();
+  }
+  return generatedFixtureImageBuffer;
+}
+
+function fixtureImagePayload() {
+  return {
+    name: 'belluga-navigation-fixture.png',
+    mimeType: 'image/png',
+    buffer: generatedFixtureImage(),
+  };
 }
 
 function formatOccurrenceDateLabel(value) {
@@ -792,8 +868,8 @@ async function createDedicatedRelatedProfiles(
           has_bio: false,
           has_content: false,
           has_taxonomies: false,
-          has_avatar: false,
-          has_cover: false,
+          has_avatar: true,
+          has_cover: true,
           has_events: true,
           has_nested_profile_groups: false,
         },
@@ -943,6 +1019,36 @@ async function deleteAccountProfileType(api, baseUrl, token, profileType) {
       timeout: apiRequestTimeoutMs,
     },
   );
+}
+
+async function uploadAccountProfileFixtureMedia(api, baseUrl, token, profileId) {
+  const response = await api.post(
+    buildApiUrl(baseUrl, `/admin/api/v1/account_profiles/${profileId}`),
+    {
+      headers: authHeaders(token),
+      multipart: {
+        _method: 'PATCH',
+        avatar: {
+          name: fixtureImagePayload().name,
+          mimeType: fixtureImagePayload().mimeType,
+          buffer: fixtureImagePayload().buffer,
+        },
+        cover: {
+          name: fixtureImagePayload().name,
+          mimeType: fixtureImagePayload().mimeType,
+          buffer: fixtureImagePayload().buffer,
+        },
+      },
+    },
+  );
+  const payload = await response.json().catch(async () => ({
+    raw: await response.text().catch(() => ''),
+  }));
+  expect(
+    response.status(),
+    `Fixture media upload must succeed for account profile ${profileId}. Response: ${JSON.stringify(payload)}`,
+  ).toBe(200);
+  return payload?.data || {};
 }
 
 async function fetchRelatedAccountProfileCandidates(
@@ -1485,13 +1591,38 @@ function stableEventDetailSnapshot(detail) {
     linked_profile_ids: (detail?.linked_account_profiles || [])
       .map((profile) => profile?.id?.toString() || '')
       .filter(Boolean),
+    linked_profiles: (detail?.linked_account_profiles || []).map((profile) => ({
+      id: profile?.id?.toString() || '',
+      avatar_url: profile?.avatar_url?.toString() || '',
+      cover_url: profile?.cover_url?.toString() || '',
+    })),
+    profile_groups: (detail?.profile_groups || []).map((group) => ({
+      id: group?.id?.toString() || '',
+      profile_ids: (group?.profiles || [])
+        .map((profile) => profile?.id?.toString() || '')
+        .filter(Boolean),
+      profiles: (group?.profiles || []).map((profile) => ({
+        id: profile?.id?.toString() || '',
+        avatar_url: profile?.avatar_url?.toString() || '',
+        cover_url: profile?.cover_url?.toString() || '',
+      })),
+    })),
     programming_items: (detail?.programming_items || []).map((item) => ({
       time: item?.time?.toString() || '',
       title: item?.title?.toString() || '',
       linked_profile_ids: (item?.linked_account_profiles || [])
         .map((profile) => profile?.id?.toString() || '')
         .filter(Boolean),
+      linked_profiles: (item?.linked_account_profiles || []).map((profile) => ({
+        id: profile?.id?.toString() || '',
+        avatar_url: profile?.avatar_url?.toString() || '',
+        cover_url: profile?.cover_url?.toString() || '',
+      })),
       location_profile_id: item?.location_profile?.id?.toString() || '',
+      location_profile_avatar_url:
+        item?.location_profile?.avatar_url?.toString() || '',
+      location_profile_cover_url:
+        item?.location_profile?.cover_url?.toString() || '',
     })),
   };
 }
@@ -1709,6 +1840,197 @@ async function fillFlutterTextField(page, label, value) {
   throw new Error(
     `Flutter text field "${label}" did not retain "${value}" before submit; last value was "${lastValue}".`,
   );
+}
+
+async function listVisibleLocatorEntries(locator) {
+  const count = await locator.count().catch(() => 0);
+  const visibleEntries = [];
+
+  for (let index = 0; index < count; index += 1) {
+    const candidate = locator.nth(index);
+    const isVisible = await candidate.isVisible().catch(() => false);
+    if (!isVisible) {
+      continue;
+    }
+
+    const box = await candidate.boundingBox().catch(() => null);
+    if (!box) {
+      continue;
+    }
+
+    visibleEntries.push({ index, box });
+  }
+
+  return visibleEntries;
+}
+
+async function waitForActiveLocationPickerSearchField(
+  page,
+  previouslyVisibleIndices,
+  message,
+  timeout,
+) {
+  const searchFields = page.getByRole('textbox', {
+    name: /Buscar local/i,
+  });
+  const deadline = Date.now() + timeout;
+
+  while (Date.now() < deadline) {
+    const visibleEntries = await listVisibleLocatorEntries(searchFields);
+    const newlyVisibleEntries = visibleEntries.filter(
+      ({ index }) => !previouslyVisibleIndices.has(index),
+    );
+    const activeEntry =
+      newlyVisibleEntries[newlyVisibleEntries.length - 1] ||
+      visibleEntries[visibleEntries.length - 1] ||
+      null;
+
+    if (activeEntry) {
+      return searchFields.nth(activeEntry.index);
+    }
+
+    await page.waitForTimeout(150);
+  }
+
+  throw new Error(message);
+}
+
+async function waitForLocationPickerOptionNearField(
+  page,
+  activeSearchField,
+  optionText,
+) {
+  const optionCandidates = page.getByRole('button', {
+    name: new RegExp(escapeRegExp(optionText), 'i'),
+  });
+  const deadline = Date.now() + appBootTimeoutMs;
+
+  while (Date.now() < deadline) {
+    const searchFieldBox =
+      await activeSearchField.boundingBox().catch(() => null);
+    if (searchFieldBox != null) {
+      const visibleOptions = await listVisibleLocatorEntries(optionCandidates);
+      const scopedOptions = visibleOptions
+        .filter(({ box }) => {
+          const overlapsHorizontally =
+            box.x <= searchFieldBox.x + searchFieldBox.width &&
+            box.x + box.width >= searchFieldBox.x;
+          const isBelowSearchField =
+            box.y + box.height >= searchFieldBox.y - 12;
+          return overlapsHorizontally && isBelowSearchField;
+        })
+        .sort((left, right) => {
+          const verticalDistance =
+            Math.abs(left.box.y - searchFieldBox.y) -
+            Math.abs(right.box.y - searchFieldBox.y);
+          if (verticalDistance !== 0) {
+            return verticalDistance;
+          }
+          return left.box.x - right.box.x;
+        });
+
+      const chosenEntry = scopedOptions[0] || visibleOptions[0] || null;
+      if (chosenEntry) {
+        return optionCandidates.nth(chosenEntry.index);
+      }
+    }
+
+    await page.waitForTimeout(150);
+  }
+
+  throw new Error(
+    `Picker option "${optionText}" must become visible near the active location search field.`,
+  );
+}
+
+async function selectLocationPickerSheetOption(
+  page,
+  {
+    trigger,
+    optionText,
+    flow = null,
+    logStep = null,
+  },
+) {
+  const record = (message) => {
+    if (typeof logStep === 'function') {
+      logStep(flow, message);
+    }
+  };
+  const visibleSearchFieldIndicesBefore = new Set(
+    (
+      await listVisibleLocatorEntries(
+        page.getByRole('textbox', {
+          name: /Buscar local/i,
+        }),
+      )
+    ).map(({ index }) => index),
+  );
+  let activeSearchField = null;
+  const waitForSearchFieldVisible = async (message, timeout) => {
+    activeSearchField = await waitForActiveLocationPickerSearchField(
+      page,
+      visibleSearchFieldIndicesBefore,
+      message,
+      timeout,
+    );
+  };
+
+  record(`open picker for ${optionText}`);
+  await trigger.scrollIntoViewIfNeeded().catch(() => {});
+  try {
+    await trigger.click();
+    await waitForSearchFieldVisible(
+      'Location picker search field must become visible after opening the picker.',
+      2000,
+    );
+  } catch (_clickError) {
+    record(
+      `picker click did not expose search field for ${optionText}; retrying with Enter`,
+    );
+    await trigger.focus().catch(() => {});
+    try {
+      await trigger.press('Enter');
+      await waitForSearchFieldVisible(
+        'Location picker search field must become visible after retrying the picker with Enter.',
+        2000,
+      );
+    } catch (_enterError) {
+      record(
+        `picker Enter retry did not expose search field for ${optionText}; retrying with Space`,
+      );
+      await trigger.focus().catch(() => {});
+      await trigger.press('Space');
+      await waitForSearchFieldVisible(
+        'Location picker search field must become visible after retrying the picker with Space.',
+        5000,
+      );
+    }
+  }
+
+  record(`filter picker options with search ${optionText}`);
+  const selectAll = process.platform === 'darwin' ? 'Meta+A' : 'Control+A';
+  await activeSearchField.click();
+  await activeSearchField.press(selectAll).catch(async () => {
+    await page.keyboard.press(selectAll);
+  });
+  await activeSearchField.press('Backspace').catch(async () => {
+    await page.keyboard.press('Backspace');
+  });
+  await activeSearchField.pressSequentially(optionText, { delay: 5 }).catch(
+    async () => {
+      await page.keyboard.type(optionText, { delay: 5 });
+    },
+  );
+
+  const option = await waitForLocationPickerOptionNearField(
+    page,
+    activeSearchField,
+    optionText,
+  );
+
+  record(`select picker option ${optionText}`);
+  await option.click();
 }
 
 async function fillFlutterTextFieldByLocator(page, field, value, label) {
@@ -2356,94 +2678,70 @@ async function clickVisibleAddOccurrenceAffordance(page) {
 
 async function closeOccurrenceEditorSheet(page) {
   logStep('evg-helper', 'closeOccurrenceEditorSheet start');
+  const occurrenceEditorDialog = page.locator('[aria-label="Caixa de diálogo"]').first();
+  const waitForOccurrenceEditorDismissed = async (message, timeout = appBootTimeoutMs) => {
+    await expect
+      .poll(
+        async () => countVisibleMatches(occurrenceEditorDialog),
+        {
+          timeout,
+          message,
+        },
+      )
+      .toBe(0);
+  };
   await expect(
     page.getByRole('button', { name: 'Salvar data' }),
     'Occurrence editor must not expose the superseded per-occurrence save boundary.',
   ).toHaveCount(0);
-  const closeButtons = page.getByRole('button', { name: 'Fechar' });
-  let headerCloseButton = null;
-  let headerCloseHandle = null;
-  let bestX = Number.NEGATIVE_INFINITY;
-  let bestY = Number.POSITIVE_INFINITY;
-  const closeButtonCount = await closeButtons.count();
-
-  for (let index = 0; index < closeButtonCount; index += 1) {
-    const candidate = closeButtons.nth(index);
-    if (!(await candidate.isVisible().catch(() => false))) {
-      continue;
-    }
-    const box = await candidate.boundingBox().catch(() => null);
-    if (
-      box &&
-      (box.x > bestX || (box.x === bestX && box.y < bestY))
-    ) {
-      headerCloseButton = candidate;
-      headerCloseHandle = await candidate.elementHandle();
-      bestX = box.x;
-      bestY = box.y;
-    }
-  }
-
-  if (headerCloseButton) {
+  await expectAnyVisibleMatch(
+    occurrenceEditorDialog,
+    'Occurrence editor dialog must be visible before the helper tries to dismiss it.',
+  );
+  const headerCloseButton = occurrenceEditorDialog.getByRole('button', {
+    name: 'Fechar',
+  }).first();
+  await expect(
+    headerCloseButton,
+    'Occurrence editor dialog must expose a sheet-local Fechar action.',
+  ).toBeVisible({ timeout: appBootTimeoutMs });
+  try {
+    await headerCloseButton.click();
+    await waitForOccurrenceEditorDismissed(
+      'Closing the occurrence editor via the dialog close action must dismiss the dialog container.',
+      3000,
+    );
+    logStep('evg-helper', 'closeOccurrenceEditorSheet dialog close dismissed');
+    return;
+  } catch (_clickError) {
     logStep(
       'evg-helper',
-      `closeOccurrenceEditorSheet header close selected at x=${bestX}, y=${bestY}`,
+      'closeOccurrenceEditorSheet dialog click did not dismiss the container, retrying with Enter',
     );
-    await headerCloseButton.click({ timeout: appBootTimeoutMs });
-    await expect
-      .poll(
-        async () => {
-          if (!headerCloseHandle) {
-            return false;
-          }
-          try {
-            return await headerCloseHandle.evaluate((element) => {
-              if (!element.isConnected) {
-                return false;
-              }
-              const node = element;
-              if (!(node instanceof HTMLElement)) {
-                return true;
-              }
-              const style = window.getComputedStyle(node);
-              const hiddenByStyle =
-                style.display === 'none' ||
-                style.visibility === 'hidden' ||
-                style.opacity === '0';
-              return !hiddenByStyle && node.getClientRects().length > 0;
-            });
-          } catch (_error) {
-            return false;
-          }
-        },
-        {
-          timeout: appBootTimeoutMs,
-          message:
-            'Closing the occurrence editor must dismiss the sheet-specific Fechar button that was clicked.',
-        },
-      )
-      .toBe(false);
-    logStep('evg-helper', 'closeOccurrenceEditorSheet header close dismissed');
-  } else {
-    logStep('evg-helper', 'closeOccurrenceEditorSheet fallback escape path');
-    await page.keyboard.press('Escape');
-    await expect
-      .poll(
-        async () => {
-          return page
-            .getByRole('button', { name: 'Remover data' })
-            .count()
-            .catch(() => 0);
-        },
-        {
-          timeout: appBootTimeoutMs,
-          message:
-            'Escaping the occurrence editor must restore the event-level occurrence list.',
-        },
-      )
-      .toBeGreaterThan(0);
-    logStep('evg-helper', 'closeOccurrenceEditorSheet escape fallback dismissed');
   }
+
+  try {
+    await headerCloseButton.focus().catch(() => {});
+    await headerCloseButton.press('Enter');
+    await waitForOccurrenceEditorDismissed(
+      'Pressing Enter on the occurrence editor close action must dismiss the dialog container.',
+      3000,
+    );
+    logStep('evg-helper', 'closeOccurrenceEditorSheet enter retry dismissed');
+    return;
+  } catch (_enterError) {
+    logStep(
+      'evg-helper',
+      'closeOccurrenceEditorSheet enter retry did not dismiss the container, retrying with Escape',
+    );
+  }
+
+  await page.keyboard.press('Escape');
+  await waitForOccurrenceEditorDismissed(
+    'Escaping the occurrence editor must dismiss the dialog container.',
+    3000,
+  );
+  logStep('evg-helper', 'closeOccurrenceEditorSheet escape fallback dismissed');
 }
 
 async function countVisibleMatches(locator) {
@@ -2577,7 +2875,7 @@ test('@metadata NAV-01..NAV-23 multi-occurrence navigation matrix is declared', 
   }
 });
 
-test('@mutation NAV-ADM-LOC-01..06 admin occurrence programming location ownership matrix holds', async ({
+test('@mutation NAV-ADM-LOC-01..08 admin occurrence programming and event-level location ownership matrix holds', async ({
   browser,
 }) => {
   const baseUrl = requireTenantUrl();
@@ -2650,6 +2948,36 @@ test('@mutation NAV-ADM-LOC-01..06 admin occurrence programming location ownersh
       uniqueTitle,
       seededListLocation.page,
     );
+
+    await test.step('NAV-ADM-LOC-07 event-level host picker updates the selected physical host summary', async () => {
+      const hostTrigger = page.getByRole('button', {
+        name: new RegExp(
+          `Host físico[\\s\\S]*${escapeRegExp(physicalHost.display_name)}`,
+          'i',
+        ),
+      }).first();
+      await hostTrigger.scrollIntoViewIfNeeded().catch(() => {});
+      await expect(
+        hostTrigger,
+        'Event-level host picker trigger must be visible before selecting a new physical host.',
+      ).toBeVisible({ timeout: appBootTimeoutMs });
+      await selectLocationPickerSheetOption(page, {
+        trigger: hostTrigger,
+        optionText: programmingHost.display_name,
+        flow: 'evg-admin',
+        logStep,
+      });
+      await expect(
+        page.getByRole('button', {
+          name: new RegExp(
+            `Host físico[\\s\\S]*${escapeRegExp(programmingHost.display_name)}`,
+            'i',
+          ),
+        }).first(),
+        'Event-level physical host button must reflect the newly selected host.',
+      ).toBeVisible({ timeout: appBootTimeoutMs });
+    });
+
     await clickVisibleAddOccurrenceAffordance(page);
 
     const adminProgrammingTitle = `Programação local ${uniqueSuffix}`;
@@ -2681,9 +3009,13 @@ test('@mutation NAV-ADM-LOC-01..06 admin occurrence programming location ownersh
 
       await fillFlutterTextField(page, 'Horário', '13:00');
       await fillFlutterTextField(page, 'Título (opcional)', adminProgrammingTitle);
-      await selectDropdownOption(page, {
-        fieldLabel: 'Local da programação',
+      await selectLocationPickerSheetOption(page, {
+        trigger: page
+          .getByRole('button', { name: /Local da programação/i })
+          .first(),
         optionText: programmingHost.display_name,
+        flow: 'evg-admin',
+        logStep,
       });
       await page.getByRole('button', { name: 'Salvar item' }).click();
 
@@ -2724,9 +3056,18 @@ test('@mutation NAV-ADM-LOC-01..06 admin occurrence programming location ownersh
       await expect(page.getByText('Editar item de programação')).toBeVisible({
         timeout: appBootTimeoutMs,
       });
-      await selectDropdownOption(page, {
-        fieldLabel: 'Local da programação',
+      await scrollUntilVisible(
+        page,
+        page.getByRole('button', { name: /Local da programação/i }).first(),
+        'Programming location selector must be visible before clearing the selected location.',
+      );
+      await selectLocationPickerSheetOption(page, {
+        trigger: page
+          .getByRole('button', { name: /Local da programação/i })
+          .first(),
         optionText: 'Sem local específico',
+        flow: 'evg-admin',
+        logStep,
       });
       await page.getByRole('button', { name: 'Salvar item' }).click();
 
@@ -2853,6 +3194,48 @@ test('@mutation NAV-ADM-LOC-01..06 admin occurrence programming location ownersh
       ).toHaveCount(0);
     });
 
+    await test.step('NAV-ADM-LOC-08 event-level host picker persists after save and reopen', async () => {
+      const hostUpdateResponsePromise = page.waitForResponse((candidate) => {
+        const method = candidate.request().method().toUpperCase();
+        return (
+          method === 'PATCH' &&
+          candidate.url().includes(`/admin/api/v1/events/${eventId}`) &&
+          candidate.status() < 400
+        );
+      });
+
+      const submitButton = page.getByRole('button', {
+        name: 'Salvar alterações',
+      });
+      await submitButton.scrollIntoViewIfNeeded();
+      await Promise.all([hostUpdateResponsePromise, submitButton.click()]);
+      await hostUpdateResponsePromise;
+
+      const reopenedListLocation = await locateAdminEventListPage(
+        api,
+        baseUrl,
+        session.token,
+        eventId,
+      );
+      await openSeededEventFromAdminList(
+        page,
+        baseUrl,
+        uniqueTitle,
+        reopenedListLocation.page,
+      );
+      const reopenedHostSummaryButton = page.getByRole('button', {
+        name: new RegExp(
+          `Host físico[\\s\\S]*${escapeRegExp(programmingHost.display_name)}`,
+          'i',
+        ),
+      }).first();
+      await reopenedHostSummaryButton.scrollIntoViewIfNeeded().catch(() => {});
+      await expect(
+        reopenedHostSummaryButton,
+        'Reopened event must keep the selected event-level physical host summary.',
+      ).toBeVisible({ timeout: appBootTimeoutMs });
+    });
+
     await assertNoBrowserFailures(collectors);
   } finally {
     if (session?.token) {
@@ -2934,13 +3317,11 @@ test('@mutation tenant-admin event occurrence FAB persists second occurrence and
     );
     createdProgrammingHostId = programmingHost.id;
     createdProgrammingHostAccountSlug = programmingHost.accountSlug;
-    const relatedProfileSeed = await fetchRelatedAccountProfileCandidates(
+    const relatedProfileSeed = await createDedicatedRelatedProfiles(
       api,
       baseUrl,
       session.token,
-      {
-        excludeIds: [physicalHost.id, programmingHost.id],
-      },
+      `${uniqueSuffix}-stable-media`,
     );
     createdSeedProfileIds.push(...relatedProfileSeed.createdProfileIds);
     createdSeedAccountSlugs.push(...relatedProfileSeed.createdAccountSlugs);
@@ -3041,9 +3422,13 @@ test('@mutation tenant-admin event occurrence FAB persists second occurrence and
 
       await fillFlutterTextField(page, 'Horário', '13:00');
       await fillFlutterTextField(page, 'Título (opcional)', adminProgrammingTitle);
-      await selectDropdownOption(page, {
-        fieldLabel: 'Local da programação',
+      await selectLocationPickerSheetOption(page, {
+        trigger: page
+          .getByRole('button', { name: /Local da programação/i })
+          .first(),
         optionText: programmingHost.display_name,
+        flow: 'evg-admin',
+        logStep,
       });
       await page.getByRole('button', { name: 'Salvar item' }).click();
       await expect(
@@ -3079,9 +3464,13 @@ test('@mutation tenant-admin event occurrence FAB persists second occurrence and
       await expect(page.getByText('Editar item de programação')).toBeVisible({
         timeout: appBootTimeoutMs,
       });
-      await selectDropdownOption(page, {
-        fieldLabel: 'Local da programação',
+      await selectLocationPickerSheetOption(page, {
+        trigger: page
+          .getByRole('button', { name: /Local da programação/i })
+          .first(),
         optionText: 'Sem local específico',
+        flow: 'evg-admin',
+        logStep,
       });
       await page.getByRole('button', { name: 'Salvar item' }).click();
 
@@ -4110,6 +4499,17 @@ test('@mutation repeated public event detail GET/hydration keeps programming pay
       createdSeedProfileTypes.add(relatedProfileSeed.createdType);
     }
     const relatedProfiles = relatedProfileSeed.candidates;
+    const occurrenceProfileWithMedia = relatedProfiles[1] || relatedProfiles[0];
+    expect(
+      occurrenceProfileWithMedia?.id,
+      'Public occurrence runtime proof requires a related profile candidate for media seeding.',
+    ).toBeTruthy();
+    await uploadAccountProfileFixtureMedia(
+      api,
+      baseUrl,
+      session.token,
+      occurrenceProfileWithMedia.id,
+    );
 
     const firstProgrammed = await createProgrammedMultiOccurrenceEvent(
       api,

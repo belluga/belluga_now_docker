@@ -64,6 +64,26 @@ async function searchDropdownOptions(page, optionText, record) {
   await page.keyboard.type(optionText, { delay: 5 });
 }
 
+async function waitForDropdownSurface(page, optionText, timeout = 1500) {
+  const locationSearchField = page.getByRole('textbox', {
+    name: /Buscar local/i,
+  });
+
+  return expect
+    .poll(
+      async () =>
+        Boolean(await resolveOption(page, optionText)) ||
+        (await locationSearchField
+          .last()
+          .isVisible()
+          .catch(() => false)),
+      { timeout },
+    )
+    .toBe(true)
+    .then(() => true)
+    .catch(() => false);
+}
+
 async function waitForOption(page, optionText) {
   await expect
     .poll(async () => Boolean(await resolveOption(page, optionText)), {
@@ -80,13 +100,20 @@ async function clickFirstVisible(locator) {
 
   for (let index = 0; index < count; index += 1) {
     const candidate = locator.nth(index);
-    if (await candidate.isVisible().catch(() => false)) {
+    const isVisible = await candidate.isVisible().catch(() => false);
+    const isEnabled = await candidate.isEnabled().catch(() => false);
+    if (isVisible && isEnabled) {
       visibleLocator = candidate;
       break;
     }
   }
 
-  await (visibleLocator ?? locator.first()).click();
+  if (!visibleLocator) {
+    return false;
+  }
+
+  await visibleLocator.click({ timeout: 1500 });
+  return true;
 }
 
 async function selectDropdownOption(
@@ -104,29 +131,69 @@ async function selectDropdownOption(
       logStep(flow, message);
     }
   };
-  const buttonTrigger = page.getByRole('button', {
-    name: new RegExp(fieldLabel, 'i'),
-  });
-  if ((await buttonTrigger.count()) > 0) {
-    record(`open dropdown ${fieldLabel}`);
-    await clickFirstVisible(buttonTrigger);
-  } else {
-    const fallbackTrigger = fallbackButtonName
-      ? page.getByRole('button', { name: new RegExp(fallbackButtonName, 'i') })
-      : null;
-    if (fallbackTrigger && (await fallbackTrigger.count()) > 0) {
-      record(`open fallback dropdown ${fallbackButtonName}`);
-      await clickFirstVisible(fallbackTrigger);
-    } else {
-      const labelTrigger = page.getByLabel(fieldLabel);
-      expect(
-        await labelTrigger.count(),
-        `Expected a visible trigger for dropdown "${fieldLabel}".`,
-      ).toBeGreaterThan(0);
-      record(`open labeled dropdown ${fieldLabel}`);
-      await clickFirstVisible(labelTrigger);
+
+  const triggerCandidates = [
+    {
+      locator: page.getByRole('button', {
+        name: new RegExp(fieldLabel, 'i'),
+      }),
+      description: `dropdown ${fieldLabel}`,
+    },
+    ...(fallbackButtonName
+      ? [
+          {
+            locator: page.getByRole('button', {
+              name: new RegExp(fallbackButtonName, 'i'),
+            }),
+            description: `fallback dropdown ${fallbackButtonName}`,
+          },
+        ]
+      : []),
+    {
+      locator: page.getByLabel(fieldLabel),
+      description: `labeled dropdown ${fieldLabel}`,
+    },
+  ];
+
+  let openAttempted = false;
+  let surfaceOpened = false;
+  const failedTriggerDescriptions = new Set();
+  const openDeadline = Date.now() + 15000;
+
+  while (!surfaceOpened && Date.now() < openDeadline) {
+    for (const trigger of triggerCandidates) {
+      if ((await trigger.locator.count()) <= 0) {
+        continue;
+      }
+
+      openAttempted = true;
+      record(`open ${trigger.description}`);
+      const clicked = await clickFirstVisible(trigger.locator);
+      if (!clicked) {
+        continue;
+      }
+      surfaceOpened = await waitForDropdownSurface(page, optionText);
+      if (surfaceOpened) {
+        break;
+      }
+      if (!failedTriggerDescriptions.has(trigger.description)) {
+        record(`trigger ${trigger.description} did not expose dropdown surface`);
+        failedTriggerDescriptions.add(trigger.description);
+      }
+    }
+    if (!surfaceOpened) {
+      await page.waitForTimeout(300);
     }
   }
+
+  expect(
+    openAttempted,
+    `Expected a visible trigger for dropdown "${fieldLabel}".`,
+  ).toBe(true);
+  expect(
+    surfaceOpened,
+    `Dropdown "${fieldLabel}" must expose a selectable surface before choosing "${optionText}".`,
+  ).toBe(true);
 
   await searchDropdownOptions(page, optionText, record);
   const option = await waitForOption(page, optionText);
