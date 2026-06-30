@@ -491,18 +491,6 @@ jobs:
           OUTPUT_FILE: /tmp/stage_deploy_diagnostics.txt
         run: bash .github/scripts/collect_remote_deploy_diagnostics.sh
 
-      - name: Upload stage navigation smoke artifacts
-        if: ${{ always() && (steps.stage_deploy_remote.outcome == 'failure' || steps.stage_runtime_web_sha_check.outcome == 'failure' || steps.stage_initialize_preflight.outcome == 'failure' || steps.stage_untrusted_bootstrap_block.outcome == 'failure' || steps.stage_unexpected_initialize_403.outcome == 'failure' || steps.stage_untrusted_initialized_bootstrap_block.outcome == 'failure' || steps.stage_public_edge_environment_probe.outcome == 'failure' || steps.stage_provenance_check.outcome == 'failure' || steps.stage_public_taxonomy_validation_fixture.outcome == 'failure' || steps.stage_navigation_smoke.outcome == 'failure' || steps.stage_navigation_mutation_smoke.outcome == 'failure' || steps.stage_public_taxonomy_validation_fixture_cleanup.outcome == 'failure') }}
-        uses: actions/upload-artifact@v7
-        with:
-          name: stage-navigation-smoke-${{ github.run_id }}-${{ github.run_attempt }}
-          path: |
-            tools/flutter/web_app_smoke_runner/test-results
-            tools/flutter/web_app_smoke_runner/playwright-report
-            /tmp/stage_deploy_diagnostics.txt
-          if-no-files-found: warn
-          retention-days: 7
-
       - name: Mark stage revision as successful after navigation smoke
         if: steps.stage_initialize_preflight.outputs.initialized == 'true' && (steps.stage_rollback_target.outputs.trusted_tuple_present == 'true' || steps.stage_untrusted_initialized_bootstrap_block.outputs.first_trusted_tuple_bootstrap == 'true') && steps.stage_untrusted_initialized_bootstrap_block.outcome != 'failure' && steps.stage_runtime_web_sha_check.outcome == 'success' && steps.stage_public_edge_environment_probe.outcome == 'success' && steps.stage_provenance_check.outcome == 'success' && steps.stage_public_taxonomy_validation_fixture.outcome == 'success' && steps.stage_navigation_smoke.outcome == 'success' && steps.stage_navigation_mutation_smoke.outcome == 'success' && steps.stage_public_taxonomy_validation_fixture_cleanup.outcome != 'failure'
         env:
@@ -517,6 +505,19 @@ jobs:
           SCHEDULER_IMAGE: ${{ steps.stage_runtime_images.outputs.scheduler_image }}
           NGINX_IMAGE: ${{ steps.stage_runtime_images.outputs.nginx_image }}
         run: bash .github/scripts/mark_successful_revision_over_ssh.sh
+
+      - name: Upload stage navigation smoke artifacts
+        if: ${{ always() && (steps.stage_deploy_remote.outcome == 'failure' || steps.stage_runtime_web_sha_check.outcome == 'failure' || steps.stage_initialize_preflight.outcome == 'failure' || steps.stage_untrusted_bootstrap_block.outcome == 'failure' || steps.stage_unexpected_initialize_403.outcome == 'failure' || steps.stage_untrusted_initialized_bootstrap_block.outcome == 'failure' || steps.stage_public_edge_environment_probe.outcome == 'failure' || steps.stage_provenance_check.outcome == 'failure' || steps.stage_public_taxonomy_validation_fixture.outcome == 'failure' || steps.stage_navigation_smoke.outcome == 'failure' || steps.stage_navigation_mutation_smoke.outcome == 'failure' || steps.stage_public_taxonomy_validation_fixture_cleanup.outcome == 'failure') }}
+        continue-on-error: true
+        uses: actions/upload-artifact@v7
+        with:
+          name: stage-navigation-smoke-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            tools/flutter/web_app_smoke_runner/test-results
+            tools/flutter/web_app_smoke_runner/playwright-report
+            /tmp/stage_deploy_diagnostics.txt
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: Roll back stage deploy when provenance, preflight, smoke, cleanup, or post-mutation deploy failure requires recovery
         id: stage_rollback
@@ -854,6 +855,7 @@ jobs:
 
       - name: Upload stage rollback proof artifacts
         if: ${{ always() && steps.stage_rollback_proof_plan.outputs.run == 'true' && (steps.stage_rollback_proof_guard.outcome == 'failure' || steps.stage_rollback_runtime_web_sha_check.outcome == 'failure' || steps.stage_rollback_initialize_preflight.outcome == 'failure' || steps.stage_rollback_public_edge_environment_probe.outcome == 'failure' || steps.stage_rollback_provenance_check.outcome == 'failure' || steps.stage_rollback_public_taxonomy_validation_fixture.outcome == 'failure' || steps.stage_rollback_navigation_smoke.outcome == 'failure' || steps.stage_rollback_navigation_mutation_smoke.outcome == 'failure' || steps.stage_rollback_public_taxonomy_validation_fixture_cleanup.outcome == 'failure') }}
+        continue-on-error: true
         uses: actions/upload-artifact@v7
         with:
           name: stage-rollback-proof-${{ github.run_id }}-${{ github.run_attempt }}
@@ -1279,18 +1281,6 @@ jobs:
           OUTPUT_FILE: /tmp/main_deploy_diagnostics.txt
         run: bash .github/scripts/collect_remote_deploy_diagnostics.sh
 
-      - name: Upload production navigation smoke artifacts
-        if: ${{ always() && (steps.main_deploy_remote.outcome == 'failure' || steps.main_runtime_web_sha_check.outcome == 'failure' || steps.main_initialize_preflight.outcome == 'failure' || steps.main_untrusted_bootstrap_block.outcome == 'failure' || steps.main_unexpected_initialize_403.outcome == 'failure' || steps.main_untrusted_initialized_bootstrap_block.outcome == 'failure' || steps.main_public_edge_environment_probe.outcome == 'failure' || steps.main_provenance_check.outcome == 'failure' || steps.main_initial_mutation_guard.outcome == 'failure' || steps.production_navigation_smoke.outcome == 'failure') }}
-        uses: actions/upload-artifact@v7
-        with:
-          name: production-navigation-smoke-${{ github.run_id }}-${{ github.run_attempt }}
-          path: |
-            tools/flutter/web_app_smoke_runner/test-results
-            tools/flutter/web_app_smoke_runner/playwright-report
-            /tmp/main_deploy_diagnostics.txt
-          if-no-files-found: warn
-          retention-days: 7
-
       - name: Mark production revision as successful after navigation smoke
         if: steps.main_initialize_preflight.outputs.initialized == 'true' && (steps.main_rollback_target.outputs.trusted_tuple_present == 'true' || steps.main_untrusted_initialized_bootstrap_block.outputs.first_trusted_tuple_bootstrap == 'true') && steps.main_untrusted_initialized_bootstrap_block.outcome != 'failure' && steps.main_runtime_web_sha_check.outcome == 'success' && steps.main_public_edge_environment_probe.outcome == 'success' && steps.main_provenance_check.outcome == 'success' && steps.main_initial_mutation_guard.outcome == 'success' && steps.production_navigation_smoke.outcome == 'success'
         env:
@@ -1305,6 +1295,19 @@ jobs:
           SCHEDULER_IMAGE: ${{ steps.main_runtime_images.outputs.scheduler_image }}
           NGINX_IMAGE: ${{ steps.main_runtime_images.outputs.nginx_image }}
         run: bash .github/scripts/mark_successful_revision_over_ssh.sh
+
+      - name: Upload production navigation smoke artifacts
+        if: ${{ always() && (steps.main_deploy_remote.outcome == 'failure' || steps.main_runtime_web_sha_check.outcome == 'failure' || steps.main_initialize_preflight.outcome == 'failure' || steps.main_untrusted_bootstrap_block.outcome == 'failure' || steps.main_unexpected_initialize_403.outcome == 'failure' || steps.main_untrusted_initialized_bootstrap_block.outcome == 'failure' || steps.main_public_edge_environment_probe.outcome == 'failure' || steps.main_provenance_check.outcome == 'failure' || steps.main_initial_mutation_guard.outcome == 'failure' || steps.production_navigation_smoke.outcome == 'failure') }}
+        continue-on-error: true
+        uses: actions/upload-artifact@v7
+        with:
+          name: production-navigation-smoke-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            tools/flutter/web_app_smoke_runner/test-results
+            tools/flutter/web_app_smoke_runner/playwright-report
+            /tmp/main_deploy_diagnostics.txt
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: Roll back production deploy when provenance, preflight, smoke, or post-mutation deploy failure requires recovery
         id: main_rollback
@@ -1629,6 +1632,7 @@ jobs:
 
       - name: Upload production rollback proof artifacts
         if: ${{ always() && steps.main_rollback_proof_plan.outputs.run == 'true' && (steps.main_rollback_proof_guard.outcome == 'failure' || steps.main_rollback_runtime_web_sha_check.outcome == 'failure' || steps.main_rollback_initialize_preflight.outcome == 'failure' || steps.main_rollback_public_edge_environment_probe.outcome == 'failure' || steps.main_rollback_provenance_check.outcome == 'failure' || steps.main_rollback_mutation_guard.outcome == 'failure' || steps.main_rollback_navigation_smoke.outcome == 'failure') }}
+        continue-on-error: true
         uses: actions/upload-artifact@v7
         with:
           name: production-rollback-proof-${{ github.run_id }}-${{ github.run_attempt }}
