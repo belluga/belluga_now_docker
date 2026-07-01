@@ -3,6 +3,7 @@ set -euo pipefail
 
 repo_root="$(git rev-parse --show-toplevel)"
 emit_script="${repo_root}/.github/scripts/emit_flutter_release_tag.sh"
+readiness_script="${repo_root}/.github/scripts/verify_flutter_release_repo_token_readiness.sh"
 workflow_file="${repo_root}/.github/workflows/orchestration-ci-cd.yml"
 
 if [[ ! -f "${emit_script}" ]]; then
@@ -10,8 +11,24 @@ if [[ ! -f "${emit_script}" ]]; then
   exit 1
 fi
 
+if [[ ! -f "${readiness_script}" ]]; then
+  echo "ERROR: verify_flutter_release_repo_token_readiness.sh is required for the flutter release tag readiness proof." >&2
+  exit 1
+fi
+
 if [[ ! -f "${workflow_file}" ]]; then
   echo "ERROR: orchestration-ci-cd.yml is required for the flutter release tag workflow proof." >&2
+  exit 1
+fi
+
+preflight_job="$(awk '
+  /^  preflight:$/ { in_block=1 }
+  in_block && /^  [A-Za-z0-9_-]+:$/ && $0 !~ /^  preflight:$/ { exit }
+  in_block { print }
+' "${workflow_file}")"
+
+if [[ -z "${preflight_job}" ]]; then
+  echo "ERROR: orchestration-ci-cd.yml must define the preflight job that gates main-lane readiness." >&2
   exit 1
 fi
 
@@ -31,8 +48,18 @@ if ! grep -Fq "cancel-in-progress: \${{ github.event_name != 'push' || github.re
   exit 1
 fi
 
-if ! grep -Fq 'FLUTTER_RELEASE_REPO_TOKEN: ${{ secrets.FLUTTER_RELEASE_REPO_TOKEN }}' <<<"${emit_flutter_release_tag_job}"; then
-  echo "ERROR: emit_flutter_release_tag must require the dedicated FLUTTER_RELEASE_REPO_TOKEN secret." >&2
+if ! grep -Fq 'SUBMODULES_REPO_TOKEN: ${{ secrets.SUBMODULES_REPO_TOKEN }}' <<<"${emit_flutter_release_tag_job}"; then
+  echo "ERROR: emit_flutter_release_tag must require SUBMODULES_REPO_TOKEN for flutter-app tag checkout/push." >&2
+  exit 1
+fi
+
+if ! grep -Fq 'Verify flutter release tag secret readiness' <<<"${preflight_job}" || ! grep -Fq 'bash .github/scripts/verify_flutter_release_repo_token_readiness.sh' <<<"${preflight_job}"; then
+  echo "ERROR: preflight must verify SUBMODULES_REPO_TOKEN readiness before main can be declared clean." >&2
+  exit 1
+fi
+
+if ! grep -Fq "github.base_ref == 'main'" <<<"${preflight_job}" || ! grep -Fq "github.ref_name == 'main'" <<<"${preflight_job}"; then
+  echo "ERROR: preflight readiness check must stay scoped to main-lane PR/push events." >&2
   exit 1
 fi
 
@@ -41,8 +68,8 @@ if ! grep -Fq "github.event_name == 'push'" <<<"${emit_flutter_release_tag_job}"
   exit 1
 fi
 
-if grep -Fq 'SUBMODULES_REPO_TOKEN:' <<<"${emit_flutter_release_tag_job}" || grep -Fq 'WEB_APP_REPO_TOKEN:' <<<"${emit_flutter_release_tag_job}"; then
-  echo "ERROR: emit_flutter_release_tag must not fall back to the legacy submodule/web-app tokens." >&2
+if grep -Fq 'FLUTTER_RELEASE_REPO_TOKEN:' <<<"${emit_flutter_release_tag_job}" || grep -Fq 'WEB_APP_REPO_TOKEN:' <<<"${emit_flutter_release_tag_job}"; then
+  echo "ERROR: emit_flutter_release_tag must not require the retired dedicated secret or fall back to WEB_APP_REPO_TOKEN." >&2
   exit 1
 fi
 
@@ -51,8 +78,18 @@ if ! grep -Fq 'SUBMODULE_PATHS: flutter-app' <<<"${emit_flutter_release_tag_job}
   exit 1
 fi
 
-if ! grep -Fq 'Set FLUTTER_RELEASE_REPO_TOKEN in this repository secrets with flutter-app read access and flutter-app tag write access.' <<<"${emit_flutter_release_tag_job}"; then
-  echo "ERROR: emit_flutter_release_tag must document the dedicated flutter-app read/tag-write secret contract explicitly." >&2
+if ! grep -Fq 'bash .github/scripts/verify_flutter_release_repo_token_readiness.sh' <<<"${emit_flutter_release_tag_job}"; then
+  echo "ERROR: emit_flutter_release_tag must use the canonical flutter release token readiness helper." >&2
+  exit 1
+fi
+
+if ! grep -Fq 'Set SUBMODULES_REPO_TOKEN in this repository secrets with private submodule read access and flutter-app tag write access.' "${readiness_script}"; then
+  echo "ERROR: readiness script must document the submodule read/tag-write contract explicitly." >&2
+  exit 1
+fi
+
+if ! grep -Fq "This must be green before a Docker main promotion can be declared clean." "${readiness_script}"; then
+  echo "ERROR: readiness script must explain that main promotion cleanliness depends on SUBMODULES_REPO_TOKEN readiness." >&2
   exit 1
 fi
 
