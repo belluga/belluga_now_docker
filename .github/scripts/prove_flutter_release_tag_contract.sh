@@ -48,13 +48,13 @@ if ! grep -Fq "cancel-in-progress: \${{ github.event_name != 'push' || github.re
   exit 1
 fi
 
-if ! grep -Fq 'FLUTTER_RELEASE_REPO_TOKEN: ${{ secrets.FLUTTER_RELEASE_REPO_TOKEN }}' <<<"${emit_flutter_release_tag_job}"; then
-  echo "ERROR: emit_flutter_release_tag must require the dedicated FLUTTER_RELEASE_REPO_TOKEN secret." >&2
+if ! grep -Fq 'SUBMODULES_REPO_TOKEN: ${{ secrets.SUBMODULES_REPO_TOKEN }}' <<<"${emit_flutter_release_tag_job}"; then
+  echo "ERROR: emit_flutter_release_tag must require SUBMODULES_REPO_TOKEN for flutter-app tag checkout/push." >&2
   exit 1
 fi
 
 if ! grep -Fq 'Verify flutter release tag secret readiness' <<<"${preflight_job}" || ! grep -Fq 'bash .github/scripts/verify_flutter_release_repo_token_readiness.sh' <<<"${preflight_job}"; then
-  echo "ERROR: preflight must verify FLUTTER_RELEASE_REPO_TOKEN readiness before main can be declared clean." >&2
+  echo "ERROR: preflight must verify SUBMODULES_REPO_TOKEN readiness before main can be declared clean." >&2
   exit 1
 fi
 
@@ -68,8 +68,8 @@ if ! grep -Fq "github.event_name == 'push'" <<<"${emit_flutter_release_tag_job}"
   exit 1
 fi
 
-if grep -Fq 'SUBMODULES_REPO_TOKEN:' <<<"${emit_flutter_release_tag_job}" || grep -Fq 'WEB_APP_REPO_TOKEN:' <<<"${emit_flutter_release_tag_job}"; then
-  echo "ERROR: emit_flutter_release_tag must not fall back to the legacy submodule/web-app tokens." >&2
+if grep -Fq 'FLUTTER_RELEASE_REPO_TOKEN:' <<<"${emit_flutter_release_tag_job}" || grep -Fq 'WEB_APP_REPO_TOKEN:' <<<"${emit_flutter_release_tag_job}"; then
+  echo "ERROR: emit_flutter_release_tag must not require the retired dedicated secret or fall back to WEB_APP_REPO_TOKEN." >&2
   exit 1
 fi
 
@@ -83,13 +83,13 @@ if ! grep -Fq 'bash .github/scripts/verify_flutter_release_repo_token_readiness.
   exit 1
 fi
 
-if ! grep -Fq 'Set FLUTTER_RELEASE_REPO_TOKEN in this repository secrets with flutter-app read access and flutter-app tag write access.' "${readiness_script}"; then
-  echo "ERROR: readiness script must document the dedicated flutter-app read/tag-write secret contract explicitly." >&2
+if ! grep -Fq 'Set SUBMODULES_REPO_TOKEN in this repository secrets with private submodule read access and flutter-app tag write access.' "${readiness_script}"; then
+  echo "ERROR: readiness script must document the submodule read/tag-write contract explicitly." >&2
   exit 1
 fi
 
 if ! grep -Fq "This must be green before a Docker main promotion can be declared clean." "${readiness_script}"; then
-  echo "ERROR: readiness script must explain that main promotion cleanliness depends on FLUTTER_RELEASE_REPO_TOKEN readiness." >&2
+  echo "ERROR: readiness script must explain that main promotion cleanliness depends on SUBMODULES_REPO_TOKEN readiness." >&2
   exit 1
 fi
 

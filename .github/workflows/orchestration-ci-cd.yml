@@ -97,8 +97,8 @@ jobs:
       - name: Verify flutter release tag secret readiness
         if: ${{ (github.event_name == 'pull_request' && github.base_ref == 'main') || (github.event_name == 'push' && github.ref_name == 'main') }}
         env:
-          FLUTTER_RELEASE_REPO_TOKEN: ${{ secrets.FLUTTER_RELEASE_REPO_TOKEN }}
-          FLUTTER_RELEASE_REPO_TOKEN_READINESS_CONTEXT: main-lane flutter-app release-tag preflight
+          SUBMODULES_REPO_TOKEN: ${{ secrets.SUBMODULES_REPO_TOKEN }}
+          FLUTTER_RELEASE_TOKEN_READINESS_CONTEXT: main-lane flutter-app release-tag preflight
         run: bash .github/scripts/verify_flutter_release_repo_token_readiness.sh
 
       - name: Enforce protected submodule gitlink guardrail on dev PRs
@@ -1732,9 +1732,9 @@ jobs:
       - name: Resolve submodule checkout auth
         id: submodule_auth
         env:
-          FLUTTER_RELEASE_REPO_TOKEN: ${{ secrets.FLUTTER_RELEASE_REPO_TOKEN }}
+          SUBMODULES_REPO_TOKEN: ${{ secrets.SUBMODULES_REPO_TOKEN }}
         run: |
-          token="${FLUTTER_RELEASE_REPO_TOKEN:-}"
+          token="${SUBMODULES_REPO_TOKEN:-}"
 
           if [[ -n "$token" ]]; then
             echo "::add-mask::$token"
@@ -1757,8 +1757,8 @@ jobs:
       - name: Verify flutter release tag secret readiness
         if: steps.submodule_auth.outputs.has_token != 'true'
         env:
-          FLUTTER_RELEASE_REPO_TOKEN: ${{ secrets.FLUTTER_RELEASE_REPO_TOKEN }}
-          FLUTTER_RELEASE_REPO_TOKEN_READINESS_CONTEXT: post-main flutter-app release-tag emit
+          SUBMODULES_REPO_TOKEN: ${{ secrets.SUBMODULES_REPO_TOKEN }}
+          FLUTTER_RELEASE_TOKEN_READINESS_CONTEXT: post-main flutter-app release-tag emit
         run: bash .github/scripts/verify_flutter_release_repo_token_readiness.sh
 
       - name: Emit post-main flutter-app release tag
