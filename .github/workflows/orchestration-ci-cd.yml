@@ -94,6 +94,13 @@ jobs:
       - name: Verify environment invariants
         run: bash .github/scripts/verify_environment_ci.sh
 
+      - name: Verify flutter release tag secret readiness
+        if: ${{ (github.event_name == 'pull_request' && github.base_ref == 'main') || (github.event_name == 'push' && github.ref_name == 'main') }}
+        env:
+          SUBMODULES_REPO_TOKEN: ${{ secrets.SUBMODULES_REPO_TOKEN }}
+          FLUTTER_RELEASE_TOKEN_READINESS_CONTEXT: main-lane flutter-app release-tag preflight
+        run: bash .github/scripts/verify_flutter_release_repo_token_readiness.sh
+
       - name: Enforce protected submodule gitlink guardrail on dev PRs
         run: bash .github/scripts/check_submodule_gitlink_guardrail.sh
 
@@ -1725,9 +1732,9 @@ jobs:
       - name: Resolve submodule checkout auth
         id: submodule_auth
         env:
-          FLUTTER_RELEASE_REPO_TOKEN: ${{ secrets.FLUTTER_RELEASE_REPO_TOKEN }}
+          SUBMODULES_REPO_TOKEN: ${{ secrets.SUBMODULES_REPO_TOKEN }}
         run: |
-          token="${FLUTTER_RELEASE_REPO_TOKEN:-}"
+          token="${SUBMODULES_REPO_TOKEN:-}"
 
           if [[ -n "$token" ]]; then
             echo "::add-mask::$token"
@@ -1747,12 +1754,12 @@ jobs:
           git config --global url."https://x-access-token:${SUBMODULE_TOKEN}@github.com/".insteadOf "https://github.com/"
           bash .github/scripts/checkout_ci_submodules.sh
 
-      - name: Fail when missing submodule token
+      - name: Verify flutter release tag secret readiness
         if: steps.submodule_auth.outputs.has_token != 'true'
-        run: |
-          echo "ERROR: missing required FLUTTER_RELEASE_REPO_TOKEN secret for flutter-app tag checkout/push." >&2
-          echo "Set FLUTTER_RELEASE_REPO_TOKEN in this repository secrets with flutter-app read access and flutter-app tag write access." >&2
-          exit 1
+        env:
+          SUBMODULES_REPO_TOKEN: ${{ secrets.SUBMODULES_REPO_TOKEN }}
+          FLUTTER_RELEASE_TOKEN_READINESS_CONTEXT: post-main flutter-app release-tag emit
+        run: bash .github/scripts/verify_flutter_release_repo_token_readiness.sh
 
       - name: Emit post-main flutter-app release tag
         run: bash .github/scripts/emit_flutter_release_tag.sh
