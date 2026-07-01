@@ -514,7 +514,7 @@ Pré-requisitos no repositório GitHub (`Settings > Secrets and variables > Acti
 `Secrets`:
 * `SUBMODULES_REPO_TOKEN` (acesso de leitura aos submódulos privados e fallback de leitura para superfícies protegidas de runtime web quando um token dedicado não estiver configurado).
 * `WEB_APP_REPO_TOKEN` (opcional, acesso de leitura ao repositório `belluga_now_web`; quando presente, os checks protegidos de metadata/runtime web o preferem sem misturá-lo ao token dedicado de escrita do pós-`main`).
-* `FLUTTER_RELEASE_REPO_TOKEN` (acesso de escrita ao repositório `flutter-app` para o job pós-`main` criar a tag imutável `v<pubspec-version>` no SHA validado).
+* `FLUTTER_RELEASE_REPO_TOKEN` (acesso de escrita ao repositório `flutter-app` para o job pós-`main` criar a tag imutável `v<pubspec-version>` no SHA validado). O preflight da lane `main` falha antes da promoção ser considerada limpa quando esse secret não está configurado.
 * `STAGE_SSH_PRIVATE_KEY` (chave privada usada pelo GitHub Actions).
 * `STAGE_SSH_KNOWN_HOSTS` (saída do `ssh-keyscan -H <ip-ou-host-stage>`).
 

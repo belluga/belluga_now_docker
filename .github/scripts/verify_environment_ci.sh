@@ -231,6 +231,7 @@ required_files=(
   ".github/scripts/publish_runtime_images_to_ghcr.sh"
   ".github/scripts/resolve_ci_submodule_auth.sh"
   ".github/scripts/resolve_web_app_runtime_sha.sh"
+  ".github/scripts/verify_flutter_release_repo_token_readiness.sh"
   ".github/scripts/rollback_remote.sh"
 )
 
@@ -2135,8 +2136,29 @@ emit_flutter_release_tag_job="$(awk '
   in_block { print }
 ' .github/workflows/orchestration-ci-cd.yml)"
 
+preflight_job="$(awk '
+  /^  preflight:$/ { in_block=1 }
+  in_block && /^  [A-Za-z0-9_-]+:$/ && $0 !~ /^  preflight:$/ { exit }
+  in_block { print }
+' .github/workflows/orchestration-ci-cd.yml)"
+
 if [[ -z "${emit_flutter_release_tag_job}" ]]; then
   echo "ERROR: orchestration-ci-cd.yml must define an emit_flutter_release_tag post-main job." >&2
+  exit 1
+fi
+
+if [[ -z "${preflight_job}" ]]; then
+  echo "ERROR: orchestration-ci-cd.yml must define a preflight job." >&2
+  exit 1
+fi
+
+if ! grep -Fq 'Verify flutter release tag secret readiness' <<<"${preflight_job}" || ! grep -Fq 'bash .github/scripts/verify_flutter_release_repo_token_readiness.sh' <<<"${preflight_job}"; then
+  echo "ERROR: preflight must verify FLUTTER_RELEASE_REPO_TOKEN readiness before main-lane completion claims." >&2
+  exit 1
+fi
+
+if ! grep -Fq "github.base_ref == 'main'" <<<"${preflight_job}" || ! grep -Fq "github.ref_name == 'main'" <<<"${preflight_job}"; then
+  echo "ERROR: preflight release-tag secret readiness must stay scoped to main-lane PR/push events." >&2
   exit 1
 fi
 
@@ -2170,8 +2192,18 @@ if ! grep -Fq 'SUBMODULE_PATHS: flutter-app' <<<"${emit_flutter_release_tag_job}
   exit 1
 fi
 
-if ! grep -Fq 'Set FLUTTER_RELEASE_REPO_TOKEN in this repository secrets with flutter-app read access and flutter-app tag write access.' <<<"${emit_flutter_release_tag_job}"; then
-  echo "ERROR: emit_flutter_release_tag must fail with the explicit flutter-app read/tag-write contract message." >&2
+if ! grep -Fq 'bash .github/scripts/verify_flutter_release_repo_token_readiness.sh' <<<"${emit_flutter_release_tag_job}"; then
+  echo "ERROR: emit_flutter_release_tag must use the canonical flutter release token readiness helper." >&2
+  exit 1
+fi
+
+if ! grep -Fq 'Set FLUTTER_RELEASE_REPO_TOKEN in this repository secrets with flutter-app read access and flutter-app tag write access.' .github/scripts/verify_flutter_release_repo_token_readiness.sh; then
+  echo "ERROR: verify_flutter_release_repo_token_readiness.sh must fail with the explicit flutter-app read/tag-write contract message." >&2
+  exit 1
+fi
+
+if ! grep -Fq 'This must be green before a Docker main promotion can be declared clean.' .github/scripts/verify_flutter_release_repo_token_readiness.sh; then
+  echo "ERROR: verify_flutter_release_repo_token_readiness.sh must state that missing FLUTTER_RELEASE_REPO_TOKEN blocks a clean main promotion." >&2
   exit 1
 fi
 
