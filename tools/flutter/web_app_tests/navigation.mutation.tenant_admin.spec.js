@@ -60,6 +60,10 @@ function resolveAbsoluteUrl(baseUrl, rawUrl) {
   return new URL(rawUrl, baseUrl).toString();
 }
 
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 function urlsMatchIgnoringQuery(candidateUrl, expectedUrl) {
   try {
     const candidate = new URL(candidateUrl);
@@ -495,7 +499,10 @@ function ensureFixtureImageFile(fixturePath) {
   return fixtureImagePath;
 }
 
-async function assertNoBrowserFailures(collectors) {
+async function assertNoBrowserFailures(
+  collectors,
+  { allowedConsoleErrorSubstrings = [] } = {},
+) {
   expect(
     collectors.runtimeErrors,
     `Unexpected runtime errors:\n${collectors.runtimeErrors.join('\n')}`,
@@ -508,7 +515,8 @@ async function assertNoBrowserFailures(collectors) {
   const criticalConsoleErrors = collectors.consoleErrors.filter(
     (entry) =>
       !entry.includes('status of 401') &&
-      !entry.includes('ResizeObserver loop limit exceeded'),
+      !entry.includes('ResizeObserver loop limit exceeded') &&
+      !allowedConsoleErrorSubstrings.some((allowed) => entry.includes(allowed)),
   );
   expect(
     criticalConsoleErrors,
@@ -786,18 +794,32 @@ async function expectFlutterFieldRenderedAndFocusedValue(
   }
 }
 
-async function fillFlutterTextField(page, label, value) {
-  const field = page.getByLabel(label).first();
+async function fillResolvedFlutterTextField(page, field, value, description) {
   await field.scrollIntoViewIfNeeded();
   await expect(field).toBeVisible({ timeout: appBootTimeoutMs });
+  await expect
+    .poll(
+      async () => field.isEditable().catch(() => false),
+      {
+        timeout: 5000,
+        message: `Expected ${description} to become editable before typing.`,
+      },
+    )
+    .toBe(true);
 
   let lastValue = '';
   for (let attempt = 1; attempt <= 3; attempt += 1) {
-    await field.click();
-    const selectAll = process.platform === 'darwin' ? 'Meta+A' : 'Control+A';
-    await page.keyboard.press(selectAll);
-    await page.keyboard.press('Backspace');
-    await page.keyboard.type(value, { delay: 5 });
+    try {
+      await field.click();
+      await field.fill('');
+      await field.fill(value);
+    } catch (_) {
+      const selectAll = process.platform === 'darwin' ? 'Meta+A' : 'Control+A';
+      await field.click();
+      await page.keyboard.press(selectAll);
+      await page.keyboard.press('Backspace');
+      await page.keyboard.type(value, { delay: 5 });
+    }
 
     try {
       await expect
@@ -811,7 +833,7 @@ async function fillFlutterTextField(page, label, value) {
           },
           {
             timeout: 3000,
-            message: `Expected Flutter text field "${label}" to retain input.`,
+            message: `Expected ${description} to retain input.`,
           },
         )
         .toBe(value);
@@ -827,7 +849,17 @@ async function fillFlutterTextField(page, label, value) {
   }
 
   throw new Error(
-    `Flutter text field "${label}" did not retain "${value}" before submit; last value was "${lastValue}".`,
+    `${description} did not retain "${value}" before submit; last value was "${lastValue}".`,
+  );
+}
+
+async function fillFlutterTextField(page, label, value) {
+  const field = page.getByLabel(label).first();
+  return fillResolvedFlutterTextField(
+    page,
+    field,
+    value,
+    `Flutter text field "${label}"`,
   );
 }
 
@@ -913,6 +945,113 @@ async function clickSaveChanges(page) {
     timeout: appBootTimeoutMs,
   });
   await saveButton.click({ noWaitAfter: true });
+}
+
+async function countVisibleMatches(locator) {
+  return locator
+    .evaluateAll((elements) =>
+      elements.filter((element) => {
+        if (!(element instanceof HTMLElement)) {
+          return false;
+        }
+        const style = window.getComputedStyle(element);
+        const hiddenByStyle =
+          style.display === 'none' ||
+          style.visibility === 'hidden' ||
+          Number.parseFloat(style.opacity || '1') === 0;
+        if (hiddenByStyle) {
+          return false;
+        }
+        const rect = element.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0;
+      }).length,
+    )
+    .catch(() => 0);
+}
+
+async function expectAnyVisibleMatch(locator, message) {
+  await expect
+    .poll(async () => countVisibleMatches(locator), {
+      timeout: appBootTimeoutMs,
+      message,
+    })
+    .toBeGreaterThan(0);
+}
+
+async function clickVisibleAddOccurrenceAffordance(page) {
+  const candidates = page.getByRole('button', { name: /^Adicionar data$/ });
+  await expect(candidates.first()).toBeVisible({ timeout: appBootTimeoutMs });
+  const count = await candidates.count();
+  let addOccurrence = candidates.first();
+  let rightmostX = Number.NEGATIVE_INFINITY;
+
+  for (let index = 0; index < count; index += 1) {
+    const candidate = candidates.nth(index);
+    const box = await candidate.boundingBox();
+    if (!box || box.x <= rightmostX) {
+      continue;
+    }
+    rightmostX = box.x;
+    addOccurrence = candidate;
+  }
+
+  await expect(addOccurrence).toBeVisible({ timeout: appBootTimeoutMs });
+  await addOccurrence.click();
+  await expect(page.getByText('Adicionar data').last()).toBeVisible({
+    timeout: appBootTimeoutMs,
+  });
+}
+
+async function closeOccurrenceEditorSheet(page) {
+  const occurrenceEditorDialog = page.locator('[aria-label="Caixa de diálogo"]').first();
+  const waitForOccurrenceEditorDismissed = async (message, timeout = appBootTimeoutMs) => {
+    await expect
+      .poll(
+        async () => countVisibleMatches(occurrenceEditorDialog),
+        {
+          timeout,
+          message,
+        },
+      )
+      .toBe(0);
+  };
+  await expect(
+    page.getByRole('button', { name: 'Salvar data' }),
+    'Occurrence editor must not expose the superseded per-occurrence save boundary.',
+  ).toHaveCount(0);
+  await expectAnyVisibleMatch(
+    occurrenceEditorDialog,
+    'Occurrence editor dialog must be visible before the helper tries to dismiss it.',
+  );
+  const headerCloseButton = occurrenceEditorDialog.getByRole('button', {
+    name: 'Fechar',
+  }).first();
+  await expect(headerCloseButton).toBeVisible({ timeout: appBootTimeoutMs });
+
+  try {
+    await headerCloseButton.click();
+    await waitForOccurrenceEditorDismissed(
+      'Closing the occurrence editor via the dialog close action must dismiss the dialog container.',
+      3000,
+    );
+    return;
+  } catch (_) {}
+
+  try {
+    await headerCloseButton.focus().catch(() => {});
+    await headerCloseButton.press('Enter');
+    await waitForOccurrenceEditorDismissed(
+      'Pressing Enter on the occurrence editor close action must dismiss the dialog container.',
+      3000,
+    );
+    return;
+  } catch (_) {}
+
+  await page.keyboard.press('Escape');
+  await waitForOccurrenceEditorDismissed(
+    'Escaping the occurrence editor must dismiss the dialog container.',
+    3000,
+  );
 }
 
 async function scrollTenantAdminSheetToTop(page) {
@@ -1275,6 +1414,147 @@ async function fetchAdminProfile(api, baseUrl, token, profileId) {
   );
   expect(response.status(), 'Admin account profile readback must succeed.').toBe(200);
   return normalizePayload(await response.json());
+}
+
+async function fetchAdminEvent(api, baseUrl, token, eventId) {
+  const response = await api.get(
+    buildApiUrl(baseUrl, `/admin/api/v1/events/${eventId}`),
+    {
+      headers: authHeaders(token),
+    },
+  );
+  expect(response.status(), 'Tenant-admin event readback must succeed.').toBe(200);
+  return normalizePayload(await response.json());
+}
+
+async function waitForAccountDeletion(api, baseUrl, token, profileId) {
+  await expect
+    .poll(
+      async () => {
+        const response = await api.get(
+          buildApiUrl(baseUrl, `/admin/api/v1/account_profiles/${profileId}`),
+          {
+            headers: authHeaders(token),
+            failOnStatusCode: false,
+          },
+        );
+        return [404, 410].includes(response.status());
+      },
+      {
+        timeout: appBootTimeoutMs,
+        message: `Account profile ${profileId} must disappear after account deletion.`,
+      },
+    )
+    .toBe(true);
+}
+
+async function waitForEventDeletion(api, baseUrl, token, eventId) {
+  await expect
+    .poll(
+      async () => {
+        const response = await api.get(
+          buildApiUrl(baseUrl, `/admin/api/v1/events/${eventId}`),
+          {
+            headers: authHeaders(token),
+            failOnStatusCode: false,
+          },
+        );
+        return [404, 410].includes(response.status());
+      },
+      {
+        timeout: appBootTimeoutMs,
+        message: `Event ${eventId} must disappear after the admin delete flow.`,
+      },
+    )
+    .toBe(true);
+}
+
+function eventTitleLocator(page, eventTitle) {
+  return page.getByRole('button', {
+    name: new RegExp(escapeRegExp(eventTitle), 'i'),
+  }).first();
+}
+
+async function openEventFromAdminList(page, eventTitle, eventId) {
+  const eventTitleText = eventTitleLocator(page, eventTitle);
+  await scrollUntilVisible(
+    page,
+    eventTitleText,
+    `Expected admin event "${eventTitle}" to appear in the tenant-admin list.`,
+  );
+  await expect(eventTitleText).toBeVisible({ timeout: appBootTimeoutMs });
+
+  const editUrl = new URL(`/admin/events/${encodeURIComponent(eventId)}/edit`, page.url())
+    .toString();
+  const editResponse = await page.goto(editUrl, {
+    waitUntil: 'domcontentloaded',
+  });
+  expect(
+    editResponse,
+    `Expected event "${eventTitle}" to reopen through the canonical edit route after appearing in the admin list.`,
+  ).not.toBeNull();
+  expect(editResponse.status()).toBeLessThan(400);
+  await assertAppBooted(page);
+  await enableAccessibilityIfNeeded(page);
+}
+
+async function openEventMenuFromAdminList(page, eventTitle) {
+  const eventTitleText = eventTitleLocator(page, eventTitle);
+  await scrollUntilVisible(
+    page,
+    eventTitleText,
+    `Expected event-card menu for "${eventTitle}" to stay reachable in the admin list.`,
+  );
+  const eventBox = await eventTitleText.boundingBox();
+  expect(eventBox, `Event card for "${eventTitle}" must expose a visible box.`).not.toBeNull();
+
+  const candidateButtons = page.getByRole('button');
+  const candidateCount = await candidateButtons.count().catch(() => 0);
+  let bestCandidate = null;
+  let bestScore = Number.POSITIVE_INFINITY;
+
+  for (let index = 0; index < candidateCount; index += 1) {
+    const candidate = candidateButtons.nth(index);
+    const ariaLabel = (await candidate.getAttribute('aria-label').catch(() => '')) || '';
+    if (ariaLabel.startsWith('Editar evento ')) {
+      continue;
+    }
+    const box = await candidate.boundingBox().catch(() => null);
+    if (!box) {
+      continue;
+    }
+
+    const centerX = box.x + box.width / 2;
+    const centerY = box.y + box.height / 2;
+    const rightEdge = eventBox.x + eventBox.width;
+    const isWithinSameCardBand =
+      centerY >= eventBox.y - 24 &&
+      centerY <= eventBox.y + 72 &&
+      centerX >= rightEdge - 160 &&
+      centerX <= rightEdge + 48;
+    if (!isWithinSameCardBand) {
+      continue;
+    }
+
+    const score =
+      Math.abs(centerX - (rightEdge - 24)) +
+      Math.abs(centerY - (eventBox.y + 24)) * 2;
+    if (score >= bestScore) {
+      continue;
+    }
+
+    bestCandidate = candidate;
+    bestScore = score;
+  }
+
+  expect(
+    bestCandidate,
+    `Expected a popup-menu button near the admin event card for "${eventTitle}".`,
+  ).toBeTruthy();
+  await bestCandidate.click();
+  await expect(page.getByRole('menuitem', { name: 'Remover' }).last()).toBeVisible({
+    timeout: appBootTimeoutMs,
+  });
 }
 
 async function continueWithoutLocationIfPrompted(page) {
@@ -3936,6 +4216,819 @@ test('@mutation tenant-admin account profile nested tabs obey profile type capab
       await freshBrowser.close().catch(() => {});
     }
     await api.dispose();
+  }
+});
+
+test('@mutation tenant-admin account onboarding CRUD persists detail/edit readback and delete flow', async () => {
+  test.setTimeout(600000);
+  const baseUrl = requireTenantUrl();
+  const api = await createApiContext(baseUrl);
+  let browserContext;
+  let freshBrowser;
+  let session = null;
+  let accountSlug = null;
+  let profileId = null;
+  let profileTypeKey = null;
+  let primaryError = null;
+
+  try {
+    session = await loginTenantAdmin(api, baseUrl);
+    const unique = Date.now();
+    const profileTypeLabel = `PW CRUD Account ${unique}`;
+    const createdProfileType = normalizePayload(
+      await createAccountProfileType(api, baseUrl, session.token, {
+        type: `pw-crud-account-${unique}`,
+        label: profileTypeLabel,
+        allowedTaxonomies: [],
+        markerColor: '#0F766E',
+        capabilities: {
+          is_favoritable: false,
+          is_publicly_discoverable: true,
+          is_publicly_navigable: true,
+          has_avatar: false,
+          has_cover: false,
+          has_taxonomies: false,
+          has_content: false,
+          has_bio: false,
+        },
+      }),
+    );
+    profileTypeKey = createdProfileType?.type?.toString() || '';
+    expect(profileTypeKey, 'CRUD account profile type must be created.').toBeTruthy();
+
+    const initialName = `PW CRUD Account ${unique}`;
+    const updatedDisplayName = `PW CRUD Visible ${unique}`;
+
+    const pageBundle = await createFreshAuthenticatedTenantAdminPage(session);
+    freshBrowser = pageBundle.browser;
+    browserContext = pageBundle.context;
+    const page = pageBundle.page;
+    const collectors = installFailureCollectors(page);
+
+    const createResponse = await page.goto(buildApiUrl(baseUrl, '/admin/accounts/create'), {
+      waitUntil: 'domcontentloaded',
+    });
+    expect(createResponse, 'Account onboarding create route must respond.').not.toBeNull();
+    expect(createResponse.status()).toBeLessThan(400);
+    await assertAppBooted(page);
+    await enableAccessibilityIfNeeded(page);
+
+    await expect(page.getByText('Criar Conta')).toBeVisible({
+      timeout: appBootTimeoutMs,
+    });
+    await selectDropdownOption(page, {
+      flow: 'account-crud',
+      fieldLabel: 'Tipo de perfil',
+      optionText: profileTypeLabel,
+      logStep,
+    });
+    await page.waitForTimeout(250);
+    await page.getByRole('button', { name: 'Nao gerenciada' }).click();
+    await fillFlutterTextField(page, 'Nome', initialName);
+
+    const createRequestPromise = page.waitForResponse((candidate) => {
+      return (
+        candidate.request().method() === 'POST' &&
+        candidate.url().includes('/admin/api/v1/account_onboardings')
+      );
+    });
+
+    await Promise.all([
+      createRequestPromise,
+      page.getByRole('button', { name: 'Salvar conta' }).last().click(),
+    ]);
+
+    const createRequest = await createRequestPromise;
+    expect(createRequest.status(), 'Account onboarding create must succeed.').toBe(201);
+    const created = normalizePayload(await createRequest.json());
+    accountSlug = created?.account?.slug?.toString() || null;
+    profileId = created?.account_profile?.id?.toString() || null;
+    expect(accountSlug, 'Account onboarding must return account slug.').toBeTruthy();
+    expect(profileId, 'Account onboarding must return profile id.').toBeTruthy();
+
+    await expect(page.getByText(`Conta: ${accountSlug}`)).toBeVisible({
+      timeout: appBootTimeoutMs,
+    });
+
+    await page.getByRole('button', { name: 'Editar' }).first().click();
+    await expect(page.getByText('Editar Perfil')).toBeVisible({
+      timeout: appBootTimeoutMs,
+    });
+
+    const displayNameField = page.getByLabel('Nome de exibicao').first();
+    await scrollUntilVisible(
+      page,
+      displayNameField,
+      'Expected Display Name field to render in the account-profile edit flow.',
+    );
+    await expectFlutterFieldRenderedValue(
+      displayNameField,
+      initialName,
+      'Expected account onboarding readback to render the initial display name before edit.',
+    );
+
+    const saveResponsePromise = page.waitForResponse((candidate) => {
+      return (
+        candidate.request().method() === 'PATCH' &&
+        candidate.url().includes(`/admin/api/v1/account_profiles/${profileId}`) &&
+        candidate.status() < 400
+      );
+    });
+    await fillFlutterTextField(page, 'Nome de exibicao', updatedDisplayName);
+    await clickSaveChanges(page);
+    await saveResponsePromise;
+
+    await expect
+      .poll(
+        async () => {
+          const profile = await fetchAdminProfile(
+            api,
+            baseUrl,
+            session.token,
+            profileId,
+          );
+          return profile?.display_name?.toString() || '';
+        },
+        {
+          timeout: appBootTimeoutMs,
+          message:
+            'Expected account-profile edit save to persist the updated Display Name.',
+        },
+      )
+      .toBe(updatedDisplayName);
+
+    const detailResponse = await page.goto(
+      buildApiUrl(baseUrl, `/admin/accounts/${accountSlug}`),
+      {
+        waitUntil: 'domcontentloaded',
+      },
+    );
+    expect(detailResponse, 'Account detail route must reopen after edit.').not.toBeNull();
+    expect(detailResponse.status()).toBeLessThan(400);
+    await assertAppBooted(page);
+    await enableAccessibilityIfNeeded(page);
+
+    const deleteAccountButton = page.getByRole('button', { name: 'Excluir conta' }).first();
+    await scrollUntilVisible(
+      page,
+      deleteAccountButton,
+      'Expected unmanaged account detail to expose the delete action.',
+    );
+    const deleteResponsePromise = page.waitForResponse((candidate) => {
+      return (
+        candidate.request().method() === 'DELETE' &&
+        candidate.url().includes(`/admin/api/v1/accounts/${accountSlug}`)
+      );
+    });
+    await deleteAccountButton.click();
+    await expect(page.getByText('Excluir conta').last()).toBeVisible({
+      timeout: appBootTimeoutMs,
+    });
+    await page.getByRole('button', { name: 'Excluir' }).last().click();
+    const deleteResponse = await deleteResponsePromise;
+    expect(
+      [200, 204],
+      'Account delete request must succeed after the bounded admin delete flow.',
+    ).toContain(deleteResponse.status());
+
+    await waitForAccountDeletion(api, baseUrl, session.token, profileId);
+    accountSlug = null;
+    profileId = null;
+
+    await assertNoBrowserFailures(collectors);
+  } catch (error) {
+    primaryError = error;
+    throw error;
+  } finally {
+    await runCleanupPreservingPrimaryError(primaryError, async () => {
+      try {
+        await runCleanupSteps([
+          accountSlug
+            ? () => cleanupOnboardedAccount(api, baseUrl, session?.token, accountSlug)
+            : null,
+          profileTypeKey
+            ? () => deleteAccountProfileType(api, baseUrl, session?.token, profileTypeKey)
+            : null,
+        ]);
+      } finally {
+        if (browserContext) {
+          await browserContext.close().catch(() => {});
+        }
+        if (freshBrowser) {
+          await freshBrowser.close().catch(() => {});
+        }
+        await api.dispose();
+      }
+    });
+  }
+});
+
+test('@mutation tenant-admin account onboarding rejects stale selected profile type with inline 422', async () => {
+  test.setTimeout(600000);
+  const baseUrl = requireTenantUrl();
+  const api = await createApiContext(baseUrl);
+  let browserContext;
+  let freshBrowser;
+  let session = null;
+  let profileTypeKey = null;
+  let primaryError = null;
+
+  try {
+    session = await loginTenantAdmin(api, baseUrl);
+    const unique = Date.now();
+    const profileTypeLabel = `PW Stale Profile Type ${unique}`;
+    const createdProfileType = normalizePayload(
+      await createAccountProfileType(api, baseUrl, session.token, {
+        type: `pw-stale-profile-${unique}`,
+        label: profileTypeLabel,
+        allowedTaxonomies: [],
+        markerColor: '#1D4ED8',
+        capabilities: {
+          is_favoritable: false,
+          has_avatar: false,
+          has_cover: false,
+          has_taxonomies: false,
+          has_content: false,
+          has_bio: false,
+        },
+      }),
+    );
+    profileTypeKey = createdProfileType?.type?.toString() || '';
+    expect(profileTypeKey, 'Stale-profile account type must be created.').toBeTruthy();
+
+    const pageBundle = await createFreshAuthenticatedTenantAdminPage(session);
+    freshBrowser = pageBundle.browser;
+    browserContext = pageBundle.context;
+    const page = pageBundle.page;
+    const collectors = installFailureCollectors(page);
+
+    const response = await page.goto(buildApiUrl(baseUrl, '/admin/accounts/create'), {
+      waitUntil: 'domcontentloaded',
+    });
+    expect(response, 'Account onboarding create route must respond.').not.toBeNull();
+    expect(response.status()).toBeLessThan(400);
+    await assertAppBooted(page);
+    await enableAccessibilityIfNeeded(page);
+
+    await selectDropdownOption(page, {
+      flow: 'account-422',
+      fieldLabel: 'Tipo de perfil',
+      optionText: profileTypeLabel,
+      logStep,
+    });
+    logStep('account-422', 'profile type selected');
+    await page.waitForTimeout(250);
+    await fillFlutterTextField(page, 'Nome', `PW Invalid Account ${unique}`);
+    logStep('account-422', 'name field filled');
+    await deleteAccountProfileType(api, baseUrl, session.token, profileTypeKey);
+    profileTypeKey = null;
+    logStep('account-422', 'selected profile type deleted via API');
+
+    const createRequestPromise = page.waitForResponse((candidate) => {
+      return (
+        candidate.request().method() === 'POST' &&
+        candidate.url().includes('/admin/api/v1/account_onboardings')
+      );
+    });
+
+    logStep('account-422', 'submit stale onboarding');
+    await Promise.all([
+      createRequestPromise,
+      page.getByRole('button', { name: 'Salvar conta' }).last().click(),
+    ]);
+
+    const createRequest = await createRequestPromise;
+    logStep('account-422', `backend responded ${createRequest.status()}`);
+    expect(
+      createRequest.status(),
+      'Stale selected profile type must fail with backend 422 instead of succeeding silently.',
+    ).toBe(422);
+    const payload = await createRequest.json();
+    const profileTypeErrors = normalizeList(
+      payload?.errors?.profile_type || payload?.fieldErrors?.profile_type,
+    );
+    expect(profileTypeErrors.length).toBeGreaterThan(0);
+    await expect(page.getByText(profileTypeErrors[0])).toBeVisible({
+      timeout: appBootTimeoutMs,
+    });
+    logStep('account-422', 'inline validation rendered');
+    await expect(page.getByRole('button', { name: 'Salvar conta' }).last()).toBeVisible({
+      timeout: appBootTimeoutMs,
+    });
+    logStep('account-422', 'submit button remains visible after 422');
+
+    logStep(
+      'account-422',
+      `browser collectors runtime=${collectors.runtimeErrors.length} failedRequests=${collectors.failedRequests.length} consoleErrors=${collectors.consoleErrors.length}`,
+    );
+    if (
+      collectors.runtimeErrors.length > 0 ||
+      collectors.failedRequests.length > 0 ||
+      collectors.consoleErrors.length > 0
+    ) {
+      logStep(
+        'account-422',
+        `browser collectors detail ${JSON.stringify({
+          runtimeErrors: collectors.runtimeErrors,
+          failedRequests: collectors.failedRequests,
+          consoleErrors: collectors.consoleErrors,
+        })}`,
+      );
+    }
+    await assertNoBrowserFailures(collectors, {
+      allowedConsoleErrorSubstrings: [
+        'Failed to load resource: the server responded with a status of 422 ()',
+      ],
+    });
+    logStep('account-422', 'browser assertions completed');
+  } catch (error) {
+    primaryError = error;
+    throw error;
+  } finally {
+    await runCleanupPreservingPrimaryError(primaryError, async () => {
+      try {
+        if (profileTypeKey && session?.token) {
+          logStep('account-422', 'cleanup stale profile type');
+          await deleteAccountProfileType(api, baseUrl, session.token, profileTypeKey);
+        }
+      } finally {
+        if (browserContext) {
+          logStep('account-422', 'cleanup close browser context');
+          await browserContext.close().catch(() => {});
+        }
+        if (freshBrowser) {
+          logStep('account-422', 'cleanup close fresh browser');
+          await freshBrowser.close().catch(() => {});
+        }
+        logStep('account-422', 'cleanup dispose api');
+        await api.dispose();
+        logStep('account-422', 'cleanup completed');
+      }
+    });
+  }
+});
+
+test('@mutation tenant-admin event CRUD creates, reopens edit readback, and removes from manager', async () => {
+  test.setTimeout(600000);
+  const baseUrl = requireTenantUrl();
+  const api = await createApiContext(baseUrl);
+  let browserContext;
+  let freshBrowser;
+  let session = null;
+  let eventTypeId = null;
+  let eventId = null;
+  let primaryError = null;
+
+  try {
+    logStep('event-crud', 'test start');
+    session = await loginTenantAdmin(api, baseUrl);
+    logStep('event-crud', 'tenant admin login completed');
+    const unique = Date.now();
+    const eventTypeName = `PW CRUD Event Type ${unique}`;
+    const eventTypeSlug = `pw-crud-event-type-${unique}`;
+    const createdEventType = normalizePayload(
+      await createEventType(api, baseUrl, session.token, {
+        name: eventTypeName,
+        slug: eventTypeSlug,
+        allowedTaxonomies: [],
+      }),
+    );
+    eventTypeId = createdEventType?.id?.toString() || null;
+    expect(eventTypeId, 'CRUD event type must be created.').toBeTruthy();
+    logStep('event-crud', `event type seeded ${eventTypeId}`);
+
+    const initialTitle = `PW CRUD Event ${unique}`;
+    const updatedTitle = `PW CRUD Event Updated ${unique}`;
+
+    const pageBundle = await createFreshAuthenticatedTenantAdminPage(session);
+    logStep('event-crud', 'fresh authenticated page created');
+    freshBrowser = pageBundle.browser;
+    browserContext = pageBundle.context;
+    const page = pageBundle.page;
+    const collectors = installFailureCollectors(page);
+
+    const listResponse = await page.goto(buildApiUrl(baseUrl, '/admin/events'), {
+      waitUntil: 'domcontentloaded',
+    });
+    expect(listResponse, 'Tenant-admin events route must respond.').not.toBeNull();
+    expect(listResponse.status()).toBeLessThan(400);
+    logStep('event-crud', `events list responded ${listResponse.status()}`);
+    await assertAppBooted(page);
+    logStep('event-crud', 'events app boot completed');
+    await enableAccessibilityIfNeeded(page);
+    logStep('event-crud', 'events accessibility enabled');
+
+    const newEventButton = page.getByRole('button', { name: 'Novo evento' }).first();
+    await scrollUntilVisible(
+      page,
+      newEventButton,
+      'Expected tenant-admin events list to expose the Novo evento action.',
+    );
+    logStep('event-crud', 'new event button visible');
+    const createRoutePromise = page.waitForURL(
+      (candidate) => candidate.pathname.endsWith('/admin/events/create'),
+      {
+        timeout: appBootTimeoutMs,
+      },
+    );
+    await newEventButton.click();
+    logStep('event-crud', 'new event button clicked');
+    await createRoutePromise;
+    logStep('event-crud', `create route opened ${page.url()}`);
+    await expect(page.getByRole('button', { name: 'Criar evento' }).last()).toBeVisible({
+      timeout: appBootTimeoutMs,
+    });
+    logStep('event-crud', 'create form opened');
+
+    await fillFlutterTextField(page, 'Título', initialTitle);
+    logStep('event-crud', 'title filled');
+    await scrollUntilVisible(
+      page,
+      page.getByText('Tipo de evento').first(),
+      'Expected the event type section to become reachable in the create form.',
+    );
+    logStep('event-crud', 'event type section visible');
+    await selectDropdownOption(page, {
+      flow: 'event-crud',
+      fieldLabel: 'Tipo',
+      optionText: eventTypeName,
+      logStep,
+    });
+    await page.waitForTimeout(250);
+    logStep('event-crud', 'event type selected');
+    await scrollUntilVisible(
+      page,
+      page.getByText('Localização').first(),
+      'Expected the location section to become reachable in the create form.',
+    );
+    logStep('event-crud', 'location section visible');
+    await selectDropdownOption(page, {
+      flow: 'event-crud',
+      fieldLabel: 'Modo',
+      optionText: 'Online',
+      logStep,
+    });
+    logStep('event-crud', 'online mode selected');
+    await fillFlutterTextField(page, 'URL online', 'https://example.com/live');
+    logStep('event-crud', 'online URL filled');
+    await clickVisibleAddOccurrenceAffordance(page);
+    await closeOccurrenceEditorSheet(page);
+    logStep('event-crud', 'default occurrence draft added');
+    await expect(
+      page.getByRole('button', { name: 'Editar ocorrência principal' }),
+    ).toBeVisible({
+      timeout: appBootTimeoutMs,
+    });
+
+    const createRequestPromise = page.waitForResponse((candidate) => {
+      return (
+        candidate.request().method() === 'POST' &&
+        candidate.url().includes('/admin/api/v1/events')
+      );
+    });
+    const returnToEventsListPromise = page.waitForURL(
+      (candidate) => candidate.pathname.endsWith('/admin/events'),
+      {
+        timeout: 30000,
+      },
+    );
+
+    await Promise.all([
+      createRequestPromise,
+      returnToEventsListPromise,
+      page.getByRole('button', { name: 'Criar evento' }).last().click(),
+    ]);
+
+    const createRequest = await createRequestPromise;
+    logStep('event-crud', `create backend responded ${createRequest.status()}`);
+    expect(createRequest.status(), 'Tenant-admin event create must succeed.').toBe(201);
+    const createdEvent = normalizePayload(await createRequest.json());
+    eventId = createdEvent?.event_id?.toString() || null;
+    expect(eventId, 'Created event must expose event_id.').toBeTruthy();
+    logStep('event-crud', `post-create immediate route ${page.url()}`);
+    logStep(
+      'event-crud',
+      `post-create button counts create=${await countVisibleMatches(
+        page.getByRole('button', { name: 'Criar evento' }),
+      )} new=${await countVisibleMatches(
+        page.getByRole('button', { name: 'Novo evento' }),
+      )}`,
+    );
+    await returnToEventsListPromise;
+    logStep('event-crud', `returned to events list ${page.url()}`);
+    await expect(page.getByRole('button', { name: 'Novo evento' }).last()).toBeVisible({
+      timeout: appBootTimeoutMs,
+    });
+
+    await openEventFromAdminList(page, initialTitle, eventId);
+
+    const titleField = page
+      .locator('input[data-semantics-role="text-field"]')
+      .first();
+    await scrollUntilVisible(
+      page,
+      titleField,
+      'Expected event title field to render after reopening the saved event.',
+    );
+    logStep('event-crud', 'saved event reopened from manager list');
+    await expectFlutterFieldRenderedValue(
+      titleField,
+      initialTitle,
+      'Expected saved event reopen to render the persisted title before editing.',
+    );
+
+    const updateRequestPromise = page.waitForResponse((candidate) => {
+      return (
+        candidate.request().method() === 'PATCH' &&
+        candidate.url().includes(`/admin/api/v1/events/${eventId}`) &&
+        candidate.status() < 400
+      );
+    });
+    await fillResolvedFlutterTextField(
+      page,
+      titleField,
+      updatedTitle,
+      'reopened event title field',
+    );
+    await clickSaveChanges(page);
+    await updateRequestPromise;
+    logStep('event-crud', 'event title updated');
+
+    await expect(page.getByRole('button', { name: 'Salvar alterações' }).last()).toBeVisible({
+      timeout: appBootTimeoutMs,
+    });
+    logStep('event-crud', `post-update edit route preserved ${page.url()}`);
+    await expect
+      .poll(
+        async () => {
+          const event = await fetchAdminEvent(api, baseUrl, session.token, eventId);
+          return event?.title?.toString() || '';
+        },
+        {
+          timeout: appBootTimeoutMs,
+          message:
+            'Expected tenant-admin event edit save to persist the updated title.',
+        },
+      )
+      .toBe(updatedTitle);
+    logStep('event-crud', 'updated title persisted through admin readback');
+
+    const returnToEventsListResponse = await page.goto(
+      buildApiUrl(baseUrl, '/admin/events'),
+      {
+        waitUntil: 'domcontentloaded',
+      },
+    );
+    expect(
+      returnToEventsListResponse,
+      'Tenant-admin events list must remain reachable after saving an existing event.',
+    ).not.toBeNull();
+    expect(returnToEventsListResponse.status()).toBeLessThan(400);
+    await assertAppBooted(page);
+    await enableAccessibilityIfNeeded(page);
+    logStep('event-crud', `returned to events list after edit save ${page.url()}`);
+    await expect(page.getByRole('button', { name: 'Novo evento' }).last()).toBeVisible({
+      timeout: appBootTimeoutMs,
+    });
+
+    await openEventMenuFromAdminList(page, updatedTitle);
+    logStep('event-crud', 'event menu opened');
+    await page.getByRole('menuitem', { name: 'Remover' }).last().click();
+    await expect(page.getByText('Remover evento')).toBeVisible({
+      timeout: appBootTimeoutMs,
+    });
+    logStep('event-crud', 'delete confirmation opened');
+
+    const deleteRequestPromise = page.waitForResponse((candidate) => {
+      return (
+        candidate.request().method() === 'DELETE' &&
+        candidate.url().includes(`/admin/api/v1/events/${eventId}`)
+      );
+    });
+    await page.getByRole('button', { name: 'Remover' }).last().click();
+    const deleteRequest = await deleteRequestPromise;
+    logStep('event-crud', `delete backend responded ${deleteRequest.status()}`);
+    expect(
+      [200, 204],
+      'Tenant-admin event delete flow must succeed from the manager list.',
+    ).toContain(deleteRequest.status());
+
+    await waitForEventDeletion(api, baseUrl, session.token, eventId);
+    eventId = null;
+
+    await assertNoBrowserFailures(collectors);
+  } catch (error) {
+    primaryError = error;
+    throw error;
+  } finally {
+    await runCleanupPreservingPrimaryError(primaryError, async () => {
+      try {
+        await runCleanupSteps([
+          eventId ? () => deleteEvent(api, baseUrl, session?.token, eventId) : null,
+          eventTypeId
+            ? () => deleteEventType(api, baseUrl, session?.token, eventTypeId)
+            : null,
+        ]);
+      } finally {
+        if (browserContext) {
+          await browserContext.close().catch(() => {});
+        }
+        if (freshBrowser) {
+          await freshBrowser.close().catch(() => {});
+        }
+        await api.dispose();
+      }
+    });
+  }
+});
+
+test('@mutation tenant-admin event create rejects stale selected event type with inline 422', async () => {
+  test.setTimeout(600000);
+  const baseUrl = requireTenantUrl();
+  const api = await createApiContext(baseUrl);
+  let browserContext;
+  let freshBrowser;
+  let session = null;
+  let eventTypeId = null;
+  let primaryError = null;
+
+  try {
+    logStep('event-422', 'test start');
+    session = await loginTenantAdmin(api, baseUrl);
+    logStep('event-422', 'tenant admin login completed');
+    const unique = Date.now();
+    const eventTypeName = `PW Stale Event Type ${unique}`;
+    const eventTypeSlug = `pw-stale-event-type-${unique}`;
+    const createdEventType = normalizePayload(
+      await createEventType(api, baseUrl, session.token, {
+        name: eventTypeName,
+        slug: eventTypeSlug,
+        allowedTaxonomies: [],
+      }),
+    );
+    eventTypeId = createdEventType?.id?.toString() || null;
+    expect(eventTypeId, 'Stale selected event type must be created.').toBeTruthy();
+    logStep('event-422', `event type seeded ${eventTypeId}`);
+
+    const pageBundle = await createFreshAuthenticatedTenantAdminPage(session);
+    logStep('event-422', 'fresh authenticated page created');
+    freshBrowser = pageBundle.browser;
+    browserContext = pageBundle.context;
+    const page = pageBundle.page;
+    const collectors = installFailureCollectors(page);
+
+    const response = await page.goto(buildApiUrl(baseUrl, '/admin/events'), {
+      waitUntil: 'domcontentloaded',
+    });
+    expect(response, 'Tenant-admin events route must respond.').not.toBeNull();
+    expect(response.status()).toBeLessThan(400);
+    logStep('event-422', `events list responded ${response.status()}`);
+    await assertAppBooted(page);
+    logStep('event-422', 'events app boot completed');
+    await enableAccessibilityIfNeeded(page);
+    logStep('event-422', 'events accessibility enabled');
+
+    const newEventButton = page.getByRole('button', { name: 'Novo evento' }).first();
+    await scrollUntilVisible(
+      page,
+      newEventButton,
+      'Expected tenant-admin events list to expose the Novo evento action.',
+    );
+    logStep('event-422', 'new event button visible');
+    const createRoutePromise = page.waitForURL(
+      (candidate) => candidate.pathname.endsWith('/admin/events/create'),
+      {
+        timeout: appBootTimeoutMs,
+      },
+    );
+    await newEventButton.click();
+    logStep('event-422', 'new event button clicked');
+    await createRoutePromise;
+    logStep('event-422', `create route opened ${page.url()}`);
+    await expect(page.getByRole('button', { name: 'Criar evento' }).last()).toBeVisible({
+      timeout: appBootTimeoutMs,
+    });
+    logStep('event-422', 'create form opened');
+
+    await fillFlutterTextField(page, 'Título', `PW Invalid Event ${unique}`);
+    logStep('event-422', 'title filled');
+    await scrollUntilVisible(
+      page,
+      page.getByText('Tipo de evento').first(),
+      'Expected the event type section to become reachable in the create form.',
+    );
+    logStep('event-422', 'event type section visible');
+    await selectDropdownOption(page, {
+      flow: 'event-422',
+      fieldLabel: 'Tipo',
+      optionText: eventTypeName,
+      logStep,
+    });
+    await page.waitForTimeout(250);
+    logStep('event-422', 'event type selected');
+    await scrollUntilVisible(
+      page,
+      page.getByText('Localização').first(),
+      'Expected the location section to become reachable in the create form.',
+    );
+    logStep('event-422', 'location section visible');
+    await selectDropdownOption(page, {
+      flow: 'event-422',
+      fieldLabel: 'Modo',
+      optionText: 'Online',
+      logStep,
+    });
+    logStep('event-422', 'online mode selected');
+    await fillFlutterTextField(page, 'URL online', 'https://example.com/live');
+    logStep('event-422', 'online URL filled');
+    await clickVisibleAddOccurrenceAffordance(page);
+    await closeOccurrenceEditorSheet(page);
+    logStep('event-422', 'default occurrence draft added');
+    await expect(
+      page.getByRole('button', { name: 'Editar ocorrência principal' }),
+    ).toBeVisible({
+      timeout: appBootTimeoutMs,
+    });
+
+    await deleteEventType(api, baseUrl, session.token, eventTypeId);
+    eventTypeId = null;
+    logStep('event-422', 'selected event type deleted via API');
+
+    const createRequestPromise = page.waitForResponse((candidate) => {
+      return (
+        candidate.request().method() === 'POST' &&
+        candidate.url().includes('/admin/api/v1/events')
+      );
+    });
+
+    await Promise.all([
+      createRequestPromise,
+      page.getByRole('button', { name: 'Criar evento' }).last().click(),
+    ]);
+
+    const createRequest = await createRequestPromise;
+    logStep('event-422', `backend responded ${createRequest.status()}`);
+    expect(
+      createRequest.status(),
+      'Stale selected event type must fail with backend 422 instead of succeeding silently.',
+    ).toBe(422);
+    const payload = await createRequest.json();
+    const eventTypeErrors = normalizeList(
+      payload?.errors?.['type.id'] || payload?.fieldErrors?.['type.id'],
+    );
+    expect(eventTypeErrors.length).toBeGreaterThan(0);
+    await scrollTenantAdminSheetToTop(page);
+    await scrollUntilVisible(
+      page,
+      page.getByText('Tipo de evento').first(),
+      'Expected the event type section to remain reachable after the stale-type 422 response.',
+    );
+    await expect(page.getByText(eventTypeErrors[0])).toBeVisible({
+      timeout: appBootTimeoutMs,
+    });
+    logStep('event-422', 'inline validation rendered');
+
+    const createEventButton = page.getByRole('button', { name: 'Criar evento' }).last();
+    await scrollUntilVisible(
+      page,
+      createEventButton,
+      'Expected the create-event submit action to remain reachable after the stale-type 422 response.',
+    );
+    await expect(createEventButton).toBeVisible({
+      timeout: appBootTimeoutMs,
+    });
+    logStep('event-422', 'submit button remains visible after 422');
+
+    await assertNoBrowserFailures(collectors, {
+      allowedConsoleErrorSubstrings: [
+        'Failed to load resource: the server responded with a status of 422 ()',
+      ],
+    });
+    logStep('event-422', 'browser assertions completed');
+  } catch (error) {
+    primaryError = error;
+    throw error;
+  } finally {
+    await runCleanupPreservingPrimaryError(primaryError, async () => {
+      try {
+        if (eventTypeId && session?.token) {
+          logStep('event-422', 'cleanup stale event type');
+          await deleteEventType(api, baseUrl, session.token, eventTypeId);
+        }
+      } finally {
+        if (browserContext) {
+          logStep('event-422', 'cleanup close browser context');
+          await browserContext.close().catch(() => {});
+        }
+        if (freshBrowser) {
+          logStep('event-422', 'cleanup close fresh browser');
+          await freshBrowser.close().catch(() => {});
+        }
+        logStep('event-422', 'cleanup dispose api');
+        await api.dispose();
+        logStep('event-422', 'cleanup completed');
+      }
+    });
   }
 });
 
