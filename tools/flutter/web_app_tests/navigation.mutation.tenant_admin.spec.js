@@ -3037,6 +3037,11 @@ test('@mutation tenant-admin account-profile edit save keeps Display Name visibl
       page.getByText('Galerias de fotos'),
       'Expected gallery section to remain available after clear-all save.',
     );
+    await scrollUntilVisible(
+      page,
+      page.getByLabel('Nome de exibicao').first(),
+      'Expected the final edit reload to keep the Display Name field reachable after clear-all save.',
+    );
     await expectFlutterFieldRenderedValue(
       page.getByLabel('Nome de exibicao').first(),
       updatedDisplayName,
@@ -4537,7 +4542,7 @@ test('@mutation tenant-admin account onboarding rejects stale selected profile t
     }
     await assertNoBrowserFailures(collectors, {
       allowedConsoleErrorSubstrings: [
-        'Failed to load resource: the server responded with a status of 422 ()',
+        'Failed to load resource: the server responded with a status of 422',
       ],
     });
     logStep('account-422', 'browser assertions completed');
@@ -5001,7 +5006,7 @@ test('@mutation tenant-admin event create rejects stale selected event type with
 
     await assertNoBrowserFailures(collectors, {
       allowedConsoleErrorSubstrings: [
-        'Failed to load resource: the server responded with a status of 422 ()',
+        'Failed to load resource: the server responded with a status of 422',
       ],
     });
     logStep('event-422', 'browser assertions completed');
