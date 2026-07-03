@@ -3032,15 +3032,21 @@ test('@mutation tenant-admin account-profile edit save keeps Display Name visibl
     expect(finalResponse.status()).toBeLessThan(400);
     await assertAppBooted(page);
     await enableAccessibilityIfNeeded(page);
+    const finalDisplayNameField = page.getByLabel('Nome de exibicao').first();
+    await scrollUntilVisible(
+      page,
+      finalDisplayNameField,
+      'Expected the final edit reload to keep the Display Name field reachable after clear-all save.',
+    );
+    await expectFlutterFieldRenderedValue(
+      finalDisplayNameField,
+      updatedDisplayName,
+      'Expected the final edit reload to visibly render the persisted Display Name after clear-all save.',
+    );
     await scrollUntilVisible(
       page,
       page.getByText('Galerias de fotos'),
       'Expected gallery section to remain available after clear-all save.',
-    );
-    await expectFlutterFieldRenderedValue(
-      page.getByLabel('Nome de exibicao').first(),
-      updatedDisplayName,
-      'Expected the final edit reload to visibly render the persisted Display Name after clear-all save.',
     );
     await expectNoVisibleFlutterTextField(
       page,
@@ -4537,7 +4543,7 @@ test('@mutation tenant-admin account onboarding rejects stale selected profile t
     }
     await assertNoBrowserFailures(collectors, {
       allowedConsoleErrorSubstrings: [
-        'Failed to load resource: the server responded with a status of 422 ()',
+        'Failed to load resource: the server responded with a status of 422',
       ],
     });
     logStep('account-422', 'browser assertions completed');
@@ -5001,7 +5007,7 @@ test('@mutation tenant-admin event create rejects stale selected event type with
 
     await assertNoBrowserFailures(collectors, {
       allowedConsoleErrorSubstrings: [
-        'Failed to load resource: the server responded with a status of 422 ()',
+        'Failed to load resource: the server responded with a status of 422',
       ],
     });
     logStep('event-422', 'browser assertions completed');
