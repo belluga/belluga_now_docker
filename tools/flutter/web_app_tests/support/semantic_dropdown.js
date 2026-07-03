@@ -4,8 +4,20 @@ function cssAttributeValue(value) {
   return JSON.stringify(value).replace(/'/g, "\\'");
 }
 
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function buildFieldPrefixRegex(value) {
+  return new RegExp(`^${escapeRegExp(value)}(?:\\b|\\n)`, 'i');
+}
+
 function optionLocators(page, optionText) {
   return [
+    {
+      locator: page.getByText(optionText, { exact: true }),
+      strategy: 'exact text',
+    },
     {
       locator: page.getByRole('option', { name: optionText }),
       strategy: 'role',
@@ -64,7 +76,7 @@ async function searchDropdownOptions(page, optionText, record) {
   await page.keyboard.type(optionText, { delay: 5 });
 }
 
-async function waitForDropdownSurface(page, optionText, timeout = 1500) {
+async function waitForDropdownSurface(page, optionText, timeout = 3000) {
   const locationSearchField = page.getByRole('textbox', {
     name: /Buscar local/i,
   });
@@ -94,7 +106,7 @@ async function waitForOption(page, optionText) {
   return resolveOption(page, optionText);
 }
 
-async function clickFirstVisible(locator) {
+async function clickFirstVisible(locator, clickOptions = {}) {
   const count = await locator.count();
   let visibleLocator = null;
 
@@ -112,7 +124,10 @@ async function clickFirstVisible(locator) {
     return false;
   }
 
-  await visibleLocator.click({ timeout: 1500 });
+  await visibleLocator.click({
+    timeout: 1500,
+    ...clickOptions,
+  });
   return true;
 }
 
@@ -134,8 +149,18 @@ async function selectDropdownOption(
 
   const triggerCandidates = [
     {
-      locator: page.getByRole('button', {
+      locator: page.getByLabel(fieldLabel),
+      description: `labeled dropdown ${fieldLabel}`,
+    },
+    {
+      locator: page.getByRole('combobox', {
         name: new RegExp(fieldLabel, 'i'),
+      }),
+      description: `combobox ${fieldLabel}`,
+    },
+    {
+      locator: page.getByRole('button', {
+        name: buildFieldPrefixRegex(fieldLabel),
       }),
       description: `dropdown ${fieldLabel}`,
     },
@@ -143,16 +168,12 @@ async function selectDropdownOption(
       ? [
           {
             locator: page.getByRole('button', {
-              name: new RegExp(fallbackButtonName, 'i'),
+              name: buildFieldPrefixRegex(fallbackButtonName),
             }),
             description: `fallback dropdown ${fallbackButtonName}`,
           },
         ]
       : []),
-    {
-      locator: page.getByLabel(fieldLabel),
-      description: `labeled dropdown ${fieldLabel}`,
-    },
   ];
 
   let openAttempted = false;
@@ -168,12 +189,16 @@ async function selectDropdownOption(
 
       openAttempted = true;
       record(`open ${trigger.description}`);
-      const clicked = await clickFirstVisible(trigger.locator);
+      const clicked = await clickFirstVisible(trigger.locator, {
+        noWaitAfter: true,
+      });
       if (!clicked) {
         continue;
       }
+      record(`clicked ${trigger.description}`);
       surfaceOpened = await waitForDropdownSurface(page, optionText);
       if (surfaceOpened) {
+        record(`dropdown surface visible for ${fieldLabel}`);
         break;
       }
       if (!failedTriggerDescriptions.has(trigger.description)) {
@@ -196,9 +221,18 @@ async function selectDropdownOption(
   ).toBe(true);
 
   await searchDropdownOptions(page, optionText, record);
+  record(`wait for option ${optionText}`);
   const option = await waitForOption(page, optionText);
+  record(`resolved option ${optionText} via ${option.strategy}`);
   record(`select option ${optionText} via ${option.strategy}`);
-  await option.locator.last().click();
+  const clickedOption = await clickFirstVisible(option.locator, {
+    noWaitAfter: true,
+  });
+  expect(
+    clickedOption,
+    `Dropdown option "${optionText}" must expose at least one visible clickable candidate.`,
+  ).toBe(true);
+  record(`clicked option ${optionText}`);
 }
 
 module.exports = {

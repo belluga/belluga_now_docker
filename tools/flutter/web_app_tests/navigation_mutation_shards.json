@@ -57,6 +57,20 @@
           "@mutation tenant-admin event occurrence FAB persists second occurrence and public detail selects it"
         ]
       },
+      "admin-accounts": {
+        "grep_extra": "(?:account onboarding CRUD persists detail/edit readback and delete flow|account onboarding rejects stale selected profile type)",
+        "expected_titles": [
+          "@mutation tenant-admin account onboarding CRUD persists detail/edit readback and delete flow",
+          "@mutation tenant-admin account onboarding rejects stale selected profile type with inline 422"
+        ]
+      },
+      "admin-events": {
+        "grep_extra": "(?:event CRUD creates, reopens edit readback, and removes from manager|event create rejects stale selected event type)",
+        "expected_titles": [
+          "@mutation tenant-admin event CRUD creates, reopens edit readback, and removes from manager",
+          "@mutation tenant-admin event create rejects stale selected event type with inline 422"
+        ]
+      },
       "admin-final": {
         "grep_extra": "(?:cover upload|avatar upload|edit save keeps Display Name visible|nested tabs obey|event type create|event type type asset|branding public|profile-type editors|tenant agenda UI|T6-PLURAL)",
         "expected_titles": [
