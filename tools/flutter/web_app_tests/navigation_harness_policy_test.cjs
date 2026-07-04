@@ -397,6 +397,22 @@ function assertFailsForSource(name, source, expectedMessage) {
   });
 }
 
+function assertFailsForSourceWithEnv(name, source, expectedMessage, envOverrides) {
+  withTempDir((dir) => {
+    fs.writeFileSync(path.join(dir, `${name}.spec.js`), source);
+    const result = run('node', [guardScript], {
+      NAV_WEB_TESTS_DIR: dir,
+      ...envOverrides,
+    });
+    assert.notStrictEqual(result.status, 0, `${name} should fail closed`);
+    assert.match(
+      `${result.stdout}\n${result.stderr}`,
+      expectedMessage,
+      `${name} should explain the policy violation`,
+    );
+  });
+}
+
 function assertGuardPassesCleanFixture() {
   withTempDir((dir) => {
     fs.writeFileSync(
@@ -405,6 +421,27 @@ function assertGuardPassesCleanFixture() {
     );
     const result = run('node', [guardScript], {
       NAV_WEB_TESTS_DIR: dir,
+    });
+    assert.strictEqual(result.status, 0, result.stderr);
+  });
+}
+
+function assertStrictDataGuardPassesCleanFixture() {
+  withTempDir((dir) => {
+    fs.writeFileSync(
+      path.join(dir, 'clean.spec.js'),
+      [
+        'async function chooseSeeded(seededCandidates, minimum) {',
+        '  return {',
+        '    candidates: seededCandidates.slice(0, minimum),',
+        '  };',
+        '}',
+        '',
+      ].join('\n'),
+    );
+    const result = run('node', [guardScript], {
+      NAV_WEB_TESTS_DIR: dir,
+      NAV_WEB_POLICY_STRICT_DATA: '1',
     });
     assert.strictEqual(result.status, 0, result.stderr);
   });
@@ -1410,7 +1447,7 @@ function assertSmokeRunnerLoadsLocalNavigationEnv() {
     assert.notStrictEqual(result.status, 0, 'unknown shard should fail after env loads');
     assert.match(
       combinedOutput,
-      /Web navigation policy check passed \(lane=orchestrator, suite=mutation\)\./,
+      /Web navigation policy check passed \(lane=orchestrator, suite=mutation, strict_data_contracts=on\)\./,
       'local navigation env should load before the runner reaches shard validation',
     );
     assert.doesNotMatch(
@@ -1470,7 +1507,7 @@ function assertSmokeRunnerPreservesExplicitNonLocalOptIn() {
     );
     assert.match(
       combinedOutput,
-      /Web navigation policy check passed \(lane=dev, suite=mutation\)\./,
+      /Web navigation policy check passed \(lane=dev, suite=mutation, strict_data_contracts=on\)\./,
       'explicit shell opt-in must win over env-file stale values before shard resolution aborts',
     );
     assert.doesNotMatch(
@@ -1552,7 +1589,7 @@ function assertUnknownShardClearsReusedOutputDir() {
     );
     assert.match(
       refreshedPolicyGuardLog,
-      /Web navigation policy check passed \(lane=dev, suite=mutation\)\./,
+      /Web navigation policy check passed \(lane=dev, suite=mutation, strict_data_contracts=on\)\./,
       'runner should materialize fresh policy-guard output when reusing an explicit output dir',
     );
   });
@@ -1706,7 +1743,7 @@ function assertNonLocalMutationHostsRequireExplicitOptIn() {
     assert.notStrictEqual(allowed.status, 0, 'unknown shard should still fail after explicit host opt-in');
     assert.match(
       allowedOutput,
-      /Web navigation policy check passed \(lane=dev, suite=mutation\)\./,
+      /Web navigation policy check passed \(lane=dev, suite=mutation, strict_data_contracts=on\)\./,
       'explicit host opt-in should let the runner progress past the policy guard before shard resolution aborts',
     );
     assert.doesNotMatch(
@@ -1968,7 +2005,7 @@ function assertIpv6LoopbackCountsAsLocalHostForRunner() {
   );
   assert.match(
     combinedOutput,
-    /Web navigation policy check passed \(lane=local, suite=mutation\)\./,
+    /Web navigation policy check passed \(lane=local, suite=mutation, strict_data_contracts=on\)\./,
     'IPv6 loopback runner probe should reach shard resolution after treating ::1 as local',
   );
   assert.doesNotMatch(
@@ -2612,6 +2649,7 @@ function assertCheckedInManifestMatchesCurrentSpecTitles() {
 }
 
 assertGuardPassesCleanFixture();
+assertStrictDataGuardPassesCleanFixture();
 assertStageMutationWorkflowSuppliesRuntimeCredentials();
 assertStageWorkflowIntentionallyOmitsDiagnosticSuite();
 assertPublishedLaneProofRemainsPipelineOnly();
@@ -2726,6 +2764,57 @@ assertFailsForSource(
   'local-dropdown-helper-export',
   'exports.' + 'selectDropdown' + 'Option = async page => page;\n',
   /dropdown helper logic must be centralized/,
+);
+
+assertFailsForSourceWithEnv(
+  'ambient-rows-fallback',
+  [
+    'async function bad(rows, hydrate) {',
+    '  const profile = rows[0] ? await hydrate(rows[0]) : null;',
+    '  return profile;',
+    '}',
+    '',
+  ].join('\n'),
+  /ambient rows\[0\]\/candidates\[0\] fallback/,
+  { NAV_WEB_POLICY_STRICT_DATA: '1' },
+);
+
+assertFailsForSourceWithEnv(
+  'ambient-candidates-fallback',
+  [
+    'function bad(candidates) {',
+    '  return candidates.find(Boolean) || candidates[0] || null;',
+    '}',
+    '',
+  ].join('\n'),
+  /ambient rows\[0\]\/candidates\[0\] fallback/,
+  { NAV_WEB_POLICY_STRICT_DATA: '1' },
+);
+
+assertFailsForSourceWithEnv(
+  'ambient-host-candidate-fallback',
+  [
+    'async function bad(hostCandidates, createPhysicalHost) {',
+    '  return hostCandidates[0] || (await createPhysicalHost());',
+    '}',
+    '',
+  ].join('\n'),
+  /hostCandidates\[0\] from ambient registry data/,
+  { NAV_WEB_POLICY_STRICT_DATA: '1' },
+);
+
+assertFailsForSourceWithEnv(
+  'ambient-candidate-slice',
+  [
+    'function bad(candidates, minimum) {',
+    '  return {',
+    '    candidates: candidates.slice(0, minimum),',
+    '  };',
+    '}',
+    '',
+  ].join('\n'),
+  /candidates\.slice\(0, minimum\) from ambient candidate pools/,
+  { NAV_WEB_POLICY_STRICT_DATA: '1' },
 );
 
 assertFailsForSource(

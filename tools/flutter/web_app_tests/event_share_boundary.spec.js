@@ -156,25 +156,6 @@ async function deleteAccountProfileType(api, baseUrl, token, profileType) {
   expectDeleteSucceeded(response, `Account profile type ${profileType}`);
 }
 
-async function fetchPhysicalHostCandidates(api, baseUrl, token) {
-  const url = new URL(
-    buildUrl(baseUrl, '/admin/api/v1/events/account_profile_candidates'),
-  );
-  url.searchParams.set('type', 'physical_host');
-  url.searchParams.set('page', '1');
-  url.searchParams.set('page_size', '20');
-  const response = await api.get(url.toString(), {
-    headers: authHeaders(token),
-  });
-  expect(
-    response.status(),
-    'Tenant-admin physical host candidates must load for event share seed.',
-  ).toBe(200);
-  const payload = await response.json();
-  const rows = Array.isArray(payload?.data) ? payload.data : [];
-  return rows.filter((row) => row?.id?.toString().trim());
-}
-
 async function resolvePoiCapableProfileType(api, baseUrl, token) {
   const response = await api.get(
     buildUrl(baseUrl, '/admin/api/v1/account_profile_types'),
@@ -281,15 +262,12 @@ async function createSeedEvent(api, baseUrl, token) {
   const createdAccountSlugs = [];
   const createdProfileTypes = [];
   try {
-    const hostCandidates = await fetchPhysicalHostCandidates(api, baseUrl, token);
-    const physicalHost =
-      hostCandidates[0] ||
-      (await createPhysicalHost(
-        api,
-        baseUrl,
-        token,
-        `PW Event Share Host ${uniqueSuffix}`,
-      ));
+    const physicalHost = await createPhysicalHost(
+      api,
+      baseUrl,
+      token,
+      `PW Event Share Host ${uniqueSuffix}`,
+    );
     if (physicalHost.cleanupAccountSlug) {
       createdAccountSlugs.push(physicalHost.cleanupAccountSlug);
     }
