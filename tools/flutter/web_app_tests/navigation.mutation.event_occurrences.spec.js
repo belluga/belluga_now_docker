@@ -17,6 +17,7 @@ const tenantUrl = process.env.NAV_TENANT_URL;
 const appBootTimeoutMs = 90000;
 const apiRequestTimeoutMs = 30000;
 const navigationRunId = (process.env.NAV_TEST_RUN_ID || 'local').trim();
+const publicAgendaUiPageSize = 10;
 const fallbackFixtureImageBase64 =
   'iVBORw0KGgoAAAANSUhEUgAAAQAAAAEACAYAAABccqhmAAADIElEQVR4nO3UIQEAIBDAwI9AZWKRDmIgduL81GadfYGm+R0A/GMAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEPYAluQiSDn9lCoAAAAASUVORK5CYII=';
 let generatedFixtureImageBuffer = null;
@@ -1494,15 +1495,15 @@ async function fetchPublicEvent(api, baseUrl, eventRef, occurrenceId = null) {
   return payload?.data;
 }
 
-async function fetchAgendaOccurrenceIdsForTitle(api, baseUrl, title) {
+async function fetchAgendaMatchesForTitle(api, baseUrl, title) {
   const normalizedTitle = title?.toString().trim();
   expect(normalizedTitle, 'Agenda occurrence lookup requires a title.').toBeTruthy();
 
-  const occurrenceIds = [];
+  const matches = [];
   for (let page = 1; page <= 10; page += 1) {
     const url = new URL(buildApiUrl(baseUrl, '/api/v1/agenda'));
     url.searchParams.set('page', page.toString());
-    url.searchParams.set('page_size', '20');
+    url.searchParams.set('page_size', publicAgendaUiPageSize.toString());
     const response = await api.get(url.toString(), {
       headers: await tenantPublicAuthHeaders(
         api,
@@ -1523,7 +1524,11 @@ async function fetchAgendaOccurrenceIdsForTitle(api, baseUrl, title) {
       }
       const occurrenceId = row?.occurrence_id?.toString().trim() || '';
       if (occurrenceId) {
-        occurrenceIds.push(occurrenceId);
+        matches.push({
+          occurrenceId,
+          row,
+          page,
+        });
       }
     }
     if (rows.length === 0) {
@@ -1531,54 +1536,25 @@ async function fetchAgendaOccurrenceIdsForTitle(api, baseUrl, title) {
     }
   }
 
+  return matches;
+}
+
+async function fetchAgendaOccurrenceIdsForTitle(api, baseUrl, title) {
+  const matches = await fetchAgendaMatchesForTitle(api, baseUrl, title);
+  const occurrenceIds = matches.map((match) => match.occurrenceId);
   return occurrenceIds;
 }
 
 async function fetchAgendaOccurrenceIdForTitle(api, baseUrl, title) {
-  const occurrenceIds = await fetchAgendaOccurrenceIdsForTitle(
-    api,
-    baseUrl,
-    title,
-  );
-  return occurrenceIds[0] || '';
+  const matches = await fetchAgendaMatchesForTitle(api, baseUrl, title);
+  return matches[0]?.occurrenceId || '';
 }
 
 async function fetchAgendaRowsForTitle(api, baseUrl, title) {
-  const normalizedTitle = title?.toString().trim();
-  expect(normalizedTitle, 'Agenda occurrence row lookup requires a title.').toBeTruthy();
-
   const rowsByOccurrenceId = new Map();
-  for (let page = 1; page <= 10; page += 1) {
-    const url = new URL(buildApiUrl(baseUrl, '/api/v1/agenda'));
-    url.searchParams.set('page', page.toString());
-    url.searchParams.set('page_size', '20');
-    const response = await api.get(url.toString(), {
-      headers: await tenantPublicAuthHeaders(
-        api,
-        baseUrl,
-        'Public agenda occurrence row lookup',
-      ),
-    });
-    expect(response.status(), 'Public agenda occurrence row lookup must succeed.')
-      .toBe(200);
-    const payload = await response.json();
-    const rows = Array.isArray(payload?.items)
-      ? payload.items
-      : Array.isArray(payload?.data)
-        ? payload.data
-        : [];
-    for (const row of rows) {
-      if (row?.title?.toString().trim() !== normalizedTitle) {
-        continue;
-      }
-      const occurrenceId = row?.occurrence_id?.toString().trim() || '';
-      if (occurrenceId) {
-        rowsByOccurrenceId.set(occurrenceId, row);
-      }
-    }
-    if (rows.length === 0) {
-      break;
-    }
+  const matches = await fetchAgendaMatchesForTitle(api, baseUrl, title);
+  for (const match of matches) {
+    rowsByOccurrenceId.set(match.occurrenceId, match.row);
   }
 
   return Array.from(rowsByOccurrenceId.values());
@@ -2344,6 +2320,12 @@ async function clickImmersiveTab(
     `Immersive tab "${title}" must expose a semantic button target.`,
   ).toBeVisible({ timeout: appBootTimeoutMs });
   await target.click({ timeout: appBootTimeoutMs });
+  await expect
+    .poll(() => isImmersiveTabSelected(page, title), {
+      timeout: appBootTimeoutMs,
+      message: `Immersive tab "${title}" must expose selected semantics after activation.`,
+    })
+    .toBe(true);
   if (confirmationLocator) {
     await expect(
       confirmationLocator,
@@ -2356,6 +2338,31 @@ async function clickImmersiveTab(
       `Immersive tab "${title}" must activate visibly.`,
     );
   }
+}
+
+async function isImmersiveTabSelected(page, title) {
+  return page
+    .getByRole('button', { name: new RegExp(`^${escapeRegExp(title)}$`) })
+    .first()
+    .evaluate((element) => {
+      let current = element;
+      for (let depth = 0; depth < 8 && current; depth += 1) {
+        const selected =
+          current.getAttribute('aria-selected') ||
+          current.getAttribute('data-selected') ||
+          '';
+        const currentState = current.getAttribute('aria-current') || '';
+        if (
+          selected === 'true' ||
+          (currentState && currentState !== 'false')
+        ) {
+          return true;
+        }
+        current = current.parentElement;
+      }
+      return false;
+    })
+    .catch(() => false);
 }
 
 async function clickLocatorCenter(page, locator, description) {
@@ -2371,7 +2378,7 @@ async function waitForTextInViewport(page, text, description) {
     .toBeGreaterThan(0, description);
 }
 
-async function scrollUntilTextInViewport(page, text, description) {
+async function scrollScrollableViewport(page, deltaY) {
   const viewport =
     page.viewportSize() ||
     (await page.evaluate(() => ({
@@ -2379,9 +2386,36 @@ async function scrollUntilTextInViewport(page, text, description) {
       height: window.innerHeight,
     })));
   await page.mouse.move(viewport.width * 0.62, viewport.height * 0.72);
+  await page.mouse.wheel(0, deltaY).catch(() => {});
+  await page.evaluate(
+    ({ xRatio, yRatio, delta }) => {
+      const x = window.innerWidth * xRatio;
+      const y = window.innerHeight * yRatio;
+      let current = document.elementFromPoint(x, y);
+      while (current) {
+        if (
+          current instanceof HTMLElement &&
+          current.scrollHeight > current.clientHeight + 1
+        ) {
+          current.scrollBy(0, delta);
+          return true;
+        }
+        current = current.parentElement;
+      }
+      window.scrollBy(0, delta);
+      return false;
+    },
+    {
+      xRatio: 0.62,
+      yRatio: 0.72,
+      delta: deltaY,
+    },
+  ).catch(() => false);
+}
 
+async function scrollUntilTextInViewport(page, text, description) {
   for (let attempt = 0; attempt < 8; attempt += 1) {
-    await page.mouse.wheel(0, -900);
+    await scrollScrollableViewport(page, -900);
     await page.waitForTimeout(100);
   }
 
@@ -2389,7 +2423,7 @@ async function scrollUntilTextInViewport(page, text, description) {
     if ((await countTextInViewport(page, text)) > 0) {
       return;
     }
-    await page.mouse.wheel(0, 700);
+    await scrollScrollableViewport(page, 900);
     await page.waitForTimeout(250);
   }
 
@@ -2397,8 +2431,24 @@ async function scrollUntilTextInViewport(page, text, description) {
     if ((await countTextInViewport(page, text)) > 0) {
       return;
     }
-    await page.mouse.wheel(0, -700);
+    await scrollScrollableViewport(page, -700);
     await page.waitForTimeout(250);
+  }
+
+  await waitForTextInViewport(page, text, description);
+}
+
+async function scrollDownUntilTextInViewport(page, text, description) {
+  if ((await countTextInViewport(page, text)) > 0) {
+    return;
+  }
+
+  for (let attempt = 0; attempt < 24; attempt += 1) {
+    await scrollScrollableViewport(page, 900);
+    await page.waitForTimeout(250);
+    if ((await countTextInViewport(page, text)) > 0) {
+      return;
+    }
   }
 
   await waitForTextInViewport(page, text, description);
@@ -2771,6 +2821,66 @@ async function expectAnyVisibleMatch(locator, message) {
     .toBeGreaterThan(0);
 }
 
+function matchesAgendaPageResponse(candidate, baseUrl, expectedPage) {
+  const method = candidate.request().method().toUpperCase();
+  if (method !== 'GET') {
+    return false;
+  }
+
+  const actual = new URL(candidate.url());
+  const expected = new URL(buildApiUrl(baseUrl, '/api/v1/agenda'));
+  return (
+    actual.origin === expected.origin &&
+    actual.pathname === expected.pathname &&
+    (actual.searchParams.get('page') || '1') === expectedPage.toString()
+  );
+}
+
+async function revealPublicAgendaCard(page, baseUrl, titlePattern) {
+  if ((await countTextInViewport(page, titlePattern)) > 0) {
+    return;
+  }
+
+  let nextPage = 2;
+  let hasMore = true;
+  while (hasMore && nextPage <= 10) {
+    const nextPageResponsePromise = page
+      .waitForResponse(
+        (candidate) => matchesAgendaPageResponse(candidate, baseUrl, nextPage),
+        { timeout: 8000 },
+      )
+      .catch(() => null);
+
+    for (let attempt = 0; attempt < 14; attempt += 1) {
+      if ((await countTextInViewport(page, titlePattern)) > 0) {
+        return;
+      }
+      await scrollScrollableViewport(page, 1200);
+      await page.waitForTimeout(200);
+    }
+
+    const nextPageResponse = await nextPageResponsePromise;
+    if (!nextPageResponse) {
+      break;
+    }
+
+    expect(
+      nextPageResponse.status(),
+      `Public agenda pagination page ${nextPage} must succeed before agenda-card navigation assertions.`,
+    ).toBe(200);
+    const payload = await nextPageResponse.json().catch(() => ({}));
+    hasMore =
+      payload?.has_more === true ||
+      payload?.data?.has_more === true ||
+      payload?.items?.length === publicAgendaUiPageSize ||
+      payload?.data?.items?.length === publicAgendaUiPageSize;
+    if ((await countTextInViewport(page, titlePattern)) > 0) {
+      return;
+    }
+    nextPage += 1;
+  }
+}
+
 async function openPublicAgendaCardAndReturn(
   page,
   baseUrl,
@@ -2787,6 +2897,7 @@ async function openPublicAgendaCardAndReturn(
 
   const titlePattern = new RegExp(escapeRegExp(uniqueTitle));
   const title = page.getByText(titlePattern).first();
+  await revealPublicAgendaCard(page, baseUrl, titlePattern);
   await scrollUntilTextInViewport(
     page,
     titlePattern,
@@ -4296,6 +4407,9 @@ test('@mutation tenant-admin event occurrence FAB persists second occurrence and
     );
     await navStep('NAV-09', async () => {
       const mapCard = publicPage.getByText(/Ver no mapa/i).first();
+      const relatedLocationsHeading = publicPage.getByText(
+        'Outros endereços relacionados',
+      ).first();
       await clickImmersiveTab(publicPage, 'Como Chegar', {
         confirmationLocator: mapCard,
       });
@@ -4322,7 +4436,7 @@ test('@mutation tenant-admin event occurrence FAB persists second occurrence and
       await expect(publicPage.getByText(physicalHost.display_name).first())
         .toBeVisible({ timeout: appBootTimeoutMs });
       await expect(
-        publicPage.getByText('Outros endereços relacionados').first(),
+        relatedLocationsHeading,
       ).toBeVisible({ timeout: appBootTimeoutMs });
       await expect(publicPage.getByText('Local da programação')).toHaveCount(0);
       await expect
@@ -4333,7 +4447,12 @@ test('@mutation tenant-admin event occurrence FAB persists second occurrence and
           0,
           'Location-less programação items must not become visible Como Chegar destinations.',
         );
-      await scrollUntilTextInViewport(
+      await expect
+        .poll(() => isImmersiveTabSelected(publicPage, 'Como Chegar'), {
+          timeout: appBootTimeoutMs,
+        })
+        .toBe(true);
+      await scrollDownUntilTextInViewport(
         publicPage,
         programmed.programmingHost.display_name,
         'Programação item Account Profile/POI location must be listed in Como Chegar.',
@@ -4345,13 +4464,34 @@ test('@mutation tenant-admin event occurrence FAB persists second occurrence and
       );
     });
     await navStep('NAV-10', async () => {
+      const relatedLocationsHeading = publicPage.getByText(
+        'Outros endereços relacionados',
+      ).first();
       await expect
         .poll(
-          () =>
-            countTextInViewport(
+          async () => {
+            if (!(await isImmersiveTabSelected(publicPage, 'Como Chegar'))) {
+              await clickImmersiveTab(publicPage, 'Como Chegar', {
+                confirmationLocator: relatedLocationsHeading,
+              });
+            }
+            let visibleCount = await countTextInViewport(
               publicPage,
               programmed.programmingHost.display_name,
-            ),
+            );
+            if (visibleCount === 0) {
+              await scrollDownUntilTextInViewport(
+                publicPage,
+                programmed.programmingHost.display_name,
+                'Repeated programação place_ref must become visible inside Como Chegar before dedupe assertions.',
+              );
+              visibleCount = await countTextInViewport(
+                publicPage,
+                programmed.programmingHost.display_name,
+              );
+            }
+            return visibleCount;
+          },
           {
             timeout: appBootTimeoutMs,
           },
