@@ -14,6 +14,10 @@ const {
   locationPayload,
   selectMinimalEmptyStateCandidate,
 } = require('./support/account_profile_detail_empty_state_contract');
+const {
+  fixture: managedTaxonomyFixture,
+  managedFixtureEnabled,
+} = require('./support/public_taxonomy_validation_fixture_contract');
 
 const tenantUrl = process.env.NAV_TENANT_URL;
 const localRuntimeSeedEnabled =
@@ -648,6 +652,45 @@ function taxonomySnapshot(row) {
     .find((term) => term.display && term.value && term.display !== term.value);
 }
 
+function selectDeterministicTaxonomyProfileRow(rows) {
+  return rows
+    .filter((row) => canonicalPublicVisibleName(row))
+    .filter((row) => taxonomySnapshot(row))
+    .reduce((selected, row) => {
+      if (!selected) {
+        return row;
+      }
+
+      const selectedName = canonicalPublicVisibleName(selected);
+      const rowName = canonicalPublicVisibleName(row);
+      if (rowName.length !== selectedName.length) {
+        return rowName.length > selectedName.length ? row : selected;
+      }
+
+      const selectedSlug = textValue(selected?.slug);
+      const rowSlug = textValue(row?.slug);
+      return rowSlug.localeCompare(selectedSlug) < 0 ? row : selected;
+    }, null);
+}
+
+async function resolveReadonlyProofProfile({ rows, hydrate, contextLabel }) {
+  if (managedFixtureEnabled) {
+    const profile = await hydrate(managedTaxonomyFixture.profileSlug);
+    expect(
+      profile,
+      `${contextLabel} requires the managed taxonomy proof profile when NAV_PUBLIC_TAXONOMY_MANAGED_FIXTURE=1.`,
+    ).toBeTruthy();
+    return profile;
+  }
+
+  const selectedRow = selectDeterministicTaxonomyProfileRow(rows);
+  expect(
+    selectedRow,
+    `${contextLabel} requires at least one taxonomy-bearing public Account Profile when the managed fixture is disabled.`,
+  ).toBeTruthy();
+  return hydrate(selectedRow);
+}
+
 async function loadRuntimeProfiles(api, baseUrl) {
   if (!loadRuntimeProfiles.catalogCache) {
     loadRuntimeProfiles.catalogCache = new Map();
@@ -851,14 +894,11 @@ test('@readonly NAV-APD-02..06 and NAV-APD-10 hero, taxonomy, tabs, social remov
   const favoritableProfileTypes = buildFavoritableProfileTypes(
     environment?.profile_types,
   );
-  const taxonomyCandidate = rows.find((row) => taxonomySnapshot(row));
-  const profile = taxonomyCandidate
-    ? await hydrate(taxonomyCandidate)
-    : rows[0]
-      ? await hydrate(rows[0])
-      : null;
-  expect(profile, 'Seed at least one public Account Profile for NAV-APD-02..06.')
-    .toBeTruthy();
+  const profile = await resolveReadonlyProofProfile({
+    rows,
+    hydrate,
+    contextLabel: 'NAV-APD-02..06',
+  });
 
   await openTenantPath(page, baseUrl, `/parceiro/${profile.slug}`);
   await assertVisibleTextOrSemanticLabel(
@@ -928,16 +968,12 @@ test('@readonly NAV-APD-12 mobile breakpoint keeps title and taxonomy chips read
 }) => {
   const baseUrl = requireTenantUrl();
   await page.setViewportSize({ width: 390, height: 844 });
-  const { rows } = await loadRuntimeProfiles(page.request, baseUrl);
-  const candidates = rows
-    .filter((row) => canonicalPublicVisibleName(row))
-    .sort((left, right) => (
-      canonicalPublicVisibleName(right).length
-      - canonicalPublicVisibleName(left).length
-    ));
-  const profile = candidates.find((row) => taxonomySnapshot(row)) || candidates[0];
-  expect(profile, 'Seed at least one public Account Profile for NAV-APD-12.')
-    .toBeTruthy();
+  const { rows, hydrate } = await loadRuntimeProfiles(page.request, baseUrl);
+  const profile = await resolveReadonlyProofProfile({
+    rows,
+    hydrate,
+    contextLabel: 'NAV-APD-12',
+  });
 
   const profileName = canonicalPublicVisibleName(profile, {
     routeSlug: profile.slug,

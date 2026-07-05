@@ -377,25 +377,6 @@ async function createEventType(api, baseUrl, token, uniqueSuffix) {
   return payload?.data;
 }
 
-async function fetchPhysicalHostCandidates(api, baseUrl, token) {
-  const url = new URL(
-    buildUrl(baseUrl, '/admin/api/v1/events/account_profile_candidates'),
-  );
-  url.searchParams.set('type', 'physical_host');
-  url.searchParams.set('page', '1');
-  url.searchParams.set('page_size', '20');
-  const response = await api.get(url.toString(), {
-    headers: authHeaders(token),
-  });
-  expect(
-    response.status(),
-    'Tenant-admin physical host candidates must load for invite session seed.',
-  ).toBe(200);
-  const payload = await response.json();
-  const rows = Array.isArray(payload?.data) ? payload.data : [];
-  return rows.filter((row) => row?.id?.toString().trim());
-}
-
 async function resolvePoiCapableProfileType(api, baseUrl, token) {
   const type = `pw-invite-host-${Date.now()}`;
   const createResponse = await api.post(
@@ -586,17 +567,14 @@ async function createSeedEvent(api, baseUrl, token) {
     const { profileType, createdProfileType: fallbackProfileType } =
       await resolvePoiCapableProfileType(api, baseUrl, token);
     createdProfileType = fallbackProfileType;
-    const hostCandidates = await fetchPhysicalHostCandidates(api, baseUrl, token);
-    const physicalHost =
-      hostCandidates[0] ||
-      (await createPhysicalHost(
-        api,
-        baseUrl,
-        token,
-        `PW Invite Session Host ${uniqueSuffix}`,
-        profileType,
-      ));
-    if (!hostCandidates[0]?.id && physicalHost.account_slug) {
+    const physicalHost = await createPhysicalHost(
+      api,
+      baseUrl,
+      token,
+      `PW Invite Session Host ${uniqueSuffix}`,
+      profileType,
+    );
+    if (physicalHost.account_slug) {
       cleanupAccountSlugs.push(physicalHost.account_slug);
     }
 
