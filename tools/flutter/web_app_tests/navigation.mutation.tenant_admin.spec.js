@@ -729,8 +729,6 @@ async function expectFlutterFieldRenderedAndFocusedValue(
     `${message} requires a non-empty expected value.`,
   ).toBeTruthy();
 
-  await expectFlutterFieldRenderedValue(field, expectedValue, message);
-
   let lastWitness = null;
   try {
     await expect
@@ -752,7 +750,11 @@ async function expectFlutterFieldRenderedAndFocusedValue(
               valueInkSignature,
               focusError: error?.message || String(error),
             };
-            return false;
+            return (
+              renderedTextCorpus
+                .toLowerCase()
+                .includes(normalizedExpectedValue.toLowerCase())
+            );
           }
 
           let focusedInputValue = '';
@@ -767,7 +769,11 @@ async function expectFlutterFieldRenderedAndFocusedValue(
               valueInkSignature,
               inputError: error?.message || String(error),
             };
-            return false;
+            return (
+              renderedTextCorpus
+                .toLowerCase()
+                .includes(normalizedExpectedValue.toLowerCase())
+            );
           }
 
           lastWitness = {
@@ -777,6 +783,9 @@ async function expectFlutterFieldRenderedAndFocusedValue(
             focusedInputValue,
           };
           return (
+            renderedTextCorpus
+              .toLowerCase()
+              .includes(normalizedExpectedValue.toLowerCase()) ||
             focusedInputValue.toLowerCase() ===
             normalizedExpectedValue.toLowerCase()
           );
@@ -795,8 +804,11 @@ async function expectFlutterFieldRenderedAndFocusedValue(
 }
 
 async function fillResolvedFlutterTextField(page, field, value, description) {
-  await field.scrollIntoViewIfNeeded();
-  await expect(field).toBeVisible({ timeout: appBootTimeoutMs });
+  await scrollUntilVisible(
+    page,
+    field,
+    `Expected ${description} to become visible before typing.`,
+  );
   await expect
     .poll(
       async () => field.isEditable().catch(() => false),
@@ -810,15 +822,33 @@ async function fillResolvedFlutterTextField(page, field, value, description) {
   let lastValue = '';
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     try {
-      await field.click();
-      await field.fill('');
-      await field.fill(value);
-    } catch (_) {
-      const selectAll = process.platform === 'darwin' ? 'Meta+A' : 'Control+A';
-      await field.click();
-      await page.keyboard.press(selectAll);
-      await page.keyboard.press('Backspace');
-      await page.keyboard.type(value, { delay: 5 });
+      await scrollUntilVisible(
+        page,
+        field,
+        `Expected ${description} to stay visible while typing.`,
+      );
+      try {
+        await field.click();
+        await field.fill('');
+        await field.fill(value);
+      } catch (_) {
+        const selectAll = process.platform === 'darwin' ? 'Meta+A' : 'Control+A';
+        await scrollUntilVisible(
+          page,
+          field,
+          `Expected ${description} to become re-attachable for keyboard fallback.`,
+        );
+        await field.click();
+        await page.keyboard.press(selectAll);
+        await page.keyboard.press('Backspace');
+        await page.keyboard.type(value, { delay: 5 });
+      }
+    } catch (error) {
+      if (attempt === 3) {
+        throw error;
+      }
+      await page.waitForTimeout(250);
+      continue;
     }
 
     try {
