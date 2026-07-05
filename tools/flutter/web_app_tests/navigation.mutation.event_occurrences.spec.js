@@ -920,32 +920,16 @@ async function createDedicatedRelatedProfiles(
 async function ensurePhysicalHostCandidates(api, baseUrl, token, minimum = 1) {
   const createdProfileIds = [];
   const createdAccountSlugs = [];
-  let createdType = null;
-  const candidates = await listAccountProfileCandidates(
-    api,
-    baseUrl,
-    token,
-    'physical_host',
-  );
-
-  if (candidates.length >= minimum) {
-    return {
-      candidates: candidates.slice(0, Math.max(minimum, 1)),
-      createdProfileIds,
-      createdAccountSlugs,
-      createdType,
-    };
-  }
+  const normalizedMinimum = Math.max(minimum, 1);
 
   const profileTypeSeed = await resolvePoiCapableProfileType(
     api,
     baseUrl,
     token,
   );
-  createdType = profileTypeSeed.createdType;
-  const seededCandidates = [...candidates];
+  const seededCandidates = [];
 
-  for (let index = candidates.length; index < minimum; index += 1) {
+  for (let index = 0; index < normalizedMinimum; index += 1) {
     const createdHost = await createNearbyPhysicalHost(
       api,
       baseUrl,
@@ -960,14 +944,14 @@ async function ensurePhysicalHostCandidates(api, baseUrl, token, minimum = 1) {
 
   expect(
     seededCandidates.length,
-    `Event occurrence mutation seed requires at least ${minimum} physical host candidate(s).`,
-  ).toBeGreaterThanOrEqual(minimum);
+    `Event occurrence mutation seed requires at least ${normalizedMinimum} physical host candidate(s).`,
+  ).toBeGreaterThanOrEqual(normalizedMinimum);
 
   return {
-    candidates: seededCandidates.slice(0, Math.max(minimum, 1)),
+    candidates: seededCandidates,
     createdProfileIds,
     createdAccountSlugs,
-    createdType,
+    createdType: profileTypeSeed.createdType,
   };
 }
 
@@ -1058,25 +1042,10 @@ async function fetchRelatedAccountProfileCandidates(
   token,
   { minimum = 2, excludeIds = [] } = {},
 ) {
-  const excluded = new Set(excludeIds.filter(Boolean));
   const createdProfileIds = [];
   const createdAccountSlugs = [];
-  let createdType = null;
-  const candidates = (await listAccountProfileCandidates(
-    api,
-    baseUrl,
-    token,
-    'related_account_profile',
-  )).filter((row) => !excluded.has(candidateId(row)));
-
-  if (candidates.length >= minimum) {
-    return {
-      candidates: candidates.slice(0, minimum),
-      createdProfileIds,
-      createdAccountSlugs,
-      createdType,
-    };
-  }
+  const excluded = new Set(excludeIds.filter(Boolean));
+  const normalizedMinimum = Math.max(minimum, 1);
 
   const profileTypeSeed = await resolvePoiCapableProfileType(
     api,
@@ -1084,10 +1053,9 @@ async function fetchRelatedAccountProfileCandidates(
     token,
     { requireEvents: true },
   );
-  createdType = profileTypeSeed.createdType;
-  const seededCandidates = [...candidates];
+  const seededCandidates = [];
 
-  for (let index = candidates.length; index < minimum; index += 1) {
+  for (let index = 0; seededCandidates.length < normalizedMinimum; index += 1) {
     const createdProfile = await createNearbyPhysicalHost(
       api,
       baseUrl,
@@ -1105,13 +1073,13 @@ async function fetchRelatedAccountProfileCandidates(
   expect(
     seededCandidates.length,
     'Event occurrence runtime proof requires at least two related profile candidates.',
-  ).toBeGreaterThanOrEqual(minimum);
+  ).toBeGreaterThanOrEqual(normalizedMinimum);
 
   return {
-    candidates: seededCandidates.slice(0, minimum),
+    candidates: seededCandidates,
     createdProfileIds,
     createdAccountSlugs,
-    createdType,
+    createdType: profileTypeSeed.createdType,
   };
 }
 
@@ -1875,11 +1843,12 @@ async function waitForLocationPickerOptionNearField(
   page,
   activeSearchField,
   optionText,
+  timeout = appBootTimeoutMs,
 ) {
   const optionCandidates = page.getByRole('button', {
     name: new RegExp(escapeRegExp(optionText), 'i'),
   });
-  const deadline = Date.now() + appBootTimeoutMs;
+  const deadline = Date.now() + timeout;
 
   while (Date.now() < deadline) {
     const searchFieldBox =
@@ -1982,6 +1951,26 @@ async function selectLocationPickerSheetOption(
         5000,
       );
     }
+  }
+
+  const trySelectVisibleOptionWithoutSearch = async () => {
+    const option = await waitForLocationPickerOptionNearField(
+      page,
+      activeSearchField,
+      optionText,
+      1000,
+    ).catch(() => null);
+    if (!option) {
+      return false;
+    }
+
+    record(`select picker option ${optionText} directly from the visible list`);
+    await option.click();
+    return true;
+  };
+
+  if (await trySelectVisibleOptionWithoutSearch()) {
+    return;
   }
 
   record(`filter picker options with search ${optionText}`);

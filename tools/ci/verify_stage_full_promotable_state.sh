@@ -4,19 +4,65 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 DEFAULT_BASE_REF="${STAGE_FULL_PROMOTION_BASE_REF:-origin/dev}"
 
+ensure_principal_checkout() {
+  local git_dir=""
+  local git_common_dir=""
+  local principal_checkout=""
+
+  git_dir="$(
+    cd "${ROOT_DIR}" &&
+      cd "$(git rev-parse --git-dir)" &&
+      pwd
+  )"
+  git_common_dir="$(
+    cd "${ROOT_DIR}" &&
+      cd "$(git rev-parse --git-common-dir)" &&
+      pwd
+  )"
+
+  if [[ "${git_dir}" == "${git_common_dir}" ]]; then
+    return 0
+  fi
+
+  principal_checkout="$(cd "${git_common_dir}/.." && pwd)"
+
+  echo "ERROR: promotable stage-full must run from the principal checkout." >&2
+  echo "ERROR: current checkout: ${ROOT_DIR}" >&2
+  echo "ERROR: principal checkout: ${principal_checkout}" >&2
+  echo "ERROR: linked worktrees are not allowed for this promotion flow because they can miss principal-only artifacts." >&2
+  echo "ERROR: gitlinks are promotion-lane artifacts; do not inspect, realign, or update them manually from a worktree." >&2
+  echo "ERROR: recovery action: rerun stage-full from the principal checkout and let the promotion lane own any later gitlink movement." >&2
+  exit 1
+}
+
 detect_governing_todo() {
   local root_branch="$1"
+  local package_version=""
+  local candidate_version=""
+  local todo_path=""
+  local candidates=()
   if [[ ! "${root_branch}" =~ ^v.+-rc$ ]]; then
     return 1
   fi
 
-  local package_version="${root_branch%-rc}"
-  local todo_path="${ROOT_DIR}/foundation_documentation/todos/promotion_lane/${package_version}/TODO-${package_version}-release-package.md"
-  if [[ ! -f "${todo_path}" ]]; then
-    return 1
+  package_version="${root_branch%-rc}"
+  candidates=("${package_version}")
+  if [[ "${package_version}" == *+* ]]; then
+    candidate_version="${package_version%%+*}"
+    if [[ -n "${candidate_version}" && "${candidate_version}" != "${package_version}" ]]; then
+      candidates+=("${candidate_version}")
+    fi
   fi
 
-  printf '%s\n' "${todo_path}"
+  for candidate_version in "${candidates[@]}"; do
+    todo_path="${ROOT_DIR}/foundation_documentation/todos/promotion_lane/${candidate_version}/TODO-${candidate_version}-release-package.md"
+    if [[ -f "${todo_path}" ]]; then
+      printf '%s\n' "${todo_path}"
+      return 0
+    fi
+  done
+
+  return 1
 }
 
 ensure_clean_repo() {
@@ -93,6 +139,7 @@ repo_requires_source_preflight() {
 
 main() {
   local root_branch=""
+  ensure_principal_checkout
   root_branch="$(git -C "${ROOT_DIR}" branch --show-current)"
 
   echo "INFO: stage-full promotable-state validation starting."

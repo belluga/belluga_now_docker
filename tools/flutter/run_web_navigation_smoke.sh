@@ -229,6 +229,11 @@ export NAV_WEB_TEST_TYPE="${SUITE}"
 export NAV_DEPLOY_LANE="${NAV_DEPLOY_LANE:-local}"
 export NODE_PATH="${RUNNER_DIR}/node_modules${NODE_PATH:+:${NODE_PATH}}"
 export NAV_TEST_RUN_ID="${NAV_TEST_RUN_ID:-nav-${SUITE}-$(date -u +%Y%m%dT%H%M%SZ)-$$}"
+if [[ "${SUITE}" == "readonly" || "${SUITE}" == "mutation" ]]; then
+  # Release-gating browser suites must fail closed on ambient data-selection
+  # fallbacks so local and remote evidence use the same deterministic proof bar.
+  export NAV_WEB_POLICY_STRICT_DATA=1
+fi
 
 if ! command -v timeout >/dev/null 2>&1; then
   echo "ERROR: GNU timeout is required to enforce deterministic smoke-suite deadlines." >&2

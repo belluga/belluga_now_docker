@@ -3,6 +3,11 @@
 const fs = require('fs');
 const path = require('path');
 
+const strictDataContracts =
+  process.argv.includes('--strict-data-contracts') ||
+  ['1', 'true', 'yes'].includes(
+    (process.env.NAV_WEB_POLICY_STRICT_DATA || '').trim().toLowerCase(),
+  );
 const suiteType = (process.env.NAV_WEB_TEST_TYPE || '').trim().toLowerCase();
 const lane =
   (process.env.NAV_DEPLOY_LANE ||
@@ -66,6 +71,9 @@ const forcedClickViolations = [];
 const evaluatedClickViolations = [];
 const nonSemanticDropdownViolations = [];
 const localDropdownHelperViolations = [];
+const ambientSubjectFallbackViolations = [];
+const ambientHostSelectionViolations = [];
+const ambientCandidateSliceViolations = [];
 const localDropdownHelperPattern =
   /\b(?:async\s+)?function\s+selectDropdownOption\b|\b(?:const|let|var)\s+selectDropdownOption\s*=|\b(?:module\.)?exports\.selectDropdownOption\s*=/m;
 
@@ -287,72 +295,108 @@ function scanTestFiles(dir) {
     ) {
       localDropdownHelperViolations.push(relativePath);
     }
+    if (strictDataContracts) {
+      if (/\brows\[0\](?!\w)|\|\|\s*candidates\[0\](?!\w)/.test(source)) {
+        ambientSubjectFallbackViolations.push(relativePath);
+      }
+      if (/\bhostCandidates\[0\](?!\w)/.test(source)) {
+        ambientHostSelectionViolations.push(relativePath);
+      }
+      if (/candidates\s*:\s*candidates\.slice\(\s*0\s*,\s*minimum\s*\)/.test(source)) {
+        ambientCandidateSliceViolations.push(relativePath);
+      }
+    }
   }
 }
 scanTestFiles(webTestsDir);
+const policyErrors = [];
 if (credentialViolations.length > 0) {
-  console.error(
+  policyErrors.push(
     `Hard block: committed tenant-admin credential fallbacks detected in ${[
       ...new Set(credentialViolations),
     ].join(', ')}.`,
   );
-  process.exit(1);
 }
 
 if (coordinateClickViolations.length > 0) {
-  console.error(
+  policyErrors.push(
     `Hard block: release-gating web navigation specs must use semantic locators instead of mouse.click coordinate fallbacks in ${[
       ...new Set(coordinateClickViolations),
     ].join(', ')}.`,
   );
-  process.exit(1);
 }
 
 if (positionClickViolations.length > 0) {
-  console.error(
+  policyErrors.push(
     `Hard block: release-gating web navigation specs must not use locator.click({ position: ... }) coordinate targeting in ${[
       ...new Set(positionClickViolations),
     ].join(', ')}.`,
   );
-  process.exit(1);
 }
 
 if (forcedClickViolations.length > 0) {
-  console.error(
+  policyErrors.push(
     `Hard block: release-gating web navigation specs must not bypass browser actionability with click({ force: true }) in ${[
       ...new Set(forcedClickViolations),
     ].join(', ')}.`,
   );
-  process.exit(1);
 }
 
 if (evaluatedClickViolations.length > 0) {
-  console.error(
+  policyErrors.push(
     `Hard block: release-gating web navigation specs must not bypass Playwright actionability with locator.evaluate(...click()) in ${[
       ...new Set(evaluatedClickViolations),
     ].join(', ')}.`,
   );
-  process.exit(1);
 }
 
 if (nonSemanticDropdownViolations.length > 0) {
-  console.error(
+  policyErrors.push(
     `Hard block: release-gating dropdown selection must use semantic option/menuitem locators, not text-click or keyboard fallbacks, in ${[
       ...new Set(nonSemanticDropdownViolations),
     ].join(', ')}.`,
   );
-  process.exit(1);
 }
 
 if (localDropdownHelperViolations.length > 0) {
-  console.error(
+  policyErrors.push(
     `Hard block: release-gating dropdown helper logic must be centralized in support/semantic_dropdown.js, not redefined locally in ${[
       ...new Set(localDropdownHelperViolations),
     ].join(', ')}.`,
   );
+}
+
+if (ambientSubjectFallbackViolations.length > 0) {
+  policyErrors.push(
+    `Hard block: strict data-contract mode forbids ambient rows[0]/candidates[0] fallback in release-gating specs. Bootstrap a self-owned fixture or managed proof target instead: ${[
+      ...new Set(ambientSubjectFallbackViolations),
+    ].join(', ')}.`,
+  );
+}
+
+if (ambientHostSelectionViolations.length > 0) {
+  policyErrors.push(
+    `Hard block: strict data-contract mode forbids selecting hostCandidates[0] from ambient registry data in release-gating specs. Seed or resolve a dedicated host deterministically instead: ${[
+      ...new Set(ambientHostSelectionViolations),
+    ].join(', ')}.`,
+  );
+}
+
+if (ambientCandidateSliceViolations.length > 0) {
+  policyErrors.push(
+    `Hard block: strict data-contract mode forbids returning candidates.slice(0, minimum) from ambient candidate pools in release-gating specs. Seed dedicated candidates before selection: ${[
+      ...new Set(ambientCandidateSliceViolations),
+    ].join(', ')}.`,
+  );
+}
+
+if (policyErrors.length > 0) {
+  for (const message of policyErrors) {
+    console.error(message);
+  }
   process.exit(1);
 }
 
 console.log(
-  `Web navigation policy check passed (lane=${lane}, suite=${suiteType}).`,
+  `Web navigation policy check passed (lane=${lane}, suite=${suiteType}, strict_data_contracts=${strictDataContracts ? 'on' : 'off'}).`,
 );
