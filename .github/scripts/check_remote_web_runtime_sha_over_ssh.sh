@@ -37,16 +37,12 @@ fi
 repo_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 
 expected_web_runtime_sha="$(normalize_sha "${EXPECTED_WEB_APP_RUNTIME_SHA:-}")"
-expected_sha_source="override"
 if [[ -z "${expected_web_runtime_sha}" ]]; then
-  expected_web_runtime_sha="$(git -C "${repo_root}/web-app" rev-parse HEAD 2>/dev/null | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]' || true)"
-  expected_sha_source="local-checkout"
-fi
-
-if [[ -z "${expected_web_runtime_sha}" ]]; then
-  echo "ERROR: could not resolve expected web-app runtime SHA (${expected_sha_source})." >&2
+  echo "ERROR: EXPECTED_WEB_APP_RUNTIME_SHA is required; protected runtime validation must not fall back to the local web-app checkout." >&2
   exit 1
 fi
+
+expected_sha_source="pre-resolved-env"
 
 remote="${deploy_ssh_user}@${deploy_ssh_host}"
 ssh_opts=(

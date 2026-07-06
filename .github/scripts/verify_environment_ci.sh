@@ -862,6 +862,21 @@ if [[ ! -f .github/scripts/check_remote_web_runtime_sha_over_ssh.sh ]]; then
   exit 1
 fi
 
+if grep -Fq 'expected_sha_source="local-checkout"' .github/scripts/check_remote_web_runtime_sha_over_ssh.sh; then
+  echo "ERROR: check_remote_web_runtime_sha_over_ssh.sh must not classify local web-app checkout as expected runtime authority." >&2
+  exit 1
+fi
+
+if grep -Fq 'git -C "${repo_root}/web-app" rev-parse HEAD' .github/scripts/check_remote_web_runtime_sha_over_ssh.sh; then
+  echo "ERROR: check_remote_web_runtime_sha_over_ssh.sh must require EXPECTED_WEB_APP_RUNTIME_SHA and must not fall back to the local web-app checkout." >&2
+  exit 1
+fi
+
+if ! grep -Fq "EXPECTED_WEB_APP_RUNTIME_SHA is required; protected runtime validation must not fall back to the local web-app checkout." .github/scripts/check_remote_web_runtime_sha_over_ssh.sh; then
+  echo "ERROR: check_remote_web_runtime_sha_over_ssh.sh must fail closed with an explicit EXPECTED_WEB_APP_RUNTIME_SHA requirement." >&2
+  exit 1
+fi
+
 if [[ -e .github/scripts/run_stage_ci_equivalent.sh ]]; then
   echo "ERROR: run_stage_ci_equivalent.sh must not exist. Published-stage proof is a separate surface and the old CI-Equivalent misnomer is hard-blocked." >&2
   exit 1
