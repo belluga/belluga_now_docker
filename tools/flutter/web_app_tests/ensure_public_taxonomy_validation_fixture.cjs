@@ -39,6 +39,11 @@ const stageValidationPrefixes = {
   mapFilterKey: 'stage-validation-map-events-',
 };
 const managedPublicMapFilterKey = `${stageValidationPrefixes.mapFilterKey}${runKey}`;
+const managedPublicDefaultOrigin = Object.freeze({
+  lat: fixture.location.lat,
+  lng: fixture.location.lng,
+  label: 'Praia do Morro',
+});
 let anonymousIdentityTokenPromise = null;
 let requestApi = null;
 let expectApi = null;
@@ -275,6 +280,17 @@ async function readDiscoveryFiltersSettings(api, baseUrl, token) {
   return payload?.data?.discovery_filters || {};
 }
 
+async function readMapUiSettings(api, baseUrl, token) {
+  const response = await api.get(
+    buildUrl(baseUrl, '/admin/api/v1/settings/values'),
+    {
+      headers: authHeaders(token),
+    },
+  );
+  const payload = await fetchJson(response, 'Read tenant settings values');
+  return payload?.data?.map_ui || {};
+}
+
 function buildManagedPublicMapFilter() {
   return {
     key: managedPublicMapFilterKey,
@@ -284,6 +300,39 @@ function buildManagedPublicMapFilter() {
     query: {
       entities: ['event'],
     },
+  };
+}
+
+function hasFiniteCoordinate(value) {
+  return Number.isFinite(Number(value));
+}
+
+function isManagedPublicMapFilterKey(key) {
+  return key.startsWith(stageValidationPrefixes.mapFilterKey);
+}
+
+function isManagedPublicDefaultOrigin(origin) {
+  const lat = Number(origin?.lat);
+  const lng = Number(origin?.lng);
+  const label = origin?.label?.toString().trim() || '';
+  return (
+    hasFiniteCoordinate(lat) &&
+    hasFiniteCoordinate(lng) &&
+    lat === managedPublicDefaultOrigin.lat &&
+    lng === managedPublicDefaultOrigin.lng &&
+    label === managedPublicDefaultOrigin.label
+  );
+}
+
+function readDefaultOrigin(payload) {
+  if (payload?.default_origin && typeof payload.default_origin === 'object') {
+    return payload.default_origin;
+  }
+
+  return {
+    lat: payload?.['default_origin.lat'] ?? null,
+    lng: payload?.['default_origin.lng'] ?? null,
+    label: payload?.['default_origin.label'] ?? null,
   };
 }
 
@@ -307,7 +356,7 @@ async function ensureManagedPublicMapFilter(api, baseUrl, token) {
   const currentFilters = Array.isArray(publicMapSurface.filters)
     ? publicMapSurface.filters.filter((filter) => {
         const key = filter?.key?.toString().trim().toLowerCase() || '';
-        return key !== managedPublicMapFilterKey;
+        return !isManagedPublicMapFilterKey(key);
       })
     : [];
 
@@ -326,6 +375,54 @@ async function ensureManagedPublicMapFilter(api, baseUrl, token) {
   });
 }
 
+async function ensureManagedPublicDefaultOrigin(api, baseUrl, token) {
+  const current = await readMapUiSettings(api, baseUrl, token);
+  const currentDefaultOrigin = readDefaultOrigin(current);
+  if (
+    hasFiniteCoordinate(currentDefaultOrigin?.lat) &&
+    hasFiniteCoordinate(currentDefaultOrigin?.lng)
+  ) {
+    return;
+  }
+
+  const response = await api.patch(
+    buildUrl(baseUrl, '/admin/api/v1/settings/values/map_ui'),
+    {
+      headers: authHeaders(token),
+      data: {
+        'default_origin.lat': managedPublicDefaultOrigin.lat,
+        'default_origin.lng': managedPublicDefaultOrigin.lng,
+        'default_origin.label': managedPublicDefaultOrigin.label,
+      },
+    },
+  );
+  const payload = await fetchJson(response, 'Patch map_ui default_origin settings');
+  expect(
+    readDefaultOrigin(payload?.data).lat,
+    'Patched map_ui default_origin.lat must persist immediately.',
+  ).toBe(managedPublicDefaultOrigin.lat);
+  await expect
+    .poll(async () => {
+      const publicResponse = await api.get(buildUrl(baseUrl, '/api/v1/environment'));
+      const publicPayload = await fetchJson(
+        publicResponse,
+        'Read public environment after map_ui default_origin seed',
+      );
+      const publicDefaultOrigin = readDefaultOrigin(
+        publicPayload?.data?.settings?.map_ui || publicPayload?.settings?.map_ui || {},
+      );
+      return {
+        lat: publicDefaultOrigin?.lat ?? null,
+        lng: publicDefaultOrigin?.lng ?? null,
+        label: publicDefaultOrigin?.label ?? null,
+      };
+    }, {
+      timeout: 15000,
+      intervals: [250, 500, 1000],
+    })
+    .toEqual(managedPublicDefaultOrigin);
+}
+
 async function removeManagedPublicMapFilter(api, baseUrl, token) {
   const current = await readDiscoveryFiltersSettings(api, baseUrl, token);
   const surfaces = { ...(current?.surfaces || {}) };
@@ -336,7 +433,7 @@ async function removeManagedPublicMapFilter(api, baseUrl, token) {
 
   const remainingFilters = currentSurface.filters.filter((filter) => {
     const key = filter?.key?.toString().trim().toLowerCase() || '';
-    return key !== managedPublicMapFilterKey;
+    return !isManagedPublicMapFilterKey(key);
   });
 
   surfaces['public_map.primary'] = {
@@ -348,6 +445,27 @@ async function removeManagedPublicMapFilter(api, baseUrl, token) {
     ...current,
     surfaces,
   });
+}
+
+async function removeManagedPublicDefaultOrigin(api, baseUrl, token) {
+  const current = await readMapUiSettings(api, baseUrl, token);
+  const currentDefaultOrigin = readDefaultOrigin(current);
+  if (!isManagedPublicDefaultOrigin(currentDefaultOrigin)) {
+    return;
+  }
+
+  const response = await api.patch(
+    buildUrl(baseUrl, '/admin/api/v1/settings/values/map_ui'),
+    {
+      headers: authHeaders(token),
+      data: {
+        'default_origin.lat': null,
+        'default_origin.lng': null,
+        'default_origin.label': null,
+      },
+    },
+  );
+  await fetchJson(response, 'Clear managed map_ui default_origin settings');
 }
 
 async function fetchAdminAccountProfileDetail(api, baseUrl, token, profileId) {
@@ -868,6 +986,7 @@ function findDisplaySnapshot(terms) {
 
 async function resetOwnedFixtureArtifacts(api, baseUrl, token) {
   await removeManagedPublicMapFilter(api, baseUrl, token);
+  await removeManagedPublicDefaultOrigin(api, baseUrl, token);
 
   const adminEvents = await listAdminEvents(api, baseUrl, token);
   const ownedEvents = adminEvents.filter((row) => {
@@ -1089,6 +1208,7 @@ async function main() {
       await resetOwnedFixtureArtifacts(api, baseUrl, token);
       await createTaxonomy(api, baseUrl, token);
       await createAccountProfileType(api, baseUrl, token);
+      await ensureManagedPublicDefaultOrigin(api, baseUrl, token);
       await ensureManagedPublicMapFilter(api, baseUrl, token);
       const { profileId, profileSlug } = await createPublicAccountProfile(
         api,
@@ -1119,6 +1239,7 @@ async function main() {
       await verifyAccountProfileFixture(api, baseUrl, relatedProfileSlug);
       await verifyEventFixture(api, baseUrl, event);
       await verifyAgendaFixture(api, baseUrl, event);
+      await ensureManagedPublicDefaultOrigin(api, baseUrl, token);
       console.log(
         `INFO: ensured public taxonomy validation fixtures ${profileSlug} and ${fixture.eventTitle} on ${baseUrl}.`,
       );
