@@ -36,7 +36,9 @@ const stageValidationPrefixes = {
   relatedProfileSlug: 'stage-validation-related-profile-',
   eventTypeSlug: 'stage_validation_public_event_type_',
   eventSlug: 'stage-validation-public-event-',
+  mapFilterKey: 'stage-validation-map-events-',
 };
+const managedPublicMapFilterKey = `${stageValidationPrefixes.mapFilterKey}${runKey}`;
 let anonymousIdentityTokenPromise = null;
 let requestApi = null;
 let expectApi = null;
@@ -260,6 +262,92 @@ async function listAdminEvents(api, baseUrl, token) {
       pageSize: 50,
     },
   );
+}
+
+async function readDiscoveryFiltersSettings(api, baseUrl, token) {
+  const response = await api.get(
+    buildUrl(baseUrl, '/admin/api/v1/settings/values'),
+    {
+      headers: authHeaders(token),
+    },
+  );
+  const payload = await fetchJson(response, 'Read tenant settings values');
+  return payload?.data?.discovery_filters || {};
+}
+
+function buildManagedPublicMapFilter() {
+  return {
+    key: managedPublicMapFilterKey,
+    target: 'map_poi',
+    label: 'Eventos',
+    override_marker: false,
+    query: {
+      entities: ['event'],
+    },
+  };
+}
+
+async function patchDiscoveryFiltersSettings(api, baseUrl, token, discoveryFilters) {
+  const response = await api.patch(
+    buildUrl(baseUrl, '/admin/api/v1/settings/values/discovery_filters'),
+    {
+      headers: authHeaders(token),
+      data: discoveryFilters,
+    },
+  );
+  await fetchJson(response, 'Patch discovery_filters settings');
+}
+
+async function ensureManagedPublicMapFilter(api, baseUrl, token) {
+  const current = await readDiscoveryFiltersSettings(api, baseUrl, token);
+  const surfaces = { ...(current?.surfaces || {}) };
+  const publicMapSurface = {
+    ...(surfaces['public_map.primary'] || {}),
+  };
+  const currentFilters = Array.isArray(publicMapSurface.filters)
+    ? publicMapSurface.filters.filter((filter) => {
+        const key = filter?.key?.toString().trim().toLowerCase() || '';
+        return key !== managedPublicMapFilterKey;
+      })
+    : [];
+
+  publicMapSurface.target = publicMapSurface.target || 'map_poi';
+  publicMapSurface.primary_selection_mode =
+    publicMapSurface.primary_selection_mode || 'single';
+  publicMapSurface.filters = [
+    ...currentFilters,
+    buildManagedPublicMapFilter(),
+  ];
+  surfaces['public_map.primary'] = publicMapSurface;
+
+  await patchDiscoveryFiltersSettings(api, baseUrl, token, {
+    ...current,
+    surfaces,
+  });
+}
+
+async function removeManagedPublicMapFilter(api, baseUrl, token) {
+  const current = await readDiscoveryFiltersSettings(api, baseUrl, token);
+  const surfaces = { ...(current?.surfaces || {}) };
+  const currentSurface = surfaces['public_map.primary'];
+  if (!currentSurface || !Array.isArray(currentSurface.filters)) {
+    return;
+  }
+
+  const remainingFilters = currentSurface.filters.filter((filter) => {
+    const key = filter?.key?.toString().trim().toLowerCase() || '';
+    return key !== managedPublicMapFilterKey;
+  });
+
+  surfaces['public_map.primary'] = {
+    ...currentSurface,
+    filters: remainingFilters,
+  };
+
+  await patchDiscoveryFiltersSettings(api, baseUrl, token, {
+    ...current,
+    surfaces,
+  });
 }
 
 async function fetchAdminAccountProfileDetail(api, baseUrl, token, profileId) {
@@ -513,11 +601,11 @@ async function createPublicAccountProfile(
     'Fixture account profile must expose a public slug.',
   ).toBeTruthy();
   expect(
-    accountSlug === expectedSlug || accountSlug.startsWith(`${expectedSlug}-`),
+    accountSlug === expectedSlug,
     `Fixture account slug must stay anchored to canonical slug ${expectedSlug}. Received ${accountSlug}.`,
   ).toBeTruthy();
   expect(
-    profileSlug === expectedSlug || profileSlug.startsWith(`${expectedSlug}-`),
+    profileSlug === expectedSlug,
     `Fixture account profile slug must stay anchored to canonical slug ${expectedSlug}. Received ${profileSlug}.`,
   ).toBeTruthy();
 
@@ -779,6 +867,8 @@ function findDisplaySnapshot(terms) {
 }
 
 async function resetOwnedFixtureArtifacts(api, baseUrl, token) {
+  await removeManagedPublicMapFilter(api, baseUrl, token);
+
   const adminEvents = await listAdminEvents(api, baseUrl, token);
   const ownedEvents = adminEvents.filter((row) => {
     const slug = row?.slug?.toString().trim() || '';
@@ -810,6 +900,7 @@ async function resetOwnedFixtureArtifacts(api, baseUrl, token) {
       await resolveCanonicalAccountSlugForCleanup(api, baseUrl, token, row, accountSlugById),
     );
   }
+  ownedAccountSlugs.push(fixture.profileSlug, fixture.relatedProfileSlug);
 
   await cleanupOnboardedAccounts(
     api,
@@ -998,6 +1089,7 @@ async function main() {
       await resetOwnedFixtureArtifacts(api, baseUrl, token);
       await createTaxonomy(api, baseUrl, token);
       await createAccountProfileType(api, baseUrl, token);
+      await ensureManagedPublicMapFilter(api, baseUrl, token);
       const { profileId, profileSlug } = await createPublicAccountProfile(
         api,
         baseUrl,
