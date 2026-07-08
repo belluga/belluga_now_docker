@@ -77,6 +77,47 @@ async function normalizeLegacyOwnedAccountForCleanup(
   return false;
 }
 
+async function deleteAccount(
+  api,
+  baseUrl,
+  token,
+  accountSlug,
+  { requestTimeoutMs = 30000 } = {},
+) {
+  return api.delete(
+    buildUrl(baseUrl, `/admin/api/v1/accounts/${encodeURIComponent(accountSlug)}`),
+    {
+      headers: authHeaders(token),
+      failOnStatusCode: false,
+      timeout: requestTimeoutMs,
+    },
+  );
+}
+
+async function forceDeleteAccount(
+  api,
+  baseUrl,
+  token,
+  accountSlug,
+  { requestTimeoutMs = 30000 } = {},
+) {
+  const url = buildUrl(
+    baseUrl,
+    `/admin/api/v1/accounts/${encodeURIComponent(accountSlug)}/force_delete`,
+  );
+  const requestOptions = {
+    headers: authHeaders(token),
+    failOnStatusCode: false,
+    timeout: requestTimeoutMs,
+  };
+
+  if (typeof api.post === 'function') {
+    return api.post(url, requestOptions);
+  }
+
+  return api.delete(url, requestOptions);
+}
+
 async function cleanupOnboardedAccount(
   api,
   baseUrl,
@@ -118,17 +159,18 @@ async function cleanupOnboardedAccount(
   for (let attempt = 1; attempt <= boundedAttempts; attempt += 1) {
     let response;
     try {
-      response = await api.delete(
-        buildUrl(baseUrl, `/admin/api/v1/accounts/${encodeURIComponent(slug)}`),
+      response = await deleteAccount(
+        api,
+        baseUrl,
+        token,
+        slug,
         {
-          headers: authHeaders(token),
-          failOnStatusCode: false,
-          timeout: boundedRequestTimeoutMs,
+          requestTimeoutMs: boundedRequestTimeoutMs,
         },
       );
     } catch (error) {
       console.warn(
-        `[cleanupOnboardedAccount] delete attempt ${attempt} for ${slug} threw ${error}.`,
+        `[cleanupOnboardedAccount] force-delete attempt ${attempt} for ${slug} threw ${error}.`,
       );
       await sleep(boundedBaseDelayMs * attempt);
       continue;
@@ -149,12 +191,13 @@ async function cleanupOnboardedAccount(
         },
       );
       if (normalized) {
-        response = await api.delete(
-          buildUrl(baseUrl, `/admin/api/v1/accounts/${encodeURIComponent(slug)}`),
+        response = await deleteAccount(
+          api,
+          baseUrl,
+          token,
+          slug,
           {
-            headers: authHeaders(token),
-            failOnStatusCode: false,
-            timeout: boundedRequestTimeoutMs,
+            requestTimeoutMs: boundedRequestTimeoutMs,
           },
         );
         status = response.status();
@@ -163,9 +206,25 @@ async function cleanupOnboardedAccount(
         }
       }
     }
+    if (status >= 200 && status < 300 && typeof api.post === 'function') {
+      response = await forceDeleteAccount(
+        api,
+        baseUrl,
+        token,
+        slug,
+        {
+          requestTimeoutMs: boundedRequestTimeoutMs,
+        },
+      );
+      status = response.status();
+      if (status === 404) {
+        return;
+      }
+    }
+
     if (status < 200 || status >= 300) {
       console.warn(
-        `[cleanupOnboardedAccount] delete attempt ${attempt} for ${slug} returned HTTP ${status}.`,
+        `[cleanupOnboardedAccount] delete/finalize attempt ${attempt} for ${slug} returned HTTP ${status}.`,
       );
     }
 

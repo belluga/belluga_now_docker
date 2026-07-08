@@ -326,6 +326,128 @@ check_stage_provenance() {
   DEPLOY_LANE=stage bash "${ROOT_DIR}/.github/scripts/check_deployed_web_provenance.sh" stage
 }
 
+enforce_public_default_origin_state() {
+  local mode="$1"
+
+  NODE_PATH="${SMOKE_RUNNER_DIR}/node_modules${NODE_PATH:+:${NODE_PATH}}" \
+  NAV_PUBLIC_DEFAULT_ORIGIN_MODE="${mode}" \
+  NAV_PUBLIC_DEFAULT_ORIGIN_LAT="-20.671339" \
+  NAV_PUBLIC_DEFAULT_ORIGIN_LNG="-40.495395" \
+  NAV_PUBLIC_DEFAULT_ORIGIN_LABEL="Praia do Morro" \
+  ROOT_DIR="${ROOT_DIR}" \
+  node <<'EOF'
+const { request, expect } = require('@playwright/test');
+const { loginTenantAdmin } = require(`${process.env.ROOT_DIR}/tools/flutter/web_app_tests/support/tenant_admin_auth`);
+
+function buildUrl(baseUrl, pathName) {
+  return new URL(pathName, baseUrl).toString();
+}
+
+function readDefaultOrigin(payload) {
+  if (payload?.default_origin && typeof payload.default_origin === 'object') {
+    return payload.default_origin;
+  }
+
+  return {
+    lat: payload?.['default_origin.lat'] ?? null,
+    lng: payload?.['default_origin.lng'] ?? null,
+    label: payload?.['default_origin.label'] ?? null,
+  };
+}
+
+(async () => {
+  const mode = process.env.NAV_PUBLIC_DEFAULT_ORIGIN_MODE;
+  const baseUrl = process.env.NAV_TENANT_URL;
+  const managedOrigin = {
+    lat: Number(process.env.NAV_PUBLIC_DEFAULT_ORIGIN_LAT),
+    lng: Number(process.env.NAV_PUBLIC_DEFAULT_ORIGIN_LNG),
+    label: process.env.NAV_PUBLIC_DEFAULT_ORIGIN_LABEL,
+  };
+  const api = await request.newContext({
+    baseURL: baseUrl,
+    extraHTTPHeaders: { Accept: 'application/json' },
+    ignoreHTTPSErrors: true,
+  });
+
+  try {
+    const session = await loginTenantAdmin({
+      api,
+      baseUrl,
+      buildUrl,
+      deviceName: `stage-browser-contract-default-origin-${mode}`,
+    });
+    const headers = {
+      Accept: 'application/json',
+      Authorization: `Bearer ${session.token}`,
+    };
+
+    const currentResponse = await api.get(buildUrl(baseUrl, '/admin/api/v1/settings/values'), {
+      headers,
+    });
+    expect(currentResponse.status()).toBe(200);
+    const currentPayload = await currentResponse.json();
+    const currentOrigin = readDefaultOrigin(currentPayload?.data?.map_ui || {});
+    const isManagedOrigin =
+      Number(currentOrigin?.lat) === managedOrigin.lat &&
+      Number(currentOrigin?.lng) === managedOrigin.lng &&
+      (currentOrigin?.label ?? null) === managedOrigin.label;
+
+    let patchData = null;
+    if (mode === 'ensure') {
+      if (!isManagedOrigin) {
+        patchData = {
+          'default_origin.lat': managedOrigin.lat,
+          'default_origin.lng': managedOrigin.lng,
+          'default_origin.label': managedOrigin.label,
+        };
+      }
+    } else if (mode === 'cleanup') {
+      if (isManagedOrigin) {
+        patchData = {
+          'default_origin.lat': null,
+          'default_origin.lng': null,
+          'default_origin.label': null,
+        };
+      }
+    } else {
+      throw new Error(`Unsupported NAV_PUBLIC_DEFAULT_ORIGIN_MODE: ${mode}`);
+    }
+
+    if (patchData) {
+      const patchResponse = await api.patch(
+        buildUrl(baseUrl, '/admin/api/v1/settings/values/map_ui'),
+        { headers, data: patchData },
+      );
+      expect(patchResponse.status()).toBe(200);
+    }
+
+    const verifyResponse = await api.get(buildUrl(baseUrl, '/admin/api/v1/settings/values'), {
+      headers,
+    });
+    expect(verifyResponse.status()).toBe(200);
+    const verifyPayload = await verifyResponse.json();
+    const verifyOrigin = readDefaultOrigin(verifyPayload?.data?.map_ui || {});
+    if (mode === 'ensure') {
+      expect({
+        lat: Number(verifyOrigin?.lat),
+        lng: Number(verifyOrigin?.lng),
+        label: verifyOrigin?.label ?? null,
+      }).toEqual(managedOrigin);
+    } else {
+      expect(verifyOrigin?.lat ?? null).toBeNull();
+      expect(verifyOrigin?.lng ?? null).toBeNull();
+      expect(verifyOrigin?.label ?? null).toBeNull();
+    }
+  } finally {
+    await api.dispose();
+  }
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+EOF
+}
+
 fixture_ensure() {
   local target="$1"
   ensure_tenant_url
@@ -338,6 +460,8 @@ fixture_ensure() {
     cd "${SMOKE_RUNNER_DIR}"
     node ../web_app_tests/ensure_public_taxonomy_validation_fixture.cjs
   )
+
+  enforce_public_default_origin_state ensure
 }
 
 fixture_cleanup() {
@@ -353,6 +477,8 @@ fixture_cleanup() {
     cd "${SMOKE_RUNNER_DIR}"
     node ../web_app_tests/ensure_public_taxonomy_validation_fixture.cjs
   )
+
+  enforce_public_default_origin_state cleanup
 
   if [[ "${target}" == "local-public" ]]; then
     clear_contract_run_id_state

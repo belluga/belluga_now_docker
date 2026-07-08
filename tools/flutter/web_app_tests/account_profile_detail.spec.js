@@ -742,9 +742,16 @@ async function openTenantPath(page, baseUrl, pathName) {
 
 async function clickBackAffordance(page, label) {
   const namedBack = page.getByRole('button', { name: /voltar|back/i });
-  if ((await namedBack.count()) > 0) {
-    await namedBack.first().click();
-    return;
+  const namedBackCount = await namedBack.count();
+  if (namedBackCount > 0) {
+    for (let index = 0; index < namedBackCount; index += 1) {
+      const candidate = namedBack.nth(index);
+      if (!(await candidate.isVisible().catch(() => false))) {
+        continue;
+      }
+      await candidate.click();
+      return;
+    }
   }
   const firstButton = page.getByRole('button').first();
   await expect(firstButton, `${label} must expose a back button`).toBeVisible({
@@ -756,6 +763,16 @@ async function clickBackAffordance(page, label) {
 async function clickLocatorCenter(page, locator, description) {
   await expect(locator, description).toBeVisible({ timeout: appBootTimeoutMs });
   await locator.click({ timeout: appBootTimeoutMs });
+}
+
+function isRetriableDiscoveryActionError(error) {
+  const message =
+    error instanceof Error ? error.message : String(error ?? '');
+  return /detached from the DOM/i.test(message)
+    || /element is not attached/i.test(message)
+    || /element\(s\) not found/i.test(message)
+    || /toBeVisible\(\) failed/i.test(message)
+    || /waiting for element to be visible/i.test(message);
 }
 
 async function findVisibleDiscoveryProfileActions(page, rows) {
@@ -802,22 +819,36 @@ async function findVisibleDiscoveryProfileActions(page, rows) {
 }
 
 async function clickDiscoveryProfileCardAndWaitForDetail(page, rows) {
-  const visibleProfileActions =
-    await findVisibleDiscoveryProfileActions(page, rows);
-  for (const visibleProfileAction of visibleProfileActions) {
-    await clickLocatorCenter(
-      page,
-      visibleProfileAction,
-      'Discovery Account Profile card must be a real tappable target.',
-    );
-    if (
-      await page
-        .waitForURL(/\/parceiro\//, { timeout: 5000 })
-        .then(() => true)
-        .catch(() => false)
-    ) {
-      return true;
+  const deadline = Date.now() + appBootTimeoutMs;
+
+  while (Date.now() < deadline) {
+    const visibleProfileActions =
+      await findVisibleDiscoveryProfileActions(page, rows);
+    for (const visibleProfileAction of visibleProfileActions) {
+      try {
+        await clickLocatorCenter(
+          page,
+          visibleProfileAction,
+          'Discovery Account Profile card must be a real tappable target.',
+        );
+      } catch (error) {
+        if (isRetriableDiscoveryActionError(error)) {
+          continue;
+        }
+        throw error;
+      }
+
+      if (
+        await page
+          .waitForURL(/\/parceiro\//, { timeout: 5000 })
+          .then(() => true)
+          .catch(() => false)
+      ) {
+        return true;
+      }
     }
+
+    await page.waitForTimeout(200);
   }
 
   return /\/parceiro\//.test(page.url());
