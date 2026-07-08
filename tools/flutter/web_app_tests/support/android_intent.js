@@ -153,7 +153,24 @@ async function waitForPublicRouteToSettle(page, expectedTargetPath, timeoutMs) {
         return false;
       }
 
-      const splashVisible = document.querySelector('#splash-screen') !== null;
+      const splashElement = document.querySelector('#splash-screen');
+      const splashVisible = (() => {
+        if (!splashElement) {
+          return false;
+        }
+
+        const style = window.getComputedStyle(splashElement);
+        if (
+          style.display === 'none'
+          || style.visibility === 'hidden'
+          || style.opacity === '0'
+        ) {
+          return false;
+        }
+
+        const rect = splashElement.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0;
+      })();
       const hasFlutterView = document.querySelector('flutter-view') !== null;
       const hasGlassPane = document.querySelector('flt-glass-pane') !== null;
       const readyState = document.readyState;
