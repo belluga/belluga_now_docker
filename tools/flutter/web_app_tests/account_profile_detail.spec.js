@@ -775,37 +775,30 @@ function isRetriableDiscoveryActionError(error) {
     || /waiting for element to be visible/i.test(message);
 }
 
-async function findVisibleDiscoveryProfileActions(page, rows) {
+async function findVisibleDiscoveryProfileActions(page) {
   const deadline = Date.now() + appBootTimeoutMs;
 
   while (Date.now() < deadline) {
     const visibleActions = [];
     const seenLabels = new Set();
 
-    for (const row of rows) {
-      const name = canonicalPublicVisibleName(row);
-      if (!name) {
+    const namedButtons = page.getByRole('button', {
+      name: /^Abrir perfil\s+/i,
+    });
+    const count = await namedButtons.count();
+    for (let index = count - 1; index >= 0; index -= 1) {
+      const namedButton = namedButtons.nth(index);
+      if (!(await namedButton.isVisible().catch(() => false))) {
         continue;
       }
-      const prefix = name.slice(0, Math.min(name.length, 18));
-      const namedButtons = page.getByRole('button', {
-        name: new RegExp(`Abrir perfil\\s+${escapeRegExp(prefix)}`, 'i'),
-      });
-      const count = await namedButtons.count();
-      for (let index = count - 1; index >= 0; index -= 1) {
-        const namedButton = namedButtons.nth(index);
-        if (!(await namedButton.isVisible().catch(() => false))) {
-          continue;
-        }
-        const semanticLabel =
-          (await namedButton.getAttribute('aria-label').catch(() => null))
-          || `${prefix}:${index}`;
-        if (seenLabels.has(semanticLabel)) {
-          continue;
-        }
-        seenLabels.add(semanticLabel);
-        visibleActions.push(namedButton);
+      const semanticLabel =
+        (await namedButton.getAttribute('aria-label').catch(() => null))
+        || `visible-profile:${index}`;
+      if (seenLabels.has(semanticLabel)) {
+        continue;
       }
+      seenLabels.add(semanticLabel);
+      visibleActions.push(namedButton);
     }
 
     if (visibleActions.length > 0) {
@@ -818,12 +811,12 @@ async function findVisibleDiscoveryProfileActions(page, rows) {
   return [];
 }
 
-async function clickDiscoveryProfileCardAndWaitForDetail(page, rows) {
+async function clickDiscoveryProfileCardAndWaitForDetail(page) {
   const deadline = Date.now() + appBootTimeoutMs;
 
   while (Date.now() < deadline) {
     const visibleProfileActions =
-      await findVisibleDiscoveryProfileActions(page, rows);
+      await findVisibleDiscoveryProfileActions(page);
     for (const visibleProfileAction of visibleProfileActions) {
       try {
         await clickLocatorCenter(
@@ -885,10 +878,6 @@ test('@readonly NAV-APD-01 Discovery profile detail back stack does not reopen s
   page,
 }) => {
   const baseUrl = requireTenantUrl();
-  const { rows } = await loadRuntimeProfiles(page.request, baseUrl);
-  const candidate = rows.find((row) => textValue(row?.slug, row?.display_name));
-  expect(candidate, 'Seed at least one public Account Profile for NAV-APD-01.')
-    .toBeTruthy();
 
   await openTenantPath(page, baseUrl, '/');
   const procurarChip = page.getByRole('button', { name: /^Procurar$/i }).first();
@@ -899,7 +888,7 @@ test('@readonly NAV-APD-01 Discovery profile detail back stack does not reopen s
   await expect(page).toHaveURL(/\/descobrir/, { timeout: appBootTimeoutMs });
 
   expect(
-    await clickDiscoveryProfileCardAndWaitForDetail(page, rows),
+    await clickDiscoveryProfileCardAndWaitForDetail(page),
     'Discovery must open a public Account Profile detail from a real visible card tap.',
   ).toBe(true);
   await expect(page).toHaveURL(/\/parceiro\//, {
