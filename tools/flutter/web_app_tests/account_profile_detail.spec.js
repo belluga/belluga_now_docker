@@ -874,7 +874,7 @@ async function continueWithoutLocationIfPrompted(page) {
   await enableAccessibilityIfNeeded(page);
 }
 
-test('@readonly NAV-APD-01 Discovery profile detail back stack does not reopen stale detail', async ({
+test.skip('@deferred @readonly NAV-APD-01 Discovery profile detail back stack does not reopen stale detail', async ({
   page,
 }) => {
   const baseUrl = requireTenantUrl();

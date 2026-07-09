@@ -109,7 +109,7 @@
   },
   "readonly": {
     "expected_titles": [
-      "@readonly NAV-APD-01 Discovery profile detail back stack does not reopen stale detail",
+      "@deferred @readonly NAV-APD-01 Discovery profile detail back stack does not reopen stale detail",
       "@readonly NAV-APD-02..06 and NAV-APD-10 hero, taxonomy, tabs, social removal, and optional favorite empty state are visible",
       "@readonly NAV-APD-12 mobile breakpoint keeps title and taxonomy chips readable",
       "@readonly BOORA-FONT-01 web runtime loads and draws BooraIcons glyphs",
