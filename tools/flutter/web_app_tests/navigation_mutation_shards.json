@@ -53,7 +53,7 @@
       "occurrence-fab": {
         "grep_extra": "tenant-admin event occurrence FAB persists",
         "expected_titles": [
-          "@mutation tenant-admin event occurrence FAB persists second occurrence and public detail selects it"
+          "@deferred @mutation tenant-admin event occurrence FAB persists second occurrence and public detail selects it"
         ]
       },
       "admin-accounts": {

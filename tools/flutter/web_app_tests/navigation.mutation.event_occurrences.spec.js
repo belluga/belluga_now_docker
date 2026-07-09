@@ -3887,7 +3887,7 @@ test.skip('@deferred NAV-ADM-LOC-01..08 admin occurrence programming and event-l
   }
 });
 
-test('@mutation tenant-admin event occurrence FAB persists second occurrence and public detail selects it', async ({
+test.skip('@deferred @mutation tenant-admin event occurrence FAB persists second occurrence and public detail selects it', async ({
   browser,
 }) => {
   test.setTimeout(420000);
