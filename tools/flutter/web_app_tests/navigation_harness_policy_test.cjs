@@ -755,9 +755,10 @@ function assertCiEquivalentContractSurfacesStayWired() {
       'root-invariants.json',
       'promotion-runtime-builds.json',
       '../../../flutter-app/tool/ci/contracts/stage-full.json',
+      '../../../laravel-app/tool/ci/contracts/stage-full.json',
       'browser-stage-full.json',
     ],
-    'stage-full manifest must aggregate root invariants, runtime-build preflight, flutter-app stage-full, and browser stage-full contracts',
+    'stage-full manifest must aggregate root invariants, runtime-build preflight, flutter-app stage-full, laravel-app stage-full, and browser stage-full contracts',
   );
 
   const promotionRuntimeBuildsManifest = JSON.parse(
