@@ -16,6 +16,10 @@
       "path": "../../../flutter-app/tool/ci/contracts/stage-full.json"
     },
     {
+      "repo": "laravel-app",
+      "path": "../../../laravel-app/tool/ci/contracts/stage-full.json"
+    },
+    {
       "repo": "belluga_now_docker",
       "path": "browser-stage-full.json"
     }
