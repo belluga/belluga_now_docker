@@ -159,6 +159,10 @@ function eventDetailMatcher(eventRef, occurrenceId = null) {
 function defaultProtectedReadMatchers() {
   return [
     exactPathMatcher('/api/v1/agenda', 'agenda'),
+    // Home startup now warms the canonical agenda surface through the
+    // home.events discovery-filter contract before the agenda feed request
+    // itself becomes necessary, so readonly bootstrap must accept either path.
+    exactPathMatcher('/api/v1/discovery-filters/home.events', 'agenda'),
     exactPathMatcher('/api/v1/map/filters', 'map_filters'),
     exactPathMatcher('/api/v1/map/pois', 'map_pois'),
     exactPathMatcher('/api/v1/invites/settings', 'invites_settings'),
@@ -624,6 +628,18 @@ function currentPathIndicatesPromotion(page) {
 
 test('@readonly STARTUP-PUBLIC-BOOTSTRAP-01 anonymous tenant home cold start keeps the public surface and completes anonymous bootstrap', async () => {
   const baseUrl = requireTenantUrl();
+  const apiClient = await createReadonlyPublicApiClient();
+  let homeAgendaCandidate;
+  try {
+    homeAgendaCandidate = await fetchPublicEventCandidate(apiClient);
+  } finally {
+    await apiClient.dispose();
+  }
+
+  const visibleAgendaLabel = homeAgendaCandidate.title?.toString().trim()
+    || homeAgendaCandidate.name?.toString().trim()
+    || homeAgendaCandidate.slug?.toString().trim();
+
   await withFreshBrowserPage(async ({ page }) => {
     const startupCapture = attachStartupCapture(page);
 
@@ -646,6 +662,11 @@ test('@readonly STARTUP-PUBLIC-BOOTSTRAP-01 anonymous tenant home cold start kee
     ).toBeVisible({
       timeout: appBootTimeoutMs,
     });
+    await assertVisibleTextOrSemanticLabel(
+      page,
+      visibleAgendaLabel,
+      'Anonymous home startup first visible agenda event',
+    );
 
     expect(
       snapshot.pageErrors,

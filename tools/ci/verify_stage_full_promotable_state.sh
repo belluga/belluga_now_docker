@@ -41,12 +41,18 @@ detect_governing_todo() {
   local candidate_version=""
   local todo_path=""
   local candidates=()
+  local todo_roots=()
+  local todo_root=""
   if [[ ! "${root_branch}" =~ ^v.+-rc$ ]]; then
     return 1
   fi
 
   package_version="${root_branch%-rc}"
   candidates=("${package_version}")
+  todo_roots=(
+    "${ROOT_DIR}/foundation_documentation/todos/promotion_lane"
+    "${ROOT_DIR}/foundation_documentation/todos/active"
+  )
   if [[ "${package_version}" == *+* ]]; then
     candidate_version="${package_version%%+*}"
     if [[ -n "${candidate_version}" && "${candidate_version}" != "${package_version}" ]]; then
@@ -54,12 +60,14 @@ detect_governing_todo() {
     fi
   fi
 
-  for candidate_version in "${candidates[@]}"; do
-    todo_path="${ROOT_DIR}/foundation_documentation/todos/promotion_lane/${candidate_version}/TODO-${candidate_version}-release-package.md"
-    if [[ -f "${todo_path}" ]]; then
-      printf '%s\n' "${todo_path}"
-      return 0
-    fi
+  for todo_root in "${todo_roots[@]}"; do
+    for candidate_version in "${candidates[@]}"; do
+      todo_path="${todo_root}/${candidate_version}/TODO-${candidate_version}-release-package.md"
+      if [[ -f "${todo_path}" ]]; then
+        printf '%s\n' "${todo_path}"
+        return 0
+      fi
+    done
   done
 
   return 1

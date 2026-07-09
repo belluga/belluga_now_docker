@@ -796,15 +796,35 @@ async function createShareCodeFromTarget(
 ) {
   expect(eventId, 'Share-code creation requires event_id.').toBeTruthy();
   expect(occurrenceId, 'Share-code creation requires occurrence_id.').toBeTruthy();
-  const response = await api.post(buildUrl(baseUrl, '/api/v1/invites/share'), {
-    data: {
-      target_ref: {
-        event_id: eventId,
-        occurrence_id: occurrenceId,
+  let response = null;
+  for (let attempt = 1; attempt <= 4; attempt += 1) {
+    response = await api.post(buildUrl(baseUrl, '/api/v1/invites/share'), {
+      data: {
+        target_ref: {
+          event_id: eventId,
+          occurrence_id: occurrenceId,
+        },
       },
-    },
-    headers: authHeaders(token),
-  });
+      headers: authHeaders(token),
+    });
+
+    if (response.status() !== 429) {
+      break;
+    }
+
+    if (attempt < 4) {
+      const retryAfterHeader = response.headers()['retry-after'];
+      const retryAfterSeconds = Number.parseFloat(
+        Array.isArray(retryAfterHeader) ? retryAfterHeader[0] : retryAfterHeader || '',
+      );
+      const fallbackDelayMs = 1000 * attempt;
+      const delayMs = Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0
+        ? Math.ceil(retryAfterSeconds * 1000)
+        : fallbackDelayMs;
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+
   expect(response.status(), 'Share-code creation must succeed.').toBe(200);
   const payload = await response.json();
   const code = payload?.code?.toString().trim() || '';
@@ -869,20 +889,23 @@ test('@mutation INVITE-SESSION-CONTEXT invite landing exposes dynamic share meta
   let session = null;
   let seeded = null;
   let secondSeeded = null;
-  let shareSenderToken = null;
   let primaryError = null;
 
   try {
     session = await loginTenantAdmin(api, baseUrl);
     seeded = await createInvitePreviewSeedEvent(api, baseUrl, session.token);
     secondSeeded = await createInvitePreviewSeedEvent(api, baseUrl, session.token);
-    shareSenderToken = await createAnonymousIdentity(api, baseUrl, 'metadata-sender');
     await installInviteFallbackFlashRecorder(page.context());
     const firstVisit = async (seed, expectedVisibleTexts) => {
       const event = seed.event;
       const eventId = event?.event_id?.toString() || '';
       const eventTitle = seed.title;
       const occurrenceId = firstOccurrenceId(event);
+      const shareSenderToken = await createAnonymousIdentity(
+        api,
+        baseUrl,
+        `metadata-sender-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      );
       const { code } = await createShareCodeFromTarget(api, baseUrl, shareSenderToken, {
         eventId,
         occurrenceId,
@@ -899,36 +922,61 @@ test('@mutation INVITE-SESSION-CONTEXT invite landing exposes dynamic share meta
       expect(response, 'Invite landing response should be available.').not.toBeNull();
       expect(response.status()).toBeLessThan(400);
 
-      await expect(page).toHaveTitle(new RegExp(escapeRegExp(eventTitle), 'i'));
+      await expect(page).toHaveTitle(new RegExp(escapeRegExp(eventTitle), 'i'), {
+        timeout: appBootTimeoutMs,
+      });
       await expect(page.locator('head meta[property="og:title"]')).toHaveAttribute(
         'content',
         new RegExp(escapeRegExp(eventTitle), 'i'),
+        {
+          timeout: appBootTimeoutMs,
+        },
       );
       await expect(page.locator('head meta[name="twitter:title"]')).toHaveAttribute(
         'content',
         new RegExp(escapeRegExp(eventTitle), 'i'),
+        {
+          timeout: appBootTimeoutMs,
+        },
       );
       await expect(page.locator('head meta[property="og:description"]')).toHaveAttribute(
         'content',
         new RegExp(escapeRegExp(eventTitle), 'i'),
+        {
+          timeout: appBootTimeoutMs,
+        },
       );
       await expect(page.locator('head meta[property="og:url"]')).toHaveAttribute(
         'content',
         inviteUrl,
+        {
+          timeout: appBootTimeoutMs,
+        },
       );
       await expect(page.locator('head link[rel="canonical"]')).toHaveAttribute(
         'href',
         inviteUrl,
+        {
+          timeout: appBootTimeoutMs,
+        },
       );
       const expectedImage = textValue(preview?.invite?.event_image_url);
       const ogImage = page.locator('head meta[property="og:image"]');
       const twitterImage = page.locator('head meta[name="twitter:image"]');
       if (expectedImage) {
-        await expect(ogImage).toHaveAttribute('content', expectedImage);
-        await expect(twitterImage).toHaveAttribute('content', expectedImage);
+        await expect(ogImage).toHaveAttribute('content', expectedImage, {
+          timeout: appBootTimeoutMs,
+        });
+        await expect(twitterImage).toHaveAttribute('content', expectedImage, {
+          timeout: appBootTimeoutMs,
+        });
       } else {
-        await expect(ogImage).toHaveAttribute('content', /.+/);
-        await expect(twitterImage).toHaveAttribute('content', /.+/);
+        await expect(ogImage).toHaveAttribute('content', /.+/, {
+          timeout: appBootTimeoutMs,
+        });
+        await expect(twitterImage).toHaveAttribute('content', /.+/, {
+          timeout: appBootTimeoutMs,
+        });
       }
 
       expect((preview?.invite?.profile_groups || []).map((group) => group.label)).toEqual([

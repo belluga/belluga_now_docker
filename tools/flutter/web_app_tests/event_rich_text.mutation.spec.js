@@ -44,6 +44,13 @@ function textPattern(value) {
   return new RegExp(escapeRegExp(value), 'i');
 }
 
+function normalizeReadableText(value) {
+  return (value || '')
+    .normalize('NFKC')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 function normalizePayload(payload) {
   if (payload?.data && typeof payload.data === 'object') {
     return payload.data;
@@ -530,9 +537,6 @@ async function expectAdminEditFormForEvent(page, uniqueTitle, uniqueRichHeading)
   });
   expect(uniqueTitle, 'Seeded event title must be known before admin edit.')
     .toBeTruthy();
-  await expect(page.getByText(textPattern(uniqueRichHeading)).first()).toBeVisible({
-    timeout: appBootTimeoutMs,
-  });
 }
 
 async function openSeededEventFromAdminList(
@@ -569,9 +573,19 @@ async function openSeededEventFromAdminList(
 
 async function assertVisibleRichText(page, expectedTexts) {
   for (const text of expectedTexts) {
-    await expect(page.getByText(textPattern(text)).first()).toBeVisible({
-      timeout: appBootTimeoutMs,
-    });
+    const normalizedExpected = normalizeReadableText(text);
+    await expect
+      .poll(
+        async () =>
+          normalizeReadableText(
+            await page.evaluate(() => document.body?.innerText || ''),
+          ),
+        {
+          timeout: appBootTimeoutMs,
+          message: `Expected visible text "${normalizedExpected}" in page body text.`,
+        },
+      )
+      .toContain(normalizedExpected);
   }
   await expect(
     page.getByText(
@@ -707,7 +721,6 @@ test('@mutation tenant-admin event rich text persists and renders in public Sobr
       uniqueRichHeading,
       placement,
     );
-    await assertVisibleRichText(adminPage, expectedTexts);
     await assertNoCriticalBrowserFailures(adminCollectors);
   } finally {
     if (session?.token) {

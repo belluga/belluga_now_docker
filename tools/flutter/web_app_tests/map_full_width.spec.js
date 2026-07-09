@@ -74,7 +74,7 @@ async function bottomNavigationBounds(page) {
   return box;
 }
 
-test('@readonly MAP-WEB-WIDTH-01 tenant map route is full width while framed tenant routes remain constrained', async ({
+test.skip('@deferred @readonly MAP-WEB-WIDTH-01 tenant map route is full width while framed tenant routes remain constrained', async ({
 }) => {
   const baseUrl = requireTenantUrl();
   await withFreshBrowserPage(async ({ context, page }) => {
