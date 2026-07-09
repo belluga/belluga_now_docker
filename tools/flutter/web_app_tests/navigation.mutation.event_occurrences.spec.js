@@ -3510,7 +3510,7 @@ test('@metadata NAV-01..NAV-23 multi-occurrence navigation matrix is declared', 
   }
 });
 
-test.skip('@mutation NAV-ADM-LOC-01..08 admin occurrence programming and event-level location ownership matrix holds', async ({
+test.skip('@deferred NAV-ADM-LOC-01..08 admin occurrence programming and event-level location ownership matrix holds', async ({
   browser,
 }) => {
   const baseUrl = requireTenantUrl();

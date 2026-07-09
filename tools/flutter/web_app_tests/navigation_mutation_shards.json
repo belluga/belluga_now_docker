@@ -44,9 +44,8 @@
         ]
       },
       "occurrences": {
-        "grep_extra": "(?:NAV-ADM-LOC|repeated public event detail|admin-authored occurrence profile groups)",
+        "grep_extra": "(?:repeated public event detail|admin-authored occurrence profile groups)",
         "expected_titles": [
-          "@mutation NAV-ADM-LOC-01..08 admin occurrence programming and event-level location ownership matrix holds",
           "@mutation admin-authored occurrence profile groups persist full chip readback and public aggregation",
           "@mutation repeated public event detail GET/hydration keeps programming payload stable"
         ]
