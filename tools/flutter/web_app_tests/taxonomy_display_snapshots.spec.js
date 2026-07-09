@@ -597,6 +597,7 @@ test('@readonly taxonomy display snapshots render labels instead of slugs on pub
   page,
 }) => {
   const baseUrl = requireTenantUrl();
+  const origin = new URL(baseUrl).origin;
   const collectors = installFailureCollectors(page);
 
   const accountProfilesPayload = await fetchPagedRows(
@@ -724,10 +725,16 @@ test('@readonly taxonomy display snapshots render labels instead of slugs on pub
     ? { name: 'source', value: mapCategory.query.source }
     : { name: 'category', value: mapCategory.key };
 
+  await page.context().grantPermissions(['geolocation'], { origin });
+  await page.context().setGeolocation({
+    latitude: -20.671339,
+    longitude: -40.495395,
+    accuracy: 25,
+  });
+
   await page.goto(buildApiUrl(baseUrl, '/mapa'), { waitUntil: 'domcontentloaded' });
   await assertAppBooted(page);
   await enableAccessibilityIfNeeded(page);
-  await continueWithoutLocationIfPrompted(page);
   const filteredMapRequest = page.waitForRequest(
     (request) =>
       request.url().includes('/api/v1/map/pois') &&

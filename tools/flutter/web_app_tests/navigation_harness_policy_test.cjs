@@ -2590,7 +2590,7 @@ function assertStartupReadonlyManagedFixtureSearchUsesCanonicalPagination() {
 function collectTaggedTitles(tag) {
   const sourcesRoot = path.join(repoRoot, 'tools', 'flutter', 'web_app_tests');
   const titles = [];
-  const titleRegex = /test\(\s*(['"`])([\s\S]*?)\1/g;
+  const titleRegex = /test(?:\.(?:skip|only))?\(\s*(['"`])([\s\S]*?)\1/g;
 
   for (const sourcePath of listWebNavigationSources(sourcesRoot)) {
     const source = fs.readFileSync(sourcePath, 'utf8');
