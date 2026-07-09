@@ -67,7 +67,7 @@ detect_governing_todo() {
         printf '%s\n' "${todo_path}"
         return 0
       fi
-    fi
+    done
   done
 
   return 1
