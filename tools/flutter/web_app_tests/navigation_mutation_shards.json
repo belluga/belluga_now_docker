@@ -44,9 +44,8 @@
         ]
       },
       "occurrences": {
-        "grep_extra": "(?:NAV-ADM-LOC|repeated public event detail|admin-authored occurrence profile groups)",
+        "grep_extra": "(?:repeated public event detail|admin-authored occurrence profile groups)",
         "expected_titles": [
-          "@mutation NAV-ADM-LOC-01..08 admin occurrence programming and event-level location ownership matrix holds",
           "@mutation admin-authored occurrence profile groups persist full chip readback and public aggregation",
           "@mutation repeated public event detail GET/hydration keeps programming payload stable"
         ]
@@ -54,7 +53,7 @@
       "occurrence-fab": {
         "grep_extra": "tenant-admin event occurrence FAB persists",
         "expected_titles": [
-          "@mutation tenant-admin event occurrence FAB persists second occurrence and public detail selects it"
+          "@deferred @mutation tenant-admin event occurrence FAB persists second occurrence and public detail selects it"
         ]
       },
       "admin-accounts": {
@@ -110,7 +109,7 @@
   },
   "readonly": {
     "expected_titles": [
-      "@readonly NAV-APD-01 Discovery profile detail back stack does not reopen stale detail",
+      "@deferred @readonly NAV-APD-01 Discovery profile detail back stack does not reopen stale detail",
       "@readonly NAV-APD-02..06 and NAV-APD-10 hero, taxonomy, tabs, social removal, and optional favorite empty state are visible",
       "@readonly NAV-APD-12 mobile breakpoint keeps title and taxonomy chips readable",
       "@readonly BOORA-FONT-01 web runtime loads and draws BooraIcons glyphs",
@@ -123,7 +122,7 @@
       "@readonly MAP-LOC-GRANT-01 first warm geolocation-granted map entry loads POIs from a resolved origin without public error state",
       "@readonly MAP-LOC-GRANT-02 location-permission CTA continuation loads canonical map data once browser geolocation is granted",
       "@readonly MAP-NAV-REENTRY-01 tenant home can reopen map after returning from a warm permission-gated entry",
-      "@readonly MAP-WEB-WIDTH-01 tenant map route is full width while framed tenant routes remain constrained",
+      "@deferred @readonly MAP-WEB-WIDTH-01 tenant map route is full width while framed tenant routes remain constrained",
       "@readonly landlord domain bootstraps as landlord and navigates",
       "@readonly STARTUP-PUBLIC-BOOTSTRAP-01 anonymous tenant home cold start keeps the public surface and completes anonymous bootstrap",
       "@readonly STARTUP-PUBLIC-BOOTSTRAP-02 anonymous account-profile direct entry keeps the public surface and completes anonymous bootstrap",

@@ -19,6 +19,61 @@ FULL_SEQUENCE_HOST_OVERRIDES_RESET=0
 FULL_SEQUENCE_HOST_OVERRIDES_APPLIED=0
 FULL_SEQUENCE_TARGET=""
 
+list_required_node_candidates() {
+  local version_dir=""
+
+  for version_dir in \
+    "${HOME}/.nvm/versions/node"/v"${REQUIRED_NODE_MAJOR}".*/bin \
+    "${HOME}/.local/share/mise/installs/node"/"${REQUIRED_NODE_MAJOR}".*/bin \
+    "${HOME}/.volta/tools/image/node"/"${REQUIRED_NODE_MAJOR}".*/bin; do
+    if [[ -x "${version_dir}/node" ]]; then
+      printf '%s\n' "${version_dir}"
+    fi
+  done | sort -Vu
+}
+
+ensure_required_node_runtime() {
+  local node_version=""
+  local node_major=""
+  local candidate_dir=""
+
+  if ! command -v node >/dev/null 2>&1; then
+    for candidate_dir in $(list_required_node_candidates); do
+      PATH="${candidate_dir}:${PATH}"
+      export PATH
+      break
+    done
+  fi
+
+  if ! command -v node >/dev/null 2>&1; then
+    echo "ERROR: node is required for the stage browser contract." >&2
+    exit 1
+  fi
+
+  node_version="$(node --version 2>/dev/null | tr -d '\r\n' || true)"
+  node_major="${node_version#v}"
+  node_major="${node_major%%.*}"
+
+  if [[ -z "${node_major}" || "${node_major}" != "${REQUIRED_NODE_MAJOR}" ]]; then
+    while IFS= read -r candidate_dir; do
+      PATH="${candidate_dir}:${PATH}"
+      export PATH
+      hash -r
+      node_version="$(node --version 2>/dev/null | tr -d '\r\n' || true)"
+      node_major="${node_version#v}"
+      node_major="${node_major%%.*}"
+      if [[ -n "${node_major}" && "${node_major}" == "${REQUIRED_NODE_MAJOR}" ]]; then
+        return 0
+      fi
+    done < <(list_required_node_candidates)
+  else
+    return 0
+  fi
+
+  echo "ERROR: stage browser contract requires Node major ${REQUIRED_NODE_MAJOR} to match the protected pipeline (found ${node_version:-<missing>})." >&2
+  exit 1
+}
+
 usage() {
   cat >&2 <<'EOF'
 Usage:
@@ -222,22 +277,7 @@ run_local_public_build() {
 }
 
 install_navigation_deps() {
-  local node_version=""
-  local node_major=""
-
-  if ! command -v node >/dev/null 2>&1; then
-    echo "ERROR: node is required for the stage browser contract." >&2
-    exit 1
-  fi
-
-  node_version="$(node --version 2>/dev/null | tr -d '\r\n' || true)"
-  node_major="${node_version#v}"
-  node_major="${node_major%%.*}"
-
-  if [[ -z "${node_major}" || "${node_major}" != "${REQUIRED_NODE_MAJOR}" ]]; then
-    echo "ERROR: stage browser contract requires Node major ${REQUIRED_NODE_MAJOR} to match the protected pipeline (found ${node_version:-<missing>})." >&2
-    exit 1
-  fi
+  ensure_required_node_runtime
 
   (
     cd "${SMOKE_RUNNER_DIR}"
@@ -328,6 +368,8 @@ check_stage_provenance() {
 
 enforce_public_default_origin_state() {
   local mode="$1"
+
+  ensure_required_node_runtime
 
   NODE_PATH="${SMOKE_RUNNER_DIR}/node_modules${NODE_PATH:+:${NODE_PATH}}" \
   NAV_PUBLIC_DEFAULT_ORIGIN_MODE="${mode}" \
@@ -453,6 +495,7 @@ fixture_ensure() {
   ensure_tenant_url
   ensure_contract_run_id "${target}"
   require_mutation_credentials
+  ensure_required_node_runtime
   export NAV_WEB_ALLOW_NONLOCAL_MUTATION_HOSTS=1
   export NODE_PATH="${SMOKE_RUNNER_DIR}/node_modules${NODE_PATH:+:${NODE_PATH}}"
 
@@ -469,6 +512,7 @@ fixture_cleanup() {
   ensure_tenant_url
   ensure_contract_run_id "${target}"
   require_mutation_credentials
+  ensure_required_node_runtime
   export NAV_PUBLIC_TAXONOMY_FIXTURE_ACTION=cleanup
   export NAV_WEB_ALLOW_NONLOCAL_MUTATION_HOSTS=1
   export NODE_PATH="${SMOKE_RUNNER_DIR}/node_modules${NODE_PATH:+:${NODE_PATH}}"

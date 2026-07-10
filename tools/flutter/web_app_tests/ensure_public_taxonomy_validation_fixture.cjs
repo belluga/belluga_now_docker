@@ -777,8 +777,8 @@ async function createPublicEvent(
     relatedProfileId,
   },
 ) {
-  const start = new Date(Date.now() + 30 * 60 * 1000);
-  const end = new Date(start.getTime() + 60 * 60 * 1000);
+  const start = new Date(Date.now() - 5 * 60 * 1000);
+  const end = new Date(Date.now() + 55 * 60 * 1000);
   const response = await api.post(buildUrl(baseUrl, '/admin/api/v1/events'), {
     headers: authHeaders(token),
     data: {
