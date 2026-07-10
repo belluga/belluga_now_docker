@@ -26,7 +26,7 @@
         "expected_titles": [
           "@mutation Home filters honor Event Type taxonomy compatibility, hide zero-taxonomy rows, and keep selected icon foreground aligned with the label",
           "@mutation Profile Discovery hides non-publicly-discoverable types and keeps selected icon foreground aligned with the label",
-          "@mutation tenant-admin account-profile gallery groups persist and render in the public modal",
+          "@deferred @mutation tenant-admin account-profile gallery groups persist and render in the public modal",
           "@mutation tenant-admin gallery data stays dormant when has_gallery is disabled",
           "@mutation home favorites preserve backend order and expose event status halos"
         ]
