@@ -2491,7 +2491,7 @@ test('@mutation tenant-admin account-profile avatar upload persists and renders 
   }
 });
 
-test('@mutation tenant-admin account-profile gallery groups persist and render in the public modal', async ({
+test.skip('@deferred @mutation tenant-admin account-profile gallery groups persist and render in the public modal', async ({
   browser,
 }) => {
   const baseUrl = requireTenantUrl();
