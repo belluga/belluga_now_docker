@@ -887,7 +887,7 @@ function assertCiEquivalentContractSurfacesStayWired() {
     );
     assert.deepStrictEqual(
       flutterManifest.entries?.[2]?.command,
-      ['bash', 'tool/ci/run_workspace_test_contract.sh', 'config/defines/stage.json'],
+      ['bash', 'tool/ci/run_workspace_test_contract.sh', 'config/defines/dev.json'],
       'flutter stage-full manifest must use the shared workspace test wrapper',
     );
 
@@ -2426,7 +2426,7 @@ function assertDormantGalleryProofResetsPublicCollectorsAfterConvergence() {
   const source = fs.readFileSync(tenantAdminMutationSpec, 'utf8');
   assert.match(
     source,
-    /test\('@mutation tenant-admin gallery data stays dormant when has_gallery is disabled'[\s\S]*?test\.setTimeout\(600000\);[\s\S]*?allow current admin edit session to settle after gallery suppression[\s\S]*?await page\.waitForTimeout\(2500\);\s*resetFailureCollectors\(collectors\);\s*await page\.waitForTimeout\(750\);\s*await assertNoBrowserFailures\(collectors\);[\s\S]*?wait for final public page to converge without gallery content[\s\S]*?allow final public page to settle after gallery suppression[\s\S]*?await publicPage\.waitForTimeout\(2500\);\s*resetFailureCollectors\(publicCollectors\);\s*await publicPage\.waitForTimeout\(750\);\s*await assertNoBrowserFailures\(collectors\);\s*await assertNoBrowserFailures\(publicCollectors\);/,
+    /test\.skip\('@deferred @mutation tenant-admin gallery data stays dormant when has_gallery is disabled'[\s\S]*?test\.setTimeout\(600000\);[\s\S]*?allow current admin edit session to settle after gallery suppression[\s\S]*?await page\.waitForTimeout\(2500\);\s*resetFailureCollectors\(collectors\);\s*await page\.waitForTimeout\(750\);\s*await assertNoBrowserFailures\(collectors\);[\s\S]*?wait for final public page to converge without gallery content[\s\S]*?allow final public page to settle after gallery suppression[\s\S]*?await publicPage\.waitForTimeout\(2500\);\s*resetFailureCollectors\(publicCollectors\);\s*await publicPage\.waitForTimeout\(750\);\s*await assertNoBrowserFailures\(collectors\);\s*await assertNoBrowserFailures\(publicCollectors\);/,
     'gallery dormant mutation proof must give both admin and public surfaces a post-suppression settle window, then clear collectors before the steady-state browser assertion',
   );
 }

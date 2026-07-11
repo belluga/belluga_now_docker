@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 DEFAULT_BASE_REF="${STAGE_FULL_PROMOTION_BASE_REF:-origin/dev}"
+RELEASE_PACKAGE_OPENING_TRACK=""
 
 ensure_principal_checkout() {
   local git_dir=""
@@ -114,6 +115,19 @@ run_source_preflight() {
   )
 }
 
+capture_release_package_opening_track() {
+  local governing_todo="$1"
+  local output_file=""
+
+  output_file="$(mktemp)"
+  python3 "${ROOT_DIR}/delphi-ai/tools/github_release_package_rollup_guard.py" \
+    --governing-todo "${governing_todo}" \
+    --base-ref "${DEFAULT_BASE_REF}" >"${output_file}"
+  cat "${output_file}"
+  RELEASE_PACKAGE_OPENING_TRACK="$(sed -n 's/^  - recommended opening track: //p' "${output_file}" | head -n 1)"
+  rm -f "${output_file}"
+}
+
 root_gitlink_matches_base() {
   local submodule_path="$1"
   local head_gitlink_sha=""
@@ -132,6 +146,11 @@ repo_requires_source_preflight() {
 
   case "${repo_key}" in
     root)
+      case "${RELEASE_PACKAGE_OPENING_TRACK}" in
+        flutter-only|laravel-only|flutter-laravel)
+          return 1
+          ;;
+      esac
       return 0
       ;;
     flutter-app|laravel-app)
@@ -139,6 +158,18 @@ repo_requires_source_preflight() {
         return 1
       fi
       return 0
+      ;;
+  esac
+
+  return 0
+}
+
+repo_requires_promotion_validation() {
+  local repo_key="$1"
+
+  case "${repo_key}:${RELEASE_PACKAGE_OPENING_TRACK}" in
+    root:flutter-only|root:laravel-only|root:flutter-laravel)
+      return 1
       ;;
   esac
 
@@ -161,6 +192,10 @@ main() {
   fi
 
   echo "INFO: using governing package TODO: ${governing_todo#${ROOT_DIR}/}"
+  capture_release_package_opening_track "${governing_todo}"
+  if [[ -n "${RELEASE_PACKAGE_OPENING_TRACK}" ]]; then
+    echo "INFO: release-package opening track under promotable-state validation: ${RELEASE_PACKAGE_OPENING_TRACK}."
+  fi
 
   local repo_path=""
   local repo_selector=""
@@ -184,13 +219,16 @@ main() {
 
     source_branch="$(git -C "${repo_path}" branch --show-current)"
     echo "INFO: promotable-state validating ${repo_label} on branch ${source_branch:-<detached>}."
+    if ! repo_requires_promotion_validation "${repo_key}"; then
+      echo "INFO: skipping promotable-state promotion validation for ${repo_label} because the release-package opening track is app-first (${RELEASE_PACKAGE_OPENING_TRACK}); root is not an authorized first promotion source."
+      continue
+    fi
     ensure_clean_repo "${repo_path}" "${repo_label}"
     run_source_authority "${repo_selector}" "${repo_key}" "${source_branch}" "${governing_todo}"
     if repo_requires_source_preflight "${repo_key}"; then
       run_source_preflight "${repo_path}" "${repo_key}" "${source_branch}" "${governing_todo}"
       continue
     fi
-
     echo "INFO: skipping promotable-state source preflight for ${repo_label} because root gitlink matches ${DEFAULT_BASE_REF}; this stage-full rerun is root-only for that repo."
   done
 
