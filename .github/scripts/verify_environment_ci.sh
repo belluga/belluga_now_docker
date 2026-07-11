@@ -1254,6 +1254,11 @@ if [[ "${flutter_gitlink_workflow_audit_required}" -eq 1 ]]; then
     echo "ERROR: flutter stage-full contract must bootstrap workspace dependencies with fvm flutter pub get before analysis/tests." >&2
     exit 1
   fi
+
+  if ! grep -Fq '"command": ["bash", "tool/ci/run_workspace_test_contract.sh", "config/defines/dev.json"]' flutter-app/tool/ci/contracts/stage-full.json; then
+    echo "ERROR: flutter stage-full contract must run workspace tests with the canonical local/dev define file." >&2
+    exit 1
+  fi
 fi
 
 if grep -Eq '### Published Stage(-Equivalent)? Validation' README.md; then

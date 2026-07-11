@@ -887,7 +887,7 @@ function assertCiEquivalentContractSurfacesStayWired() {
     );
     assert.deepStrictEqual(
       flutterManifest.entries?.[2]?.command,
-      ['bash', 'tool/ci/run_workspace_test_contract.sh', 'config/defines/stage.json'],
+      ['bash', 'tool/ci/run_workspace_test_contract.sh', 'config/defines/dev.json'],
       'flutter stage-full manifest must use the shared workspace test wrapper',
     );
 

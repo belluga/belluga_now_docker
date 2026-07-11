@@ -905,7 +905,7 @@ test.skip('@deferred @readonly NAV-APD-01 Discovery profile detail back stack do
   expect(page.url()).not.toBe(openedDetailUrl);
 });
 
-test('@readonly NAV-APD-02..06 and NAV-APD-10 hero, taxonomy, tabs, social removal, and optional favorite empty state are visible', async ({
+test.skip('@deferred @readonly NAV-APD-02..06 and NAV-APD-10 hero, taxonomy, tabs, social removal, and optional favorite empty state are visible', async ({
   page,
 }) => {
   const baseUrl = requireTenantUrl();

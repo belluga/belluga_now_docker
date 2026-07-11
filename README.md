@@ -305,6 +305,9 @@ the same thing as proving a published lane contract.
 under evaluation and should resolve through local/dev topology. In this repository,
 the broadest local pre-promotion CI Equivalent contract is
 `bash tools/ci/run_contract.sh --profile stage-full`.
+For Flutter workspace execution inside that contract, the canonical define file is
+`flutter-app/config/defines/dev.json`; using `stage` defines in `stage-full` is
+out of contract unless an explicit user-validated exception says otherwise.
 It includes repo-owned local-public web publish/provenance proof plus readonly and
 mutation browser smoke on `belluga.space` / `guarappari.belluga.space`.
 When the next step is to send that exact evaluated state into the remote promotion
