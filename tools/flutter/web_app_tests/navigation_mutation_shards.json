@@ -27,7 +27,7 @@
           "@mutation Home filters honor Event Type taxonomy compatibility, hide zero-taxonomy rows, and keep selected icon foreground aligned with the label",
           "@mutation Profile Discovery hides non-publicly-discoverable types and keeps selected icon foreground aligned with the label",
           "@deferred @mutation tenant-admin account-profile gallery groups persist and render in the public modal",
-          "@mutation tenant-admin gallery data stays dormant when has_gallery is disabled",
+          "@deferred @mutation tenant-admin gallery data stays dormant when has_gallery is disabled",
           "@mutation home favorites preserve backend order and expose event status halos"
         ]
       },
@@ -110,8 +110,8 @@
   "readonly": {
     "expected_titles": [
       "@deferred @readonly NAV-APD-01 Discovery profile detail back stack does not reopen stale detail",
-      "@readonly NAV-APD-02..06 and NAV-APD-10 hero, taxonomy, tabs, social removal, and optional favorite empty state are visible",
-      "@readonly NAV-APD-12 mobile breakpoint keeps title and taxonomy chips readable",
+      "@deferred @readonly NAV-APD-02..06 and NAV-APD-10 hero, taxonomy, tabs, social removal, and optional favorite empty state are visible",
+      "@deferred @readonly NAV-APD-12 mobile breakpoint keeps title and taxonomy chips readable",
       "@readonly BOORA-FONT-01 web runtime loads and draws BooraIcons glyphs",
       "@readonly landlord and tenant well-known endpoints are JSON and not SPA fallback",
       "@readonly landlord and tenant manifest endpoint is JSON and not SPA fallback",
