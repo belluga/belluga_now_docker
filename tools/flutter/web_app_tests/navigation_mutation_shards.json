@@ -111,7 +111,7 @@
     "expected_titles": [
       "@deferred @readonly NAV-APD-01 Discovery profile detail back stack does not reopen stale detail",
       "@deferred @readonly NAV-APD-02..06 and NAV-APD-10 hero, taxonomy, tabs, social removal, and optional favorite empty state are visible",
-      "@readonly NAV-APD-12 mobile breakpoint keeps title and taxonomy chips readable",
+      "@deferred @readonly NAV-APD-12 mobile breakpoint keeps title and taxonomy chips readable",
       "@readonly BOORA-FONT-01 web runtime loads and draws BooraIcons glyphs",
       "@readonly landlord and tenant well-known endpoints are JSON and not SPA fallback",
       "@readonly landlord and tenant manifest endpoint is JSON and not SPA fallback",

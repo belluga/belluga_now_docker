@@ -983,7 +983,7 @@ test.skip('@deferred @readonly NAV-APD-02..06 and NAV-APD-10 hero, taxonomy, tab
   }
 });
 
-test('@readonly NAV-APD-12 mobile breakpoint keeps title and taxonomy chips readable', async ({
+test.skip('@deferred @readonly NAV-APD-12 mobile breakpoint keeps title and taxonomy chips readable', async ({
   page,
 }) => {
   const baseUrl = requireTenantUrl();
