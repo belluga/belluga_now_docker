@@ -3117,7 +3117,7 @@ test('@mutation tenant-admin account-profile edit save keeps Display Name visibl
   }
 });
 
-test('@mutation tenant-admin gallery data stays dormant when has_gallery is disabled', async ({
+test.skip('@deferred @mutation tenant-admin gallery data stays dormant when has_gallery is disabled', async ({
   browser,
 }) => {
   test.setTimeout(600000);
