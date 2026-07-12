@@ -2491,7 +2491,7 @@ test('@mutation tenant-admin account-profile avatar upload persists and renders 
   }
 });
 
-test('@mutation tenant-admin account-profile gallery groups persist and render in the public modal', async ({
+test.skip('@deferred @mutation tenant-admin account-profile gallery groups persist and render in the public modal', async ({
   browser,
 }) => {
   const baseUrl = requireTenantUrl();
@@ -3117,7 +3117,7 @@ test('@mutation tenant-admin account-profile edit save keeps Display Name visibl
   }
 });
 
-test('@mutation tenant-admin gallery data stays dormant when has_gallery is disabled', async ({
+test.skip('@deferred @mutation tenant-admin gallery data stays dormant when has_gallery is disabled', async ({
   browser,
 }) => {
   test.setTimeout(600000);

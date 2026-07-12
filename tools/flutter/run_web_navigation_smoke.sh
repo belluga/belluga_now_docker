@@ -337,9 +337,15 @@ if [[ -n "${NAV_WEB_SHARD:-}" ]]; then
   GREP="${GREP}.*${SHARD_GREP_EXTRA}"
 fi
 
+PLAYWRIGHT_CLI="./node_modules/playwright/cli.js"
+if [[ ! -f "${PLAYWRIGHT_CLI}" ]]; then
+  echo "ERROR: expected local Playwright CLI at ${PLAYWRIGHT_CLI}; run browser dependency install first." >&2
+  exit 1
+fi
+
 LIST_OUTPUT="${DEFAULT_OUTPUT_DIR}/selected-tests.txt"
 run_with_timeout "web navigation test selection (${SUITE})" "${LIST_TIMEOUT_SECONDS}" \
-  npx playwright test \
+  node "${PLAYWRIGHT_CLI}" test \
   --config ./playwright.config.js \
   --grep "${GREP}" \
   --list \
@@ -348,7 +354,7 @@ run_with_timeout "web navigation test selection (${SUITE})" "${LIST_TIMEOUT_SECO
 node ../web_app_tests/web_navigation_shards.cjs validate "${SUITE}" "${NAV_WEB_SHARD:-all}" "${LIST_OUTPUT}"
 
 run_with_timeout "web navigation smoke (${SUITE})" "${SUITE_TIMEOUT_SECONDS}" \
-  npx playwright test \
+  node "${PLAYWRIGHT_CLI}" test \
   --config ./playwright.config.js \
   --grep "${GREP}" \
   --retries=0 \
