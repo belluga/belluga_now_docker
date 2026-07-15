@@ -118,8 +118,15 @@ def validate_repository(repo_root: Path) -> list[Finding]:
             findings,
             controller_path,
             source_loader,
-            "fetchContactSourceCandidatesPage(",
-            "Use the dedicated server-owned candidate endpoint; do not reuse the generic profile list.",
+            "loadContactSourceCandidates(",
+            "Use the repository's dedicated contact-source loader; do not reuse the generic profile list.",
+        )
+        require_fragment(
+            findings,
+            controller_path,
+            source_loader,
+            "loadNextContactSourceCandidatesPage(",
+            "Page through the dedicated contact-source loader; do not construct a generic profile query.",
         )
         for forbidden in (
             "fetchAccountProfiles(",
@@ -166,6 +173,30 @@ def validate_repository(repo_root: Path) -> list[Finding]:
         flutter_contract,
         "fetchContactSourceCandidatesPage(",
         "Expose the dedicated candidate-page contract to controllers and test doubles.",
+    )
+    contract_initial_loader = section_between(
+        flutter_contract,
+        "Future<TenantAdminPagedResult<TenantAdminAccountProfile>>\n  loadContactSourceCandidates",
+        "Future<TenantAdminPagedResult<TenantAdminAccountProfile>?>\n  loadNextContactSourceCandidatesPage",
+    )
+    require_fragment(
+        findings,
+        repository_contract_path,
+        contract_initial_loader,
+        "_fetchContactSourceCandidatesPage(",
+        "Keep the semantic initial loader bound to the dedicated contact-source page request.",
+    )
+    contract_next_loader = section_between(
+        flutter_contract,
+        "Future<TenantAdminPagedResult<TenantAdminAccountProfile>?>\n  loadNextContactSourceCandidatesPage",
+        "Future<TenantAdminAccountProfile> fetchAccountProfile",
+    )
+    require_fragment(
+        findings,
+        repository_contract_path,
+        contract_next_loader,
+        "_fetchContactSourceCandidatesPage(",
+        "Keep the semantic next-page loader bound to the dedicated contact-source page request.",
     )
 
     encoder = read_source(repo_root, encoder_path, findings)

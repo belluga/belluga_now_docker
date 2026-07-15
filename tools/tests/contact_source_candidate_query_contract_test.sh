@@ -35,7 +35,7 @@ import sys
 path = Path(sys.argv[1])
 source = path.read_text(encoding="utf-8")
 source = source.replace(
-    "fetchContactSourceCandidatesPage(",
+    "await _profilesRepository.loadContactSourceCandidates(",
     "fetchAccountProfilesPage(",
     1,
 )
