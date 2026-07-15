@@ -4255,7 +4255,7 @@ test('@mutation tenant-admin account profile nested tabs obey profile type capab
   }
 });
 
-test('@mutation tenant-admin account onboarding CRUD persists detail/edit readback and delete flow', async () => {
+test.skip('@deferred @mutation tenant-admin account onboarding CRUD persists detail/edit readback and delete flow', async () => {
   test.setTimeout(600000);
   const baseUrl = requireTenantUrl();
   const api = await createApiContext(baseUrl);

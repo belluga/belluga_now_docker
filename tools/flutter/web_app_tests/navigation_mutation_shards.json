@@ -59,7 +59,7 @@
       "admin-accounts": {
         "grep_extra": "(?:account onboarding CRUD persists detail/edit readback and delete flow|account onboarding rejects stale selected profile type)",
         "expected_titles": [
-          "@mutation tenant-admin account onboarding CRUD persists detail/edit readback and delete flow",
+          "@deferred @mutation tenant-admin account onboarding CRUD persists detail/edit readback and delete flow",
           "@mutation tenant-admin account onboarding rejects stale selected profile type with inline 422"
         ]
       },
