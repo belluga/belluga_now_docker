@@ -14,6 +14,28 @@
         "VERIFY_ENV_EVENT_NAME=\"${VERIFY_ENV_EVENT_NAME:-pull_request}\" VERIFY_ENV_BASE_REF=\"${VERIFY_ENV_BASE_REF:-dev}\" bash .github/scripts/verify_environment_ci.sh"
       ],
       "description": "Fail closed when root workflow/runtime/parity invariants drift."
+    },
+    {
+      "id": "contact-channels-fixture-equality",
+      "repo": "belluga_now_docker",
+      "kind": "mandatory-root-invariant",
+      "cwd": "../../..",
+      "command": [
+        "python3",
+        "tools/contact_channels/verify_fixture_equality.py"
+      ],
+      "description": "Fail closed when either implementation fixture drifts from the canonical contact-channel corpus."
+    },
+    {
+      "id": "contact-source-candidate-query-contract",
+      "repo": "belluga_now_docker",
+      "kind": "mandatory-root-invariant",
+      "cwd": "../../..",
+      "command": [
+        "python3",
+        "tools/contact_channels/verify_contact_source_candidate_query_contract.py"
+      ],
+      "description": "Fail closed when the contact-source picker regresses to a broad Account Profile fetch or loses its indexed server-owned eligibility query."
     }
   ]
 }
