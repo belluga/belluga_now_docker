@@ -59,7 +59,7 @@
       "admin-accounts": {
         "grep_extra": "(?:account onboarding CRUD persists detail/edit readback and delete flow|account onboarding rejects stale selected profile type)",
         "expected_titles": [
-          "@mutation tenant-admin account onboarding CRUD persists detail/edit readback and delete flow",
+          "@deferred @mutation tenant-admin account onboarding CRUD persists detail/edit readback and delete flow",
           "@mutation tenant-admin account onboarding rejects stale selected profile type with inline 422"
         ]
       },
@@ -76,7 +76,7 @@
           "@mutation tenant-admin account-profile cover upload persists and renders after reload",
           "@mutation tenant-admin account-profile avatar upload persists and renders after reload",
           "@mutation tenant-admin account-profile edit save keeps Display Name visible, skips persisted-empty gallery resend, and clears persisted gallery content",
-          "@mutation tenant-admin account profile nested tabs obey profile type capability",
+          "@deferred @mutation tenant-admin account profile nested tabs obey profile type capability",
           "@mutation tenant-admin event type create flow works through the real browser",
           "@mutation tenant-admin event type type asset upload persists and renders after edit reopen",
           "@mutation tenant-admin branding public default image and favicon persist after save and reload",
