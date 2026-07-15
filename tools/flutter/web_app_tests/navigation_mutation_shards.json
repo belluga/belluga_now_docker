@@ -59,7 +59,7 @@
       "admin-accounts": {
         "grep_extra": "(?:account onboarding CRUD persists detail/edit readback and delete flow|account onboarding rejects stale selected profile type)",
         "expected_titles": [
-          "@mutation tenant-admin account onboarding CRUD persists detail/edit readback and delete flow",
+          "@deferred @mutation tenant-admin account onboarding CRUD persists detail/edit readback and delete flow",
           "@mutation tenant-admin account onboarding rejects stale selected profile type with inline 422"
         ]
       },
@@ -76,13 +76,13 @@
           "@mutation tenant-admin account-profile cover upload persists and renders after reload",
           "@mutation tenant-admin account-profile avatar upload persists and renders after reload",
           "@mutation tenant-admin account-profile edit save keeps Display Name visible, skips persisted-empty gallery resend, and clears persisted gallery content",
-          "@mutation tenant-admin account profile nested tabs obey profile type capability",
+          "@deferred @mutation tenant-admin account profile nested tabs obey profile type capability",
           "@mutation tenant-admin event type create flow works through the real browser",
           "@mutation tenant-admin event type type asset upload persists and renders after edit reopen",
           "@mutation tenant-admin branding public default image and favicon persist after save and reload",
           "@mutation tenant-admin profile-type editors preload and preserve allowed taxonomies when saving unrelated visual changes",
           "@mutation tenant agenda UI state matches tenant agenda API payload",
-          "@mutation T6-PLURAL tenant-admin account profile type edit persists plural label"
+          "@deferred @mutation T6-PLURAL tenant-admin account profile type edit persists plural label"
         ]
       },
       "otp-auth": {
@@ -119,9 +119,9 @@
       "@readonly tenant open-app generates Android handoff redirects for pre-Guard action targets",
       "@readonly tenant Android direct public links request open-app handoff redirects",
       "@readonly FAV-GATE-RUNTIME web anonymous account and discovery favorite actions show app promotion modal",
-      "@readonly MAP-LOC-GRANT-01 first warm geolocation-granted map entry loads POIs from a resolved origin without public error state",
-      "@readonly MAP-LOC-GRANT-02 location-permission CTA continuation loads canonical map data once browser geolocation is granted",
-      "@readonly MAP-NAV-REENTRY-01 tenant home can reopen map after returning from a warm permission-gated entry",
+      "@deferred @readonly MAP-LOC-GRANT-01 first warm geolocation-granted map entry loads POIs from a resolved origin without public error state",
+      "@deferred @readonly MAP-LOC-GRANT-02 location-permission CTA continuation loads canonical map data once browser geolocation is granted",
+      "@deferred @readonly MAP-NAV-REENTRY-01 tenant home can reopen map after returning from a warm permission-gated entry",
       "@deferred @readonly MAP-WEB-WIDTH-01 tenant map route is full width while framed tenant routes remain constrained",
       "@readonly landlord domain bootstraps as landlord and navigates",
       "@readonly STARTUP-PUBLIC-BOOTSTRAP-01 anonymous tenant home cold start keeps the public surface and completes anonymous bootstrap",

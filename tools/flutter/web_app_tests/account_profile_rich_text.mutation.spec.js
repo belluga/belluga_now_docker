@@ -53,6 +53,20 @@ function normalizePayload(payload) {
   return payload;
 }
 
+function isRetriableCleanupNetworkError(error) {
+  const message = error?.message || '';
+  return [
+    'ECONNRESET',
+    'ETIMEDOUT',
+    'ECONNREFUSED',
+    'socket hang up',
+  ].some((fragment) => message.includes(fragment));
+}
+
+async function waitMs(delayMs) {
+  await new Promise((resolve) => setTimeout(resolve, delayMs));
+}
+
 function installFailureCollectors(page) {
   const runtimeErrors = [];
   const failedRequests = [];
@@ -479,16 +493,25 @@ async function deleteAccountProfileType(api, baseUrl, token, profileType) {
     return;
   }
 
-  await api.delete(
-    buildUrl(
-      baseUrl,
-      `/admin/api/v1/account_profile_types/${encodeURIComponent(profileType)}`,
-    ),
-    {
-      headers: authHeaders(token),
-      failOnStatusCode: false,
-    },
+  const targetUrl = buildUrl(
+    baseUrl,
+    `/admin/api/v1/account_profile_types/${encodeURIComponent(profileType)}`,
   );
+
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      await api.delete(targetUrl, {
+        headers: authHeaders(token),
+        failOnStatusCode: false,
+      });
+      return;
+    } catch (error) {
+      if (!isRetriableCleanupNetworkError(error) || attempt === 3) {
+        throw error;
+      }
+      await waitMs(400 * attempt);
+    }
+  }
 }
 
 async function assertVisibleRichText(page, expectedTexts) {

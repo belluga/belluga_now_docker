@@ -94,6 +94,12 @@ jobs:
       - name: Verify environment invariants
         run: bash .github/scripts/verify_environment_ci.sh
 
+      - name: Verify contact-channel fixture equality
+        run: python3 tools/contact_channels/verify_fixture_equality.py
+
+      - name: Verify contact-source candidate query contract
+        run: python3 tools/contact_channels/verify_contact_source_candidate_query_contract.py
+
       - name: Verify flutter release tag secret readiness
         if: ${{ (github.event_name == 'pull_request' && github.base_ref == 'main') || (github.event_name == 'push' && github.ref_name == 'main') }}
         env:
