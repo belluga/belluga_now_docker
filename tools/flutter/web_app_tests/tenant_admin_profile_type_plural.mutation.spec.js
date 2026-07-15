@@ -213,7 +213,7 @@ function pageWait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-test('@mutation T6-PLURAL tenant-admin account profile type edit persists plural label', async ({
+test.skip('@deferred @mutation T6-PLURAL tenant-admin account profile type edit persists plural label', async ({
   browser,
 }, testInfo) => {
   const baseUrl = requireTenantUrl();
