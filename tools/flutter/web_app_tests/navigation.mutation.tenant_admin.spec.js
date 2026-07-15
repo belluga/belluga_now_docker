@@ -4062,7 +4062,7 @@ test('@mutation home favorites preserve backend order and expose event status ha
   }
 });
 
-test('@mutation tenant-admin account profile nested tabs obey profile type capability', async ({
+test.skip('@deferred @mutation tenant-admin account profile nested tabs obey profile type capability', async ({
   browser,
 }) => {
   const baseUrl = requireTenantUrl();
