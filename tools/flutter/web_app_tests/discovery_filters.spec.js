@@ -496,6 +496,66 @@ async function fetchDiscoveryCatalog(page, baseUrl, surface) {
   return catalog;
 }
 
+async function waitForPublicAgendaEvents(page, baseUrl, eventIds) {
+  const expectedEventIds = new Set(
+    eventIds.map((eventId) => String(eventId || '').trim()).filter(Boolean),
+  );
+
+  expect(expectedEventIds.size, 'Public agenda readiness requires seeded event ids.')
+    .toBeGreaterThan(0);
+
+  await expect
+    .poll(
+      async () => {
+        const foundEventIds = new Set();
+        const headers = await tenantPublicAuthHeaders(
+          page,
+          'Public agenda readiness',
+        );
+
+        for (let pageNumber = 1; pageNumber <= 6; pageNumber += 1) {
+          const url = new URL(buildUrl(baseUrl, '/api/v1/agenda'));
+          url.searchParams.set('page', pageNumber.toString());
+          url.searchParams.set('page_size', '50');
+          url.searchParams.set(
+            'origin_lat',
+            navigationGeolocation.latitude.toString(),
+          );
+          url.searchParams.set(
+            'origin_lng',
+            navigationGeolocation.longitude.toString(),
+          );
+          const response = await page.request.get(url.toString(), {
+            headers,
+            failOnStatusCode: false,
+          });
+          if (response.status() !== 200) {
+            return false;
+          }
+
+          const payload = await response.json();
+          const rows = normalizeList(payload?.items);
+          for (const row of rows) {
+            const eventId = String(row?.event_id || '').trim();
+            if (eventId) {
+              foundEventIds.add(eventId);
+            }
+          }
+          if (rows.length === 0 || [...expectedEventIds].every((id) => foundEventIds.has(id))) {
+            break;
+          }
+        }
+
+        return [...expectedEventIds].every((id) => foundEventIds.has(id));
+      },
+      {
+        timeout: appBootTimeoutMs,
+        message: `Seeded Home taxonomy events must be visible in the public agenda before Home UI assertions: ${[...expectedEventIds].join(', ')}`,
+      },
+    )
+    .toBe(true);
+}
+
 async function waitForPublicAccountProfileListHit(
   page,
   baseUrl,
@@ -2108,6 +2168,8 @@ test('@mutation Home filters honor Event Type taxonomy compatibility, hide zero-
       daysFromNow: 3,
     });
     createdEventIds.push(eventC.event_id?.toString() || '');
+
+    await waitForPublicAgendaEvents(page, baseUrl, createdEventIds);
 
     await grantNavigationGeolocation(page, baseUrl);
     await openTenantPath(page, baseUrl, '/');
