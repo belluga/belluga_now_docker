@@ -12,6 +12,7 @@ const {
 const tenantUrl = process.env.NAV_TENANT_URL;
 const appBootTimeoutMs = 90000;
 const apiRequestTimeoutMs = 30000;
+const agendaReadinessRequestTimeoutMs = 5000;
 const localRuntimeSeedEnabled =
   (process.env.NAV_DEPLOY_LANE || '').toString().trim().toLowerCase() === 'local';
 const navigationGeolocation = {
@@ -500,6 +501,7 @@ async function waitForPublicAgendaEvents(page, baseUrl, eventIds) {
   const expectedEventIds = new Set(
     eventIds.map((eventId) => String(eventId || '').trim()).filter(Boolean),
   );
+  const readinessDeadline = Date.now() + appBootTimeoutMs;
 
   expect(expectedEventIds.size, 'Public agenda readiness requires seeded event ids.')
     .toBeGreaterThan(0);
@@ -513,7 +515,12 @@ async function waitForPublicAgendaEvents(page, baseUrl, eventIds) {
           'Public agenda readiness',
         );
 
-        for (let pageNumber = 1; pageNumber <= 6; pageNumber += 1) {
+        for (let pageNumber = 1; ; pageNumber += 1) {
+          const remainingTimeoutMs = readinessDeadline - Date.now();
+          if (remainingTimeoutMs <= 0) {
+            return false;
+          }
+
           const url = new URL(buildUrl(baseUrl, '/api/v1/agenda'));
           url.searchParams.set('page', pageNumber.toString());
           url.searchParams.set('page_size', '50');
@@ -525,10 +532,19 @@ async function waitForPublicAgendaEvents(page, baseUrl, eventIds) {
             'origin_lng',
             navigationGeolocation.longitude.toString(),
           );
-          const response = await page.request.get(url.toString(), {
-            headers,
-            failOnStatusCode: false,
-          });
+          let response;
+          try {
+            response = await page.request.get(url.toString(), {
+              headers,
+              failOnStatusCode: false,
+              timeout: Math.min(
+                agendaReadinessRequestTimeoutMs,
+                remainingTimeoutMs,
+              ),
+            });
+          } catch {
+            return false;
+          }
           if (response.status() !== 200) {
             return false;
           }
@@ -541,12 +557,13 @@ async function waitForPublicAgendaEvents(page, baseUrl, eventIds) {
               foundEventIds.add(eventId);
             }
           }
-          if (rows.length === 0 || [...expectedEventIds].every((id) => foundEventIds.has(id))) {
-            break;
+          if ([...expectedEventIds].every((id) => foundEventIds.has(id))) {
+            return true;
+          }
+          if (payload?.has_more !== true) {
+            return false;
           }
         }
-
-        return [...expectedEventIds].every((id) => foundEventIds.has(id));
       },
       {
         timeout: appBootTimeoutMs,
