@@ -4062,6 +4062,193 @@ test('@mutation home favorites preserve backend order and expose event status ha
   }
 });
 
+test('@mutation tenant-admin persisted WhatsApp edit saves without a draft key and preserves server-owned id', async () => {
+  test.setTimeout(600000);
+  const baseUrl = requireTenantUrl();
+  const api = await createApiContext(baseUrl);
+  let browserContext;
+  let freshBrowser;
+  let session = null;
+  let accountSlug = null;
+  let profileId = null;
+  let profileTypeKey = null;
+  let primaryError = null;
+
+  try {
+    session = await loginTenantAdmin(api, baseUrl);
+    const unique = Date.now();
+    const createdProfileType = (
+      await createAccountProfileType(api, baseUrl, session.token, {
+        type: `pw-contact-channel-${unique}`,
+        label: `PW Contact Channel ${unique}`,
+        allowedTaxonomies: [],
+        markerColor: '#0B6E4F',
+        capabilities: {
+          is_favoritable: false,
+          is_publicly_discoverable: false,
+          is_publicly_navigable: false,
+          has_avatar: false,
+          has_cover: false,
+          has_taxonomies: false,
+          has_contact_channels: true,
+        },
+      })
+    )?.data;
+    profileTypeKey = createdProfileType?.type?.toString() || '';
+    expect(profileTypeKey, 'Contact-channel profile type must be created.').toBeTruthy();
+
+    const createdProfile = await createAccountProfileForType(
+      api,
+      baseUrl,
+      session.token,
+      {
+        name: `PW Contact Channel Profile ${unique}`,
+        profileType: createdProfileType,
+      },
+    );
+    accountSlug = createdProfile.accountSlug;
+    profileId = createdProfile.profileId?.toString() || null;
+    expect(accountSlug, 'Contact-channel account onboarding must return a slug.').toBeTruthy();
+    expect(profileId, 'Contact-channel account onboarding must return a profile id.').toBeTruthy();
+
+    const initialTitle = `Inicial ${unique}`;
+    const seedResponse = await api.patch(
+      buildApiUrl(baseUrl, `/admin/api/v1/account_profiles/${profileId}`),
+      {
+        headers: authHeaders(session.token),
+        data: {
+          contact_mode: 'own',
+          contact_channels: [
+            {
+              draft_key: `whatsapp-${unique}`,
+              type: 'whatsapp',
+              value: '+55 (27) 99999-1111',
+              title: initialTitle,
+            },
+          ],
+        },
+      },
+    );
+    expect(seedResponse.status(), 'Persisted WhatsApp seed must succeed.').toBe(200);
+    const seededProfile = normalizePayload(await seedResponse.json());
+    const persistedChannel = normalizeList(seededProfile?.contact_channels)[0] || {};
+    const persistedChannelId = persistedChannel?.id?.toString() || '';
+    expect(persistedChannelId, 'Seeded WhatsApp must receive a server-owned id.').toBeTruthy();
+
+    const pageBundle = await createFreshAuthenticatedTenantAdminPage(session);
+    freshBrowser = pageBundle.browser;
+    browserContext = pageBundle.context;
+    const page = pageBundle.page;
+    const collectors = installFailureCollectors(page);
+    const editUrl = buildApiUrl(
+      baseUrl,
+      `/admin/accounts/${accountSlug}/profiles/${profileId}/edit`,
+    );
+
+    const editResponse = await page.goto(editUrl, { waitUntil: 'domcontentloaded' });
+    expect(editResponse, 'Contact-channel edit route must respond.').not.toBeNull();
+    expect(editResponse.status()).toBeLessThan(400);
+    await assertAppBooted(page);
+    await enableAccessibilityIfNeeded(page);
+
+    const titleField = page.getByLabel('Título de WhatsApp (opcional)').first();
+    await scrollUntilVisible(
+      page,
+      titleField,
+      'Expected the persisted WhatsApp title editor in the account-profile edit flow.',
+    );
+    await expectFlutterFieldRenderedValue(
+      titleField,
+      initialTitle,
+      'Expected the persisted WhatsApp title before editing.',
+    );
+
+    const updatedTitle = `Atualizado ${unique}`;
+    await fillFlutterTextField(page, 'Título de WhatsApp (opcional)', updatedTitle);
+
+    const saveRequestPromise = page.waitForRequest((candidate) => {
+      return (
+        candidate.method() === 'PATCH' &&
+        candidate.url().includes(`/admin/api/v1/account_profiles/${profileId}`)
+      );
+    });
+    const saveResponsePromise = page.waitForResponse((candidate) => {
+      return (
+        candidate.request().method() === 'PATCH' &&
+        candidate.url().includes(`/admin/api/v1/account_profiles/${profileId}`)
+      );
+    });
+    await clickSaveChanges(page);
+    const [saveRequest, saveResponse] = await Promise.all([
+      saveRequestPromise,
+      saveResponsePromise,
+    ]);
+    expect(saveResponse.status(), 'Persisted WhatsApp edit must not return 422.').toBe(200);
+
+    const savePayload = saveRequest.postDataJSON();
+    const savedChannel = normalizeList(savePayload?.contact_channels).find(
+      (channel) => channel?.type === 'whatsapp',
+    );
+    expect(savedChannel, 'Edit save must submit the persisted WhatsApp.').toBeTruthy();
+    expect(savedChannel?.id, 'Edit save must retain the server-owned id.').toBe(
+      persistedChannelId,
+    );
+    expect(
+      Object.prototype.hasOwnProperty.call(savedChannel, 'draft_key'),
+      'Edit save must omit the request-local draft key for a persisted WhatsApp.',
+    ).toBe(false);
+    expect(savedChannel?.title, 'Edit save must submit the changed WhatsApp title.').toBe(
+      updatedTitle,
+    );
+
+    await expect
+      .poll(
+        async () => {
+          const profile = await fetchAdminProfile(
+            api,
+            baseUrl,
+            session.token,
+            profileId,
+          );
+          return normalizeList(profile?.contact_channels).find(
+            (channel) => channel?.id?.toString() === persistedChannelId,
+          )?.title || '';
+        },
+        {
+          timeout: appBootTimeoutMs,
+          message: 'Expected persisted WhatsApp title to survive the edit/save readback.',
+        },
+      )
+      .toBe(updatedTitle);
+
+    await assertNoBrowserFailures(collectors);
+  } catch (error) {
+    primaryError = error;
+    throw error;
+  } finally {
+    await runCleanupPreservingPrimaryError(primaryError, async () => {
+      try {
+        await runCleanupSteps([
+          accountSlug
+            ? () => cleanupOnboardedAccount(api, baseUrl, session?.token, accountSlug)
+            : null,
+          profileTypeKey
+            ? () => deleteAccountProfileType(api, baseUrl, session?.token, profileTypeKey)
+            : null,
+        ]);
+      } finally {
+        if (browserContext) {
+          await browserContext.close().catch(() => {});
+        }
+        if (freshBrowser) {
+          await freshBrowser.close().catch(() => {});
+        }
+        await api.dispose();
+      }
+    });
+  }
+});
+
 test.skip('@deferred @mutation tenant-admin account profile nested tabs obey profile type capability', async ({
   browser,
 }) => {
