@@ -483,18 +483,11 @@ async function locateAdminEventListPlacement(api, baseUrl, token, eventId) {
 }
 
 async function scrollToSeededEventCard(page, uniqueTitle, expectedApiPage) {
-  const titlePattern = new RegExp(escapeRegExp(uniqueTitle));
   const semanticCard = page
     .getByRole('button', {
       name: new RegExp(`Editar evento\\s+${escapeRegExp(uniqueTitle)}`, 'i'),
     })
     .first();
-  const candidates = [
-    page.getByRole('group', { name: titlePattern }).first(),
-    page.getByLabel(titlePattern).first(),
-    page.getByText(titlePattern).first(),
-    semanticCard,
-  ];
   const listAnchors = page.getByRole('button', { name: /^Editar evento / });
   const maxAttempts = Math.max(24, expectedApiPage * 18);
   const viewport =
@@ -506,16 +499,8 @@ async function scrollToSeededEventCard(page, uniqueTitle, expectedApiPage) {
   await page.mouse.move(viewport.width * 0.55, viewport.height * 0.78);
 
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-    for (const [index, candidate] of candidates.entries()) {
-      if (await candidate.isVisible().catch(() => false)) {
-        return {
-          locator: candidate,
-          source: index === candidates.length - 1
-            ? 'semantic button'
-            : 'visible title/card surface',
-          isAccessibleEditButton: index === candidates.length - 1,
-        };
-      }
+    if (await semanticCard.isVisible().catch(() => false)) {
+      return { locator: semanticCard };
     }
 
     const anchorCount = await listAnchors.count().catch(() => 0);
