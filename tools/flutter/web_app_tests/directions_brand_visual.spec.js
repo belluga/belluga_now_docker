@@ -604,8 +604,8 @@ async function visibleLabelLocator(page, label, contextLabel) {
   return semanticLocator;
 }
 
-async function openDirectionsTab(page, contextLabel) {
-  const tab = await visibleLabelLocator(page, 'Como Chegar', contextLabel);
+async function openDirectionsTab(page, contextLabel, tabLabel = 'Como Chegar') {
+  const tab = await visibleLabelLocator(page, tabLabel, contextLabel);
   await tab.click();
 
   await visibleLabelLocator(page, 'Waze', `${contextLabel} directions`);
@@ -1026,7 +1026,7 @@ test('@mutation NAV-DIR-BRAND-01 Waze and Uber brand controls render on shared d
 
     await page.setViewportSize({ width: 390, height: 844 });
     await openAppPath(page, baseUrl, eventPath);
-    await openDirectionsTab(page, 'Event mobile');
+    await openDirectionsTab(page, 'Event mobile', 'O Local');
     const eventMobileWazeButton = await visibleLabelLocator(
       page,
       'Waze',

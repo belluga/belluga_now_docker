@@ -5,7 +5,8 @@ function sanitizeRunId(raw) {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
-    .slice(0, 32) || 'default';
+    .slice(0, 32)
+    .replace(/^-+|-+$/g, '') || 'default';
 }
 
 const managedFixtureEnabled =
@@ -26,7 +27,7 @@ const fixture = {
   taxonomyName: `Stage Validation Profile Style ${runKey}`,
   taxonomyTermSlug: `golden_hour_${runKey}`,
   taxonomyTermLabel: `Golden Hour ${runKey}`,
-  profileType: `stage_validation_public_profile_${runKey}`,
+  profileType: `stage-validation-public-profile-${runKey}`,
   profileTypeLabel: `Stage Validation Public Profile ${runKey}`,
   profileName: `Stage Validation Public Profile ${runKey}`,
   profileSlug: `stage-validation-public-profile-${runKey}`,

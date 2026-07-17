@@ -2,32 +2,67 @@
   "mutation": {
     "shards": {
       "apd": {
-        "grep_extra": "(?:account-profile rich text|NAV-APD-07|NAV-APD-09|NAV-APD-11|NAV-APD-13|NAV-APD-14|NAV-DIR-BRAND-01)",
+        "grep_extra": "(?:account-profile rich text|NAV-APD-07|NAV-APD-09|NAV-APD-11|NAV-APD-13|NAV-APD-14)",
         "expected_titles": [
           "@mutation tenant-admin account-profile rich text persists and renders on admin and public surfaces",
           "@mutation NAV-APD-07..08 agenda is occurrence-first and cards navigate to event detail",
           "@mutation NAV-APD-09 Como Chegar opens focused map and shared route chooser",
           "@mutation NAV-APD-11 reference point action opens confirmation modal",
           "@mutation NAV-APD-13 map reference point action opens confirmation modal",
-          "@mutation NAV-APD-14 map route action reuses the shared route chooser after reference-point prompt",
+          "@mutation NAV-APD-14 map route action reuses the shared route chooser after reference-point prompt"
+        ]
+      },
+      "directions-brand": {
+        "grep_extra": "NAV-DIR-BRAND-01",
+        "expected_titles": [
           "@mutation NAV-DIR-BRAND-01 Waze and Uber brand controls render on shared directions surfaces"
         ]
       },
       "filters": {
-        "grep_extra": "(?:public Map keeps|public Map navigates|event rich text)",
+        "grep_extra": "public Map keeps baseline",
         "expected_titles": [
-          "@mutation public Map keeps baseline primary filters without taxonomy subfilters and uses backend filtering",
-          "@mutation public Map navigates configured canonical filters with and without marker override visuals",
+          "@mutation public Map keeps baseline primary filters without taxonomy subfilters and uses backend filtering"
+        ]
+      },
+      "map-filter-configured": {
+        "grep_extra": "public Map navigates configured",
+        "expected_titles": [
+          "@mutation public Map navigates configured canonical filters with and without marker override visuals"
+        ]
+      },
+      "event-rich-text": {
+        "grep_extra": "event rich text",
+        "expected_titles": [
           "@mutation tenant-admin event rich text persists and renders in public Sobre"
         ]
       },
       "v0208-closeout": {
-        "grep_extra": "(?:Home filters honor|Profile Discovery hides|gallery groups persist|gallery data stays dormant|home favorites preserve)",
+        "grep_extra": "Home filters honor",
         "expected_titles": [
-          "@mutation Home filters honor Event Type taxonomy compatibility, hide zero-taxonomy rows, and keep selected icon foreground aligned with the label",
-          "@mutation Profile Discovery hides non-publicly-discoverable types and keeps selected icon foreground aligned with the label",
-          "@deferred @mutation tenant-admin account-profile gallery groups persist and render in the public modal",
-          "@deferred @mutation tenant-admin gallery data stays dormant when has_gallery is disabled",
+          "@mutation Home filters honor Event Type taxonomy compatibility, hide zero-taxonomy rows, and keep selected icon foreground aligned with the label"
+        ]
+      },
+      "profile-discovery": {
+        "grep_extra": "Profile Discovery hides",
+        "expected_titles": [
+          "@mutation Profile Discovery hides non-publicly-discoverable types and keeps selected icon foreground aligned with the label"
+        ]
+      },
+      "account-gallery-groups": {
+        "grep_extra": "gallery groups persist",
+        "expected_titles": [
+          "@deferred @mutation tenant-admin account-profile gallery groups persist and render in the public modal"
+        ]
+      },
+      "account-gallery-disabled": {
+        "grep_extra": "gallery data stays dormant",
+        "expected_titles": [
+          "@deferred @mutation tenant-admin gallery data stays dormant when has_gallery is disabled"
+        ]
+      },
+      "home-favorites": {
+        "grep_extra": "home favorites preserve",
+        "expected_titles": [
           "@mutation home favorites preserve backend order and expose event status halos"
         ]
       },
@@ -44,10 +79,15 @@
         ]
       },
       "occurrences": {
-        "grep_extra": "(?:repeated public event detail|admin-authored occurrence profile groups)",
+        "grep_extra": "repeated public event detail",
         "expected_titles": [
-          "@mutation admin-authored occurrence profile groups persist full chip readback and public aggregation",
           "@mutation repeated public event detail GET/hydration keeps programming payload stable"
+        ]
+      },
+      "occurrence-profile-groups": {
+        "grep_extra": "admin-authored occurrence profile groups",
+        "expected_titles": [
+          "@mutation admin-authored occurrence profile groups persist full chip readback and public aggregation"
         ]
       },
       "occurrence-fab": {
@@ -57,31 +97,86 @@
         ]
       },
       "admin-accounts": {
-        "grep_extra": "(?:account onboarding CRUD persists detail/edit readback and delete flow|account onboarding rejects stale selected profile type)",
+        "grep_extra": "account onboarding CRUD persists detail/edit readback and delete flow",
         "expected_titles": [
-          "@deferred @mutation tenant-admin account onboarding CRUD persists detail/edit readback and delete flow",
+          "@deferred @mutation tenant-admin account onboarding CRUD persists detail/edit readback and delete flow"
+        ]
+      },
+      "admin-account-stale": {
+        "grep_extra": "account onboarding rejects stale selected profile type",
+        "expected_titles": [
           "@mutation tenant-admin account onboarding rejects stale selected profile type with inline 422"
         ]
       },
       "admin-events": {
-        "grep_extra": "(?:event CRUD creates, reopens edit readback, and removes from manager|event create rejects stale selected event type)",
+        "grep_extra": "event CRUD creates, reopens edit readback, and removes from manager",
         "expected_titles": [
-          "@mutation tenant-admin event CRUD creates, reopens edit readback, and removes from manager",
+          "@mutation tenant-admin event CRUD creates, reopens edit readback, and removes from manager"
+        ]
+      },
+      "admin-event-stale": {
+        "grep_extra": "event create rejects stale selected event type",
+        "expected_titles": [
           "@mutation tenant-admin event create rejects stale selected event type with inline 422"
         ]
       },
       "admin-final": {
-        "grep_extra": "(?:cover upload|avatar upload|edit save keeps Display Name visible|nested tabs obey|event type create|event type type asset|branding public|profile-type editors|tenant agenda UI|T6-PLURAL)",
+        "grep_extra": "cover upload persists",
         "expected_titles": [
-          "@mutation tenant-admin account-profile cover upload persists and renders after reload",
-          "@mutation tenant-admin account-profile avatar upload persists and renders after reload",
-          "@mutation tenant-admin account-profile edit save keeps Display Name visible, skips persisted-empty gallery resend, and clears persisted gallery content",
-          "@deferred @mutation tenant-admin account profile nested tabs obey profile type capability",
-          "@mutation tenant-admin event type create flow works through the real browser",
-          "@mutation tenant-admin event type type asset upload persists and renders after edit reopen",
-          "@mutation tenant-admin branding public default image and favicon persist after save and reload",
-          "@mutation tenant-admin profile-type editors preload and preserve allowed taxonomies when saving unrelated visual changes",
-          "@mutation tenant agenda UI state matches tenant agenda API payload",
+          "@mutation tenant-admin account-profile cover upload persists and renders after reload"
+        ]
+      },
+      "admin-avatar-upload": {
+        "grep_extra": "avatar upload persists",
+        "expected_titles": [
+          "@mutation tenant-admin account-profile avatar upload persists and renders after reload"
+        ]
+      },
+      "admin-profile-edit": {
+        "grep_extra": "edit save keeps Display Name visible",
+        "expected_titles": [
+          "@mutation tenant-admin account-profile edit save keeps Display Name visible, skips persisted-empty gallery resend, and clears persisted gallery content"
+        ]
+      },
+      "admin-profile-tabs": {
+        "grep_extra": "nested tabs obey",
+        "expected_titles": [
+          "@deferred @mutation tenant-admin account profile nested tabs obey profile type capability"
+        ]
+      },
+      "admin-event-type-create": {
+        "grep_extra": "event type create flow",
+        "expected_titles": [
+          "@mutation tenant-admin event type create flow works through the real browser"
+        ]
+      },
+      "admin-event-type-asset": {
+        "grep_extra": "event type type asset",
+        "expected_titles": [
+          "@mutation tenant-admin event type type asset upload persists and renders after edit reopen"
+        ]
+      },
+      "admin-branding": {
+        "grep_extra": "branding public default image",
+        "expected_titles": [
+          "@mutation tenant-admin branding public default image and favicon persist after save and reload"
+        ]
+      },
+      "admin-profile-taxonomies": {
+        "grep_extra": "profile-type editors preload",
+        "expected_titles": [
+          "@mutation tenant-admin profile-type editors preload and preserve allowed taxonomies when saving unrelated visual changes"
+        ]
+      },
+      "admin-agenda": {
+        "grep_extra": "tenant agenda UI state",
+        "expected_titles": [
+          "@mutation tenant agenda UI state matches tenant agenda API payload"
+        ]
+      },
+      "admin-plural": {
+        "grep_extra": "T6-PLURAL",
+        "expected_titles": [
           "@deferred @mutation T6-PLURAL tenant-admin account profile type edit persists plural label"
         ]
       },
@@ -92,10 +187,20 @@
         ]
       },
       "invite-session": {
-        "grep_extra": "(?:INVITE-SESSION-CONTEXT|T6-EVENT-SHARE)",
+        "grep_extra": "invite landing exposes dynamic share metadata",
         "expected_titles": [
-          "@mutation INVITE-SESSION-CONTEXT invite landing exposes dynamic share metadata",
-          "@mutation INVITE-SESSION-CONTEXT Android direct invite and event links generate app intent handoff",
+          "@mutation INVITE-SESSION-CONTEXT invite landing exposes dynamic share metadata"
+        ]
+      },
+      "invite-android-handoff": {
+        "grep_extra": "Android direct invite and event links generate app intent handoff",
+        "expected_titles": [
+          "@mutation INVITE-SESSION-CONTEXT Android direct invite and event links generate app intent handoff"
+        ]
+      },
+      "event-share-boundary": {
+        "grep_extra": "T6-EVENT-SHARE",
+        "expected_titles": [
           "@mutation T6-EVENT-SHARE anonymous web event invite opens contextual promotion directly"
         ]
       }
