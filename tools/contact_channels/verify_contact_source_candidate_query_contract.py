@@ -120,9 +120,22 @@ def validate_repository(repo_root: Path) -> list[Finding]:
         legacy_migration_path,
         upgraded_migration_path,
     ]
-    has_upgraded_contact_source_contract = source_exists(
+    has_candidate_discovery_service = source_exists(
         repo_root, candidate_discovery_service_path
-    ) and source_exists(repo_root, upgraded_migration_path)
+    )
+    has_upgraded_migration = source_exists(repo_root, upgraded_migration_path)
+    has_upgraded_contact_source_contract = (
+        has_candidate_discovery_service and has_upgraded_migration
+    )
+
+    if has_candidate_discovery_service and not has_upgraded_migration:
+        findings.append(
+            Finding(
+                upgraded_migration_path,
+                "upgraded contact-source discovery service is present without the required name-search migration",
+                "Keep the upgraded contact-source contract complete: when AccountProfileCandidateDiscoveryService exists, the name_search_key migration/index rebuild must also be present.",
+            )
+        )
 
     flutter_controller = read_source(repo_root, controller_path, findings)
     source_loader = section_between(
