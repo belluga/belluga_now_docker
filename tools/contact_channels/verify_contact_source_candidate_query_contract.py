@@ -51,6 +51,19 @@ def read_source(repo_root: Path, relative_path: str, findings: list[Finding]) ->
         return ""
 
 
+def source_exists(repo_root: Path, relative_path: str) -> bool:
+    return (repo_root / relative_path).exists()
+
+
+def read_sources(repo_root: Path, relative_paths: list[str], findings: list[Finding]) -> str:
+    parts: list[str] = []
+    for relative_path in relative_paths:
+        source = read_source(repo_root, relative_path, findings)
+        if source:
+            parts.append(source)
+    return "\n".join(parts)
+
+
 def require_fragment(
     findings: list[Finding],
     surface: str,
@@ -90,14 +103,26 @@ def validate_repository(repo_root: Path) -> list[Finding]:
     )
     route_path = "laravel-app/routes/api/tenant_api_v1.php"
     controller_php_path = "laravel-app/app/Http/Api/v1/Controllers/AccountProfilesController.php"
+    candidate_discovery_service_path = (
+        "laravel-app/app/Application/AccountProfiles/AccountProfileCandidateDiscoveryService.php"
+    )
     query_service_path = "laravel-app/app/Application/AccountProfiles/AccountProfileQueryService.php"
     type_provider_path = "laravel-app/app/Application/AccountProfiles/AccountProfileTypeSetProvider.php"
     type_model_path = "laravel-app/app/Models/Tenants/TenantProfileType.php"
     request_path = "laravel-app/app/Http/Api/v1/Requests/AccountProfileContactSourceCandidatesRequest.php"
-    migration_path = (
-        "laravel-app/database/migrations/tenants/"
-        "2026_07_13_000100_add_contact_source_candidate_indexes.php"
+    legacy_migration_path = (
+        "laravel-app/database/migrations/tenants/2026_07_13_000100_add_contact_source_candidate_indexes.php"
     )
+    upgraded_migration_path = (
+        "laravel-app/database/migrations/tenants/2026_07_21_000100_rebuild_contact_source_candidate_index_for_name_search.php"
+    )
+    migration_paths = [
+        legacy_migration_path,
+        upgraded_migration_path,
+    ]
+    has_upgraded_contact_source_contract = source_exists(
+        repo_root, candidate_discovery_service_path
+    ) and source_exists(repo_root, upgraded_migration_path)
 
     flutter_controller = read_source(repo_root, controller_path, findings)
     source_loader = section_between(
@@ -239,43 +264,94 @@ def validate_repository(repo_root: Path) -> list[Finding]:
         "public function contactSourceCandidates(",
         "public function publicIndex(",
     )
-    for required in (
-        "AccountProfileContactSourceCandidatesRequest",
-        "paginateContactSourceCandidates(",
-        "exclude_account_profile_id",
-    ):
-        require_fragment(
-            findings,
-            controller_php_path,
-            controller_method,
-            required,
-            "Keep request validation and candidate eligibility in the dedicated Laravel endpoint.",
-        )
+    if has_upgraded_contact_source_contract:
+        for required in (
+            "exclude_account_profile_id",
+            "AccountProfileCandidateDiscoveryService::SCOPE_CONTACT_CAPABLE",
+            "candidateDiscoveryService->page(",
+        ):
+            require_fragment(
+                findings,
+                controller_php_path,
+                controller_method,
+                required,
+                "Keep the dedicated Laravel endpoint bound to the contact-capable candidate discovery scope.",
+            )
+        if "fetchAccountProfiles" in controller_method or "paginate(" in controller_method:
+            findings.append(
+                Finding(
+                    controller_php_path,
+                    "contact-source controller fell back to a broad account-profile list/query path",
+                    "Keep contact-source retrieval on the dedicated candidate discovery path; do not reuse generic profile pagination.",
+                )
+            )
 
-    query_service = read_source(repo_root, query_service_path, findings)
-    candidate_query = section_between(
-        query_service,
-        "public function paginateContactSourceCandidates(",
-        "private function applyAdminCandidateFilters",
-    )
-    for required in (
-        "contactChannelsEnabledTypes()",
-        "->where('contact_mode', 'own')",
-        "->where('is_active', true)",
-        "->whereNull('deleted_at')",
-        "->whereIn('profile_type', $eligibleTypes)",
-        "->where('_id', '!=', $normalizedExcludedProfileId)",
-        "->orderBy('display_name')",
-        "->orderBy('_id')",
-        "->paginate($perPage)",
-    ):
-        require_fragment(
-            findings,
-            query_service_path,
-            candidate_query,
-            required,
-            "Resolve own, active, non-deleted, capability-enabled sources in the tenant query before pagination.",
+        candidate_discovery_service = read_source(
+            repo_root, candidate_discovery_service_path, findings
         )
+        candidate_query = section_between(
+            candidate_discovery_service,
+            "public function page(",
+            "public function eligibleProfilesByIds(",
+        )
+        for required in (
+            "self::SCOPE_CONTACT_CAPABLE",
+            "->where('contact_mode', AccountProfileContactChannelsService::CONTACT_MODE_OWN)",
+            "->where('is_active', true)",
+            "->whereNull('deleted_at')",
+            "->whereIn('profile_type', $eligibleTypes)",
+            "->where('_id', '!=', $excludedProfileId)",
+            "->where('name_search_key', new Regex('^'.preg_quote($normalizedSearch, '/')))",
+            "->orderBy('name_search_key')",
+            "->orderBy('_id')",
+            "->skip($skip)",
+            "->take($perPage + 1)",
+        ):
+            require_fragment(
+                findings,
+                candidate_discovery_service_path,
+                candidate_query,
+                required,
+                "Resolve own, active, non-deleted, capability-enabled sources in the dedicated discovery query before paging.",
+            )
+    else:
+        for required in (
+            "AccountProfileContactSourceCandidatesRequest",
+            "paginateContactSourceCandidates(",
+            "exclude_account_profile_id",
+        ):
+            require_fragment(
+                findings,
+                controller_php_path,
+                controller_method,
+                required,
+                "Keep request validation and candidate eligibility in the dedicated Laravel endpoint.",
+            )
+
+        query_service = read_source(repo_root, query_service_path, findings)
+        candidate_query = section_between(
+            query_service,
+            "public function paginateContactSourceCandidates(",
+            "private function applyAdminCandidateFilters",
+        )
+        for required in (
+            "contactChannelsEnabledTypes()",
+            "->where('contact_mode', 'own')",
+            "->where('is_active', true)",
+            "->whereNull('deleted_at')",
+            "->whereIn('profile_type', $eligibleTypes)",
+            "->where('_id', '!=', $normalizedExcludedProfileId)",
+            "->orderBy('display_name')",
+            "->orderBy('_id')",
+            "->paginate($perPage)",
+        ):
+            require_fragment(
+                findings,
+                query_service_path,
+                candidate_query,
+                required,
+                "Resolve own, active, non-deleted, capability-enabled sources in the tenant query before pagination.",
+            )
 
     type_provider = read_source(repo_root, type_provider_path, findings)
     require_fragment(
@@ -303,17 +379,21 @@ def validate_repository(repo_root: Path) -> list[Finding]:
     )
 
     request = read_source(repo_root, request_path, findings)
-    for required in ("'page'", "'per_page'", "'exclude_account_profile_id'", "InputConstraints::PUBLIC_PAGE_SIZE_MAX"):
-        require_fragment(
-            findings,
-            request_path,
-            request,
-            required,
-            "Validate candidate pagination and exclusion at the endpoint boundary.",
-        )
+    if request:
+        for required in ("'page'", "'per_page'", "'exclude_account_profile_id'", "InputConstraints::PUBLIC_PAGE_SIZE_MAX"):
+            require_fragment(
+                findings,
+                request_path,
+                request,
+                required,
+                "When the dedicated request object exists, keep candidate pagination and exclusion validation aligned with the endpoint boundary.",
+            )
 
-    migration = read_source(repo_root, migration_path, findings)
-    for required in (
+    active_migration_paths = (
+        migration_paths if has_upgraded_contact_source_contract else [legacy_migration_path]
+    )
+    migration = read_sources(repo_root, active_migration_paths, findings)
+    migration_requirements = [
         "idx_account_profile_types_contact_channels_v1",
         "idx_account_profiles_contact_source_candidates_v1",
         "'capabilities.has_contact_channels'",
@@ -321,11 +401,14 @@ def validate_repository(repo_root: Path) -> list[Finding]:
         "'is_active'",
         "'deleted_at'",
         "'profile_type'",
-        "'display_name'",
-    ):
+    ]
+    migration_requirements.append(
+        "'name_search_key'" if has_upgraded_contact_source_contract else "'display_name'"
+    )
+    for required in migration_requirements:
         require_fragment(
             findings,
-            migration_path,
+            ", ".join(active_migration_paths),
             migration,
             required,
             "Maintain the capability and paginated-candidate indexes with the query contract.",
@@ -342,7 +425,7 @@ def print_teach(repo_root: Path, findings: list[Finding]) -> None:
     )
     print(
         "E (Evidence): Flutter must call the dedicated paged endpoint; Laravel "
-        "must enforce filters before pagination and retain matching indexes."
+        "must keep the dedicated contact-capable discovery path and retain matching indexes."
     )
     if not findings:
         print("A (Assessment): the dedicated query path is intact; no broad client fetch/filter was found.")
