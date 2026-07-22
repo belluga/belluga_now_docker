@@ -4062,6 +4062,193 @@ test('@mutation home favorites preserve backend order and expose event status ha
   }
 });
 
+test('@mutation tenant-admin persisted WhatsApp edit saves without a draft key and preserves server-owned id', async () => {
+  test.setTimeout(600000);
+  const baseUrl = requireTenantUrl();
+  const api = await createApiContext(baseUrl);
+  let browserContext;
+  let freshBrowser;
+  let session = null;
+  let accountSlug = null;
+  let profileId = null;
+  let profileTypeKey = null;
+  let primaryError = null;
+
+  try {
+    session = await loginTenantAdmin(api, baseUrl);
+    const unique = Date.now();
+    const createdProfileType = (
+      await createAccountProfileType(api, baseUrl, session.token, {
+        type: `pw-contact-channel-${unique}`,
+        label: `PW Contact Channel ${unique}`,
+        allowedTaxonomies: [],
+        markerColor: '#0B6E4F',
+        capabilities: {
+          is_favoritable: false,
+          is_publicly_discoverable: false,
+          is_publicly_navigable: false,
+          has_avatar: false,
+          has_cover: false,
+          has_taxonomies: false,
+          has_contact_channels: true,
+        },
+      })
+    )?.data;
+    profileTypeKey = createdProfileType?.type?.toString() || '';
+    expect(profileTypeKey, 'Contact-channel profile type must be created.').toBeTruthy();
+
+    const createdProfile = await createAccountProfileForType(
+      api,
+      baseUrl,
+      session.token,
+      {
+        name: `PW Contact Channel Profile ${unique}`,
+        profileType: createdProfileType,
+      },
+    );
+    accountSlug = createdProfile.accountSlug;
+    profileId = createdProfile.profileId?.toString() || null;
+    expect(accountSlug, 'Contact-channel account onboarding must return a slug.').toBeTruthy();
+    expect(profileId, 'Contact-channel account onboarding must return a profile id.').toBeTruthy();
+
+    const initialTitle = `Inicial ${unique}`;
+    const seedResponse = await api.patch(
+      buildApiUrl(baseUrl, `/admin/api/v1/account_profiles/${profileId}`),
+      {
+        headers: authHeaders(session.token),
+        data: {
+          contact_mode: 'own',
+          contact_channels: [
+            {
+              draft_key: `whatsapp-${unique}`,
+              type: 'whatsapp',
+              value: '+55 (27) 99999-1111',
+              title: initialTitle,
+            },
+          ],
+        },
+      },
+    );
+    expect(seedResponse.status(), 'Persisted WhatsApp seed must succeed.').toBe(200);
+    const seededProfile = normalizePayload(await seedResponse.json());
+    const persistedChannel = normalizeList(seededProfile?.contact_channels)[0] || {};
+    const persistedChannelId = persistedChannel?.id?.toString() || '';
+    expect(persistedChannelId, 'Seeded WhatsApp must receive a server-owned id.').toBeTruthy();
+
+    const pageBundle = await createFreshAuthenticatedTenantAdminPage(session);
+    freshBrowser = pageBundle.browser;
+    browserContext = pageBundle.context;
+    const page = pageBundle.page;
+    const collectors = installFailureCollectors(page);
+    const editUrl = buildApiUrl(
+      baseUrl,
+      `/admin/accounts/${accountSlug}/profiles/${profileId}/edit`,
+    );
+
+    const editResponse = await page.goto(editUrl, { waitUntil: 'domcontentloaded' });
+    expect(editResponse, 'Contact-channel edit route must respond.').not.toBeNull();
+    expect(editResponse.status()).toBeLessThan(400);
+    await assertAppBooted(page);
+    await enableAccessibilityIfNeeded(page);
+
+    const titleField = page.getByLabel('Título de WhatsApp (opcional)').first();
+    await scrollUntilVisible(
+      page,
+      titleField,
+      'Expected the persisted WhatsApp title editor in the account-profile edit flow.',
+    );
+    await expectFlutterFieldRenderedValue(
+      titleField,
+      initialTitle,
+      'Expected the persisted WhatsApp title before editing.',
+    );
+
+    const updatedTitle = `Atualizado ${unique}`;
+    await fillFlutterTextField(page, 'Título de WhatsApp (opcional)', updatedTitle);
+
+    const saveRequestPromise = page.waitForRequest((candidate) => {
+      return (
+        candidate.method() === 'PATCH' &&
+        candidate.url().includes(`/admin/api/v1/account_profiles/${profileId}`)
+      );
+    });
+    const saveResponsePromise = page.waitForResponse((candidate) => {
+      return (
+        candidate.request().method() === 'PATCH' &&
+        candidate.url().includes(`/admin/api/v1/account_profiles/${profileId}`)
+      );
+    });
+    await clickSaveChanges(page);
+    const [saveRequest, saveResponse] = await Promise.all([
+      saveRequestPromise,
+      saveResponsePromise,
+    ]);
+    expect(saveResponse.status(), 'Persisted WhatsApp edit must not return 422.').toBe(200);
+
+    const savePayload = saveRequest.postDataJSON();
+    const savedChannel = normalizeList(savePayload?.contact_channels).find(
+      (channel) => channel?.type === 'whatsapp',
+    );
+    expect(savedChannel, 'Edit save must submit the persisted WhatsApp.').toBeTruthy();
+    expect(savedChannel?.id, 'Edit save must retain the server-owned id.').toBe(
+      persistedChannelId,
+    );
+    expect(
+      Object.prototype.hasOwnProperty.call(savedChannel, 'draft_key'),
+      'Edit save must omit the request-local draft key for a persisted WhatsApp.',
+    ).toBe(false);
+    expect(savedChannel?.title, 'Edit save must submit the changed WhatsApp title.').toBe(
+      updatedTitle,
+    );
+
+    await expect
+      .poll(
+        async () => {
+          const profile = await fetchAdminProfile(
+            api,
+            baseUrl,
+            session.token,
+            profileId,
+          );
+          return normalizeList(profile?.contact_channels).find(
+            (channel) => channel?.id?.toString() === persistedChannelId,
+          )?.title || '';
+        },
+        {
+          timeout: appBootTimeoutMs,
+          message: 'Expected persisted WhatsApp title to survive the edit/save readback.',
+        },
+      )
+      .toBe(updatedTitle);
+
+    await assertNoBrowserFailures(collectors);
+  } catch (error) {
+    primaryError = error;
+    throw error;
+  } finally {
+    await runCleanupPreservingPrimaryError(primaryError, async () => {
+      try {
+        await runCleanupSteps([
+          accountSlug
+            ? () => cleanupOnboardedAccount(api, baseUrl, session?.token, accountSlug)
+            : null,
+          profileTypeKey
+            ? () => deleteAccountProfileType(api, baseUrl, session?.token, profileTypeKey)
+            : null,
+        ]);
+      } finally {
+        if (browserContext) {
+          await browserContext.close().catch(() => {});
+        }
+        if (freshBrowser) {
+          await freshBrowser.close().catch(() => {});
+        }
+        await api.dispose();
+      }
+    });
+  }
+});
+
 test.skip('@deferred @mutation tenant-admin account profile nested tabs obey profile type capability', async ({
   browser,
 }) => {
@@ -4252,6 +4439,347 @@ test.skip('@deferred @mutation tenant-admin account profile nested tabs obey pro
       await freshBrowser.close().catch(() => {});
     }
     await api.dispose();
+  }
+});
+
+test('@mutation U06-CANDIDATE-PICKER server-owned nested and contact candidate search persists through the canonical picker', async () => {
+  test.setTimeout(900000);
+  const baseUrl = requireTenantUrl();
+  const api = await createApiContext(baseUrl);
+  let browserContext;
+  let freshBrowser;
+  let session = null;
+  let nestedTypeKey = null;
+  let contactTypeKey = null;
+  let primaryError = null;
+  const createdAccountSlugs = [];
+
+  try {
+    session = await loginTenantAdmin(api, baseUrl);
+    const unique = Date.now();
+    const nestedType = (
+      await createAccountProfileType(api, baseUrl, session.token, {
+        type: `pw-u06-nested-${unique}`,
+        label: `PW U06 Nested ${unique}`,
+        allowedTaxonomies: [],
+        markerColor: '#0E7A6A',
+        capabilities: {
+          is_queryable: true,
+          is_favoritable: false,
+          is_poi_enabled: false,
+          has_avatar: false,
+          has_cover: false,
+          has_taxonomies: false,
+          has_nested_profile_groups: true,
+        },
+      })
+    )?.data;
+    nestedTypeKey = nestedType?.type?.toString() || '';
+    expect(nestedTypeKey, 'U06 nested profile type must be created.').toBeTruthy();
+
+    const contactType = (
+      await createAccountProfileType(api, baseUrl, session.token, {
+        type: `pw-u06-contact-${unique}`,
+        label: `PW U06 Contact ${unique}`,
+        allowedTaxonomies: [],
+        markerColor: '#1D4ED8',
+        capabilities: {
+          is_queryable: false,
+          is_favoritable: false,
+          is_poi_enabled: false,
+          has_avatar: false,
+          has_cover: false,
+          has_taxonomies: false,
+          has_contact_channels: true,
+        },
+      })
+    )?.data;
+    contactTypeKey = contactType?.type?.toString() || '';
+    expect(contactTypeKey, 'U06 contact profile type must be created.').toBeTruthy();
+
+    for (let index = 1; index <= 21; index += 1) {
+      const filler = await createAccountProfileForType(
+        api,
+        baseUrl,
+        session.token,
+        {
+          name: `Xa Fixture ${String(index).padStart(3, '0')} ${unique}`,
+          profileType: nestedType,
+        },
+      );
+      createdAccountSlugs.push(filler.accountSlug);
+    }
+
+    const xapuri = await createAccountProfileForType(
+      api,
+      baseUrl,
+      session.token,
+      {
+        name: `Xapuri U06 ${unique}`,
+        profileType: nestedType,
+      },
+    );
+    createdAccountSlugs.push(xapuri.accountSlug);
+    expect(xapuri.profileId, 'U06 Xapuri candidate must have an id.').toBeTruthy();
+
+    const nestedParent = await createAccountProfileForType(
+      api,
+      baseUrl,
+      session.token,
+      {
+        name: `PW U06 Nested Parent ${unique}`,
+        profileType: nestedType,
+      },
+    );
+    createdAccountSlugs.push(nestedParent.accountSlug);
+    expect(nestedParent.profileId, 'U06 nested parent must have an id.').toBeTruthy();
+
+    const contactSource = await createAccountProfileForType(
+      api,
+      baseUrl,
+      session.token,
+      {
+        name: `Mirror Source U06 ${unique}`,
+        profileType: contactType,
+      },
+    );
+    createdAccountSlugs.push(contactSource.accountSlug);
+    expect(contactSource.profileId, 'U06 contact source must have an id.').toBeTruthy();
+
+    const contactTitle = `WhatsApp U06 ${unique}`;
+    const sourceSeed = await api.patch(
+      buildApiUrl(baseUrl, `/admin/api/v1/account_profiles/${contactSource.profileId}`),
+      {
+        headers: authHeaders(session.token),
+        data: {
+          contact_mode: 'own',
+          contact_channels: [
+            {
+              draft_key: `u06-whatsapp-${unique}`,
+              type: 'whatsapp',
+              value: '+55 (27) 99999-0040',
+              title: contactTitle,
+            },
+          ],
+        },
+      },
+    );
+    expect(sourceSeed.status(), 'U06 contact source seed must succeed.').toBe(200);
+    const sourcePayload = normalizePayload(await sourceSeed.json());
+    const sourceChannel = normalizeList(sourcePayload?.contact_channels)[0] || {};
+    const sourceChannelId = sourceChannel?.id?.toString() || '';
+    expect(sourceChannelId, 'U06 contact source must retain a channel id.').toBeTruthy();
+
+    const contactTarget = await createAccountProfileForType(
+      api,
+      baseUrl,
+      session.token,
+      {
+        name: `Mirror Target U06 ${unique}`,
+        profileType: contactType,
+      },
+    );
+    createdAccountSlugs.push(contactTarget.accountSlug);
+    expect(contactTarget.profileId, 'U06 contact target must have an id.').toBeTruthy();
+
+    const pageBundle = await createFreshAuthenticatedTenantAdminPage(session);
+    freshBrowser = pageBundle.browser;
+    browserContext = pageBundle.context;
+    const page = pageBundle.page;
+    const collectors = installFailureCollectors(page);
+
+    const nestedEditUrl = buildApiUrl(
+      baseUrl,
+      `/admin/accounts/${nestedParent.accountSlug}/profiles/${nestedParent.profileId}/edit`,
+    );
+    const nestedEditResponse = await page.goto(nestedEditUrl, {
+      waitUntil: 'domcontentloaded',
+    });
+    expect(nestedEditResponse, 'U06 nested edit route must respond.').not.toBeNull();
+    expect(nestedEditResponse.status()).toBeLessThan(400);
+    await assertAppBooted(page);
+    await enableAccessibilityIfNeeded(page);
+    await scrollUntilVisible(
+      page,
+      page.getByText('Abas de contas vinculadas'),
+      'U06 nested parent must expose the canonical nested-group editor.',
+    );
+    await page.getByRole('button', { name: 'Adicionar grupo' }).click();
+    await page.getByRole('button', { name: 'Selecionar perfis' }).click();
+    await expect(
+      page.getByText('Digite ao menos 2 caracteres para buscar.'),
+    ).toBeVisible({ timeout: appBootTimeoutMs });
+
+    const firstPageResponsePromise = page.waitForResponse((candidate) => {
+      const url = new URL(candidate.url());
+      return (
+        candidate.request().method() === 'GET' &&
+        url.pathname === '/admin/api/v1/account_profiles/candidates' &&
+        url.searchParams.get('scope') === 'queryable' &&
+        url.searchParams.get('search') === 'xa' &&
+        candidate.status() === 200
+      );
+    });
+    await fillFlutterTextField(page, 'Buscar perfil', 'xa');
+    const firstPageResponse = await firstPageResponsePromise;
+    const firstPagePayload = await firstPageResponse.json();
+    expect(firstPagePayload?.data).toHaveLength(20);
+    expect(firstPagePayload?.has_more).toBe(true);
+    expect(
+      normalizeList(firstPagePayload?.data).some(
+        (entry) => entry?.id?.toString() === xapuri.profileId?.toString(),
+      ),
+      'Xapuri must be outside the initial 20-row xa page fixture.',
+    ).toBe(false);
+
+    const xapuriSearchResponsePromise = page.waitForResponse((candidate) => {
+      const url = new URL(candidate.url());
+      return (
+        candidate.request().method() === 'GET' &&
+        url.pathname === '/admin/api/v1/account_profiles/candidates' &&
+        url.searchParams.get('scope') === 'queryable' &&
+        url.searchParams.get('search') === 'xapuri' &&
+        candidate.status() === 200
+      );
+    });
+    await fillFlutterTextField(page, 'Buscar perfil', 'xapuri');
+    const xapuriSearchResponse = await xapuriSearchResponsePromise;
+    const xapuriPayload = await xapuriSearchResponse.json();
+    expect(
+      normalizeList(xapuriPayload?.data).map((entry) => entry?.id?.toString()),
+    ).toContain(xapuri.profileId?.toString());
+
+    await page.getByText(xapuri.displayName, { exact: true }).click();
+    await page.getByRole('button', { name: 'Confirmar' }).last().click();
+    const nestedSaveResponsePromise = page.waitForResponse((candidate) => {
+      return (
+        candidate.request().method() === 'PATCH' &&
+        candidate.url().includes(`/admin/api/v1/account_profiles/${nestedParent.profileId}`) &&
+        candidate.status() === 200
+      );
+    });
+    await clickSaveChanges(page);
+    await nestedSaveResponsePromise;
+    const nestedReadback = await fetchAdminProfile(
+      api,
+      baseUrl,
+      session.token,
+      nestedParent.profileId,
+    );
+    expect(
+      normalizeList(nestedReadback?.nested_profile_groups)
+        .flatMap((group) => normalizeList(group?.account_profile_ids))
+        .map((id) => id?.toString()),
+      'Nested save must persist the selected Xapuri profile id.',
+    ).toContain(xapuri.profileId?.toString());
+
+    const contactEditUrl = buildApiUrl(
+      baseUrl,
+      `/admin/accounts/${contactTarget.accountSlug}/profiles/${contactTarget.profileId}/edit`,
+    );
+    const contactEditResponse = await page.goto(contactEditUrl, {
+      waitUntil: 'domcontentloaded',
+    });
+    expect(contactEditResponse, 'U06 contact edit route must respond.').not.toBeNull();
+    expect(contactEditResponse.status()).toBeLessThan(400);
+    await assertAppBooted(page);
+    await enableAccessibilityIfNeeded(page);
+    await scrollUntilVisible(
+      page,
+      page.getByText('Origem do Contato'),
+      'U06 contact target must expose the canonical contact-source section.',
+    );
+    await page.getByRole('radio', { name: /Espelhar outro perfil/i }).click();
+    await page
+      .getByRole('button', { name: 'Selecionar perfil de origem' })
+      .click();
+
+    const contactSearchResponsePromise = page.waitForResponse((candidate) => {
+      const url = new URL(candidate.url());
+      return (
+        candidate.request().method() === 'GET' &&
+        url.pathname === '/admin/api/v1/account_profiles/candidates' &&
+        url.searchParams.get('scope') === 'contact_capable' &&
+        url.searchParams.get('search') === 'mi' &&
+        candidate.status() === 200
+      );
+    });
+    await fillFlutterTextField(page, 'Buscar perfil', 'mi');
+    const contactSearchResponse = await contactSearchResponsePromise;
+    const contactSearchPayload = await contactSearchResponse.json();
+    expect(
+      normalizeList(contactSearchPayload?.data).map((entry) => entry?.id?.toString()),
+    ).toContain(contactSource.profileId?.toString());
+
+    await page.getByText(contactSource.displayName, { exact: true }).click();
+    const sourceDetailResponsePromise = page.waitForResponse((candidate) => {
+      return (
+        candidate.request().method() === 'GET' &&
+        candidate.url().includes(
+          `/admin/api/v1/account_profiles/${contactSource.profileId}`,
+        ) &&
+        candidate.status() === 200
+      );
+    });
+    await page.getByRole('button', { name: 'Confirmar' }).last().click();
+    await sourceDetailResponsePromise;
+    await expect(page.getByText(contactTitle, { exact: false }).first()).toBeVisible({
+      timeout: appBootTimeoutMs,
+    });
+
+    const contactSaveResponsePromise = page.waitForResponse((candidate) => {
+      return (
+        candidate.request().method() === 'PATCH' &&
+        candidate.url().includes(`/admin/api/v1/account_profiles/${contactTarget.profileId}`) &&
+        candidate.status() === 200
+      );
+    });
+    await clickSaveChanges(page);
+    await contactSaveResponsePromise;
+    const contactReadback = await fetchAdminProfile(
+      api,
+      baseUrl,
+      session.token,
+      contactTarget.profileId,
+    );
+    expect(contactReadback?.contact_mode).toBe('mirrored_account_profile');
+    expect(contactReadback?.contact_source_account_profile_id?.toString()).toBe(
+      contactSource.profileId?.toString(),
+    );
+    expect(
+      normalizeList(contactReadback?.effective_contact_channels).map(
+        (channel) => channel?.id?.toString(),
+      ),
+    ).toContain(sourceChannelId);
+
+    await assertNoBrowserFailures(collectors);
+  } catch (error) {
+    primaryError = error;
+    throw error;
+  } finally {
+    await runCleanupPreservingPrimaryError(primaryError, async () => {
+      try {
+        await runCleanupSteps([
+          ...createdAccountSlugs
+            .reverse()
+            .map((slug) => () => cleanupOnboardedAccount(api, baseUrl, session?.token, slug)),
+          nestedTypeKey
+            ? () => deleteAccountProfileType(api, baseUrl, session?.token, nestedTypeKey)
+            : null,
+          contactTypeKey
+            ? () => deleteAccountProfileType(api, baseUrl, session?.token, contactTypeKey)
+            : null,
+        ]);
+      } finally {
+        if (browserContext) {
+          await browserContext.close().catch(() => {});
+        }
+        if (freshBrowser) {
+          await freshBrowser.close().catch(() => {});
+        }
+        await api.dispose();
+      }
+    });
   }
 });
 

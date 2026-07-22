@@ -138,6 +138,18 @@
           "@mutation tenant-admin account-profile edit save keeps Display Name visible, skips persisted-empty gallery resend, and clears persisted gallery content"
         ]
       },
+      "admin-contact-channels": {
+        "grep_extra": "persisted WhatsApp edit saves",
+        "expected_titles": [
+          "@mutation tenant-admin persisted WhatsApp edit saves without a draft key and preserves server-owned id"
+        ]
+      },
+      "u06-candidate-picker": {
+        "grep_extra": "U06-CANDIDATE-PICKER",
+        "expected_titles": [
+          "@mutation U06-CANDIDATE-PICKER server-owned nested and contact candidate search persists through the canonical picker"
+        ]
+      },
       "admin-profile-tabs": {
         "grep_extra": "nested tabs obey",
         "expected_titles": [
