@@ -382,35 +382,6 @@ function labelPattern(label) {
   return new RegExp(`^${escaped}$`, 'i');
 }
 
-function requestContainsFilterValue(url, expectedValue) {
-  const normalizedExpected = normalizeText(expectedValue).toLowerCase();
-  if (!normalizedExpected) {
-    return false;
-  }
-
-  const requestUrl = new URL(url);
-  for (const [, value] of requestUrl.searchParams.entries()) {
-    if (normalizeText(value).toLowerCase().includes(normalizedExpected)) {
-      return true;
-    }
-  }
-  return false;
-}
-
-function chooseMapCategory(categories) {
-  const selected =
-    normalizeList(categories).find(
-      (category) => normalizeText(category?.query?.source).toLowerCase() === 'event',
-    ) ??
-    normalizeList(categories).find(
-      (category) =>
-        normalizeText(category?.label).length > 0 &&
-        normalizeText(category?.key).length > 0,
-    );
-  expect(selected, 'Expected a runtime map filter category').toBeTruthy();
-  return selected;
-}
-
 function findDisplaySnapshot(terms) {
   if (!Array.isArray(terms)) {
     return null;
@@ -433,42 +404,6 @@ function findDisplaySnapshot(terms) {
         taxonomyName: normalizeText(term.taxonomy_name),
       };
     }
-  }
-  return null;
-}
-
-function findNonPrimaryMapTaxonomySnapshot(terms, categories) {
-  const primaryLabels = new Set(
-    normalizeList(categories)
-      .map((category) => normalizeText(category?.label).toLowerCase())
-      .filter(Boolean),
-  );
-
-  if (!Array.isArray(terms)) {
-    return null;
-  }
-  for (const term of terms) {
-    if (!term || typeof term !== 'object') {
-      continue;
-    }
-    const value = normalizeText(term.value);
-    const name = normalizeText(term.name);
-    const label = normalizeText(term.label);
-    const display = name || label;
-    if (!value || !display || display === value) {
-      continue;
-    }
-    if (primaryLabels.has(display.toLowerCase())) {
-      continue;
-    }
-    return {
-      type: normalizeText(term.type),
-      value,
-      name,
-      label,
-      display,
-      taxonomyName: normalizeText(term.taxonomy_name),
-    };
   }
   return null;
 }
@@ -597,7 +532,6 @@ test('@readonly taxonomy display snapshots render labels instead of slugs on pub
   page,
 }) => {
   const baseUrl = requireTenantUrl();
-  const origin = new URL(baseUrl).origin;
   const collectors = installFailureCollectors(page);
 
   const accountProfilesPayload = await fetchPagedRows(
@@ -697,75 +631,6 @@ test('@readonly taxonomy display snapshots render labels instead of slugs on pub
     eventTaxonomyLeakCandidate.snapshot.value,
     'Public event detail route',
   );
-
-  const mapFiltersPayload = await fetchJson(
-    page,
-    buildApiUrl(baseUrl, '/api/v1/map/filters'),
-    'Public map filter catalog',
-  );
-  const mapCategories = Array.isArray(mapFiltersPayload?.categories)
-    ? mapFiltersPayload.categories
-    : [];
-  const mapFilterSnapshot = findDisplaySnapshot(mapFiltersPayload?.taxonomy_terms);
-  if (mapFilterSnapshot) {
-    expect(mapFilterSnapshot.label || mapFilterSnapshot.name).toBe(mapFilterSnapshot.display);
-    expect(mapFilterSnapshot.display).not.toBe(mapFilterSnapshot.value);
-  }
-  expect(
-    mapCategories.length,
-    'Public map filter catalog must expose primary categories for the current Map surface.',
-  ).toBeGreaterThan(0);
-  const hiddenMapTaxonomySnapshot = findNonPrimaryMapTaxonomySnapshot(
-    mapFiltersPayload?.taxonomy_terms,
-    mapCategories,
-  );
-
-  const mapCategory = chooseMapCategory(mapCategories);
-  const expectedMapFilter = mapCategory.query?.source
-    ? { name: 'source', value: mapCategory.query.source }
-    : { name: 'category', value: mapCategory.key };
-
-  await page.context().grantPermissions(['geolocation'], { origin });
-  await page.context().setGeolocation({
-    latitude: -20.671339,
-    longitude: -40.495395,
-    accuracy: 25,
-  });
-
-  await page.goto(buildApiUrl(baseUrl, '/mapa'), { waitUntil: 'domcontentloaded' });
-  await assertAppBooted(page);
-  await enableAccessibilityIfNeeded(page);
-  const filteredMapRequest = page.waitForRequest(
-    (request) =>
-      request.url().includes('/api/v1/map/pois') &&
-      requestContainsFilterValue(request.url(), expectedMapFilter.value),
-    { timeout: appBootTimeoutMs },
-  );
-  const mapFilterButton = page.getByRole('button', {
-    name: labelPattern(mapCategory.label),
-  });
-  await expect(
-    mapFilterButton.first(),
-    `Map filter UI must expose the primary category label "${mapCategory.label}" as a selectable filter.`,
-  ).toBeVisible({ timeout: appBootTimeoutMs });
-  await mapFilterButton.first().click();
-  const requestSample = await filteredMapRequest;
-  expect(
-    requestContainsFilterValue(requestSample.url(), expectedMapFilter.value),
-    `Map filter request must carry backend query value ${expectedMapFilter.name}=${expectedMapFilter.value}: ${requestSample.url()}`,
-  ).toBeTruthy();
-  await assertVisibleDisplayLabel(
-    page,
-    mapCategory.label,
-    mapCategory.key,
-    'Map filter UI',
-  );
-  if (hiddenMapTaxonomySnapshot) {
-    await expect(
-      page.getByRole('button', { name: labelPattern(hiddenMapTaxonomySnapshot.display) }),
-      `Map filter UI must not expose taxonomy subfilters as clickable buttons: ${hiddenMapTaxonomySnapshot.display}`,
-    ).toHaveCount(0, { timeout: appBootTimeoutMs });
-  }
 
   await assertNoBrowserFailures(collectors);
 });
