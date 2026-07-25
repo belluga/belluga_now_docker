@@ -1,15 +1,16 @@
 {
   "mutation": {
     "shards": {
-      "apd": {
-        "grep_extra": "(?:account-profile rich text|NAV-APD-07|NAV-APD-09|NAV-APD-11|NAV-APD-13|NAV-APD-14)",
+      "apd-rich-text": {
+        "grep_extra": "account-profile rich text",
         "expected_titles": [
-          "@mutation tenant-admin account-profile rich text persists and renders on admin and public surfaces",
-          "@mutation NAV-APD-07..08 agenda is occurrence-first and cards navigate to event detail",
-          "@mutation NAV-APD-09 Como Chegar opens focused map and shared route chooser",
-          "@mutation NAV-APD-11 reference point action opens confirmation modal",
-          "@mutation NAV-APD-13 map reference point action opens confirmation modal",
-          "@mutation NAV-APD-14 map route action reuses the shared route chooser after reference-point prompt"
+          "@mutation tenant-admin account-profile rich text persists and renders on admin and public surfaces"
+        ]
+      },
+      "apd-occurrence-first": {
+        "grep_extra": "NAV-APD-07",
+        "expected_titles": [
+          "@mutation NAV-APD-07..08 agenda is occurrence-first and cards navigate to event detail"
         ]
       },
       "directions-brand": {

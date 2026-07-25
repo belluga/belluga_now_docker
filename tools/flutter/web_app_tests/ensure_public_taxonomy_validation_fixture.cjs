@@ -244,7 +244,8 @@ async function listAdminAccountProfiles(api, baseUrl, token) {
     {
       headers: authHeaders(token),
       label: 'Admin account profile list',
-      pageSize: 200,
+      // Keep the fixture aligned with the protected admin endpoint contract.
+      pageSize: 50,
     },
   );
 }

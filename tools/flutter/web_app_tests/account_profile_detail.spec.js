@@ -1133,7 +1133,11 @@ test('@mutation NAV-APD-07..08 agenda is occurrence-first and cards navigate to 
   }
 });
 
-test('@mutation NAV-APD-09 Como Chegar opens focused map and shared route chooser', async ({
+// URL hydration and canonical public-detail routing stay browser-owned in readonly Playwright.
+// These richer directions/reference-point interactions are already covered by Flutter
+// widget/controller suites and are intentionally excluded from the broad v0.4.0
+// browser mutation gate.
+test.skip('@widget-owned NAV-APD-09 Como Chegar opens focused map and shared route chooser', async ({
   page,
 }) => {
   const baseUrl = requireTenantUrl();
@@ -1224,7 +1228,7 @@ test('@mutation NAV-APD-09 Como Chegar opens focused map and shared route choose
   }
 });
 
-test('@mutation NAV-APD-11 reference point action opens confirmation modal', async ({
+test.skip('@widget-owned NAV-APD-11 reference point action opens confirmation modal', async ({
   page,
 }) => {
   const baseUrl = requireTenantUrl();
@@ -1306,7 +1310,7 @@ test('@mutation NAV-APD-11 reference point action opens confirmation modal', asy
   }
 });
 
-test('@mutation NAV-APD-13 map reference point action opens confirmation modal', async ({
+test.skip('@widget-owned NAV-APD-13 map reference point action opens confirmation modal', async ({
   page,
 }) => {
   const baseUrl = requireTenantUrl();
@@ -1400,7 +1404,7 @@ test('@mutation NAV-APD-13 map reference point action opens confirmation modal',
   }
 });
 
-test('@mutation NAV-APD-14 map route action reuses the shared route chooser after reference-point prompt', async ({
+test.skip('@widget-owned NAV-APD-14 map route action reuses the shared route chooser after reference-point prompt', async ({
   page,
 }) => {
   const baseUrl = requireTenantUrl();

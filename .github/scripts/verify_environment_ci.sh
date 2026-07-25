@@ -900,7 +900,7 @@ required_ci_contract_files=(
   "tools/ci/contracts/stage-full.json"
   "tools/ci/contracts/main-proof.json"
   "tools/contact_channels/verify_fixture_equality.py"
-  "tools/contact_channels/verify_contact_source_candidate_query_contract.py"
+  "tools/contact_channels/verify_canonical_contact_source_picker_contract.py"
 )
 
 for file in "${required_ci_contract_files[@]}"; do
@@ -920,13 +920,13 @@ if ! grep -Fq 'run: python3 tools/contact_channels/verify_fixture_equality.py' .
   exit 1
 fi
 
-if ! grep -Fq 'name: Verify contact-source candidate query contract' .github/workflows/orchestration-ci-cd.yml; then
-  echo "ERROR: orchestration preflight must run the server-owned contact-source candidate query guard." >&2
+if ! grep -Fq 'name: Verify canonical contact-source picker contract' .github/workflows/orchestration-ci-cd.yml; then
+  echo "ERROR: orchestration preflight must run the canonical contact-source picker guard." >&2
   exit 1
 fi
 
-if ! grep -Fq 'run: python3 tools/contact_channels/verify_contact_source_candidate_query_contract.py' .github/workflows/orchestration-ci-cd.yml; then
-  echo "ERROR: orchestration preflight must invoke tools/contact_channels/verify_contact_source_candidate_query_contract.py directly." >&2
+if ! grep -Fq 'run: python3 tools/contact_channels/verify_canonical_contact_source_picker_contract.py' .github/workflows/orchestration-ci-cd.yml; then
+  echo "ERROR: orchestration preflight must invoke tools/contact_channels/verify_canonical_contact_source_picker_contract.py directly." >&2
   exit 1
 fi
 
