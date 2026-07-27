@@ -148,7 +148,7 @@
       "u06-candidate-picker": {
         "grep_extra": "U06-CANDIDATE-PICKER",
         "expected_titles": [
-          "@mutation U06-CANDIDATE-PICKER server-owned nested and contact candidate search persists through the canonical picker"
+          "@deferred @mutation U06-CANDIDATE-PICKER server-owned nested and contact candidate search persists through the canonical picker"
         ]
       },
       "admin-profile-tabs": {
@@ -178,7 +178,7 @@
       "admin-profile-taxonomies": {
         "grep_extra": "profile-type editors preload",
         "expected_titles": [
-          "@mutation tenant-admin profile-type editors preload and preserve allowed taxonomies when saving unrelated visual changes"
+          "@deferred @mutation tenant-admin profile-type editors preload and preserve allowed taxonomies when saving unrelated visual changes"
         ]
       },
       "admin-agenda": {
