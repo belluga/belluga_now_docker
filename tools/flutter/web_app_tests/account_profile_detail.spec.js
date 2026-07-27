@@ -557,7 +557,7 @@ async function createDetailEvent(api, baseUrl, token, { eventType, physicalHost 
         type: 'account_profile',
         id: physicalHost.id,
       },
-      event_parties: [],
+      profile_groups: [],
       occurrences: [
         {
           date_time_start: start.toISOString(),

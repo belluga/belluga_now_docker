@@ -804,17 +804,21 @@ async function createPublicEvent(
         type: 'account_profile',
         id: physicalHostId,
       },
-      event_parties: relatedProfileId
-        ? [
-            {
-              party_ref_id: relatedProfileId,
-            },
-          ]
-        : [],
+      profile_groups: [],
       occurrences: [
         {
           date_time_start: start.toISOString(),
           date_time_end: end.toISOString(),
+          profile_groups: relatedProfileId
+            ? [
+                {
+                  id: 'featured-profiles',
+                  label: 'Featured Profiles',
+                  order: 0,
+                  account_profile_ids: [relatedProfileId],
+                },
+              ]
+            : [],
         },
       ],
       publication: {

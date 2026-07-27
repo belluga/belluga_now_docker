@@ -613,12 +613,12 @@ test('@readonly taxonomy display snapshots render labels instead of slugs on pub
     page,
     eventTaxonomyLeakCandidate.slug,
   );
-  const managedEventDisplaySnapshot = findDisplaySnapshotInEventRelatedProfiles(
-    managedEventDetail,
-  );
+  const managedEventDisplaySnapshot =
+    findDisplaySnapshot(managedEventDetail?.taxonomy_terms) ??
+    findDisplaySnapshotInEventRelatedProfiles(managedEventDetail);
   expect(
     managedEventDisplaySnapshot,
-    `Managed taxonomy event fixture ${eventTaxonomyLeakCandidate.slug} must expose a positive related-profile taxonomy display snapshot on the event detail payload.`,
+    `Managed taxonomy event fixture ${eventTaxonomyLeakCandidate.slug} must expose a positive taxonomy display snapshot on the event detail payload or its related-profile summaries.`,
   ).toBeTruthy();
   await assertVisibleDisplayLabel(
     page,

@@ -1110,7 +1110,7 @@ async function createSingleOccurrenceEvent(
           type: 'account_profile',
           id: physicalHost.id,
         },
-        event_parties: [],
+        profile_groups: [],
         occurrences: [
           {
             date_time_start: firstStart.toISOString(),
@@ -1168,17 +1168,11 @@ async function createSingleOccurrenceProgrammedEvent(
           type: 'account_profile',
           id: physicalHost.id,
         },
-        event_parties: [],
+        profile_groups: [],
         occurrences: [
           {
             date_time_start: firstStart.toISOString(),
             date_time_end: firstEnd.toISOString(),
-            event_parties: [
-              {
-                party_ref_id: occurrenceParty.id,
-                permissions: { can_edit: false },
-              },
-            ],
             profile_groups: [
               {
                 id: `programacao-single-${uniqueSuffix}`,
@@ -1253,12 +1247,6 @@ async function createProgrammedMultiOccurrenceEvent(
           type: 'account_profile',
           id: physicalHost.id,
         },
-        event_parties: [
-          {
-            party_ref_id: eventParty.id,
-            permissions: { can_edit: false },
-          },
-        ],
         profile_groups: [
           {
             id: `programacao-evento-${uniqueSuffix}`,
@@ -1275,12 +1263,6 @@ async function createProgrammedMultiOccurrenceEvent(
           {
             date_time_start: secondStart.toISOString(),
             date_time_end: secondEnd.toISOString(),
-            event_parties: [
-              {
-                party_ref_id: occurrenceParty.id,
-                permissions: { can_edit: false },
-              },
-            ],
             profile_groups: [
               {
                 id: `programacao-ocorrencia-${uniqueSuffix}`,
@@ -1374,7 +1356,7 @@ async function createPastFirstFutureLaterOccurrenceEvent(
           type: 'account_profile',
           id: physicalHost.id,
         },
-        event_parties: [],
+        profile_groups: [],
         occurrences: [
           {
             date_time_start: firstStart.toISOString(),
@@ -2610,15 +2592,23 @@ async function addOccurrenceProfileGroup(page, { groupLabel, profileNames = [] }
     searchField,
     'Occurrence profile selector search field must be visible after opening the selector.',
   ).toBeVisible({ timeout: appBootTimeoutMs });
-  const modalSelectedCount = async () => {
-    const modalCountText =
-      (await page
-        .getByText(/\d+\s+selecionado\(s\)/i)
-        .last()
-        .textContent()
-        .catch(() => '')) || '';
-    const match = modalCountText.match(/(\d+)\s+selecionado\(s\)/i);
-    return match ? Number.parseInt(match[1], 10) : 0;
+  const modalSelectedCountLabel = page
+    .getByText(/\d+\s+selecionado\(s\)/i)
+    .last();
+  const selectedCount = async () => {
+    const modalText =
+      (await modalSelectedCountLabel.textContent().catch(() => '')) || '';
+    const modalMatch = modalText.match(/(\d+)\s+selecionado\(s\)/i);
+    if (modalMatch) {
+      return Number.parseInt(modalMatch[1], 10);
+    }
+
+    const buttonText =
+      (await selectorButton.textContent().catch(() => '')) || '';
+    const buttonMatch = buttonText.match(
+      /(\d+)\s+perfil\(is\)\s+selecionado\(s\)/i,
+    );
+    return buttonMatch ? Number.parseInt(buttonMatch[1], 10) : 0;
   };
 
   for (const [index, profileName] of profileNames.entries()) {
@@ -2632,15 +2622,33 @@ async function addOccurrenceProfileGroup(page, { groupLabel, profileNames = [] }
     const checkbox = page.getByRole('checkbox', {
       name: new RegExp(escapeRegExp(profileName)),
     });
+    const candidateText = page.getByText(profileName, {
+      exact: true,
+    });
     await expect(
       checkbox,
       `Occurrence profile selector must expose candidate ${profileName}.`,
     ).toBeVisible({ timeout: appBootTimeoutMs });
     const expectedCount = index + 1;
-    if ((await modalSelectedCount()) < expectedCount) {
-      await checkbox.click();
+    if ((await selectedCount()) < expectedCount) {
+      const selectionActions = [
+        async () => checkbox.check(),
+        async () => checkbox.click(),
+        async () => {
+          await checkbox.focus();
+          await page.keyboard.press('Space');
+        },
+        async () => candidateText.click(),
+      ];
+      for (const action of selectionActions) {
+        if ((await selectedCount()) >= expectedCount) {
+          break;
+        }
+        await action().catch(() => {});
+        await page.waitForTimeout(200);
+      }
       await expect
-        .poll(modalSelectedCount, {
+        .poll(selectedCount, {
           timeout: appBootTimeoutMs,
           message: `Occurrence profile selector must increment to ${expectedCount} after selecting ${profileName}.`,
         })
@@ -2649,7 +2657,7 @@ async function addOccurrenceProfileGroup(page, { groupLabel, profileNames = [] }
     logStep('evg-helper', `selected group profile "${profileName}"`);
   }
 
-  await page.getByRole('button', { name: 'Concluir' }).click();
+  await page.getByRole('button', { name: 'Concluir' }).last().click();
   logStep('evg-helper', `group selector closed "${groupLabel}"`);
   await expect(
     page.getByRole('button', {

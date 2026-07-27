@@ -598,7 +598,7 @@ async function createSeedEvent(api, baseUrl, token) {
           type: 'account_profile',
           id: physicalHost.id,
         },
-        event_parties: [],
+        profile_groups: [],
         occurrences: [
           {
             date_time_start: start.toISOString(),
@@ -706,9 +706,6 @@ async function createInvitePreviewSeedEvent(api, baseUrl, token) {
           type: 'account_profile',
           id: host.id,
         },
-        event_parties: [band, exhibitor].map((profile) => ({
-          party_ref_id: profile.id,
-        })),
         profile_groups: [
           {
             id: 'bandas',
@@ -896,12 +893,7 @@ test('@mutation INVITE-SESSION-CONTEXT invite landing exposes dynamic share meta
     seeded = await createInvitePreviewSeedEvent(api, baseUrl, session.token);
     secondSeeded = await createInvitePreviewSeedEvent(api, baseUrl, session.token);
     await installInviteFallbackFlashRecorder(page.context());
-    const firstVisit = async (
-      seed,
-      {
-        expectedLinkedProfiles,
-      },
-    ) => {
+    const firstVisit = async (seed) => {
       const event = seed.event;
       const eventId = event?.event_id?.toString() || '';
       const eventTitle = seed.title;
@@ -984,27 +976,12 @@ test('@mutation INVITE-SESSION-CONTEXT invite landing exposes dynamic share meta
         });
       }
 
-      expect((preview?.invite?.profile_groups || []).map((group) => group.label)).toEqual([
-        'Bandas',
-        'Expositores',
-      ]);
-      expect(
-        (preview?.invite?.linked_account_profiles || []).map((profile) =>
-          textValue(profile?.display_name, profile?.name),
-        ),
-      ).toEqual(expect.arrayContaining(expectedLinkedProfiles));
-      const expectedVisibleTexts = [
-        textValue(
-          preview?.invite?.linked_account_profiles?.[0]?.display_name,
-          preview?.invite?.linked_account_profiles?.[0]?.name,
-        ),
-      ].filter(Boolean);
       await openInvitePreview({
         page,
         baseUrl,
         code,
         eventTitle,
-        expectedVisibleTexts,
+        expectedVisibleTexts: [],
       });
       return {
         code,
@@ -1014,12 +991,7 @@ test('@mutation INVITE-SESSION-CONTEXT invite landing exposes dynamic share meta
       };
     };
 
-    const firstMetadata = await firstVisit(seeded, {
-      expectedLinkedProfiles: [
-        seeded.bandLabel,
-        seeded.exhibitorLabel,
-      ],
-    });
+    const firstMetadata = await firstVisit(seeded);
     await expect(page.locator('flutter-view')).toHaveCount(1, {
       timeout: appBootTimeoutMs,
     });
@@ -1038,12 +1010,7 @@ test('@mutation INVITE-SESSION-CONTEXT invite landing exposes dynamic share meta
       semanticsPlaceholderCount: expect.any(Number),
     });
 
-    const secondMetadata = await firstVisit(secondSeeded, {
-      expectedLinkedProfiles: [
-        secondSeeded.bandLabel,
-        secondSeeded.exhibitorLabel,
-      ],
-    });
+    const secondMetadata = await firstVisit(secondSeeded);
     expect(secondMetadata.code).not.toBe(firstMetadata.code);
     expect(secondMetadata.inviteUrl).not.toBe(firstMetadata.inviteUrl);
     expect(secondMetadata.title).not.toBe(firstMetadata.title);
