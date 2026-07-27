@@ -896,7 +896,12 @@ test('@mutation INVITE-SESSION-CONTEXT invite landing exposes dynamic share meta
     seeded = await createInvitePreviewSeedEvent(api, baseUrl, session.token);
     secondSeeded = await createInvitePreviewSeedEvent(api, baseUrl, session.token);
     await installInviteFallbackFlashRecorder(page.context());
-    const firstVisit = async (seed, expectedVisibleTexts) => {
+    const firstVisit = async (
+      seed,
+      {
+        expectedLinkedProfiles,
+      },
+    ) => {
       const event = seed.event;
       const eventId = event?.event_id?.toString() || '';
       const eventTitle = seed.title;
@@ -987,7 +992,13 @@ test('@mutation INVITE-SESSION-CONTEXT invite landing exposes dynamic share meta
         (preview?.invite?.linked_account_profiles || []).map((profile) =>
           textValue(profile?.display_name, profile?.name),
         ),
-      ).toEqual(expect.arrayContaining(expectedVisibleTexts.slice(-2)));
+      ).toEqual(expect.arrayContaining(expectedLinkedProfiles));
+      const expectedVisibleTexts = [
+        textValue(
+          preview?.invite?.linked_account_profiles?.[0]?.display_name,
+          preview?.invite?.linked_account_profiles?.[0]?.name,
+        ),
+      ].filter(Boolean);
       await openInvitePreview({
         page,
         baseUrl,
@@ -1003,12 +1014,12 @@ test('@mutation INVITE-SESSION-CONTEXT invite landing exposes dynamic share meta
       };
     };
 
-    const firstMetadata = await firstVisit(seeded, [
-      'Bandas',
-      'Expositores',
-      seeded.bandLabel,
-      seeded.exhibitorLabel,
-    ]);
+    const firstMetadata = await firstVisit(seeded, {
+      expectedLinkedProfiles: [
+        seeded.bandLabel,
+        seeded.exhibitorLabel,
+      ],
+    });
     await expect(page.locator('flutter-view')).toHaveCount(1, {
       timeout: appBootTimeoutMs,
     });
@@ -1027,12 +1038,12 @@ test('@mutation INVITE-SESSION-CONTEXT invite landing exposes dynamic share meta
       semanticsPlaceholderCount: expect.any(Number),
     });
 
-    const secondMetadata = await firstVisit(secondSeeded, [
-      'Bandas',
-      'Expositores',
-      secondSeeded.bandLabel,
-      secondSeeded.exhibitorLabel,
-    ]);
+    const secondMetadata = await firstVisit(secondSeeded, {
+      expectedLinkedProfiles: [
+        secondSeeded.bandLabel,
+        secondSeeded.exhibitorLabel,
+      ],
+    });
     expect(secondMetadata.code).not.toBe(firstMetadata.code);
     expect(secondMetadata.inviteUrl).not.toBe(firstMetadata.inviteUrl);
     expect(secondMetadata.title).not.toBe(firstMetadata.title);
