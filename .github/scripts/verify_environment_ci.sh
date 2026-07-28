@@ -930,6 +930,30 @@ if ! grep -Fq 'run: python3 tools/contact_channels/verify_canonical_contact_sour
   exit 1
 fi
 
+if ! awk '
+  /- name: Verify contact-channel fixture equality/ { in_step=1; next }
+  in_step && /^[[:space:]]+if:/ {
+    if ($0 == "        if: ${{ github.event_name == '\''push'\'' }}") ok=1
+    in_step=0
+  }
+  END { exit ok ? 0 : 1 }
+' .github/workflows/orchestration-ci-cd.yml; then
+  echo "ERROR: contact-channel fixture equality must run only on post-merge push events." >&2
+  exit 1
+fi
+
+if ! awk '
+  /- name: Verify canonical contact-source picker contract/ { in_step=1; next }
+  in_step && /^[[:space:]]+if:/ {
+    if ($0 == "        if: ${{ github.event_name == '\''push'\'' }}") ok=1
+    in_step=0
+  }
+  END { exit ok ? 0 : 1 }
+' .github/workflows/orchestration-ci-cd.yml; then
+  echo "ERROR: canonical contact-source picker contract must run only on post-merge push events." >&2
+  exit 1
+fi
+
 if ! grep -Fq 'git submodule sync --recursive' .github/scripts/checkout_ci_submodules.sh; then
   echo "ERROR: checkout_ci_submodules.sh must sync submodule metadata before checkout." >&2
   exit 1
