@@ -27,15 +27,15 @@
       "description": "Fail closed when either implementation fixture drifts from the canonical contact-channel corpus."
     },
     {
-      "id": "contact-source-candidate-query-contract",
+      "id": "canonical-contact-source-picker-contract",
       "repo": "belluga_now_docker",
       "kind": "mandatory-root-invariant",
       "cwd": "../../..",
       "command": [
         "python3",
-        "tools/contact_channels/verify_contact_source_candidate_query_contract.py"
+        "tools/contact_channels/verify_canonical_contact_source_picker_contract.py"
       ],
-      "description": "Fail closed when the contact-source picker regresses to a broad Account Profile fetch or loses its indexed server-owned eligibility query."
+      "description": "Fail closed when the contact-source picker drifts away from the canonical generic Account Profile index with server-owned eligibility filters and preview payload."
     }
   ]
 }

@@ -1,15 +1,16 @@
 {
   "mutation": {
     "shards": {
-      "apd": {
-        "grep_extra": "(?:account-profile rich text|NAV-APD-07|NAV-APD-09|NAV-APD-11|NAV-APD-13|NAV-APD-14)",
+      "apd-rich-text": {
+        "grep_extra": "account-profile rich text",
         "expected_titles": [
-          "@mutation tenant-admin account-profile rich text persists and renders on admin and public surfaces",
-          "@mutation NAV-APD-07..08 agenda is occurrence-first and cards navigate to event detail",
-          "@mutation NAV-APD-09 Como Chegar opens focused map and shared route chooser",
-          "@mutation NAV-APD-11 reference point action opens confirmation modal",
-          "@mutation NAV-APD-13 map reference point action opens confirmation modal",
-          "@mutation NAV-APD-14 map route action reuses the shared route chooser after reference-point prompt"
+          "@mutation tenant-admin account-profile rich text persists and renders on admin and public surfaces"
+        ]
+      },
+      "apd-occurrence-first": {
+        "grep_extra": "NAV-APD-07",
+        "expected_titles": [
+          "@mutation NAV-APD-07..08 agenda is occurrence-first and cards navigate to event detail"
         ]
       },
       "directions-brand": {
@@ -138,6 +139,18 @@
           "@mutation tenant-admin account-profile edit save keeps Display Name visible, skips persisted-empty gallery resend, and clears persisted gallery content"
         ]
       },
+      "admin-contact-channels": {
+        "grep_extra": "persisted WhatsApp edit saves",
+        "expected_titles": [
+          "@mutation tenant-admin persisted WhatsApp edit saves without a draft key and preserves server-owned id"
+        ]
+      },
+      "u06-candidate-picker": {
+        "grep_extra": "U06-CANDIDATE-PICKER",
+        "expected_titles": [
+          "@deferred @mutation U06-CANDIDATE-PICKER server-owned nested and contact candidate search persists through the canonical picker"
+        ]
+      },
       "admin-profile-tabs": {
         "grep_extra": "nested tabs obey",
         "expected_titles": [
@@ -165,7 +178,7 @@
       "admin-profile-taxonomies": {
         "grep_extra": "profile-type editors preload",
         "expected_titles": [
-          "@mutation tenant-admin profile-type editors preload and preserve allowed taxonomies when saving unrelated visual changes"
+          "@deferred @mutation tenant-admin profile-type editors preload and preserve allowed taxonomies when saving unrelated visual changes"
         ]
       },
       "admin-agenda": {

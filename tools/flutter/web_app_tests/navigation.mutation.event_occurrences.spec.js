@@ -1110,7 +1110,7 @@ async function createSingleOccurrenceEvent(
           type: 'account_profile',
           id: physicalHost.id,
         },
-        event_parties: [],
+        profile_groups: [],
         occurrences: [
           {
             date_time_start: firstStart.toISOString(),
@@ -1168,17 +1168,11 @@ async function createSingleOccurrenceProgrammedEvent(
           type: 'account_profile',
           id: physicalHost.id,
         },
-        event_parties: [],
+        profile_groups: [],
         occurrences: [
           {
             date_time_start: firstStart.toISOString(),
             date_time_end: firstEnd.toISOString(),
-            event_parties: [
-              {
-                party_ref_id: occurrenceParty.id,
-                permissions: { can_edit: false },
-              },
-            ],
             profile_groups: [
               {
                 id: `programacao-single-${uniqueSuffix}`,
@@ -1253,12 +1247,6 @@ async function createProgrammedMultiOccurrenceEvent(
           type: 'account_profile',
           id: physicalHost.id,
         },
-        event_parties: [
-          {
-            party_ref_id: eventParty.id,
-            permissions: { can_edit: false },
-          },
-        ],
         profile_groups: [
           {
             id: `programacao-evento-${uniqueSuffix}`,
@@ -1275,12 +1263,6 @@ async function createProgrammedMultiOccurrenceEvent(
           {
             date_time_start: secondStart.toISOString(),
             date_time_end: secondEnd.toISOString(),
-            event_parties: [
-              {
-                party_ref_id: occurrenceParty.id,
-                permissions: { can_edit: false },
-              },
-            ],
             profile_groups: [
               {
                 id: `programacao-ocorrencia-${uniqueSuffix}`,
@@ -1374,7 +1356,7 @@ async function createPastFirstFutureLaterOccurrenceEvent(
           type: 'account_profile',
           id: physicalHost.id,
         },
-        event_parties: [],
+        profile_groups: [],
         occurrences: [
           {
             date_time_start: firstStart.toISOString(),
@@ -2610,22 +2592,26 @@ async function addOccurrenceProfileGroup(page, { groupLabel, profileNames = [] }
     searchField,
     'Occurrence profile selector search field must be visible after opening the selector.',
   ).toBeVisible({ timeout: appBootTimeoutMs });
+  const modalSelectedCountLabel = page
+    .getByText(/\d+\s+selecionado\(s\)/i)
+    .last();
   const selectedCount = async () => {
-    const buttonText = (await selectorButton.textContent().catch(() => '')) || '';
-    const match = buttonText.match(/(\d+)\s+perfil\(is\)\s+selecionado\(s\)/i);
-    return match ? Number.parseInt(match[1], 10) : 0;
+    const modalText =
+      (await modalSelectedCountLabel.textContent().catch(() => '')) || '';
+    const modalMatch = modalText.match(/(\d+)\s+selecionado\(s\)/i);
+    if (modalMatch) {
+      return Number.parseInt(modalMatch[1], 10);
+    }
+
+    const buttonText =
+      (await selectorButton.textContent().catch(() => '')) || '';
+    const buttonMatch = buttonText.match(
+      /(\d+)\s+perfil\(is\)\s+selecionado\(s\)/i,
+    );
+    return buttonMatch ? Number.parseInt(buttonMatch[1], 10) : 0;
   };
 
   for (const [index, profileName] of profileNames.entries()) {
-    if (index > 0) {
-      await page.keyboard.press('Escape').catch(() => {});
-      await selectorButton.click();
-      await expect(
-        searchField,
-        'Occurrence profile selector search field must remain visible after reopening the selector.',
-      ).toBeVisible({ timeout: appBootTimeoutMs });
-    }
-
     await fillFlutterTextFieldByLocator(
       page,
       searchField,
@@ -2636,13 +2622,31 @@ async function addOccurrenceProfileGroup(page, { groupLabel, profileNames = [] }
     const checkbox = page.getByRole('checkbox', {
       name: new RegExp(escapeRegExp(profileName)),
     });
+    const candidateText = page.getByText(profileName, {
+      exact: true,
+    });
     await expect(
       checkbox,
       `Occurrence profile selector must expose candidate ${profileName}.`,
     ).toBeVisible({ timeout: appBootTimeoutMs });
     const expectedCount = index + 1;
     if ((await selectedCount()) < expectedCount) {
-      await checkbox.click();
+      const selectionActions = [
+        async () => checkbox.check(),
+        async () => checkbox.click(),
+        async () => {
+          await checkbox.focus();
+          await page.keyboard.press('Space');
+        },
+        async () => candidateText.click(),
+      ];
+      for (const action of selectionActions) {
+        if ((await selectedCount()) >= expectedCount) {
+          break;
+        }
+        await action().catch(() => {});
+        await page.waitForTimeout(200);
+      }
       await expect
         .poll(selectedCount, {
           timeout: appBootTimeoutMs,
@@ -2653,18 +2657,7 @@ async function addOccurrenceProfileGroup(page, { groupLabel, profileNames = [] }
     logStep('evg-helper', `selected group profile "${profileName}"`);
   }
 
-  await page.keyboard.press('Escape').catch(() => {});
-  if (
-    await page
-      .getByRole('checkbox', {
-        name: new RegExp(escapeRegExp(profileNames[0])),
-      })
-      .first()
-      .isVisible()
-      .catch(() => false)
-  ) {
-    await selectorButton.click();
-  }
+  await page.getByRole('button', { name: 'Concluir' }).last().click();
   logStep('evg-helper', `group selector closed "${groupLabel}"`);
   await expect(
     page.getByRole('button', {
@@ -5591,29 +5584,44 @@ test('@mutation admin-authored occurrence profile groups persist full chip readb
       ['first', firstPublicDetail],
       ['second', secondPublicDetail],
     ]) {
+      const publicGroups = detail?.profile_groups || [];
+      const bandasGroup =
+        publicGroups.find((group) => group?.label === 'Bandas') || null;
+      const outroGrupoGroup =
+        publicGroups.find((group) => group?.label === 'Outro Grupo') || null;
       expect(
-        (detail?.profile_groups || []).map((group) => group?.label),
+        publicGroups.map((group) => group?.label),
         `Public ${label} selected occurrence must expose the event-wide aggregated profile-group tabs.`,
       ).toEqual(['Bandas', 'Outro Grupo']);
       expect(
-        (detail?.profile_groups?.[0]?.profiles || [])
-          .map((profile) => profile?.id?.toString() || '')
-          .filter(Boolean)
-          .sort(),
-        `Public ${label} selected occurrence must keep the first-occurrence group members.`,
-      ).toEqual([bandLead.id, bandSupport.id].map(String).sort());
+        bandasGroup?.member_count,
+        `Public ${label} selected occurrence must expose Bandas as metadata-only lazy hydration.`,
+      ).toBe(2);
       expect(
-        (detail?.profile_groups?.[1]?.profiles || [])
-          .map((profile) => profile?.id?.toString() || '')
-          .filter(Boolean)
-          .sort(),
-        `Public ${label} selected occurrence must keep every member from the second-occurrence custom group.`,
-      ).toEqual(
-        [bandLead.id, bandSupport.id, guestOne.id, guestTwo.id]
-          .map(String)
-          .sort(),
+        (bandasGroup?.profiles || []).map((profile) => profile?.id?.toString() || ''),
+        `Public ${label} selected occurrence must not eagerly embed Bandas members in the initial payload.`,
+      ).toEqual([]);
+      expect(
+        typeof bandasGroup?.members_path === 'string' && bandasGroup.members_path.trim(),
+        `Public ${label} selected occurrence must expose Bandas lazy members_path.`,
+      ).toBeTruthy();
+      expect(
+        outroGrupoGroup?.member_count,
+        `Public ${label} selected occurrence must expose Outro Grupo as metadata-only lazy hydration.`,
+      ).toBe(4);
+      expect(
+        (outroGrupoGroup?.profiles || []).map((profile) => profile?.id?.toString() || ''),
+        `Public ${label} selected occurrence must not eagerly embed Outro Grupo members in the initial payload.`,
+      ).toEqual([]);
+      expect(
+        typeof outroGrupoGroup?.members_path === 'string' &&
+          outroGrupoGroup.members_path.trim(),
+        `Public ${label} selected occurrence must expose Outro Grupo lazy members_path.`,
+      ).toBeTruthy();
+      logStep(
+        'evg-public',
+        `public API aggregate metadata confirmed for ${label} occurrence`,
       );
-      logStep('evg-public', `public API aggregate detail confirmed for ${label} occurrence`);
     }
     logStep('evg-public', 'public API aggregation assertions passed');
 
