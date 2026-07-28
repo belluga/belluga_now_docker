@@ -54,6 +54,24 @@ def source_exists(repo_root: Path, relative_path: str) -> bool:
     return (repo_root / relative_path).exists()
 
 
+def read_sources(repo_root: Path, relative_paths: list[str], findings: list[Finding]) -> str:
+    parts: list[str] = []
+    for relative_path in relative_paths:
+        source = read_source(repo_root, relative_path, findings)
+        if source:
+            parts.append(source)
+    return "\n".join(parts)
+
+
+def section_between(source: str, start: str, end: str) -> str:
+    start_index = source.find(start)
+    if start_index < 0:
+        return ""
+
+    end_index = source.find(end, start_index + len(start))
+    return source[start_index:] if end_index < 0 else source[start_index:end_index]
+
+
 def require_fragment(
     findings: list[Finding],
     surface: str,
@@ -95,26 +113,38 @@ def validate_repository(repo_root: Path) -> list[Finding]:
         "flutter-app/lib/infrastructure/dal/dao/tenant_admin/"
         "tenant_admin_account_profiles_request_encoder.dart"
     )
+    abstract_query_path = "laravel-app/app/Application/Shared/Query/AbstractQueryService.php"
     route_path = "laravel-app/routes/api/tenant_api_v1.php"
     php_controller_path = "laravel-app/app/Http/Api/v1/Controllers/AccountProfilesController.php"
     query_service_path = "laravel-app/app/Application/AccountProfiles/AccountProfileQueryService.php"
     type_provider_path = "laravel-app/app/Application/AccountProfiles/AccountProfileTypeSetProvider.php"
     type_model_path = "laravel-app/app/Models/Tenants/TenantProfileType.php"
+    profile_model_path = "laravel-app/app/Models/Tenants/AccountProfile.php"
+    migration_path = (
+        "laravel-app/database/migrations/tenants/"
+        "2026_07_21_000100_rebuild_contact_source_candidate_index_for_name_search.php"
+    )
     request_path = "laravel-app/app/Http/Api/v1/Requests/AccountProfileContactSourceCandidatesRequest.php"
 
     flutter_controller = read_source(repo_root, flutter_controller_path, findings)
+    flutter_controller_section = section_between(
+        flutter_controller,
+        "Future<void> loadContactSourceCandidates",
+        "void searchNestedProfileCandidates",
+    )
     for required in (
         "Future<void> loadContactSourceCandidates({String? excludeProfileId})",
-        ".loadPage(",
+        "_loadContactSourceCandidatesPage(",
         "search: _contactSourceCandidatesQuery",
         "profileType: _contactSourceCandidatesProfileType",
         "contactMode: BellugaContactSourceMode.own.rawValue",
         "contactChannelsEnabledOnly: true",
+        "excludeAccountProfileId: _contactSourceCandidatesExcludeProfileId",
     ):
         require_fragment(
             findings,
             flutter_controller_path,
-            flutter_controller,
+            flutter_controller_section,
             required,
             "Keep the scenario-specific picker loader on the canonical generic page loader with server-owned filters.",
         )
@@ -132,15 +162,24 @@ def validate_repository(repo_root: Path) -> list[Finding]:
         )
 
     flutter_repository = read_source(repo_root, flutter_repository_path, findings)
+    flutter_repository_section = section_between(
+        flutter_repository,
+        "fetchAccountProfilesPage({",
+        "fetchAccountProfileCandidatesPage({",
+    )
     for required in (
         "fetchAccountProfilesPage(",
         "encodeFetchAccountProfilesQuery(",
         "$_apiBaseUrl/v1/account_profiles",
+        "contactMode: contactMode?.value,",
+        "excludeAccountProfileId: excludeAccountProfileId?.value,",
+        "page: page.value,",
+        "pageSize: pageSize.value,",
     ):
         require_fragment(
             findings,
             flutter_repository_path,
-            flutter_repository,
+            flutter_repository_section,
             required,
             "Keep the contact-source picker backed by the generic Account Profile endpoint.",
         )
@@ -160,6 +199,7 @@ def validate_repository(repo_root: Path) -> list[Finding]:
     for required in (
         "TenantAdminAccountProfilesRepoString? contactMode,",
         "TenantAdminAccountProfilesRepoBool? contactChannelsEnabledOnly,",
+        "TenantAdminAccountProfilesRepoString? excludeAccountProfileId,",
     ):
         require_fragment(
             findings,
@@ -177,15 +217,22 @@ def validate_repository(repo_root: Path) -> list[Finding]:
     )
 
     flutter_encoder = read_source(repo_root, flutter_encoder_path, findings)
+    flutter_encoder_section = section_between(
+        flutter_encoder,
+        "Map<String, dynamic> encodeFetchAccountProfilesQuery({",
+        "Map<String, dynamic> encodeFetchAccountProfileCandidatesQuery({",
+    )
     for required in (
         "payload['contact_mode'] = contactMode.trim();",
         "payload['contact_channels_enabled_only'] = true;",
+        "payload['exclude_account_profile_id'] = excludeAccountProfileId.trim();",
+        "payload['page'] = page;",
         "payload['page_size'] = pageSize;",
     ):
         require_fragment(
             findings,
             flutter_encoder_path,
-            flutter_encoder,
+            flutter_encoder_section,
             required,
             "Encode the canonical server-owned filters on the generic Account Profile request.",
         )
@@ -207,14 +254,24 @@ def validate_repository(repo_root: Path) -> list[Finding]:
     )
 
     php_controller = read_source(repo_root, php_controller_path, findings)
+    php_controller_section = section_between(
+        php_controller,
+        "public function index(",
+        "public function candidates(",
+    )
     for required in (
         "'contact_mode' => ['sometimes', 'string', 'in:own,mirrored_account_profile']",
         "'contact_channels_enabled_only' => ['sometimes', 'boolean']",
+        "'exclude_account_profile_id' => ['sometimes', 'string', 'regex:/^[a-f0-9]{24}$/i']",
+        "AccountProfileNameSearchKey::normalizeRequestSearch($validated['search'])",
+        "$validated['search'] = $normalizedSearch;",
+        "$perPage = (int) ($validated['per_page'] ?? $validated['page_size'] ?? 15) ?: 15;",
+        "$this->profileQueryService->paginate(",
     ):
         require_fragment(
             findings,
             php_controller_path,
-            php_controller,
+            php_controller_section,
             required,
             "Validate the canonical generic filters directly on the admin index.",
         )
@@ -227,13 +284,46 @@ def validate_repository(repo_root: Path) -> list[Finding]:
     )
 
     query_service = read_source(repo_root, query_service_path, findings)
+    query_service_paginate_section = section_between(
+        query_service,
+        "public function paginate(",
+        "private function applyAdminCandidateFilters",
+    )
+    query_service_admin_filters_section = section_between(
+        query_service,
+        "private function applyAdminCandidateFilters(",
+        "public function publicPaginate(",
+    )
     for required in (
+        "applyAdminCandidateFilters($query, $queryParams);",
+        "new Regex('^'.preg_quote($search, '/'), 'i')",
+        "$this->buildPaginator(",
         "private readonly AccountProfileContactChannelsService $contactChannelsService,",
+    ):
+        require_fragment(
+            findings,
+            query_service_path,
+            query_service_paginate_section if "private readonly" not in required else query_service,
+            required,
+            "Keep the generic query path responsible for normalized prefix search and canonical picker pagination.",
+        )
+    for required in (
         "contactChannelsEnabledTypes()",
         "->whereIn('profile_type', $contactChannelsEnabledTypes)",
         "->where('is_active', true);",
+        "$excludedProfileId = trim((string) ($queryParams['exclude_account_profile_id'] ?? ''));",
+        "->where('_id', '!=', $excludedProfileId);",
+    ):
+        require_fragment(
+            findings,
+            query_service_path,
+            query_service_admin_filters_section,
+            required,
+            "Keep eligibility filtering and preview payload on the generic Account Profile query path.",
+        )
+    for required in (
         "'effective_contact_channels' => $this->contactChannelsService",
-        "->resolveEffectiveContactChannels($profile)",
+        "->resolveEffectiveContactChannels($profile),",
     ):
         require_fragment(
             findings,
@@ -247,8 +337,22 @@ def validate_repository(repo_root: Path) -> list[Finding]:
         query_service_path,
         query_service,
         "paginateContactSourceCandidates(",
-        "Do not add a dedicated contact-source pagination path back into the query service.",
-    )
+            "Do not add a dedicated contact-source pagination path back into the query service.",
+        )
+
+    abstract_query = read_source(repo_root, abstract_query_path, findings)
+    for required in (
+        "$this->baseSearchableFields(),",
+        "if (is_array($value)) {",
+        "$query->where($field, $value);",
+    ):
+        require_fragment(
+            findings,
+            abstract_query_path,
+            abstract_query,
+            required,
+            "Keep generic scalar filters, including contact_mode, flowing through the shared query paginator.",
+        )
 
     type_provider = read_source(repo_root, type_provider_path, findings)
     for required in (
@@ -269,8 +373,41 @@ def validate_repository(repo_root: Path) -> list[Finding]:
         type_model_path,
         type_model,
         "->where('capabilities.has_contact_channels', true)",
-        "Keep contact-capable type resolution server-owned in the profile-type model scope.",
-    )
+            "Keep contact-capable type resolution server-owned in the profile-type model scope.",
+        )
+
+    profile_model = read_source(repo_root, profile_model_path, findings)
+    for required in (
+        "use HasSlug, SoftDeletes, UsesTenantConnection;",
+        "'contact_mode',",
+        "'is_active' => 'bool',",
+        "'deleted_at' => 'datetime',",
+    ):
+        require_fragment(
+            findings,
+            profile_model_path,
+            profile_model,
+            required,
+            "Keep the generic Account Profile model enforcing soft-delete semantics and filterable contact-mode state.",
+        )
+
+    migration = read_sources(repo_root, [migration_path], findings)
+    for required in (
+        "idx_account_profiles_contact_source_candidates_v1",
+        "'contact_mode' => 1,",
+        "'is_active' => 1,",
+        "'deleted_at' => 1,",
+        "'profile_type' => 1,",
+        "'name_search_key' => 1,",
+        "'_id' => 1,",
+    ):
+        require_fragment(
+            findings,
+            migration_path,
+            migration,
+            required,
+            "Keep the canonical contact-source picker backed by the name_search_key candidate index authority.",
+        )
 
     if source_exists(repo_root, request_path):
         findings.append(
@@ -289,11 +426,13 @@ def print_teach(findings: list[Finding]) -> None:
     print(
         "T (Truth): the contact-source picker is a filtered view over the generic tenant-admin "
         "Account Profile index. Eligibility is server-owned via contact-capable type, own mode, "
-        "active state, and exclusion of the current profile."
+        "active non-deleted state, exclusion of the current profile, normalized prefix search, "
+        "and bounded pagination."
     )
     print(
         "E (Evidence): Flutter must call fetchAccountProfilesPage with canonical filters; Laravel "
-        "must validate/apply those filters on the generic index and return effective contact preview payload."
+        "must validate/apply those filters on the generic index, keep the supporting "
+        "name_search_key index authority, and return effective contact preview payload."
     )
     if not findings:
         print("A (Assessment): the canonical picker contract is intact; no dedicated contact_sources surface was found.")
