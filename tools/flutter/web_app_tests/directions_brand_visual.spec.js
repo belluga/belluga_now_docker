@@ -451,7 +451,7 @@ async function createDirectionsEvent(
           type: 'account_profile',
           id: physicalHostId,
         },
-        event_parties: [],
+        profile_groups: [],
         occurrences: [
           {
             date_time_start: start.toISOString(),

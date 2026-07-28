@@ -244,7 +244,8 @@ async function listAdminAccountProfiles(api, baseUrl, token) {
     {
       headers: authHeaders(token),
       label: 'Admin account profile list',
-      pageSize: 200,
+      // Keep the fixture aligned with the protected admin endpoint contract.
+      pageSize: 50,
     },
   );
 }
@@ -778,7 +779,7 @@ async function createPublicEvent(
   },
 ) {
   const start = new Date(Date.now() - 5 * 60 * 1000);
-  const end = new Date(Date.now() + 55 * 60 * 1000);
+  const end = new Date(Date.now() + 12 * 60 * 60 * 1000);
   const response = await api.post(buildUrl(baseUrl, '/admin/api/v1/events'), {
     headers: authHeaders(token),
     data: {
@@ -803,17 +804,21 @@ async function createPublicEvent(
         type: 'account_profile',
         id: physicalHostId,
       },
-      event_parties: relatedProfileId
-        ? [
-            {
-              party_ref_id: relatedProfileId,
-            },
-          ]
-        : [],
+      profile_groups: [],
       occurrences: [
         {
           date_time_start: start.toISOString(),
           date_time_end: end.toISOString(),
+          profile_groups: relatedProfileId
+            ? [
+                {
+                  id: 'featured-profiles',
+                  label: 'Featured Profiles',
+                  order: 0,
+                  account_profile_ids: [relatedProfileId],
+                },
+              ]
+            : [],
         },
       ],
       publication: {
