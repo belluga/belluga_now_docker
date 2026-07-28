@@ -706,24 +706,25 @@ async function createInvitePreviewSeedEvent(api, baseUrl, token) {
           type: 'account_profile',
           id: host.id,
         },
-        profile_groups: [
-          {
-            id: 'bandas',
-            label: 'Bandas',
-            order: 0,
-            account_profile_ids: [band.id],
-          },
-          {
-            id: 'expositores',
-            label: 'Expositores',
-            order: 1,
-            account_profile_ids: [exhibitor.id],
-          },
-        ],
+        profile_groups: [],
         occurrences: [
           {
             date_time_start: start.toISOString(),
             date_time_end: end.toISOString(),
+            profile_groups: [
+              {
+                id: 'bandas',
+                label: 'Bandas',
+                order: 0,
+                account_profile_ids: [band.id],
+              },
+              {
+                id: 'expositores',
+                label: 'Expositores',
+                order: 1,
+                account_profile_ids: [exhibitor.id],
+              },
+            ],
           },
         ],
         publication: {
