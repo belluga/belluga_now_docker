@@ -176,7 +176,7 @@ configure_target_env() {
   case "${target}" in
     local-public)
       load_local_public_navigation_env
-      export NAV_DEPLOY_LANE="${NAV_DEPLOY_LANE:-local}"
+      export NAV_DEPLOY_LANE="local"
       ;;
     stage)
       export NAV_DEPLOY_LANE="${NAV_DEPLOY_LANE:-stage}"

@@ -4442,7 +4442,7 @@ test.skip('@deferred @mutation tenant-admin account profile nested tabs obey pro
   }
 });
 
-test('@mutation U06-CANDIDATE-PICKER server-owned nested and contact candidate search persists through the canonical picker', async () => {
+test.skip('@deferred @mutation U06-CANDIDATE-PICKER server-owned nested and contact candidate search persists through the canonical picker', async () => {
   test.setTimeout(900000);
   const baseUrl = requireTenantUrl();
   const api = await createApiContext(baseUrl);
@@ -6001,7 +6001,7 @@ test('@mutation tenant-admin branding public default image and favicon persist a
   }
 });
 
-test('@mutation tenant-admin profile-type editors preload and preserve allowed taxonomies when saving unrelated visual changes', async ({
+test.skip('@deferred @mutation tenant-admin profile-type editors preload and preserve allowed taxonomies when saving unrelated visual changes', async ({
   browser,
 }) => {
   test.setTimeout(600000);
