@@ -127,6 +127,12 @@ const {
   shouldContinuePagedFetch,
   withManagedFixtureRunKeyScope,
 } = require('./support/public_taxonomy_validation_fixture_contract');
+const {
+  describeFailureCollectorsContract,
+  isMediaAssetUrl,
+  shouldIgnoreFailedRequest,
+  summarizeCriticalConsoleErrors,
+} = require('./support/browser_failure_collectors');
 
 function run(command, args, env = {}) {
   return spawnSync(command, args, {
@@ -2934,6 +2940,265 @@ assert.match(
   `${rawGrepResult.stdout}\n${rawGrepResult.stderr}`,
   /NAV_WEB_GREP_EXTRA is ad-hoc/,
 );
+
+// Browser failure collectors contract (media/image failure normalization).
+// RED anchors: this block fails until support/browser_failure_collectors.js
+// exists and every adopted spec delegates to it.
+{
+  const adoptedSpecFiles = [
+    'discovery_filters.spec.js',
+    'event_rich_text.mutation.spec.js',
+    'account_profile_rich_text.mutation.spec.js',
+    'navigation.mutation.tenant_admin.spec.js',
+    'navigation.mutation.event_occurrences.spec.js',
+  ];
+
+  for (const specFile of adoptedSpecFiles) {
+    const specSource = fs.readFileSync(
+      path.join(__dirname, specFile),
+      'utf8',
+    );
+    assert.ok(
+      specSource.includes("require('./support/browser_failure_collectors')"),
+      `${specFile} must adopt the shared browser failure collectors helper`,
+    );
+    assert.ok(
+      !/function installFailureCollectors\s*\(/.test(specSource),
+      `${specFile} must not keep a local installFailureCollectors copy`,
+    );
+  }
+
+  const eventOccurrencesSource = fs.readFileSync(
+    path.join(__dirname, 'navigation.mutation.event_occurrences.spec.js'),
+    'utf8',
+  );
+  assert.ok(
+    !/function isNonCriticalFailedRequest\s*\(/.test(eventOccurrencesSource),
+    'event_occurrences must not keep a local isNonCriticalFailedRequest copy',
+  );
+  assert.ok(
+    !/ignoredFailedRequests\.length > 0/.test(eventOccurrencesSource),
+    'event_occurrences must not keep the wildcard ERR_FAILED console suppression',
+  );
+
+  const eventRichTextSource = fs.readFileSync(
+    path.join(__dirname, 'event_rich_text.mutation.spec.js'),
+    'utf8',
+  );
+  assert.ok(
+    !/function isNonCriticalConsoleError\s*\(/.test(eventRichTextSource),
+    'event_rich_text must not keep a local isNonCriticalConsoleError copy',
+  );
+
+  const canonicalMediaUrls = [
+    'https://guarappari.belluga.app/api/v1/media/account-profiles/69f90390ff69090b810321b7/avatar?v=1777927056',
+    'https://guarappari.belluga.app/api/v1/media/events/6a5e373dc5e5a56ae204dcf1/cover?v=1784579391',
+    'https://guarappari.belluga.app/api/v1/media/account-profiles/69f90390ff69090b810321b7/gallery/0?v=1777927056',
+    'https://guarappari.belluga.app/api/v1/media/event-types/6a69723340782ed221064708/asset?v=1785295389',
+    'https://guarappari.belluga.app/api/v1/media/tenant/branding/default-image?v=1785295389',
+  ];
+  const legacyMediaUrls = [
+    'https://guarappari.booraagora.com.br/account-profiles/69976b43d93abdd0650e64ec/avatar?v=1771531075',
+    'https://guarappari.com.br/events/6a5e373dc5e5a56ae204dcf1/cover?v=1784579391',
+    'https://guarappari.com.br/account-profiles/69976b43d93abdd0650e64ec/gallery/2?v=1771531075',
+    'https://guarappari.com.br/event-types/6a69723340782ed221064708/asset?v=1785295389',
+    'https://guarappari.com.br/tenant/branding/default-image?v=1785295389',
+    'https://guarappari.com.br/favicon.ico?v=1771531075',
+  ];
+  const nonMediaUrls = [
+    'https://guarappari.belluga.app/api/v1/agenda?page=1',
+    'https://guarappari.belluga.app/api/v1/account_profiles?page=1',
+    'https://guarappari.belluga.app/api/v1/admin/events',
+    'https://guarappari.belluga.app/admin/accounts',
+    'https://guarappari.belluga.app/manifest.json',
+  ];
+
+  for (const url of [...canonicalMediaUrls, ...legacyMediaUrls]) {
+    assert.strictEqual(
+      isMediaAssetUrl(url),
+      true,
+      `media URL must be classified as media asset: ${url}`,
+    );
+  }
+  for (const url of nonMediaUrls) {
+    assert.strictEqual(
+      isMediaAssetUrl(url),
+      false,
+      `non-media URL must not be classified as media asset: ${url}`,
+    );
+  }
+
+  const failingRequest = (url, resourceType = 'fetch') => ({
+    url: () => url,
+    resourceType: () => resourceType,
+  });
+
+  assert.strictEqual(
+    shouldIgnoreFailedRequest(
+      failingRequest(canonicalMediaUrls[0]),
+      'net::ERR_FAILED',
+    ),
+    true,
+    'media ERR_FAILED request with extensionless URL must be ignored',
+  );
+  assert.strictEqual(
+    shouldIgnoreFailedRequest(failingRequest(legacyMediaUrls[0]), 'net::ERR_FAILED'),
+    true,
+    'legacy media ERR_FAILED request must be ignored',
+  );
+  assert.strictEqual(
+    shouldIgnoreFailedRequest(
+      failingRequest(nonMediaUrls[0]),
+      'net::ERR_FAILED',
+    ),
+    false,
+    'API data request failure must NOT be ignored',
+  );
+  assert.strictEqual(
+    shouldIgnoreFailedRequest(
+      failingRequest(nonMediaUrls[0]),
+      'net::ERR_ABORTED',
+    ),
+    true,
+    'aborted requests stay non-critical',
+  );
+  assert.strictEqual(
+    shouldIgnoreFailedRequest(
+      failingRequest('https://cdn.example.test/photo.png?x=1'),
+      'net::ERR_FAILED',
+    ),
+    true,
+    'image extension fallback stays non-critical',
+  );
+
+  const buildCollectors = (overrides = {}) => ({
+    failedRequests: [],
+    ignoredFailedRequests: [],
+    consoleErrors: [],
+    consoleErrorUrls: [],
+    mediaErrorResponses: [],
+    ...overrides,
+  });
+
+  const errFailedText = 'Failed to load resource: net::ERR_FAILED';
+  const notFoundText =
+    'Failed to load resource: the server responded with a status of 404 (Not Found)';
+
+  const sameUrlErrFailed = buildCollectors({
+    ignoredFailedRequests: [canonicalMediaUrls[0]],
+    consoleErrors: [errFailedText],
+    consoleErrorUrls: [canonicalMediaUrls[0]],
+  });
+  assert.deepStrictEqual(
+    summarizeCriticalConsoleErrors(sameUrlErrFailed),
+    [],
+    'same-URL ERR_FAILED console entry must be suppressed',
+  );
+
+  const noUrlErrFailed = buildCollectors({
+    ignoredFailedRequests: [canonicalMediaUrls[0]],
+    consoleErrors: [errFailedText],
+    consoleErrorUrls: [''],
+  });
+  assert.deepStrictEqual(
+    summarizeCriticalConsoleErrors(noUrlErrFailed),
+    [errFailedText],
+    'ERR_FAILED console entry without URL evidence must stay critical (no wildcard)',
+  );
+
+  const recordedMedia404 = buildCollectors({
+    consoleErrors: [notFoundText],
+    consoleErrorUrls: [''],
+    mediaErrorResponses: [canonicalMediaUrls[0]],
+  });
+  assert.deepStrictEqual(
+    summarizeCriticalConsoleErrors(recordedMedia404),
+    [],
+    '404 console entry with recorded media-404 response on the same page must be suppressed',
+  );
+
+  const unrecorded404 = buildCollectors({
+    consoleErrors: [notFoundText],
+    consoleErrorUrls: [''],
+  });
+  assert.deepStrictEqual(
+    summarizeCriticalConsoleErrors(unrecorded404),
+    [notFoundText],
+    '404 console entry without recorded media-404 evidence must stay critical',
+  );
+
+  const api404WithMediaNoise = buildCollectors({
+    consoleErrors: [notFoundText],
+    consoleErrorUrls: [nonMediaUrls[0]],
+    mediaErrorResponses: [canonicalMediaUrls[0]],
+  });
+  assert.deepStrictEqual(
+    summarizeCriticalConsoleErrors(api404WithMediaNoise),
+    [notFoundText],
+    'API URL 404 console entry must stay critical even when unrelated media-404s exist',
+  );
+
+  const corsText = (url) =>
+    `Access to XMLHttpRequest at '${url}' from origin 'https://guarappari.belluga.space' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.`;
+
+  const corsMediaBlocked = buildCollectors({
+    ignoredFailedRequests: [legacyMediaUrls[0]],
+    consoleErrors: [corsText(legacyMediaUrls[0])],
+    consoleErrorUrls: [''],
+  });
+  assert.deepStrictEqual(
+    summarizeCriticalConsoleErrors(corsMediaBlocked),
+    [],
+    'CORS-blocked media asset with recorded ignored request evidence must be suppressed',
+  );
+
+  const corsApiBlocked = buildCollectors({
+    ignoredFailedRequests: [legacyMediaUrls[0]],
+    consoleErrors: [corsText(nonMediaUrls[0])],
+    consoleErrorUrls: [''],
+  });
+  assert.deepStrictEqual(
+    summarizeCriticalConsoleErrors(corsApiBlocked),
+    [corsText(nonMediaUrls[0])],
+    'CORS-blocked non-media URL must stay critical even when ignored media requests exist',
+  );
+
+  const corsMediaNoEvidence = buildCollectors({
+    consoleErrors: [corsText(legacyMediaUrls[0])],
+    consoleErrorUrls: [''],
+  });
+  assert.deepStrictEqual(
+    summarizeCriticalConsoleErrors(corsMediaNoEvidence),
+    [corsText(legacyMediaUrls[0])],
+    'CORS-blocked media URL without same-page evidence must stay critical',
+  );
+
+  const expected422 = buildCollectors({
+    consoleErrors: [
+      'Failed to load resource: the server responded with a status of 422 (Unprocessable Content)',
+    ],
+    consoleErrorUrls: [''],
+  });
+  assert.deepStrictEqual(
+    summarizeCriticalConsoleErrors(expected422, {
+      allowedConsoleErrorSubstrings: ['status of 422'],
+    }),
+    [],
+    'explicitly allowed 422 console entries keep working for stale-type tests',
+  );
+
+  const contract = describeFailureCollectorsContract();
+  assert.strictEqual(
+    contract.taxonomyVersion,
+    'media-url-shape-v1',
+    'collector taxonomy version must stay pinned',
+  );
+  assert.ok(
+    Array.isArray(contract.adoptedSpecFiles) &&
+      adoptedSpecFiles.every((file) => contract.adoptedSpecFiles.includes(file)),
+    'collector contract must enumerate the adopted spec families',
+  );
+}
 
 console.log('Navigation harness policy regression tests passed.');
 function assertAccountOnboardingCleanupContractPasses() {

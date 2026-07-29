@@ -9,6 +9,11 @@ const {
 } = require('./support/tenant_admin_auth');
 const { selectDropdownOption } = require('./support/semantic_dropdown');
 const {
+  installFailureCollectors,
+  resetFailureCollectors,
+  summarizeCriticalConsoleErrors,
+} = require('./support/browser_failure_collectors');
+const {
   cleanupOnboardedAccount,
   runCleanupPreservingPrimaryError,
   runCleanupSteps,
@@ -110,28 +115,6 @@ async function expectImagePreviewRenderedOrRequested({
       },
     )
     .toBeTruthy();
-}
-
-function installFailureCollectors(page) {
-  const runtimeErrors = [];
-  const failedRequests = [];
-  const consoleErrors = [];
-
-  page.on('pageerror', (error) => runtimeErrors.push(error.message));
-  page.on('requestfailed', (request) => {
-    const failureText = request.failure()?.errorText || 'unknown';
-    if (failureText === 'net::ERR_ABORTED') {
-      return;
-    }
-    failedRequests.push(`${request.method()} ${request.url()} (${failureText})`);
-  });
-  page.on('console', (message) => {
-    if (message.type() === 'error') {
-      consoleErrors.push(message.text());
-    }
-  });
-
-  return { runtimeErrors, failedRequests, consoleErrors };
 }
 
 function logStep(flow, message) {
@@ -512,12 +495,9 @@ async function assertNoBrowserFailures(
     `Unexpected failed requests:\n${collectors.failedRequests.join('\n')}`,
   ).toEqual([]);
 
-  const criticalConsoleErrors = collectors.consoleErrors.filter(
-    (entry) =>
-      !entry.includes('status of 401') &&
-      !entry.includes('ResizeObserver loop limit exceeded') &&
-      !allowedConsoleErrorSubstrings.some((allowed) => entry.includes(allowed)),
-  );
+  const criticalConsoleErrors = summarizeCriticalConsoleErrors(collectors, {
+    allowedConsoleErrorSubstrings,
+  });
   expect(
     criticalConsoleErrors,
     `Critical console errors:\n${criticalConsoleErrors.join('\n')}`,
@@ -530,16 +510,6 @@ async function disposeApiResponse(response) {
   }
 
   await response.dispose().catch(() => {});
-}
-
-function resetFailureCollectors(collectors) {
-  if (!collectors) {
-    return;
-  }
-
-  collectors.runtimeErrors.length = 0;
-  collectors.failedRequests.length = 0;
-  collectors.consoleErrors.length = 0;
 }
 
 async function assertAppBooted(page) {

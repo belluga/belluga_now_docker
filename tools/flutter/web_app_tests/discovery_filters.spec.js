@@ -8,6 +8,10 @@ const {
   cleanupOnboardedAccounts,
   runCleanupPreservingPrimaryError,
 } = require('./support/account_onboarding_cleanup');
+const {
+  installFailureCollectors,
+  summarizeCriticalConsoleErrors,
+} = require('./support/browser_failure_collectors');
 
 const tenantUrl = process.env.NAV_TENANT_URL;
 const appBootTimeoutMs = 90000;
@@ -255,28 +259,6 @@ async function activateSemanticToggle(locator) {
   }
 }
 
-function installFailureCollectors(page) {
-  const runtimeErrors = [];
-  const failedRequests = [];
-  const consoleErrors = [];
-
-  page.on('pageerror', (error) => runtimeErrors.push(error.message));
-  page.on('requestfailed', (request) => {
-    const failureText = request.failure()?.errorText || 'unknown';
-    if (failureText === 'net::ERR_ABORTED') {
-      return;
-    }
-    failedRequests.push(`${request.method()} ${request.url()} (${failureText})`);
-  });
-  page.on('console', (message) => {
-    if (message.type() === 'error') {
-      consoleErrors.push(message.text());
-    }
-  });
-
-  return { runtimeErrors, failedRequests, consoleErrors };
-}
-
 async function assertNoCriticalBrowserFailures(collectors) {
   expect(
     collectors.runtimeErrors,
@@ -287,11 +269,7 @@ async function assertNoCriticalBrowserFailures(collectors) {
     `Unexpected failed requests:\n${collectors.failedRequests.join('\n')}`,
   ).toEqual([]);
 
-  const criticalConsoleErrors = collectors.consoleErrors.filter(
-    (entry) =>
-      !entry.includes('status of 401') &&
-      !entry.includes('ResizeObserver loop limit exceeded'),
-  );
+  const criticalConsoleErrors = summarizeCriticalConsoleErrors(collectors);
   expect(
     criticalConsoleErrors,
     `Critical console errors:\n${criticalConsoleErrors.join('\n')}`,

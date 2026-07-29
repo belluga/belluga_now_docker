@@ -3,6 +3,10 @@ const { test, expect, request } = require('@playwright/test');
 const {
   loginTenantAdmin: loginTenantAdminWithRequiredCredentials,
 } = require('./support/tenant_admin_auth');
+const {
+  installFailureCollectors,
+  summarizeCriticalConsoleErrors,
+} = require('./support/browser_failure_collectors');
 
 const tenantUrl = process.env.NAV_TENANT_URL;
 const appBootTimeoutMs = 90000;
@@ -58,58 +62,6 @@ function normalizePayload(payload) {
   return payload;
 }
 
-function installFailureCollectors(page) {
-  const runtimeErrors = [];
-  const failedRequests = [];
-  const consoleErrors = [];
-
-  page.on('pageerror', (error) => runtimeErrors.push(error.message));
-  page.on('requestfailed', (requestEntry) => {
-    const failureText = requestEntry.failure()?.errorText || 'unknown';
-    if (isNonCriticalFailedRequest(requestEntry, failureText)) {
-      return;
-    }
-    failedRequests.push(
-      `${requestEntry.method()} ${requestEntry.url()} (${failureText})`,
-    );
-  });
-  page.on('console', (message) => {
-    if (message.type() === 'error') {
-      consoleErrors.push(message.text());
-    }
-  });
-
-  return { runtimeErrors, failedRequests, consoleErrors };
-}
-
-function isNonCriticalFailedRequest(requestEntry, failureText) {
-  if (failureText === 'net::ERR_ABORTED') {
-    return true;
-  }
-
-  if (['image', 'media', 'font'].includes(requestEntry.resourceType())) {
-    return true;
-  }
-
-  return /\.(?:avif|gif|jpe?g|png|svg|webp|woff2?)(?:[?#].*)?$/i.test(
-    requestEntry.url(),
-  );
-}
-
-function isNonCriticalConsoleError(entry) {
-  if (
-    entry.includes('status of 401') ||
-    entry.includes('ResizeObserver loop limit exceeded') ||
-    entry === 'Failed to load resource: net::ERR_FAILED'
-  ) {
-    return true;
-  }
-
-  return /https?:\/\/[^'"\s]+\.(?:avif|gif|jpe?g|png|svg|webp|woff2?)(?:[?#][^'"\s]*)?/.test(
-    entry,
-  );
-}
-
 async function assertNoCriticalBrowserFailures(collectors) {
   expect(
     collectors.runtimeErrors,
@@ -120,9 +72,7 @@ async function assertNoCriticalBrowserFailures(collectors) {
     `Unexpected failed requests:\n${collectors.failedRequests.join('\n')}`,
   ).toEqual([]);
 
-  const criticalConsoleErrors = collectors.consoleErrors.filter(
-    (entry) => !isNonCriticalConsoleError(entry),
-  );
+  const criticalConsoleErrors = summarizeCriticalConsoleErrors(collectors);
   expect(
     criticalConsoleErrors,
     `Critical console errors:\n${criticalConsoleErrors.join('\n')}`,
