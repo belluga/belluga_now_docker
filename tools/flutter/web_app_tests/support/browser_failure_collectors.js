@@ -11,8 +11,9 @@
  *   shapes, including `?v=` cache-busted variants), because Flutter web
  *   fetches images programmatically (fetch/XHR), so `resourceType()` is not
  *   `image` and media URLs carry no file extension.
- * - Supplementary non-critical signals: `net::ERR_ABORTED`,
- *   `resourceType()` in `image|media|font`, and image/font file extensions.
+ * - The only generic non-critical transport signal is `net::ERR_ABORTED`.
+ *   Every other ignored browser failure must match an explicitly approved
+ *   media URL shape.
  * - Console entries are structured: `consoleErrors` keeps the text (legacy
  *   assertion shape) while `consoleErrorUrls` keeps the parallel location
  *   URL (`''` when unavailable).
@@ -22,6 +23,13 @@
  *   - `404` console entries are suppressed only when the entry URL is a
  *     media asset URL, or when a media-classified HTTP >=400 response was
  *     recorded on the same page (response listener evidence).
+ * - Response listeners preserve fail-closed semantics for ambiguous
+ *   locationless console 404s by recording non-media HTTP >=400 responses
+ *   separately; API/data/server errors therefore remain critical even when a
+ *   same-page media 404 also occurred.
+ * - Console `429` suppression is URL-scoped and applies only when the
+ *   console entry location matches an explicitly allowlisted rate-limited
+ *   response captured on the same page.
  * - API/JSON/data requests, non-media assets, runtime page errors, and
  *   disallowed 429 responses always stay critical.
  */
@@ -32,6 +40,7 @@ const ADOPTED_SPEC_FILES = [
   'discovery_filters.spec.js',
   'event_rich_text.mutation.spec.js',
   'account_profile_rich_text.mutation.spec.js',
+  'navigation.spec.js',
   'navigation.mutation.tenant_admin.spec.js',
   'navigation.mutation.event_occurrences.spec.js',
 ];
@@ -39,11 +48,10 @@ const ADOPTED_SPEC_FILES = [
 const IMAGE_OR_FONT_EXTENSION_PATTERN =
   /\.(?:avif|gif|jpe?g|png|svg|webp|woff2?|ico)(?:[?#].*)?$/i;
 
-const NON_CRITICAL_RESOURCE_TYPES = new Set(['image', 'media', 'font']);
-
 const CONSOLE_ERR_FAILED_TEXT = 'Failed to load resource: net::ERR_FAILED';
 const CONSOLE_NOT_FOUND_PREFIX =
   'Failed to load resource: the server responded with a status of 404';
+const DEFAULT_ALLOWED_RESPONSE_STATUSES = [];
 
 function extractUrlPath(url) {
   if (typeof url !== 'string' || url.length === 0) {
@@ -100,8 +108,8 @@ function isMediaAssetUrl(url) {
     return true;
   }
 
-  // Branding/favicon legacy asset with cache-buster, e.g. /favicon.ico?v=...
-  if (IMAGE_OR_FONT_EXTENSION_PATTERN.test(url)) {
+  // Legacy favicon asset with cache-buster, e.g. /favicon.ico?v=...
+  if (hasCacheBustedVersionParam(url) && /^\/favicon\.ico$/i.test(pathname)) {
     return true;
   }
 
@@ -110,8 +118,9 @@ function isMediaAssetUrl(url) {
 
 /**
  * Decides whether a `requestfailed` entry is non-critical. URL-shape
- * classification is primary; resourceType()/extension/ERR_ABORTED are
- * supplementary signals. API/data requests always stay critical.
+ * classification is primary and `net::ERR_ABORTED` is the only generic
+ * non-critical transport signal. API/data/off-contract asset requests always
+ * stay critical.
  */
 function shouldIgnoreFailedRequest(request, failureText) {
   if (failureText === 'net::ERR_ABORTED') {
@@ -123,13 +132,7 @@ function shouldIgnoreFailedRequest(request, failureText) {
     return true;
   }
 
-  const resourceType =
-    typeof request?.resourceType === 'function' ? request.resourceType() : '';
-  if (NON_CRITICAL_RESOURCE_TYPES.has(resourceType)) {
-    return true;
-  }
-
-  return IMAGE_OR_FONT_EXTENSION_PATTERN.test(url);
+  return false;
 }
 
 function isNotFoundConsoleEntry(text) {
@@ -157,6 +160,22 @@ function isMediaResponseError(response) {
   return isMediaAssetUrl(url);
 }
 
+function serializeHttpErrorResponse(response) {
+  return {
+    method:
+      typeof response?.request === 'function' &&
+      typeof response.request()?.method === 'function'
+        ? response.request().method()
+        : 'GET',
+    status: typeof response?.status === 'function' ? response.status() : 0,
+    url: typeof response?.url === 'function' ? response.url() : '',
+  };
+}
+
+function formatHttpErrorResponse(entry) {
+  return `${entry.method} ${entry.url} (${entry.status})`;
+}
+
 /**
  * Installs the canonical collectors on a Playwright page.
  *
@@ -168,6 +187,9 @@ function isMediaResponseError(response) {
  * - `consoleErrorUrls`: location URL parallel to `consoleErrors` (`''` when
  *   unavailable).
  * - `mediaErrorResponses`: URLs of media-classified HTTP >=400 responses.
+ * - `httpErrorResponses`: non-media HTTP >=400 responses, excluding 429
+ *   (handled separately), preserved so API/data failures stay critical even
+ *   when console 404 text has no location URL.
  * - `rateLimitedResponses`: `METHOD URL` entries for HTTP 429 responses.
  */
 function installFailureCollectors(page) {
@@ -177,6 +199,7 @@ function installFailureCollectors(page) {
   const consoleErrors = [];
   const consoleErrorUrls = [];
   const mediaErrorResponses = [];
+  const httpErrorResponses = [];
   const rateLimitedResponses = [];
 
   page.on('pageerror', (error) => runtimeErrors.push(error.message));
@@ -200,7 +223,8 @@ function installFailureCollectors(page) {
   });
 
   page.on('response', (response) => {
-    if (response.status() === 429) {
+    const status = response.status();
+    if (status === 429) {
       rateLimitedResponses.push(
         `${response.request().method()} ${response.url()}`,
       );
@@ -208,6 +232,10 @@ function installFailureCollectors(page) {
     }
     if (isMediaResponseError(response)) {
       mediaErrorResponses.push(response.url());
+      return;
+    }
+    if (status >= 400) {
+      httpErrorResponses.push(serializeHttpErrorResponse(response));
     }
   });
 
@@ -218,6 +246,7 @@ function installFailureCollectors(page) {
     consoleErrors,
     consoleErrorUrls,
     mediaErrorResponses,
+    httpErrorResponses,
     rateLimitedResponses,
   };
 }
@@ -229,12 +258,16 @@ function installFailureCollectors(page) {
  */
 function summarizeCriticalConsoleErrors(
   collectors,
-  { allowedConsoleErrorSubstrings = [] } = {},
+  {
+    allowedConsoleErrorSubstrings = [],
+    allowedRateLimitedResponseSubstrings = [],
+  } = {},
 ) {
   const consoleErrors = collectors.consoleErrors || [];
   const consoleErrorUrls = collectors.consoleErrorUrls || [];
   const ignoredFailedRequests = collectors.ignoredFailedRequests || [];
   const mediaErrorResponses = collectors.mediaErrorResponses || [];
+  const rateLimitedResponses = collectors.rateLimitedResponses || [];
 
   return consoleErrors.filter((text, index) => {
     const locationUrl = consoleErrorUrls[index] || '';
@@ -245,6 +278,22 @@ function summarizeCriticalConsoleErrors(
       allowedConsoleErrorSubstrings.some((allowed) => text.includes(allowed))
     ) {
       return false;
+    }
+
+    if (text.includes('status of 429')) {
+      if (locationUrl.length === 0) {
+        return true;
+      }
+
+      const matchesAllowlistedRateLimit = rateLimitedResponses.some(
+        (entry) =>
+          entry.includes(locationUrl) &&
+          allowedRateLimitedResponseSubstrings.some(
+            (allowed) => entry.includes(allowed) || locationUrl.includes(allowed),
+          ),
+      );
+
+      return !matchesAllowlistedRateLimit;
     }
 
     if (isErrFailedConsoleEntry(text)) {
@@ -285,6 +334,59 @@ function summarizeCriticalConsoleErrors(
   });
 }
 
+function summarizeCriticalHttpResponses(
+  collectors,
+  { allowedResponseStatuses = DEFAULT_ALLOWED_RESPONSE_STATUSES } = {},
+) {
+  const allowedStatuses = new Set(
+    (allowedResponseStatuses || []).map((value) => Number(value)),
+  );
+  const httpErrorResponses = collectors.httpErrorResponses || [];
+  return httpErrorResponses
+    .filter((entry) => !allowedStatuses.has(Number(entry.status)))
+    .map(formatHttpErrorResponse);
+}
+
+function summarizeDisallowedRateLimitedResponses(
+  collectors,
+  { allowedRateLimitedResponseSubstrings = [] } = {},
+) {
+  const allowedSubstrings = (allowedRateLimitedResponseSubstrings || []).filter(
+    (value) => typeof value === 'string' && value.trim().length > 0,
+  );
+  const rateLimitedResponses = collectors.rateLimitedResponses || [];
+  return rateLimitedResponses.filter(
+    (entry) => !allowedSubstrings.some((allowed) => entry.includes(allowed)),
+  );
+}
+
+function summarizeCriticalBrowserFailures(
+  collectors,
+  {
+    allowedConsoleErrorSubstrings = [],
+    allowedResponseStatuses = DEFAULT_ALLOWED_RESPONSE_STATUSES,
+    allowedRateLimitedResponseSubstrings = [],
+  } = {},
+) {
+  const disallowedRateLimitedResponses =
+    summarizeDisallowedRateLimitedResponses(collectors, {
+      allowedRateLimitedResponseSubstrings,
+    });
+  const criticalConsoleErrors = summarizeCriticalConsoleErrors(collectors, {
+    allowedConsoleErrorSubstrings,
+    allowedRateLimitedResponseSubstrings,
+  });
+  return {
+    runtimeErrors: [...(collectors.runtimeErrors || [])],
+    failedRequests: [...(collectors.failedRequests || [])],
+    criticalHttpResponses: summarizeCriticalHttpResponses(collectors, {
+      allowedResponseStatuses,
+    }),
+    disallowedRateLimitedResponses,
+    criticalConsoleErrors,
+  };
+}
+
 function resetFailureCollectors(collectors) {
   if (!collectors) {
     return;
@@ -296,6 +398,7 @@ function resetFailureCollectors(collectors) {
     'consoleErrors',
     'consoleErrorUrls',
     'mediaErrorResponses',
+    'httpErrorResponses',
     'rateLimitedResponses',
   ]) {
     if (Array.isArray(collectors[key])) {
@@ -320,5 +423,8 @@ module.exports = {
   isMediaAssetUrl,
   resetFailureCollectors,
   shouldIgnoreFailedRequest,
+  summarizeCriticalBrowserFailures,
   summarizeCriticalConsoleErrors,
+  summarizeCriticalHttpResponses,
+  summarizeDisallowedRateLimitedResponses,
 };

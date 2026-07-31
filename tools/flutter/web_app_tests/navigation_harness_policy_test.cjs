@@ -131,7 +131,9 @@ const {
   describeFailureCollectorsContract,
   isMediaAssetUrl,
   shouldIgnoreFailedRequest,
+  summarizeCriticalBrowserFailures,
   summarizeCriticalConsoleErrors,
+  summarizeCriticalHttpResponses,
 } = require('./support/browser_failure_collectors');
 
 function run(command, args, env = {}) {
@@ -2949,6 +2951,7 @@ assert.match(
     'discovery_filters.spec.js',
     'event_rich_text.mutation.spec.js',
     'account_profile_rich_text.mutation.spec.js',
+    'navigation.spec.js',
     'navigation.mutation.tenant_admin.spec.js',
     'navigation.mutation.event_occurrences.spec.js',
   ];
@@ -3067,16 +3070,27 @@ assert.match(
       failingRequest('https://cdn.example.test/photo.png?x=1'),
       'net::ERR_FAILED',
     ),
-    true,
-    'image extension fallback stays non-critical',
+    false,
+    'off-contract image extension failures must stay critical',
+  );
+  assert.strictEqual(
+    shouldIgnoreFailedRequest(
+      failingRequest(nonMediaUrls[0], 'image'),
+      'net::ERR_FAILED',
+    ),
+    false,
+    'non-media image resourceType failures must stay critical without an approved media URL shape',
   );
 
   const buildCollectors = (overrides = {}) => ({
+    runtimeErrors: [],
     failedRequests: [],
     ignoredFailedRequests: [],
     consoleErrors: [],
     consoleErrorUrls: [],
     mediaErrorResponses: [],
+    httpErrorResponses: [],
+    rateLimitedResponses: [],
     ...overrides,
   });
 
@@ -3138,6 +3152,41 @@ assert.match(
     'API URL 404 console entry must stay critical even when unrelated media-404s exist',
   );
 
+  const criticalApi404Response = buildCollectors({
+    httpErrorResponses: [
+      { method: 'GET', url: nonMediaUrls[0], status: 404 },
+    ],
+  });
+  assert.deepStrictEqual(
+    summarizeCriticalHttpResponses(criticalApi404Response),
+    [`GET ${nonMediaUrls[0]} (404)`],
+    'non-media 404 responses must stay critical at the response layer',
+  );
+
+  const critical401Response = buildCollectors({
+    httpErrorResponses: [
+      { method: 'GET', url: nonMediaUrls[1], status: 401 },
+    ],
+  });
+  assert.deepStrictEqual(
+    summarizeCriticalHttpResponses(critical401Response),
+    [`GET ${nonMediaUrls[1]} (401)`],
+    'non-media 401 responses must stay critical unless a test explicitly allows them',
+  );
+
+  const allowed422Response = buildCollectors({
+    httpErrorResponses: [
+      { method: 'PATCH', url: `${nonMediaUrls[0]}/stale`, status: 422 },
+    ],
+  });
+  assert.deepStrictEqual(
+    summarizeCriticalHttpResponses(allowed422Response, {
+      allowedResponseStatuses: [422],
+    }),
+    [],
+    'allowed response statuses must be suppressible explicitly for stale-type tests',
+  );
+
   const corsText = (url) =>
     `Access to XMLHttpRequest at '${url}' from origin 'https://guarappari.belluga.space' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.`;
 
@@ -3187,6 +3236,95 @@ assert.match(
     'explicitly allowed 422 console entries keep working for stale-type tests',
   );
 
+  const allowedRateLimit = buildCollectors({
+    rateLimitedResponses: ['GET https://guarappari.example/api/v1/media/account-profiles/123/avatar'],
+    consoleErrors: [
+      'Failed to load resource: the server responded with a status of 429',
+    ],
+    consoleErrorUrls: ['https://guarappari.example/api/v1/media/account-profiles/123/avatar'],
+  });
+  assert.deepStrictEqual(
+    summarizeCriticalBrowserFailures(allowedRateLimit, {
+      allowedRateLimitedResponseSubstrings: ['/api/v1/media/'],
+    }),
+    {
+      runtimeErrors: [],
+      failedRequests: [],
+      criticalHttpResponses: [],
+      disallowedRateLimitedResponses: [],
+      criticalConsoleErrors: [],
+    },
+    'allowed 429 media noise must stay non-critical through the shared summary',
+  );
+
+  const locationlessAllowedRateLimit = buildCollectors({
+    rateLimitedResponses: ['GET https://guarappari.example/api/v1/media/account-profiles/123/avatar'],
+    consoleErrors: [
+      'Failed to load resource: the server responded with a status of 429',
+    ],
+    consoleErrorUrls: [''],
+  });
+  assert.deepStrictEqual(
+    summarizeCriticalBrowserFailures(locationlessAllowedRateLimit, {
+      allowedRateLimitedResponseSubstrings: ['/api/v1/media/'],
+    }),
+    {
+      runtimeErrors: [],
+      failedRequests: [],
+      criticalHttpResponses: [],
+      disallowedRateLimitedResponses: [],
+      criticalConsoleErrors: [
+        'Failed to load resource: the server responded with a status of 429',
+      ],
+    },
+    'locationless 429 console entries must stay critical because suppression is URL-scoped',
+  );
+
+  const disallowedRateLimit = buildCollectors({
+    rateLimitedResponses: [`GET ${nonMediaUrls[0]}`],
+  });
+  assert.deepStrictEqual(
+    summarizeCriticalBrowserFailures(disallowedRateLimit),
+    {
+      runtimeErrors: [],
+      failedRequests: [],
+      criticalHttpResponses: [],
+      disallowedRateLimitedResponses: [`GET ${nonMediaUrls[0]}`],
+      criticalConsoleErrors: [],
+    },
+    'non-media 429 responses must stay critical through the shared summary',
+  );
+
+  const mixedRateLimit = buildCollectors({
+    rateLimitedResponses: [
+      'GET https://guarappari.example/api/v1/media/account-profiles/123/avatar',
+      `GET ${nonMediaUrls[0]}`,
+    ],
+    consoleErrors: [
+      'Failed to load resource: the server responded with a status of 429',
+      'Failed to load resource: the server responded with a status of 429',
+    ],
+    consoleErrorUrls: [
+      'https://guarappari.example/api/v1/media/account-profiles/123/avatar',
+      nonMediaUrls[0],
+    ],
+  });
+  assert.deepStrictEqual(
+    summarizeCriticalBrowserFailures(mixedRateLimit, {
+      allowedRateLimitedResponseSubstrings: ['/api/v1/media/'],
+    }),
+    {
+      runtimeErrors: [],
+      failedRequests: [],
+      criticalHttpResponses: [],
+      disallowedRateLimitedResponses: [`GET ${nonMediaUrls[0]}`],
+      criticalConsoleErrors: [
+        'Failed to load resource: the server responded with a status of 429',
+      ],
+    },
+    'mixed-page 429 noise must suppress only the allowlisted response and keep unrelated API throttling critical',
+  );
+
   const contract = describeFailureCollectorsContract();
   assert.strictEqual(
     contract.taxonomyVersion,
@@ -3194,9 +3332,13 @@ assert.match(
     'collector taxonomy version must stay pinned',
   );
   assert.ok(
-    Array.isArray(contract.adoptedSpecFiles) &&
-      adoptedSpecFiles.every((file) => contract.adoptedSpecFiles.includes(file)),
+    Array.isArray(contract.adoptedSpecFiles),
     'collector contract must enumerate the adopted spec families',
+  );
+  assert.deepStrictEqual(
+    [...contract.adoptedSpecFiles].sort(),
+    [...adoptedSpecFiles].sort(),
+    'collector contract must keep the exact adopted spec set in sync with the policy test',
   );
 }
 

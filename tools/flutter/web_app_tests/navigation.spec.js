@@ -4,6 +4,10 @@ const {
   managedFixtureEnabled,
   matchesCanonicalManagedSlug,
 } = require('./support/public_taxonomy_validation_fixture_contract');
+const {
+  installFailureCollectors,
+  summarizeCriticalBrowserFailures,
+} = require('./support/browser_failure_collectors');
 
 const landlordUrl = process.env.NAV_LANDLORD_URL;
 const tenantUrl = process.env.NAV_TENANT_URL;
@@ -48,13 +52,10 @@ function isApplicationApiRequest(rawUrl) {
   return applicationOrigins().includes(parsed.origin) && parsed.pathname.startsWith('/api/');
 }
 
-function installFailureCollectors(page) {
-  const runtimeErrors = [];
-  const failedRequests = [];
-  const consoleErrors = [];
+function installReadonlyCollectors(page) {
+  const collectors = installFailureCollectors(page);
   const mutatingApiRequests = [];
 
-  page.on('pageerror', (error) => runtimeErrors.push(error.message));
   page.on('request', (request) => {
     const method = (request.method() || '').toUpperCase();
     if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') {
@@ -66,21 +67,8 @@ function installFailureCollectors(page) {
     }
     mutatingApiRequests.push(`${method} ${url}`);
   });
-  page.on('requestfailed', (request) => {
-    const failureText = request.failure()?.errorText || 'unknown';
-    if (failureText === 'net::ERR_ABORTED') {
-      return;
-    }
 
-    failedRequests.push(`${request.method()} ${request.url()} (${failureText})`);
-  });
-  page.on('console', (message) => {
-    if (message.type() === 'error') {
-      consoleErrors.push(message.text());
-    }
-  });
-
-  return { runtimeErrors, failedRequests, consoleErrors, mutatingApiRequests };
+  return { ...collectors, mutatingApiRequests };
 }
 
 async function assertAppBooted(page) {
@@ -249,7 +237,7 @@ async function scrollPageUntilLocatorVisible(
 
 test('@readonly landlord domain bootstraps as landlord and navigates', async ({ page }) => {
   const { landlordUrl } = requireNavigationUrls();
-  const collectors = installFailureCollectors(page);
+  const collectors = installReadonlyCollectors(page);
 
   const response = await page.goto(landlordUrl, { waitUntil: 'domcontentloaded' });
   expect(response, 'Landlord response should be available').not.toBeNull();
@@ -283,9 +271,21 @@ test('@readonly landlord domain bootstraps as landlord and navigates', async ({ 
     'landlord'
   );
 
-  expect(collectors.runtimeErrors, `Unexpected runtime errors:\n${collectors.runtimeErrors.join('\n')}`).toEqual([]);
-  expect(collectors.failedRequests, `Failed requests:\n${collectors.failedRequests.join('\n')}`).toEqual([]);
-  expect(collectors.consoleErrors, `Console errors:\n${collectors.consoleErrors.join('\n')}`).toEqual([]);
+  const summary = summarizeCriticalBrowserFailures(collectors);
+  expect(summary.runtimeErrors, `Unexpected runtime errors:\n${summary.runtimeErrors.join('\n')}`).toEqual([]);
+  expect(summary.failedRequests, `Failed requests:\n${summary.failedRequests.join('\n')}`).toEqual([]);
+  expect(
+    summary.criticalHttpResponses,
+    `Critical HTTP responses:\n${summary.criticalHttpResponses.join('\n')}`,
+  ).toEqual([]);
+  expect(
+    summary.disallowedRateLimitedResponses,
+    `Disallowed 429 responses:\n${summary.disallowedRateLimitedResponses.join('\n')}`,
+  ).toEqual([]);
+  expect(
+    summary.criticalConsoleErrors,
+    `Critical console errors:\n${summary.criticalConsoleErrors.join('\n')}`,
+  ).toEqual([]);
   expect(
     collectors.mutatingApiRequests,
     `Readonly landlord flow must not issue mutating API requests:\n${collectors.mutatingApiRequests.join('\n')}`,
@@ -357,14 +357,20 @@ test('@readonly tenant domain bootstraps as tenant and navigates to tenant route
     'tenant'
   );
 
-  expect(collectors.runtimeErrors, `Unexpected runtime errors:\n${collectors.runtimeErrors.join('\n')}`).toEqual([]);
-  expect(collectors.failedRequests, `Failed requests:\n${collectors.failedRequests.join('\n')}`).toEqual([]);
-  const criticalConsoleErrors = collectors.consoleErrors.filter(
-    (entry) => !entry.includes('status of 401'),
-  );
+  const summary = summarizeCriticalBrowserFailures(collectors);
+  expect(summary.runtimeErrors, `Unexpected runtime errors:\n${summary.runtimeErrors.join('\n')}`).toEqual([]);
+  expect(summary.failedRequests, `Failed requests:\n${summary.failedRequests.join('\n')}`).toEqual([]);
   expect(
-    criticalConsoleErrors,
-    `Critical console errors:\n${criticalConsoleErrors.join('\n')}`,
+    summary.criticalHttpResponses,
+    `Critical HTTP responses:\n${summary.criticalHttpResponses.join('\n')}`,
+  ).toEqual([]);
+  expect(
+    summary.disallowedRateLimitedResponses,
+    `Disallowed 429 responses:\n${summary.disallowedRateLimitedResponses.join('\n')}`,
+  ).toEqual([]);
+  expect(
+    summary.criticalConsoleErrors,
+    `Critical console errors:\n${summary.criticalConsoleErrors.join('\n')}`,
   ).toEqual([]);
 });
 

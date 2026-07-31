@@ -7,7 +7,7 @@ const {
 const { selectDropdownOption } = require('./support/semantic_dropdown');
 const {
   installFailureCollectors,
-  summarizeCriticalConsoleErrors,
+  summarizeCriticalBrowserFailures,
 } = require('./support/browser_failure_collectors');
 const {
   cleanupOnboardedAccount,
@@ -210,40 +210,32 @@ function anonymousFingerprintHash(baseUrl) {
 }
 
 async function assertNoBrowserFailures(collectors) {
+  const summary = summarizeCriticalBrowserFailures(collectors, {
+    allowedRateLimitedResponseSubstrings: [
+      '/api/v1/media/',
+      'ingest.sentry.io',
+      '/envelope/',
+    ],
+  });
   expect(
-    collectors.runtimeErrors,
-    `Unexpected runtime errors:\n${collectors.runtimeErrors.join('\n')}`,
+    summary.runtimeErrors,
+    `Unexpected runtime errors:\n${summary.runtimeErrors.join('\n')}`,
   ).toEqual([]);
   expect(
-    collectors.failedRequests,
-    `Unexpected failed requests:\n${collectors.failedRequests.join('\n')}`,
+    summary.failedRequests,
+    `Unexpected failed requests:\n${summary.failedRequests.join('\n')}`,
   ).toEqual([]);
-
-  const disallowedRateLimits = collectors.rateLimitedResponses.filter(
-    (entry) =>
-      !entry.includes('/api/v1/media/') &&
-      !entry.includes('/api/v1/account-profiles/') &&
-      !entry.includes('/avatar') &&
-      !entry.includes('/cover') &&
-      !entry.includes('ingest.sentry.io') &&
-      !entry.includes('/envelope/'),
-  );
   expect(
-    disallowedRateLimits,
-    `Disallowed 429 responses:\n${disallowedRateLimits.join('\n')}`,
+    summary.criticalHttpResponses,
+    `Critical HTTP responses:\n${summary.criticalHttpResponses.join('\n')}`,
   ).toEqual([]);
-
-  const criticalConsoleErrors = summarizeCriticalConsoleErrors(collectors).filter(
-    (entry) =>
-      !(
-        entry.includes('status of 429') &&
-        collectors.rateLimitedResponses.length > 0 &&
-        disallowedRateLimits.length == 0
-      ),
-  );
   expect(
-    criticalConsoleErrors,
-    `Critical console errors:\n${criticalConsoleErrors.join('\n')}`,
+    summary.disallowedRateLimitedResponses,
+    `Disallowed 429 responses:\n${summary.disallowedRateLimitedResponses.join('\n')}`,
+  ).toEqual([]);
+  expect(
+    summary.criticalConsoleErrors,
+    `Critical console errors:\n${summary.criticalConsoleErrors.join('\n')}`,
   ).toEqual([]);
 }
 

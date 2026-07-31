@@ -11,7 +11,7 @@ const { selectDropdownOption } = require('./support/semantic_dropdown');
 const {
   installFailureCollectors,
   resetFailureCollectors,
-  summarizeCriticalConsoleErrors,
+  summarizeCriticalBrowserFailures,
 } = require('./support/browser_failure_collectors');
 const {
   cleanupOnboardedAccount,
@@ -484,23 +484,34 @@ function ensureFixtureImageFile(fixturePath) {
 
 async function assertNoBrowserFailures(
   collectors,
-  { allowedConsoleErrorSubstrings = [] } = {},
+  {
+    allowedConsoleErrorSubstrings = [],
+    allowedResponseStatuses,
+  } = {},
 ) {
-  expect(
-    collectors.runtimeErrors,
-    `Unexpected runtime errors:\n${collectors.runtimeErrors.join('\n')}`,
-  ).toEqual([]);
-  expect(
-    collectors.failedRequests,
-    `Unexpected failed requests:\n${collectors.failedRequests.join('\n')}`,
-  ).toEqual([]);
-
-  const criticalConsoleErrors = summarizeCriticalConsoleErrors(collectors, {
+  const summary = summarizeCriticalBrowserFailures(collectors, {
     allowedConsoleErrorSubstrings,
+    allowedResponseStatuses,
   });
   expect(
-    criticalConsoleErrors,
-    `Critical console errors:\n${criticalConsoleErrors.join('\n')}`,
+    summary.runtimeErrors,
+    `Unexpected runtime errors:\n${summary.runtimeErrors.join('\n')}`,
+  ).toEqual([]);
+  expect(
+    summary.failedRequests,
+    `Unexpected failed requests:\n${summary.failedRequests.join('\n')}`,
+  ).toEqual([]);
+  expect(
+    summary.criticalHttpResponses,
+    `Critical HTTP responses:\n${summary.criticalHttpResponses.join('\n')}`,
+  ).toEqual([]);
+  expect(
+    summary.disallowedRateLimitedResponses,
+    `Disallowed 429 responses:\n${summary.disallowedRateLimitedResponses.join('\n')}`,
+  ).toEqual([]);
+  expect(
+    summary.criticalConsoleErrors,
+    `Critical console errors:\n${summary.criticalConsoleErrors.join('\n')}`,
   ).toEqual([]);
 }
 
@@ -5073,6 +5084,7 @@ test('@mutation tenant-admin account onboarding rejects stale selected profile t
       allowedConsoleErrorSubstrings: [
         'Failed to load resource: the server responded with a status of 422',
       ],
+      allowedResponseStatuses: [422],
     });
     logStep('account-422', 'browser assertions completed');
   } catch (error) {
@@ -5537,6 +5549,7 @@ test('@mutation tenant-admin event create rejects stale selected event type with
       allowedConsoleErrorSubstrings: [
         'Failed to load resource: the server responded with a status of 422',
       ],
+      allowedResponseStatuses: [422],
     });
     logStep('event-422', 'browser assertions completed');
   } catch (error) {
