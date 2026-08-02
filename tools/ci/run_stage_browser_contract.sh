@@ -550,6 +550,9 @@ run_navigation_smoke() {
 
   ensure_navigation_urls
   ensure_contract_run_id "${target}"
+  if (( FULL_SEQUENCE_FIXTURE_ENSURED == 0 )); then
+    fixture_ensure "${target}"
+  fi
   export NAV_PUBLIC_TAXONOMY_MANAGED_FIXTURE=1
 
   case "${suite}" in

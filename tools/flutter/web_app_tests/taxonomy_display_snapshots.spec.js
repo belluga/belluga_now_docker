@@ -5,13 +5,14 @@ const {
   filterOwnedEventRows,
   filterOwnedProfileRows,
   managedFixtureEnabled,
+  rowFingerprint,
+  shouldContinuePagedFetch,
   withManagedFixtureRunKeyScope,
 } = require('./support/public_taxonomy_validation_fixture_contract');
 
 const tenantUrl = process.env.NAV_TENANT_URL;
 const appBootTimeoutMs = 90000;
 const publicListPageSize = 50;
-const publicListMaxPages = 25;
 const managedFixtureRun = managedFixtureEnabled;
 
 test.describe.configure({ timeout: 300000 });
@@ -263,18 +264,23 @@ async function fetchPagedRows(
   page,
   pathName,
   description,
-  { maxPages = publicListMaxPages } = {},
+  {
+    pageSizeParam = 'per_page',
+    searchParams = {},
+  } = {},
 ) {
   const baseUrl = requireTenantUrl();
   const rows = [];
   const pageSummaries = [];
+  let previousFingerprint = null;
 
-  for (let pageNumber = 1; pageNumber <= maxPages; pageNumber += 1) {
+  for (let pageNumber = 1; pageNumber <= 100; pageNumber += 1) {
     const payload = await fetchJson(
       page,
       buildApiUrl(baseUrl, pathName, {
         page: pageNumber,
-        per_page: publicListPageSize,
+        [pageSizeParam]: publicListPageSize,
+        ...searchParams,
       }),
       `${description} page ${pageNumber}`,
     );
@@ -288,11 +294,18 @@ async function fetchPagedRows(
       nextPageUrl: payload?.next_page_url ?? null,
     });
 
-    const lastPage = Number(payload?.last_page);
-    if (Number.isFinite(lastPage) && pageNumber >= lastPage) {
-      break;
+    const fingerprint = JSON.stringify(pageRows.map(rowFingerprint));
+    if (pageNumber > 1 && fingerprint === previousFingerprint) {
+      throw new Error(`${description} repeated the same page payload without advancing pagination.`);
     }
-    if (payload?.next_page_url == null && pageRows.length === 0) {
+    previousFingerprint = fingerprint;
+
+    if (!shouldContinuePagedFetch({
+      payload,
+      pageRows,
+      pageNumber,
+      pageSize: publicListPageSize,
+    })) {
       break;
     }
   }
@@ -538,6 +551,11 @@ test('@readonly taxonomy display snapshots render labels instead of slugs on pub
     page,
     '/api/v1/account_profiles',
     'Public account profiles list',
+    {
+      searchParams: {
+        search: fixture.profileName,
+      },
+    },
   );
   const accountCandidate = findManagedAccountProfileCandidate(
     accountProfilesPayload.rows,
@@ -545,6 +563,13 @@ test('@readonly taxonomy display snapshots render labels instead of slugs on pub
   expect(
     accountCandidate,
     `Managed taxonomy fixture ${fixture.profileSlug} must be visible with canonical taxonomy display snapshot. Pages scanned: ${JSON.stringify(accountProfilesPayload.pageSummaries)}. Snapshot samples: ${JSON.stringify(taxonomySnapshotDebug(accountProfilesPayload.rows))}`,
+  ).toBeTruthy();
+  const accountCandidateId = normalizeText(
+    accountCandidate.profile?.id || accountCandidate.profile?.account_profile_id,
+  );
+  expect(
+    accountCandidateId,
+    `Managed taxonomy fixture ${fixture.profileSlug} must expose a stable public profile id for scoped event list verification.`,
   ).toBeTruthy();
 
   const accountDetailPayload = await fetchJson(
@@ -572,6 +597,12 @@ test('@readonly taxonomy display snapshots render labels instead of slugs on pub
     page,
     '/api/v1/events',
     'Public events list',
+    {
+      pageSizeParam: 'page_size',
+      searchParams: {
+        venue_profile_id: accountCandidateId,
+      },
+    },
   );
   const eventDisplayCandidate = null;
   // Event-owned taxonomy terms are API snapshots; the public detail UI does not

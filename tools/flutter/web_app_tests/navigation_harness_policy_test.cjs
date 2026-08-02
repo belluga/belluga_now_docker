@@ -1064,6 +1064,11 @@ function assertCiEquivalentContractSurfacesStayWired() {
   );
   assert.match(
     localPublicWrapperSource,
+    /run_navigation_smoke\(\)\s*\{[\s\S]*?if \(\( FULL_SEQUENCE_FIXTURE_ENSURED == 0 \)\); then[\s\S]*?fixture_ensure "\$\{target\}"/,
+    'stage browser wrapper must auto-seed the managed taxonomy fixture before isolated readonly or mutation smoke runs',
+  );
+  assert.match(
+    localPublicWrapperSource,
     /export NAV_PUBLIC_TAXONOMY_MANAGED_FIXTURE=1/,
     'stage browser wrapper must opt readonly and mutation smoke into the managed taxonomy fixture canonically',
   );
@@ -2323,6 +2328,41 @@ function assertStageFixtureOwnedFiltersUseCanonicalKeysOnly() {
     ],
     'stage fixture cleanup must identify the current run by canonical profile slug anchors only, including backend-generated suffixes, never by mutable display name or profile type.',
   );
+
+  const fixtureScriptSource = fs.readFileSync(
+    path.join(repoRoot, 'tools', 'flutter', 'web_app_tests', 'ensure_public_taxonomy_validation_fixture.cjs'),
+    'utf8',
+  );
+  assert.doesNotMatch(
+    fixtureScriptSource,
+    /const adminEvents = await listAdminEvents\(api, baseUrl, token\);[\s\S]*?slug\.startsWith\(stageValidationPrefixes\.eventSlug\)/,
+    'stage fixture cleanup must not sweep the full admin event list by broad historical prefix; current-run event cleanup must stay anchored to owned fixture slugs only',
+  );
+  assert.doesNotMatch(
+    fixtureScriptSource,
+    /const adminProfiles = await listAdminAccountProfiles\(api, baseUrl, token\);[\s\S]*?slug\.startsWith\(stageValidationPrefixes\.(?:profileSlug|relatedProfileSlug)\)/,
+    'stage fixture cleanup must not sweep the full admin account-profile list by broad historical prefix; current-run profile cleanup must stay anchored to canonical owned slugs only',
+  );
+  assert.doesNotMatch(
+    fixtureScriptSource,
+    /const adminAccounts = await listAdminAccounts\(api, baseUrl, token\);/,
+    'stage fixture cleanup must not enumerate the full admin account list just to resolve owned current-run cleanup subjects',
+  );
+  assert.doesNotMatch(
+    fixtureScriptSource,
+    /const eventTypes = await listEventTypes\(api, baseUrl, token\);[\s\S]*?slug\.startsWith\(stageValidationPrefixes\.eventTypeSlug\)/,
+    'stage fixture cleanup must not sweep historical event types by shared prefix; run-key isolation means registry cleanup stays exact to the current run',
+  );
+  assert.doesNotMatch(
+    fixtureScriptSource,
+    /const profileTypes = await listAccountProfileTypes\(api, baseUrl, token\);[\s\S]*?type\.startsWith\(stageValidationPrefixes\.profileType\)/,
+    'stage fixture cleanup must not sweep historical profile types by shared prefix; run-key isolation means registry cleanup stays exact to the current run',
+  );
+  assert.doesNotMatch(
+    fixtureScriptSource,
+    /const taxonomies = await listTaxonomies\(api, baseUrl, token\);[\s\S]*?slug\.startsWith\(stageValidationPrefixes\.taxonomySlug\)/,
+    'stage fixture cleanup must not sweep historical taxonomies by shared prefix; run-key isolation means registry cleanup stays exact to the current run',
+  );
 }
 
 function assertStageFixtureRunIdIsolation() {
@@ -2512,6 +2552,28 @@ function assertStageFixturePaginationHelperIsExhaustive() {
   );
 }
 
+function assertStageFixturePublicEventListUsesCanonicalPageSize() {
+  const fixtureScriptSource = fs.readFileSync(
+    path.join(repoRoot, 'tools', 'flutter', 'web_app_tests', 'ensure_public_taxonomy_validation_fixture.cjs'),
+    'utf8',
+  );
+  assert.match(
+    fixtureScriptSource,
+    /async function fetchPublicEvents[\s\S]*?buildUrl\(baseUrl, '\/api\/v1\/events'\)[\s\S]*?searchParams\.set\('page_size', pageSize\.toString\(\)\)/,
+    'stage fixture public event verification must use the canonical /api/v1/events page_size parameter',
+  );
+  assert.doesNotMatch(
+    fixtureScriptSource,
+    /async function fetchPublicEvents[\s\S]*?buildUrl\(baseUrl, '\/api\/v1\/events'\)[\s\S]*?searchParams\.set\('per_page', pageSize\.toString\(\)\)/,
+    'stage fixture public event verification must not use the ignored per_page parameter on /api/v1/events',
+  );
+  assert.match(
+    fixtureScriptSource,
+    /async function verifyAccountProfileFixture[\s\S]*?fetchPublicAccountProfiles\(api, baseUrl, \{\s*search: expectedName,\s*\}\)/,
+    'stage fixture public account-profile verification must use the canonical public search contract for the owned fixture profile instead of scanning the entire catalog',
+  );
+}
+
 function assertCanonicalNavigationTimeoutBudget() {
   const source = fs.readFileSync(smokeScript, 'utf8');
   assert.match(
@@ -2579,6 +2641,38 @@ function assertReadonlyManagedFixtureTestsScopeAnonymousFingerprints() {
   );
 }
 
+function assertTaxonomyDisplaySnapshotsUseScopedCanonicalEventListQuery() {
+  const taxonomySource = fs.readFileSync(
+    path.join(repoRoot, 'tools', 'flutter', 'web_app_tests', 'taxonomy_display_snapshots.spec.js'),
+    'utf8',
+  );
+  assert.match(
+    taxonomySource,
+    /const publicListPageSize = 50;/,
+    'taxonomy display snapshot proof must keep the canonical public list page size',
+  );
+  assert.match(
+    taxonomySource,
+    /shouldContinuePagedFetch\(\{\s*payload,\s*pageRows,\s*pageNumber,\s*pageSize: publicListPageSize,\s*\}\)/,
+    'taxonomy display snapshot proof must use the canonical pagination helper instead of a fixed page cap',
+  );
+  assert.match(
+    taxonomySource,
+    /pageSizeParam: 'page_size',[\s\S]*?venue_profile_id: accountCandidateId/,
+    'taxonomy display snapshot proof must query /api/v1/events with the canonical page_size parameter and the managed fixture venue_profile_id scope',
+  );
+  assert.match(
+    taxonomySource,
+    /\/api\/v1\/account_profiles[\s\S]*?search: fixture\.profileName/,
+    'taxonomy display snapshot proof must scope the public account-profile list to the managed fixture search term instead of scanning the entire catalog',
+  );
+  assert.doesNotMatch(
+    taxonomySource,
+    /\/api\/v1\/events[\s\S]*?per_page: publicListPageSize/,
+    'taxonomy display snapshot proof must not use the ignored per_page parameter on /api/v1/events',
+  );
+}
+
 function assertStartupReadonlyManagedFixtureSearchUsesCanonicalPagination() {
   const source = fs.readFileSync(
     path.join(repoRoot, 'tools', 'flutter', 'web_app_tests', 'startup_public_bootstrap.readonly.spec.js'),
@@ -2593,6 +2687,11 @@ function assertStartupReadonlyManagedFixtureSearchUsesCanonicalPagination() {
     source,
     /\/api\/v1\/agenda\?page=1&page_size=50/,
     'startup public bootstrap readonly proof must not assume the managed public agenda fixture stays on page 1',
+  );
+  assert.match(
+    source,
+    /if \(managedFixtureEnabled\) \{[\s\S]*?scrollPageUntilLocatorVisible\(/,
+    'startup public bootstrap readonly proof must treat the managed home agenda fixture as feed content discoverable with scroll, not as an above-the-fold ordering guarantee',
   );
 }
 
@@ -2705,9 +2804,11 @@ assertStageFixtureRunIdIsolation();
 assertStageBrowserContractPersistsLocalPublicRunId();
 assertDormantGalleryProofResetsPublicCollectorsAfterConvergence();
 assertStageFixturePaginationHelperIsExhaustive();
+assertStageFixturePublicEventListUsesCanonicalPageSize();
 assertCanonicalNavigationTimeoutBudget();
 assertManagedFixtureRunScopedFingerprintHelper();
 assertReadonlyManagedFixtureTestsScopeAnonymousFingerprints();
+assertTaxonomyDisplaySnapshotsUseScopedCanonicalEventListQuery();
 assertStartupReadonlyManagedFixtureSearchUsesCanonicalPagination();
 assertCheckedInManifestMatchesCurrentSpecTitles();
 assertAccountOnboardingCleanupContractPasses();
