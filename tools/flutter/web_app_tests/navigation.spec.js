@@ -634,26 +634,22 @@ test('@mutation tenant agenda UI state matches tenant agenda API payload', async
     });
   }
 
-  const criticalFailedRequests = collectors.failedRequests.filter((entry) =>
+  const summary = summarizeCriticalBrowserFailures(collectors);
+  const criticalFailedRequests = summary.failedRequests.filter((entry) =>
     entry.includes(tenantOrigin) && entry.includes('/api/'),
-  );
-  const criticalConsoleErrors = collectors.consoleErrors.filter((entry) =>
-    entry.includes('/api/v1/') ||
-    entry.includes('FormatException') ||
-    entry.includes('Landlord login failed'),
   );
 
   expect(
-    collectors.runtimeErrors,
-    `Unexpected runtime errors:\n${collectors.runtimeErrors.join('\n')}`,
+    summary.runtimeErrors,
+    `Unexpected runtime errors:\n${summary.runtimeErrors.join('\n')}`,
   ).toEqual([]);
   expect(
     criticalFailedRequests,
     `Critical failed API requests:\n${criticalFailedRequests.join('\n')}`,
   ).toEqual([]);
   expect(
-    criticalConsoleErrors,
-    `Critical console errors:\n${criticalConsoleErrors.join('\n')}`,
+    summary.criticalConsoleErrors,
+    `Critical console errors:\n${summary.criticalConsoleErrors.join('\n')}`,
   ).toEqual([]);
 
   await context.close();

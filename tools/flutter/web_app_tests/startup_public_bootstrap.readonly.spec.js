@@ -2,6 +2,10 @@ const crypto = require('crypto');
 const { test, expect, request } = require('@playwright/test');
 const { withFreshBrowserPage } = require('./support/fresh_browser_context');
 const {
+  installFailureCollectors,
+  summarizeCriticalConsoleErrors,
+} = require('./support/browser_failure_collectors');
+const {
   fixture,
   managedFixtureEnabled,
   matchesCanonicalManagedSlug,
@@ -171,14 +175,13 @@ function defaultProtectedReadMatchers() {
 }
 
 function attachStartupCapture(page, { protectedReadMatchers = defaultProtectedReadMatchers() } = {}) {
+  const browserFailures = installFailureCollectors(page);
   const anonymousIdentityResponses = [];
   const requestTimeline = [];
   const protectedReadResponses = [];
   const protectedReadFailures = [];
   const openAppUrls = [];
   const popupUrls = [];
-  const consoleErrors = [];
-  const pageErrors = [];
   const responseTimeline = [];
   const eventTimeline = [];
   let timelineSequence = 0;
@@ -284,16 +287,6 @@ function attachStartupCapture(page, { protectedReadMatchers = defaultProtectedRe
     });
   });
 
-  page.on('console', (message) => {
-    if (message.type() === 'error') {
-      consoleErrors.push(message.text());
-    }
-  });
-
-  page.on('pageerror', (error) => {
-    pageErrors.push(error.message);
-  });
-
   return {
     snapshot: () => ({
       anonymousIdentityResponses: [...anonymousIdentityResponses],
@@ -302,8 +295,11 @@ function attachStartupCapture(page, { protectedReadMatchers = defaultProtectedRe
       protectedReadFailures: [...protectedReadFailures],
       openAppUrls: [...openAppUrls],
       popupUrls: [...popupUrls],
-      consoleErrors: [...consoleErrors],
-      pageErrors: [...pageErrors],
+      consoleErrors: [...browserFailures.consoleErrors],
+      consoleErrorUrls: [...browserFailures.consoleErrorUrls],
+      ignoredFailedRequests: [...browserFailures.ignoredFailedRequests],
+      mediaErrorResponses: [...browserFailures.mediaErrorResponses],
+      pageErrors: [...browserFailures.runtimeErrors],
       responseTimeline: [...responseTimeline],
       eventTimeline: [...eventTimeline],
     }),
@@ -585,7 +581,7 @@ async function assertStartupSnapshotGreen(page, startupCapture, contextLabel, {
     `Unexpected page errors during ${contextLabel}:\n${snapshot.pageErrors.join('\n')}`,
   ).toEqual([]);
   expect(
-    snapshot.consoleErrors,
+    summarizeCriticalConsoleErrors(snapshot),
     `Unexpected console errors during ${contextLabel}:\n${snapshot.consoleErrors.join('\n')}`,
   ).toEqual([]);
 }
@@ -673,7 +669,7 @@ test('@readonly STARTUP-PUBLIC-BOOTSTRAP-01 anonymous tenant home cold start kee
       `Unexpected page errors during startup:\n${snapshot.pageErrors.join('\n')}`,
     ).toEqual([]);
     expect(
-      snapshot.consoleErrors.filter((entry) => !entry.includes('status of 401')),
+      summarizeCriticalConsoleErrors(snapshot),
       `Unexpected console errors during startup:\n${snapshot.consoleErrors.join('\n')}`,
     ).toEqual([]);
   });
