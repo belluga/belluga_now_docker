@@ -4,6 +4,7 @@ const { withFreshBrowserPage } = require('./support/fresh_browser_context');
 const {
   installFailureCollectors,
   summarizeCriticalConsoleErrors,
+  summarizeCriticalHttpResponses,
 } = require('./support/browser_failure_collectors');
 const {
   fixture,
@@ -336,6 +337,7 @@ function attachStartupCapture(page, { protectedReadMatchers = defaultProtectedRe
       consoleErrorUrls: [...browserFailures.consoleErrorUrls],
       ignoredFailedRequests: [...browserFailures.ignoredFailedRequests],
       mediaErrorResponses: [...browserFailures.mediaErrorResponses],
+      httpErrorResponses: [...browserFailures.httpErrorResponses],
       pageErrors: [...browserFailures.runtimeErrors],
       responseTimeline: [...responseTimeline],
       eventTimeline: [...eventTimeline],
@@ -613,14 +615,7 @@ async function assertStartupSnapshotGreen(page, startupCapture, contextLabel, {
   expect(snapshot.openAppUrls).toEqual([]);
   expect(snapshot.popupUrls).toEqual([]);
   await assertNoPromotionUiVisible(page, contextLabel);
-  expect(
-    snapshot.pageErrors,
-    `Unexpected page errors during ${contextLabel}:\n${snapshot.pageErrors.join('\n')}`,
-  ).toEqual([]);
-  expect(
-    summarizeCriticalConsoleErrors(snapshot),
-    `Unexpected console errors during ${contextLabel}:\n${snapshot.consoleErrors.join('\n')}`,
-  ).toEqual([]);
+  assertNoUnexpectedBrowserFailures(snapshot, contextLabel);
 }
 
 async function assertDirectPublicStartup(page, path, visibleLabel, contextLabel, {
@@ -657,6 +652,22 @@ function currentPathIndicatesPromotion(page) {
     currentUrl.includes('/baixe-o-app') ||
     currentUrl.includes('/auth/login')
   );
+}
+
+function assertNoUnexpectedBrowserFailures(snapshot, contextLabel) {
+  const criticalHttpResponses = summarizeCriticalHttpResponses(snapshot);
+  expect(
+    snapshot.pageErrors,
+    `Unexpected page errors during ${contextLabel}:\n${snapshot.pageErrors.join('\n')}`,
+  ).toEqual([]);
+  expect(
+    criticalHttpResponses,
+    `Unexpected HTTP error responses during ${contextLabel}:\n${criticalHttpResponses.join('\n')}`,
+  ).toEqual([]);
+  expect(
+    summarizeCriticalConsoleErrors(snapshot),
+    `Unexpected console errors during ${contextLabel}:\n${snapshot.consoleErrors.join('\n')}`,
+  ).toEqual([]);
 }
 
 test('@readonly STARTUP-PUBLIC-BOOTSTRAP-01 anonymous tenant home cold start keeps the public surface and completes anonymous bootstrap', async () => {
@@ -721,14 +732,7 @@ test('@readonly STARTUP-PUBLIC-BOOTSTRAP-01 anonymous tenant home cold start kee
       );
     }
 
-    expect(
-      snapshot.pageErrors,
-      `Unexpected page errors during startup:\n${snapshot.pageErrors.join('\n')}`,
-    ).toEqual([]);
-    expect(
-      summarizeCriticalConsoleErrors(snapshot),
-      `Unexpected console errors during startup:\n${snapshot.consoleErrors.join('\n')}`,
-    ).toEqual([]);
+    assertNoUnexpectedBrowserFailures(snapshot, 'startup');
   });
 });
 
