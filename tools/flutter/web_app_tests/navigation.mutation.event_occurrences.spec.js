@@ -6,6 +6,10 @@ const {
 } = require('./support/tenant_admin_auth');
 const { selectDropdownOption } = require('./support/semantic_dropdown');
 const {
+  installFailureCollectors,
+  summarizeCriticalBrowserFailures,
+} = require('./support/browser_failure_collectors');
+const {
   cleanupOnboardedAccount,
   cleanupOnboardedAccounts,
 } = require('./support/account_onboarding_cleanup');
@@ -205,104 +209,33 @@ function anonymousFingerprintHash(baseUrl) {
     .digest('hex');
 }
 
-function installFailureCollectors(page) {
-  const runtimeErrors = [];
-  const failedRequests = [];
-  const ignoredFailedRequests = [];
-  const consoleErrors = [];
-  const rateLimitedResponses = [];
-
-  page.on('pageerror', (error) => runtimeErrors.push(error.message));
-  page.on('requestfailed', (request) => {
-    const failureText = request.failure()?.errorText || 'unknown';
-    if (isNonCriticalFailedRequest(request, failureText)) {
-      ignoredFailedRequests.push(request.url());
-      return;
-    }
-    failedRequests.push(`${request.method()} ${request.url()} (${failureText})`);
-  });
-  page.on('console', (message) => {
-    if (message.type() === 'error') {
-      consoleErrors.push(message.text());
-    }
-  });
-  page.on('response', (response) => {
-    if (response.status() !== 429) {
-      return;
-    }
-    rateLimitedResponses.push(
-      `${response.request().method()} ${response.url()}`,
-    );
-  });
-
-  return {
-    runtimeErrors,
-    failedRequests,
-    ignoredFailedRequests,
-    consoleErrors,
-    rateLimitedResponses,
-  };
-}
-
-function isNonCriticalFailedRequest(request, failureText) {
-  if (failureText === 'net::ERR_ABORTED') {
-    return true;
-  }
-
-  if (['image', 'media', 'font'].includes(request.resourceType())) {
-    return true;
-  }
-
-  return /\.(?:avif|gif|jpe?g|png|svg|webp|woff2?)(?:[?#].*)?$/i.test(
-    request.url(),
-  );
-}
-
 async function assertNoBrowserFailures(collectors) {
+  const summary = summarizeCriticalBrowserFailures(collectors, {
+    allowedRateLimitedResponseSubstrings: [
+      '/api/v1/media/',
+      'ingest.sentry.io',
+      '/envelope/',
+    ],
+  });
   expect(
-    collectors.runtimeErrors,
-    `Unexpected runtime errors:\n${collectors.runtimeErrors.join('\n')}`,
+    summary.runtimeErrors,
+    `Unexpected runtime errors:\n${summary.runtimeErrors.join('\n')}`,
   ).toEqual([]);
   expect(
-    collectors.failedRequests,
-    `Unexpected failed requests:\n${collectors.failedRequests.join('\n')}`,
+    summary.failedRequests,
+    `Unexpected failed requests:\n${summary.failedRequests.join('\n')}`,
   ).toEqual([]);
-
-  const disallowedRateLimits = collectors.rateLimitedResponses.filter(
-    (entry) =>
-      !entry.includes('/api/v1/media/') &&
-      !entry.includes('/api/v1/account-profiles/') &&
-      !entry.includes('/avatar') &&
-      !entry.includes('/cover') &&
-      !entry.includes('ingest.sentry.io') &&
-      !entry.includes('/envelope/'),
-  );
   expect(
-    disallowedRateLimits,
-    `Disallowed 429 responses:\n${disallowedRateLimits.join('\n')}`,
+    summary.criticalHttpResponses,
+    `Critical HTTP responses:\n${summary.criticalHttpResponses.join('\n')}`,
   ).toEqual([]);
-
-  const criticalConsoleErrors = collectors.consoleErrors.filter(
-    (entry) =>
-      !entry.includes('status of 401') &&
-      !entry.includes('ResizeObserver loop limit exceeded') &&
-      !(
-        entry.includes('has been blocked by CORS policy') &&
-        collectors.ignoredFailedRequests.some((url) => entry.includes(url))
-      ) &&
-      !(
-        entry.includes('Failed to load resource: net::ERR_FAILED') &&
-        collectors.ignoredFailedRequests.length > 0
-      ) &&
-      !(
-        entry.includes('status of 429') &&
-        collectors.rateLimitedResponses.length > 0 &&
-        disallowedRateLimits.length == 0
-      ),
-  );
   expect(
-    criticalConsoleErrors,
-    `Critical console errors:\n${criticalConsoleErrors.join('\n')}`,
+    summary.disallowedRateLimitedResponses,
+    `Disallowed 429 responses:\n${summary.disallowedRateLimitedResponses.join('\n')}`,
+  ).toEqual([]);
+  expect(
+    summary.criticalConsoleErrors,
+    `Critical console errors:\n${summary.criticalConsoleErrors.join('\n')}`,
   ).toEqual([]);
 }
 

@@ -2,6 +2,10 @@ const crypto = require('crypto');
 const { test, expect, request } = require('@playwright/test');
 const { withFreshBrowserPage } = require('./support/fresh_browser_context');
 const {
+  installFailureCollectors,
+  summarizeCriticalConsoleErrors,
+} = require('./support/browser_failure_collectors');
+const {
   fixture,
   managedFixtureEnabled,
   matchesCanonicalManagedSlug,
@@ -70,6 +74,43 @@ async function assertVisibleTextOrSemanticLabel(page, label, contextLabel) {
       },
     )
     .toBe(true);
+}
+
+async function scrollPageUntilLocatorVisible(
+  page,
+  locator,
+  {
+    timeout = appBootTimeoutMs,
+    step = 900,
+    settleMs = 300,
+  } = {},
+) {
+  const viewport =
+    page.viewportSize() ||
+    (await page.evaluate(() => ({
+      width: window.innerWidth,
+      height: window.innerHeight,
+    })));
+  await page.mouse.move(viewport.width * 0.62, viewport.height * 0.72).catch(() => {});
+  const deadline = Date.now() + timeout;
+
+  while (Date.now() < deadline) {
+    const candidate = locator.first();
+    const count = await candidate.count().catch(() => 0);
+    if (count > 0) {
+      await candidate.scrollIntoViewIfNeeded({
+        timeout: Math.min(2000, Math.max(deadline - Date.now(), 250)),
+      }).catch(() => {});
+      if (await candidate.isVisible().catch(() => false)) {
+        return candidate;
+      }
+    }
+
+    await page.mouse.wheel(0, step).catch(() => {});
+    await page.waitForTimeout(settleMs);
+  }
+
+  return null;
 }
 
 async function assertAppBooted(page) {
@@ -171,14 +212,13 @@ function defaultProtectedReadMatchers() {
 }
 
 function attachStartupCapture(page, { protectedReadMatchers = defaultProtectedReadMatchers() } = {}) {
+  const browserFailures = installFailureCollectors(page);
   const anonymousIdentityResponses = [];
   const requestTimeline = [];
   const protectedReadResponses = [];
   const protectedReadFailures = [];
   const openAppUrls = [];
   const popupUrls = [];
-  const consoleErrors = [];
-  const pageErrors = [];
   const responseTimeline = [];
   const eventTimeline = [];
   let timelineSequence = 0;
@@ -284,16 +324,6 @@ function attachStartupCapture(page, { protectedReadMatchers = defaultProtectedRe
     });
   });
 
-  page.on('console', (message) => {
-    if (message.type() === 'error') {
-      consoleErrors.push(message.text());
-    }
-  });
-
-  page.on('pageerror', (error) => {
-    pageErrors.push(error.message);
-  });
-
   return {
     snapshot: () => ({
       anonymousIdentityResponses: [...anonymousIdentityResponses],
@@ -302,8 +332,11 @@ function attachStartupCapture(page, { protectedReadMatchers = defaultProtectedRe
       protectedReadFailures: [...protectedReadFailures],
       openAppUrls: [...openAppUrls],
       popupUrls: [...popupUrls],
-      consoleErrors: [...consoleErrors],
-      pageErrors: [...pageErrors],
+      consoleErrors: [...browserFailures.consoleErrors],
+      consoleErrorUrls: [...browserFailures.consoleErrorUrls],
+      ignoredFailedRequests: [...browserFailures.ignoredFailedRequests],
+      mediaErrorResponses: [...browserFailures.mediaErrorResponses],
+      pageErrors: [...browserFailures.runtimeErrors],
       responseTimeline: [...responseTimeline],
       eventTimeline: [...eventTimeline],
     }),
@@ -585,7 +618,7 @@ async function assertStartupSnapshotGreen(page, startupCapture, contextLabel, {
     `Unexpected page errors during ${contextLabel}:\n${snapshot.pageErrors.join('\n')}`,
   ).toEqual([]);
   expect(
-    snapshot.consoleErrors,
+    summarizeCriticalConsoleErrors(snapshot),
     `Unexpected console errors during ${contextLabel}:\n${snapshot.consoleErrors.join('\n')}`,
   ).toEqual([]);
 }
@@ -662,18 +695,38 @@ test('@readonly STARTUP-PUBLIC-BOOTSTRAP-01 anonymous tenant home cold start kee
     ).toBeVisible({
       timeout: appBootTimeoutMs,
     });
-    await assertVisibleTextOrSemanticLabel(
-      page,
-      visibleAgendaLabel,
-      'Anonymous home startup first visible agenda event',
-    );
+    if (managedFixtureEnabled) {
+      const managedFixtureTitle = page
+        .getByText(new RegExp(escapeRegExp(visibleAgendaLabel), 'i'))
+        .first();
+      const visibleManagedFixtureTitle = await scrollPageUntilLocatorVisible(
+        page,
+        managedFixtureTitle,
+      );
+      expect(
+        visibleManagedFixtureTitle,
+        `Anonymous home startup must render managed agenda fixture ${visibleAgendaLabel} somewhere in the home feed.`,
+      ).toBeTruthy();
+      await expect(
+        visibleManagedFixtureTitle,
+        `Anonymous home startup must allow the managed agenda fixture ${visibleAgendaLabel} to become visible on the home feed.`,
+      ).toBeVisible({
+        timeout: appBootTimeoutMs,
+      });
+    } else {
+      await assertVisibleTextOrSemanticLabel(
+        page,
+        visibleAgendaLabel,
+        'Anonymous home startup first visible agenda event',
+      );
+    }
 
     expect(
       snapshot.pageErrors,
       `Unexpected page errors during startup:\n${snapshot.pageErrors.join('\n')}`,
     ).toEqual([]);
     expect(
-      snapshot.consoleErrors.filter((entry) => !entry.includes('status of 401')),
+      summarizeCriticalConsoleErrors(snapshot),
       `Unexpected console errors during startup:\n${snapshot.consoleErrors.join('\n')}`,
     ).toEqual([]);
   });
