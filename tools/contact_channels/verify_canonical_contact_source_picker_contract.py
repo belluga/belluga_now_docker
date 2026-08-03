@@ -224,7 +224,7 @@ def validate_repository(repo_root: Path) -> list[Finding]:
     )
     for required in (
         "payload['contact_mode'] = contactMode.trim();",
-        "payload['contact_channels_enabled_only'] = true;",
+        "payload['contact_channels_enabled_only'] = 1;",
         "payload['exclude_account_profile_id'] = excludeAccountProfileId.trim();",
         "payload['page'] = page;",
         "payload['page_size'] = pageSize;",
