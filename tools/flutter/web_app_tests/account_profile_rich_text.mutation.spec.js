@@ -6,6 +6,10 @@ const {
 const {
   cleanupOnboardedAccount,
 } = require('./support/account_onboarding_cleanup');
+const {
+  installFailureCollectors,
+  summarizeCriticalBrowserFailures,
+} = require('./support/browser_failure_collectors');
 
 const tenantUrl = process.env.NAV_TENANT_URL;
 const appBootTimeoutMs = 90000;
@@ -67,74 +71,27 @@ async function waitMs(delayMs) {
   await new Promise((resolve) => setTimeout(resolve, delayMs));
 }
 
-function installFailureCollectors(page) {
-  const runtimeErrors = [];
-  const failedRequests = [];
-  const consoleErrors = [];
-
-  page.on('pageerror', (error) => runtimeErrors.push(error.message));
-  page.on('requestfailed', (requestEntry) => {
-    const failureText = requestEntry.failure()?.errorText || 'unknown';
-    if (isNonCriticalFailedRequest(requestEntry, failureText)) {
-      return;
-    }
-    failedRequests.push(
-      `${requestEntry.method()} ${requestEntry.url()} (${failureText})`,
-    );
-  });
-  page.on('console', (message) => {
-    if (message.type() === 'error') {
-      consoleErrors.push(message.text());
-    }
-  });
-
-  return { runtimeErrors, failedRequests, consoleErrors };
-}
-
-function isNonCriticalFailedRequest(requestEntry, failureText) {
-  if (failureText === 'net::ERR_ABORTED') {
-    return true;
-  }
-
-  if (['image', 'media', 'font'].includes(requestEntry.resourceType())) {
-    return true;
-  }
-
-  return /\.(?:avif|gif|jpe?g|png|svg|webp|woff2?)(?:[?#].*)?$/i.test(
-    requestEntry.url(),
-  );
-}
-
-function isNonCriticalConsoleError(entry) {
-  if (
-    entry.includes('status of 401') ||
-    entry.includes('ResizeObserver loop limit exceeded') ||
-    entry === 'Failed to load resource: net::ERR_FAILED'
-  ) {
-    return true;
-  }
-
-  return /https?:\/\/[^'"\s]+\.(?:avif|gif|jpe?g|png|svg|webp|woff2?)(?:[?#][^'"\s]*)?/.test(
-    entry,
-  );
-}
-
 async function assertNoCriticalBrowserFailures(collectors) {
+  const summary = summarizeCriticalBrowserFailures(collectors);
   expect(
-    collectors.runtimeErrors,
-    `Unexpected runtime errors:\n${collectors.runtimeErrors.join('\n')}`,
+    summary.runtimeErrors,
+    `Unexpected runtime errors:\n${summary.runtimeErrors.join('\n')}`,
   ).toEqual([]);
   expect(
-    collectors.failedRequests,
-    `Unexpected failed requests:\n${collectors.failedRequests.join('\n')}`,
+    summary.failedRequests,
+    `Unexpected failed requests:\n${summary.failedRequests.join('\n')}`,
   ).toEqual([]);
-
-  const criticalConsoleErrors = collectors.consoleErrors.filter(
-    (entry) => !isNonCriticalConsoleError(entry),
-  );
   expect(
-    criticalConsoleErrors,
-    `Critical console errors:\n${criticalConsoleErrors.join('\n')}`,
+    summary.criticalHttpResponses,
+    `Critical HTTP responses:\n${summary.criticalHttpResponses.join('\n')}`,
+  ).toEqual([]);
+  expect(
+    summary.disallowedRateLimitedResponses,
+    `Disallowed 429 responses:\n${summary.disallowedRateLimitedResponses.join('\n')}`,
+  ).toEqual([]);
+  expect(
+    summary.criticalConsoleErrors,
+    `Critical console errors:\n${summary.criticalConsoleErrors.join('\n')}`,
   ).toEqual([]);
 }
 

@@ -127,6 +127,14 @@ const {
   shouldContinuePagedFetch,
   withManagedFixtureRunKeyScope,
 } = require('./support/public_taxonomy_validation_fixture_contract');
+const {
+  describeFailureCollectorsContract,
+  isMediaAssetUrl,
+  shouldIgnoreFailedRequest,
+  summarizeCriticalBrowserFailures,
+  summarizeCriticalConsoleErrors,
+  summarizeCriticalHttpResponses,
+} = require('./support/browser_failure_collectors');
 
 function run(command, args, env = {}) {
   return spawnSync(command, args, {
@@ -1053,6 +1061,11 @@ function assertCiEquivalentContractSurfacesStayWired() {
     localPublicWrapperSource,
     /bash "\$\{ROOT_DIR\}\/tools\/flutter\/run_web_navigation_smoke\.sh" "\$\{suite\}"/,
     'stage browser wrapper must delegate browser smoke to the canonical runner',
+  );
+  assert.match(
+    localPublicWrapperSource,
+    /run_navigation_smoke\(\)\s*\{[\s\S]*?if \(\( FULL_SEQUENCE_FIXTURE_ENSURED == 0 \)\); then[\s\S]*?fixture_ensure "\$\{target\}"/,
+    'stage browser wrapper must auto-seed the managed taxonomy fixture before isolated readonly or mutation smoke runs',
   );
   assert.match(
     localPublicWrapperSource,
@@ -2315,6 +2328,41 @@ function assertStageFixtureOwnedFiltersUseCanonicalKeysOnly() {
     ],
     'stage fixture cleanup must identify the current run by canonical profile slug anchors only, including backend-generated suffixes, never by mutable display name or profile type.',
   );
+
+  const fixtureScriptSource = fs.readFileSync(
+    path.join(repoRoot, 'tools', 'flutter', 'web_app_tests', 'ensure_public_taxonomy_validation_fixture.cjs'),
+    'utf8',
+  );
+  assert.doesNotMatch(
+    fixtureScriptSource,
+    /const adminEvents = await listAdminEvents\(api, baseUrl, token\);[\s\S]*?slug\.startsWith\(stageValidationPrefixes\.eventSlug\)/,
+    'stage fixture cleanup must not sweep the full admin event list by broad historical prefix; current-run event cleanup must stay anchored to owned fixture slugs only',
+  );
+  assert.doesNotMatch(
+    fixtureScriptSource,
+    /const adminProfiles = await listAdminAccountProfiles\(api, baseUrl, token\);[\s\S]*?slug\.startsWith\(stageValidationPrefixes\.(?:profileSlug|relatedProfileSlug)\)/,
+    'stage fixture cleanup must not sweep the full admin account-profile list by broad historical prefix; current-run profile cleanup must stay anchored to canonical owned slugs only',
+  );
+  assert.doesNotMatch(
+    fixtureScriptSource,
+    /const adminAccounts = await listAdminAccounts\(api, baseUrl, token\);/,
+    'stage fixture cleanup must not enumerate the full admin account list just to resolve owned current-run cleanup subjects',
+  );
+  assert.doesNotMatch(
+    fixtureScriptSource,
+    /const eventTypes = await listEventTypes\(api, baseUrl, token\);[\s\S]*?slug\.startsWith\(stageValidationPrefixes\.eventTypeSlug\)/,
+    'stage fixture cleanup must not sweep historical event types by shared prefix; run-key isolation means registry cleanup stays exact to the current run',
+  );
+  assert.doesNotMatch(
+    fixtureScriptSource,
+    /const profileTypes = await listAccountProfileTypes\(api, baseUrl, token\);[\s\S]*?type\.startsWith\(stageValidationPrefixes\.profileType\)/,
+    'stage fixture cleanup must not sweep historical profile types by shared prefix; run-key isolation means registry cleanup stays exact to the current run',
+  );
+  assert.doesNotMatch(
+    fixtureScriptSource,
+    /const taxonomies = await listTaxonomies\(api, baseUrl, token\);[\s\S]*?slug\.startsWith\(stageValidationPrefixes\.taxonomySlug\)/,
+    'stage fixture cleanup must not sweep historical taxonomies by shared prefix; run-key isolation means registry cleanup stays exact to the current run',
+  );
 }
 
 function assertStageFixtureRunIdIsolation() {
@@ -2504,6 +2552,28 @@ function assertStageFixturePaginationHelperIsExhaustive() {
   );
 }
 
+function assertStageFixturePublicEventListUsesCanonicalPageSize() {
+  const fixtureScriptSource = fs.readFileSync(
+    path.join(repoRoot, 'tools', 'flutter', 'web_app_tests', 'ensure_public_taxonomy_validation_fixture.cjs'),
+    'utf8',
+  );
+  assert.match(
+    fixtureScriptSource,
+    /async function fetchPublicEvents[\s\S]*?buildUrl\(baseUrl, '\/api\/v1\/events'\)[\s\S]*?searchParams\.set\('page_size', pageSize\.toString\(\)\)/,
+    'stage fixture public event verification must use the canonical /api/v1/events page_size parameter',
+  );
+  assert.doesNotMatch(
+    fixtureScriptSource,
+    /async function fetchPublicEvents[\s\S]*?buildUrl\(baseUrl, '\/api\/v1\/events'\)[\s\S]*?searchParams\.set\('per_page', pageSize\.toString\(\)\)/,
+    'stage fixture public event verification must not use the ignored per_page parameter on /api/v1/events',
+  );
+  assert.match(
+    fixtureScriptSource,
+    /async function verifyAccountProfileFixture[\s\S]*?fetchPublicAccountProfiles\(api, baseUrl, \{\s*search: expectedName,\s*\}\)/,
+    'stage fixture public account-profile verification must use the canonical public search contract for the owned fixture profile instead of scanning the entire catalog',
+  );
+}
+
 function assertCanonicalNavigationTimeoutBudget() {
   const source = fs.readFileSync(smokeScript, 'utf8');
   assert.match(
@@ -2571,6 +2641,38 @@ function assertReadonlyManagedFixtureTestsScopeAnonymousFingerprints() {
   );
 }
 
+function assertTaxonomyDisplaySnapshotsUseScopedCanonicalEventListQuery() {
+  const taxonomySource = fs.readFileSync(
+    path.join(repoRoot, 'tools', 'flutter', 'web_app_tests', 'taxonomy_display_snapshots.spec.js'),
+    'utf8',
+  );
+  assert.match(
+    taxonomySource,
+    /const publicListPageSize = 50;/,
+    'taxonomy display snapshot proof must keep the canonical public list page size',
+  );
+  assert.match(
+    taxonomySource,
+    /shouldContinuePagedFetch\(\{\s*payload,\s*pageRows,\s*pageNumber,\s*pageSize: publicListPageSize,\s*\}\)/,
+    'taxonomy display snapshot proof must use the canonical pagination helper instead of a fixed page cap',
+  );
+  assert.match(
+    taxonomySource,
+    /pageSizeParam: 'page_size',[\s\S]*?venue_profile_id: accountCandidateId/,
+    'taxonomy display snapshot proof must query /api/v1/events with the canonical page_size parameter and the managed fixture venue_profile_id scope',
+  );
+  assert.match(
+    taxonomySource,
+    /\/api\/v1\/account_profiles[\s\S]*?search: fixture\.profileName/,
+    'taxonomy display snapshot proof must scope the public account-profile list to the managed fixture search term instead of scanning the entire catalog',
+  );
+  assert.doesNotMatch(
+    taxonomySource,
+    /\/api\/v1\/events[\s\S]*?per_page: publicListPageSize/,
+    'taxonomy display snapshot proof must not use the ignored per_page parameter on /api/v1/events',
+  );
+}
+
 function assertStartupReadonlyManagedFixtureSearchUsesCanonicalPagination() {
   const source = fs.readFileSync(
     path.join(repoRoot, 'tools', 'flutter', 'web_app_tests', 'startup_public_bootstrap.readonly.spec.js'),
@@ -2585,6 +2687,11 @@ function assertStartupReadonlyManagedFixtureSearchUsesCanonicalPagination() {
     source,
     /\/api\/v1\/agenda\?page=1&page_size=50/,
     'startup public bootstrap readonly proof must not assume the managed public agenda fixture stays on page 1',
+  );
+  assert.match(
+    source,
+    /if \(managedFixtureEnabled\) \{[\s\S]*?scrollPageUntilLocatorVisible\(/,
+    'startup public bootstrap readonly proof must treat the managed home agenda fixture as feed content discoverable with scroll, not as an above-the-fold ordering guarantee',
   );
 }
 
@@ -2697,9 +2804,11 @@ assertStageFixtureRunIdIsolation();
 assertStageBrowserContractPersistsLocalPublicRunId();
 assertDormantGalleryProofResetsPublicCollectorsAfterConvergence();
 assertStageFixturePaginationHelperIsExhaustive();
+assertStageFixturePublicEventListUsesCanonicalPageSize();
 assertCanonicalNavigationTimeoutBudget();
 assertManagedFixtureRunScopedFingerprintHelper();
 assertReadonlyManagedFixtureTestsScopeAnonymousFingerprints();
+assertTaxonomyDisplaySnapshotsUseScopedCanonicalEventListQuery();
 assertStartupReadonlyManagedFixtureSearchUsesCanonicalPagination();
 assertCheckedInManifestMatchesCurrentSpecTitles();
 assertAccountOnboardingCleanupContractPasses();
@@ -2934,6 +3043,405 @@ assert.match(
   `${rawGrepResult.stdout}\n${rawGrepResult.stderr}`,
   /NAV_WEB_GREP_EXTRA is ad-hoc/,
 );
+
+// Browser failure collectors contract (media/image failure normalization).
+// RED anchors: this block fails until support/browser_failure_collectors.js
+// exists and every adopted spec delegates to it.
+{
+  const adoptedSpecFiles = [
+    'discovery_filters.spec.js',
+    'event_rich_text.mutation.spec.js',
+    'account_profile_rich_text.mutation.spec.js',
+    'navigation.spec.js',
+    'navigation.mutation.tenant_admin.spec.js',
+    'navigation.mutation.event_occurrences.spec.js',
+  ];
+
+  for (const specFile of adoptedSpecFiles) {
+    const specSource = fs.readFileSync(
+      path.join(__dirname, specFile),
+      'utf8',
+    );
+    assert.ok(
+      specSource.includes("require('./support/browser_failure_collectors')"),
+      `${specFile} must adopt the shared browser failure collectors helper`,
+    );
+    assert.ok(
+      !/function installFailureCollectors\s*\(/.test(specSource),
+      `${specFile} must not keep a local installFailureCollectors copy`,
+    );
+  }
+
+  const eventOccurrencesSource = fs.readFileSync(
+    path.join(__dirname, 'navigation.mutation.event_occurrences.spec.js'),
+    'utf8',
+  );
+  assert.ok(
+    !/function isNonCriticalFailedRequest\s*\(/.test(eventOccurrencesSource),
+    'event_occurrences must not keep a local isNonCriticalFailedRequest copy',
+  );
+  assert.ok(
+    !/ignoredFailedRequests\.length > 0/.test(eventOccurrencesSource),
+    'event_occurrences must not keep the wildcard ERR_FAILED console suppression',
+  );
+
+  const eventRichTextSource = fs.readFileSync(
+    path.join(__dirname, 'event_rich_text.mutation.spec.js'),
+    'utf8',
+  );
+  assert.ok(
+    !/function isNonCriticalConsoleError\s*\(/.test(eventRichTextSource),
+    'event_rich_text must not keep a local isNonCriticalConsoleError copy',
+  );
+
+  const canonicalMediaUrls = [
+    'https://guarappari.belluga.app/api/v1/media/account-profiles/69f90390ff69090b810321b7/avatar?v=1777927056',
+    'https://guarappari.belluga.app/api/v1/media/events/6a5e373dc5e5a56ae204dcf1/cover?v=1784579391',
+    'https://guarappari.belluga.app/api/v1/media/account-profiles/69f90390ff69090b810321b7/gallery/0?v=1777927056',
+    'https://guarappari.belluga.app/api/v1/media/event-types/6a69723340782ed221064708/asset?v=1785295389',
+    'https://guarappari.belluga.app/api/v1/media/tenant/branding/default-image?v=1785295389',
+  ];
+  const legacyMediaUrls = [
+    'https://guarappari.booraagora.com.br/account-profiles/69976b43d93abdd0650e64ec/avatar?v=1771531075',
+    'https://guarappari.com.br/events/6a5e373dc5e5a56ae204dcf1/cover?v=1784579391',
+    'https://guarappari.com.br/account-profiles/69976b43d93abdd0650e64ec/gallery/2?v=1771531075',
+    'https://guarappari.com.br/event-types/6a69723340782ed221064708/asset?v=1785295389',
+    'https://guarappari.com.br/tenant/branding/default-image?v=1785295389',
+    'https://guarappari.com.br/favicon.ico?v=1771531075',
+  ];
+  const nonMediaUrls = [
+    'https://guarappari.belluga.app/api/v1/agenda?page=1',
+    'https://guarappari.belluga.app/api/v1/account_profiles?page=1',
+    'https://guarappari.belluga.app/api/v1/admin/events',
+    'https://guarappari.belluga.app/admin/accounts',
+    'https://guarappari.belluga.app/manifest.json',
+  ];
+
+  for (const url of [...canonicalMediaUrls, ...legacyMediaUrls]) {
+    assert.strictEqual(
+      isMediaAssetUrl(url),
+      true,
+      `media URL must be classified as media asset: ${url}`,
+    );
+  }
+  for (const url of nonMediaUrls) {
+    assert.strictEqual(
+      isMediaAssetUrl(url),
+      false,
+      `non-media URL must not be classified as media asset: ${url}`,
+    );
+  }
+
+  const failingRequest = (url, resourceType = 'fetch') => ({
+    url: () => url,
+    resourceType: () => resourceType,
+  });
+
+  assert.strictEqual(
+    shouldIgnoreFailedRequest(
+      failingRequest(canonicalMediaUrls[0]),
+      'net::ERR_FAILED',
+    ),
+    true,
+    'media ERR_FAILED request with extensionless URL must be ignored',
+  );
+  assert.strictEqual(
+    shouldIgnoreFailedRequest(failingRequest(legacyMediaUrls[0]), 'net::ERR_FAILED'),
+    true,
+    'legacy media ERR_FAILED request must be ignored',
+  );
+  assert.strictEqual(
+    shouldIgnoreFailedRequest(
+      failingRequest(nonMediaUrls[0]),
+      'net::ERR_FAILED',
+    ),
+    false,
+    'API data request failure must NOT be ignored',
+  );
+  assert.strictEqual(
+    shouldIgnoreFailedRequest(
+      failingRequest(nonMediaUrls[0]),
+      'net::ERR_ABORTED',
+    ),
+    true,
+    'aborted requests stay non-critical',
+  );
+  assert.strictEqual(
+    shouldIgnoreFailedRequest(
+      failingRequest('https://cdn.example.test/photo.png?x=1'),
+      'net::ERR_FAILED',
+    ),
+    false,
+    'off-contract image extension failures must stay critical',
+  );
+  assert.strictEqual(
+    shouldIgnoreFailedRequest(
+      failingRequest(nonMediaUrls[0], 'image'),
+      'net::ERR_FAILED',
+    ),
+    false,
+    'non-media image resourceType failures must stay critical without an approved media URL shape',
+  );
+
+  const buildCollectors = (overrides = {}) => ({
+    runtimeErrors: [],
+    failedRequests: [],
+    ignoredFailedRequests: [],
+    consoleErrors: [],
+    consoleErrorUrls: [],
+    mediaErrorResponses: [],
+    httpErrorResponses: [],
+    rateLimitedResponses: [],
+    ...overrides,
+  });
+
+  const errFailedText = 'Failed to load resource: net::ERR_FAILED';
+  const notFoundText =
+    'Failed to load resource: the server responded with a status of 404 (Not Found)';
+
+  const sameUrlErrFailed = buildCollectors({
+    ignoredFailedRequests: [canonicalMediaUrls[0]],
+    consoleErrors: [errFailedText],
+    consoleErrorUrls: [canonicalMediaUrls[0]],
+  });
+  assert.deepStrictEqual(
+    summarizeCriticalConsoleErrors(sameUrlErrFailed),
+    [],
+    'same-URL ERR_FAILED console entry must be suppressed',
+  );
+
+  const noUrlErrFailed = buildCollectors({
+    ignoredFailedRequests: [canonicalMediaUrls[0]],
+    consoleErrors: [errFailedText],
+    consoleErrorUrls: [''],
+  });
+  assert.deepStrictEqual(
+    summarizeCriticalConsoleErrors(noUrlErrFailed),
+    [errFailedText],
+    'ERR_FAILED console entry without URL evidence must stay critical (no wildcard)',
+  );
+
+  const recordedMedia404 = buildCollectors({
+    consoleErrors: [notFoundText],
+    consoleErrorUrls: [''],
+    mediaErrorResponses: [canonicalMediaUrls[0]],
+  });
+  assert.deepStrictEqual(
+    summarizeCriticalConsoleErrors(recordedMedia404),
+    [],
+    '404 console entry with recorded media-404 response on the same page must be suppressed',
+  );
+
+  const unrecorded404 = buildCollectors({
+    consoleErrors: [notFoundText],
+    consoleErrorUrls: [''],
+  });
+  assert.deepStrictEqual(
+    summarizeCriticalConsoleErrors(unrecorded404),
+    [notFoundText],
+    '404 console entry without recorded media-404 evidence must stay critical',
+  );
+
+  const api404WithMediaNoise = buildCollectors({
+    consoleErrors: [notFoundText],
+    consoleErrorUrls: [nonMediaUrls[0]],
+    mediaErrorResponses: [canonicalMediaUrls[0]],
+  });
+  assert.deepStrictEqual(
+    summarizeCriticalConsoleErrors(api404WithMediaNoise),
+    [notFoundText],
+    'API URL 404 console entry must stay critical even when unrelated media-404s exist',
+  );
+
+  const criticalApi404Response = buildCollectors({
+    httpErrorResponses: [
+      { method: 'GET', url: nonMediaUrls[0], status: 404 },
+    ],
+  });
+  assert.deepStrictEqual(
+    summarizeCriticalHttpResponses(criticalApi404Response),
+    [`GET ${nonMediaUrls[0]} (404)`],
+    'non-media 404 responses must stay critical at the response layer',
+  );
+
+  const critical401Response = buildCollectors({
+    httpErrorResponses: [
+      { method: 'GET', url: nonMediaUrls[1], status: 401 },
+    ],
+  });
+  assert.deepStrictEqual(
+    summarizeCriticalHttpResponses(critical401Response),
+    [`GET ${nonMediaUrls[1]} (401)`],
+    'non-media 401 responses must stay critical unless a test explicitly allows them',
+  );
+
+  const allowed422Response = buildCollectors({
+    httpErrorResponses: [
+      { method: 'PATCH', url: `${nonMediaUrls[0]}/stale`, status: 422 },
+    ],
+  });
+  assert.deepStrictEqual(
+    summarizeCriticalHttpResponses(allowed422Response, {
+      allowedResponseStatuses: [422],
+    }),
+    [],
+    'allowed response statuses must be suppressible explicitly for stale-type tests',
+  );
+
+  const corsText = (url) =>
+    `Access to XMLHttpRequest at '${url}' from origin 'https://guarappari.belluga.space' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.`;
+
+  const corsMediaBlocked = buildCollectors({
+    ignoredFailedRequests: [legacyMediaUrls[0]],
+    consoleErrors: [corsText(legacyMediaUrls[0])],
+    consoleErrorUrls: [''],
+  });
+  assert.deepStrictEqual(
+    summarizeCriticalConsoleErrors(corsMediaBlocked),
+    [],
+    'CORS-blocked media asset with recorded ignored request evidence must be suppressed',
+  );
+
+  const corsApiBlocked = buildCollectors({
+    ignoredFailedRequests: [legacyMediaUrls[0]],
+    consoleErrors: [corsText(nonMediaUrls[0])],
+    consoleErrorUrls: [''],
+  });
+  assert.deepStrictEqual(
+    summarizeCriticalConsoleErrors(corsApiBlocked),
+    [corsText(nonMediaUrls[0])],
+    'CORS-blocked non-media URL must stay critical even when ignored media requests exist',
+  );
+
+  const corsMediaNoEvidence = buildCollectors({
+    consoleErrors: [corsText(legacyMediaUrls[0])],
+    consoleErrorUrls: [''],
+  });
+  assert.deepStrictEqual(
+    summarizeCriticalConsoleErrors(corsMediaNoEvidence),
+    [corsText(legacyMediaUrls[0])],
+    'CORS-blocked media URL without same-page evidence must stay critical',
+  );
+
+  const expected422 = buildCollectors({
+    consoleErrors: [
+      'Failed to load resource: the server responded with a status of 422 (Unprocessable Content)',
+    ],
+    consoleErrorUrls: [''],
+  });
+  assert.deepStrictEqual(
+    summarizeCriticalConsoleErrors(expected422, {
+      allowedConsoleErrorSubstrings: ['status of 422'],
+    }),
+    [],
+    'explicitly allowed 422 console entries keep working for stale-type tests',
+  );
+
+  const allowedRateLimit = buildCollectors({
+    rateLimitedResponses: ['GET https://guarappari.example/api/v1/media/account-profiles/123/avatar'],
+    consoleErrors: [
+      'Failed to load resource: the server responded with a status of 429',
+    ],
+    consoleErrorUrls: ['https://guarappari.example/api/v1/media/account-profiles/123/avatar'],
+  });
+  assert.deepStrictEqual(
+    summarizeCriticalBrowserFailures(allowedRateLimit, {
+      allowedRateLimitedResponseSubstrings: ['/api/v1/media/'],
+    }),
+    {
+      runtimeErrors: [],
+      failedRequests: [],
+      criticalHttpResponses: [],
+      disallowedRateLimitedResponses: [],
+      criticalConsoleErrors: [],
+    },
+    'allowed 429 media noise must stay non-critical through the shared summary',
+  );
+
+  const locationlessAllowedRateLimit = buildCollectors({
+    rateLimitedResponses: ['GET https://guarappari.example/api/v1/media/account-profiles/123/avatar'],
+    consoleErrors: [
+      'Failed to load resource: the server responded with a status of 429',
+    ],
+    consoleErrorUrls: [''],
+  });
+  assert.deepStrictEqual(
+    summarizeCriticalBrowserFailures(locationlessAllowedRateLimit, {
+      allowedRateLimitedResponseSubstrings: ['/api/v1/media/'],
+    }),
+    {
+      runtimeErrors: [],
+      failedRequests: [],
+      criticalHttpResponses: [],
+      disallowedRateLimitedResponses: [],
+      criticalConsoleErrors: [
+        'Failed to load resource: the server responded with a status of 429',
+      ],
+    },
+    'locationless 429 console entries must stay critical because suppression is URL-scoped',
+  );
+
+  const disallowedRateLimit = buildCollectors({
+    rateLimitedResponses: [`GET ${nonMediaUrls[0]}`],
+  });
+  assert.deepStrictEqual(
+    summarizeCriticalBrowserFailures(disallowedRateLimit),
+    {
+      runtimeErrors: [],
+      failedRequests: [],
+      criticalHttpResponses: [],
+      disallowedRateLimitedResponses: [`GET ${nonMediaUrls[0]}`],
+      criticalConsoleErrors: [],
+    },
+    'non-media 429 responses must stay critical through the shared summary',
+  );
+
+  const mixedRateLimit = buildCollectors({
+    rateLimitedResponses: [
+      'GET https://guarappari.example/api/v1/media/account-profiles/123/avatar',
+      `GET ${nonMediaUrls[0]}`,
+    ],
+    consoleErrors: [
+      'Failed to load resource: the server responded with a status of 429',
+      'Failed to load resource: the server responded with a status of 429',
+    ],
+    consoleErrorUrls: [
+      'https://guarappari.example/api/v1/media/account-profiles/123/avatar',
+      nonMediaUrls[0],
+    ],
+  });
+  assert.deepStrictEqual(
+    summarizeCriticalBrowserFailures(mixedRateLimit, {
+      allowedRateLimitedResponseSubstrings: ['/api/v1/media/'],
+    }),
+    {
+      runtimeErrors: [],
+      failedRequests: [],
+      criticalHttpResponses: [],
+      disallowedRateLimitedResponses: [`GET ${nonMediaUrls[0]}`],
+      criticalConsoleErrors: [
+        'Failed to load resource: the server responded with a status of 429',
+      ],
+    },
+    'mixed-page 429 noise must suppress only the allowlisted response and keep unrelated API throttling critical',
+  );
+
+  const contract = describeFailureCollectorsContract();
+  assert.strictEqual(
+    contract.taxonomyVersion,
+    'media-url-shape-v1',
+    'collector taxonomy version must stay pinned',
+  );
+  assert.ok(
+    Array.isArray(contract.adoptedSpecFiles),
+    'collector contract must enumerate the adopted spec families',
+  );
+  assert.deepStrictEqual(
+    [...contract.adoptedSpecFiles].sort(),
+    [...adoptedSpecFiles].sort(),
+    'collector contract must keep the exact adopted spec set in sync with the policy test',
+  );
+}
 
 console.log('Navigation harness policy regression tests passed.');
 function assertAccountOnboardingCleanupContractPasses() {

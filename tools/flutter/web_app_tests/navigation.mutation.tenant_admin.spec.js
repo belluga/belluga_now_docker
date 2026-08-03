@@ -9,6 +9,11 @@ const {
 } = require('./support/tenant_admin_auth');
 const { selectDropdownOption } = require('./support/semantic_dropdown');
 const {
+  installFailureCollectors,
+  resetFailureCollectors,
+  summarizeCriticalBrowserFailures,
+} = require('./support/browser_failure_collectors');
+const {
   cleanupOnboardedAccount,
   runCleanupPreservingPrimaryError,
   runCleanupSteps,
@@ -110,28 +115,6 @@ async function expectImagePreviewRenderedOrRequested({
       },
     )
     .toBeTruthy();
-}
-
-function installFailureCollectors(page) {
-  const runtimeErrors = [];
-  const failedRequests = [];
-  const consoleErrors = [];
-
-  page.on('pageerror', (error) => runtimeErrors.push(error.message));
-  page.on('requestfailed', (request) => {
-    const failureText = request.failure()?.errorText || 'unknown';
-    if (failureText === 'net::ERR_ABORTED') {
-      return;
-    }
-    failedRequests.push(`${request.method()} ${request.url()} (${failureText})`);
-  });
-  page.on('console', (message) => {
-    if (message.type() === 'error') {
-      consoleErrors.push(message.text());
-    }
-  });
-
-  return { runtimeErrors, failedRequests, consoleErrors };
 }
 
 function logStep(flow, message) {
@@ -501,26 +484,34 @@ function ensureFixtureImageFile(fixturePath) {
 
 async function assertNoBrowserFailures(
   collectors,
-  { allowedConsoleErrorSubstrings = [] } = {},
+  {
+    allowedConsoleErrorSubstrings = [],
+    allowedResponseStatuses,
+  } = {},
 ) {
+  const summary = summarizeCriticalBrowserFailures(collectors, {
+    allowedConsoleErrorSubstrings,
+    allowedResponseStatuses,
+  });
   expect(
-    collectors.runtimeErrors,
-    `Unexpected runtime errors:\n${collectors.runtimeErrors.join('\n')}`,
+    summary.runtimeErrors,
+    `Unexpected runtime errors:\n${summary.runtimeErrors.join('\n')}`,
   ).toEqual([]);
   expect(
-    collectors.failedRequests,
-    `Unexpected failed requests:\n${collectors.failedRequests.join('\n')}`,
+    summary.failedRequests,
+    `Unexpected failed requests:\n${summary.failedRequests.join('\n')}`,
   ).toEqual([]);
-
-  const criticalConsoleErrors = collectors.consoleErrors.filter(
-    (entry) =>
-      !entry.includes('status of 401') &&
-      !entry.includes('ResizeObserver loop limit exceeded') &&
-      !allowedConsoleErrorSubstrings.some((allowed) => entry.includes(allowed)),
-  );
   expect(
-    criticalConsoleErrors,
-    `Critical console errors:\n${criticalConsoleErrors.join('\n')}`,
+    summary.criticalHttpResponses,
+    `Critical HTTP responses:\n${summary.criticalHttpResponses.join('\n')}`,
+  ).toEqual([]);
+  expect(
+    summary.disallowedRateLimitedResponses,
+    `Disallowed 429 responses:\n${summary.disallowedRateLimitedResponses.join('\n')}`,
+  ).toEqual([]);
+  expect(
+    summary.criticalConsoleErrors,
+    `Critical console errors:\n${summary.criticalConsoleErrors.join('\n')}`,
   ).toEqual([]);
 }
 
@@ -530,16 +521,6 @@ async function disposeApiResponse(response) {
   }
 
   await response.dispose().catch(() => {});
-}
-
-function resetFailureCollectors(collectors) {
-  if (!collectors) {
-    return;
-  }
-
-  collectors.runtimeErrors.length = 0;
-  collectors.failedRequests.length = 0;
-  collectors.consoleErrors.length = 0;
 }
 
 async function assertAppBooted(page) {
@@ -5103,6 +5084,7 @@ test('@mutation tenant-admin account onboarding rejects stale selected profile t
       allowedConsoleErrorSubstrings: [
         'Failed to load resource: the server responded with a status of 422',
       ],
+      allowedResponseStatuses: [422],
     });
     logStep('account-422', 'browser assertions completed');
   } catch (error) {
@@ -5567,6 +5549,7 @@ test('@mutation tenant-admin event create rejects stale selected event type with
       allowedConsoleErrorSubstrings: [
         'Failed to load resource: the server responded with a status of 422',
       ],
+      allowedResponseStatuses: [422],
     });
     logStep('event-422', 'browser assertions completed');
   } catch (error) {
