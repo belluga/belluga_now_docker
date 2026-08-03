@@ -3,9 +3,6 @@
 const crypto = require('crypto');
 const {
   fixture,
-  filterOwnedEventRows,
-  filterOwnedProfileRows,
-  paginationLastPage,
   rowFingerprint,
   runKey,
   shouldContinuePagedFetch,
@@ -766,6 +763,35 @@ async function fetchPublicAccountProfileDetail(api, baseUrl, slug) {
   return payload?.data || payload;
 }
 
+async function fetchOptionalPublicAccountProfileDetail(api, baseUrl, slug) {
+  const anonymousToken = await resolveAnonymousIdentityToken(api, baseUrl);
+  const response = await api.get(
+    buildUrl(baseUrl, `/api/v1/account_profiles/${slug}`),
+    {
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${anonymousToken}`,
+      },
+      failOnStatusCode: false,
+    },
+  );
+
+  if (response.status() === 404) {
+    return null;
+  }
+
+  const payload = await fetchJson(response, `Optional public account profile detail ${slug}`);
+  return payload?.data || payload;
+}
+
+function readAccountProfileId(candidate) {
+  return (
+    candidate?.id?.toString().trim()
+    || candidate?._id?.toString().trim()
+    || ''
+  );
+}
+
 async function fetchPublicEvents(
   api,
   baseUrl,
@@ -795,6 +821,44 @@ async function fetchPublicEvents(
         Authorization: `Bearer ${anonymousToken}`,
       },
       label: 'Public events list',
+      pageSize: 50,
+    },
+  );
+}
+
+async function listAdminFixtureEvents(
+  api,
+  baseUrl,
+  token,
+  {
+    venueProfileId = null,
+    relatedProfileId = null,
+  } = {},
+) {
+  expect(
+    Boolean(venueProfileId) || Boolean(relatedProfileId),
+    'Fixture admin event cleanup requires at least one profile filter.',
+  ).toBeTruthy();
+
+  return fetchPagedRows(
+    api,
+    (pageNumber, pageSize) => {
+      const url = new URL(buildUrl(baseUrl, '/admin/api/v1/events'));
+      url.searchParams.set('page', pageNumber.toString());
+      url.searchParams.set('page_size', pageSize.toString());
+      url.searchParams.set('status', 'published');
+      url.searchParams.set('temporal', 'past,now,future');
+      if (venueProfileId) {
+        url.searchParams.set('venue_profile_id', venueProfileId);
+      }
+      if (relatedProfileId) {
+        url.searchParams.set('related_account_profile_id', relatedProfileId);
+      }
+      return url.toString();
+    },
+    {
+      headers: authHeaders(token),
+      label: 'Admin fixture events list',
       pageSize: 50,
     },
   );
@@ -890,11 +954,42 @@ async function resetOwnedFixtureArtifacts(api, baseUrl, token) {
   await removeManagedPublicMapFilter(api, baseUrl, token);
   await removeManagedPublicDefaultOrigin(api, baseUrl, token);
 
-  const publicEvents = await fetchPublicEvents(api, baseUrl);
-  const ownedEventIdentifiers = filterOwnedEventRows(publicEvents)
-    .map((row) => row?.event_id?.toString().trim() || row?.id?.toString().trim() || row?.slug?.toString().trim() || '')
-    .filter(Boolean);
-  ownedEventIdentifiers.push(fixture.eventSlug);
+  const ownedEventIdentifiers = [fixture.eventSlug];
+  const primaryProfileDetail = await fetchOptionalPublicAccountProfileDetail(
+    api,
+    baseUrl,
+    fixture.profileSlug,
+  );
+  const relatedProfileDetail = await fetchOptionalPublicAccountProfileDetail(
+    api,
+    baseUrl,
+    fixture.relatedProfileSlug,
+  );
+  const primaryProfileId = readAccountProfileId(primaryProfileDetail);
+  const relatedProfileId = readAccountProfileId(relatedProfileDetail);
+
+  if (primaryProfileId) {
+    ownedEventIdentifiers.push(
+      ...(
+        await listAdminFixtureEvents(api, baseUrl, token, {
+          venueProfileId: primaryProfileId,
+        })
+      ).map((row) => row?.event_id?.toString().trim() || row?.id?.toString().trim() || row?.slug?.toString().trim() || '')
+        .filter(Boolean),
+    );
+  }
+
+  if (relatedProfileId) {
+    ownedEventIdentifiers.push(
+      ...(
+        await listAdminFixtureEvents(api, baseUrl, token, {
+          relatedProfileId,
+        })
+      ).map((row) => row?.event_id?.toString().trim() || row?.id?.toString().trim() || row?.slug?.toString().trim() || '')
+        .filter(Boolean),
+    );
+  }
+
   for (const eventIdentifier of [...new Set(ownedEventIdentifiers)]) {
     await deleteEvent(api, baseUrl, token, eventIdentifier);
   }
