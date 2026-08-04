@@ -801,6 +801,8 @@ async function fillResolvedFlutterTextField(page, field, value, description) {
     .toBe(true);
 
   let lastValue = '';
+  const normalizedValue = value?.toString() || '';
+  const selectAll = process.platform === 'darwin' ? 'Meta+A' : 'Control+A';
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     try {
       await scrollUntilVisible(
@@ -808,21 +810,11 @@ async function fillResolvedFlutterTextField(page, field, value, description) {
         field,
         `Expected ${description} to stay visible while typing.`,
       );
-      try {
-        await field.click();
-        await field.fill('');
-        await field.fill(value);
-      } catch (_) {
-        const selectAll = process.platform === 'darwin' ? 'Meta+A' : 'Control+A';
-        await scrollUntilVisible(
-          page,
-          field,
-          `Expected ${description} to become re-attachable for keyboard fallback.`,
-        );
-        await field.click();
-        await page.keyboard.press(selectAll);
-        await page.keyboard.press('Backspace');
-        await page.keyboard.type(value, { delay: 5 });
+      await field.click();
+      await page.keyboard.press(selectAll);
+      await page.keyboard.press('Backspace');
+      if (normalizedValue) {
+        await page.keyboard.type(normalizedValue, { delay: 5 });
       }
     } catch (error) {
       if (attempt === 3) {
@@ -847,7 +839,7 @@ async function fillResolvedFlutterTextField(page, field, value, description) {
             message: `Expected ${description} to retain input.`,
           },
         )
-        .toBe(value);
+        .toBe(normalizedValue);
       return field;
     } catch (_) {
       try {
