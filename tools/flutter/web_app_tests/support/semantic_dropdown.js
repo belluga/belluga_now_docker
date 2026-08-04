@@ -235,6 +235,25 @@ async function clickFirstVisible(locator, clickOptions = {}) {
   throw lastError;
 }
 
+async function focusFirstVisible(locator) {
+  const count = await locator.count();
+
+  for (let index = 0; index < count; index += 1) {
+    const candidate = locator.nth(index);
+    const isVisible = await candidate.isVisible().catch(() => false);
+    const isEnabled = await candidate.isEnabled().catch(() => false);
+    if (!isVisible || !isEnabled) {
+      continue;
+    }
+
+    await candidate.scrollIntoViewIfNeeded().catch(() => {});
+    await candidate.focus().catch(() => {});
+    return true;
+  }
+
+  return false;
+}
+
 async function selectDropdownOption(
   page,
   {
@@ -304,6 +323,20 @@ async function selectDropdownOption(
       if (surfaceOpened) {
         record(`dropdown surface visible for ${fieldLabel}`);
         break;
+      }
+      if (await focusFirstVisible(trigger.locator)) {
+        for (const key of ['Enter', 'ArrowDown']) {
+          record(`keyboard open ${trigger.description} via ${key}`);
+          await page.keyboard.press(key).catch(() => {});
+          surfaceOpened = await waitForDropdownSurface(page, optionText, 1500);
+          if (surfaceOpened) {
+            record(`dropdown surface visible for ${fieldLabel} via ${key}`);
+            break;
+          }
+        }
+        if (surfaceOpened) {
+          break;
+        }
       }
       if (!failedTriggerDescriptions.has(trigger.description)) {
         record(`trigger ${trigger.description} did not expose dropdown surface`);

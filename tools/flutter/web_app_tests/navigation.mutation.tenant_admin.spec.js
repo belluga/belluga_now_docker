@@ -810,11 +810,15 @@ async function fillResolvedFlutterTextField(page, field, value, description) {
         field,
         `Expected ${description} to stay visible while typing.`,
       );
-      await field.click();
+      try {
+        await field.focus();
+      } catch (_) {
+        await field.click({ timeout: 1500 });
+      }
       await page.keyboard.press(selectAll);
       await page.keyboard.press('Backspace');
       if (normalizedValue) {
-        await page.keyboard.type(normalizedValue, { delay: 5 });
+        await page.keyboard.insertText(normalizedValue);
       }
     } catch (error) {
       if (attempt === 3) {
