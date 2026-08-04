@@ -270,14 +270,18 @@ async function cleanupOnboardedAccounts(
   accountSlugs,
   options,
 ) {
-  const errors = [];
-  for (const accountSlug of accountSlugs || []) {
-    try {
-      await cleanupOnboardedAccount(api, baseUrl, token, accountSlug, options);
-    } catch (error) {
-      errors.push(error);
-    }
-  }
+  const uniqueAccountSlugs = [...new Set(
+    (accountSlugs || [])
+      .map((accountSlug) => accountSlug?.toString().trim())
+      .filter(Boolean),
+  )];
+  const results = await Promise.allSettled(
+    uniqueAccountSlugs.map((accountSlug) =>
+      cleanupOnboardedAccount(api, baseUrl, token, accountSlug, options)),
+  );
+  const errors = results
+    .filter((result) => result.status === 'rejected')
+    .map((result) => result.reason);
 
   if (errors.length === 0) {
     return;
