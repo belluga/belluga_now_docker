@@ -158,7 +158,43 @@ async function cleanupOnboardedAccount(
 
   for (let attempt = 1; attempt <= boundedAttempts; attempt += 1) {
     let response;
+    let usedForceDelete = false;
     try {
+      usedForceDelete = typeof api.post === 'function';
+      response = usedForceDelete
+        ? await forceDeleteAccount(
+          api,
+          baseUrl,
+          token,
+          slug,
+          {
+            requestTimeoutMs: boundedRequestTimeoutMs,
+          },
+        )
+        : await deleteAccount(
+          api,
+          baseUrl,
+          token,
+          slug,
+          {
+            requestTimeoutMs: boundedRequestTimeoutMs,
+          },
+        );
+    } catch (error) {
+      console.warn(
+        `[cleanupOnboardedAccount] force-delete attempt ${attempt} for ${slug} threw ${error}.`,
+      );
+      await sleep(boundedBaseDelayMs * attempt);
+      continue;
+    }
+    let status = response.status();
+    if (status === 404 && usedForceDelete) {
+      const stillExists = await accountStillExists(api, baseUrl, token, slug, {
+        requestTimeoutMs: boundedRequestTimeoutMs,
+      });
+      if (!stillExists) {
+        return;
+      }
       response = await deleteAccount(
         api,
         baseUrl,
@@ -168,14 +204,8 @@ async function cleanupOnboardedAccount(
           requestTimeoutMs: boundedRequestTimeoutMs,
         },
       );
-    } catch (error) {
-      console.warn(
-        `[cleanupOnboardedAccount] force-delete attempt ${attempt} for ${slug} threw ${error}.`,
-      );
-      await sleep(boundedBaseDelayMs * attempt);
-      continue;
+      status = response.status();
     }
-    let status = response.status();
     if (status === 404) {
       return;
     }
@@ -191,34 +221,29 @@ async function cleanupOnboardedAccount(
         },
       );
       if (normalized) {
-        response = await deleteAccount(
-          api,
-          baseUrl,
-          token,
-          slug,
-          {
-            requestTimeoutMs: boundedRequestTimeoutMs,
-          },
-        );
+        response = typeof api.post === 'function'
+          ? await forceDeleteAccount(
+            api,
+            baseUrl,
+            token,
+            slug,
+            {
+              requestTimeoutMs: boundedRequestTimeoutMs,
+            },
+          )
+          : await deleteAccount(
+            api,
+            baseUrl,
+            token,
+            slug,
+            {
+              requestTimeoutMs: boundedRequestTimeoutMs,
+            },
+          );
         status = response.status();
         if (status === 404) {
           return;
         }
-      }
-    }
-    if (status >= 200 && status < 300 && typeof api.post === 'function') {
-      response = await forceDeleteAccount(
-        api,
-        baseUrl,
-        token,
-        slug,
-        {
-          requestTimeoutMs: boundedRequestTimeoutMs,
-        },
-      );
-      status = response.status();
-      if (status === 404) {
-        return;
       }
     }
 

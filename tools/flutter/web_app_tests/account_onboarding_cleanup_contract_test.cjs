@@ -14,12 +14,19 @@ function response(status) {
   };
 }
 
-function fakeApi({ deleteStatuses, getStatuses, patchStatuses = [] }) {
+function fakeApi({
+  deleteStatuses = [],
+  postStatuses = [],
+  getStatuses,
+  patchStatuses = [],
+}) {
   let deleteIndex = 0;
+  let postIndex = 0;
   let getIndex = 0;
   let patchIndex = 0;
 
   const deleteCalls = [];
+  const postCalls = [];
   const patchCalls = [];
 
   return {
@@ -27,6 +34,12 @@ function fakeApi({ deleteStatuses, getStatuses, patchStatuses = [] }) {
       const status = deleteStatuses[Math.min(deleteIndex, deleteStatuses.length - 1)];
       deleteIndex += 1;
       deleteCalls.push(status);
+      return response(status);
+    },
+    async post() {
+      const status = postStatuses[Math.min(postIndex, postStatuses.length - 1)];
+      postIndex += 1;
+      postCalls.push(status);
       return response(status);
     },
     async get() {
@@ -43,6 +56,7 @@ function fakeApi({ deleteStatuses, getStatuses, patchStatuses = [] }) {
     stats() {
       return {
         deleteCalls: deleteCalls.slice(),
+        postCalls: postCalls.slice(),
         patchCalls: patchCalls.slice(),
       };
     },
@@ -51,7 +65,7 @@ function fakeApi({ deleteStatuses, getStatuses, patchStatuses = [] }) {
 
 async function assertDefaultStrictThrowsWhenCleanupCannotRemoveAccount() {
   const api = fakeApi({
-    deleteStatuses: [500, 500, 500],
+    postStatuses: [500, 500, 500],
     getStatuses: [200, 200, 200],
   });
 
@@ -63,7 +77,7 @@ async function assertDefaultStrictThrowsWhenCleanupCannotRemoveAccount() {
 
 async function assertExplicitNonStrictReturnsFalse() {
   const api = fakeApi({
-    deleteStatuses: [500, 500, 500],
+    postStatuses: [500, 500, 500],
     getStatuses: [200, 200, 200],
   });
 
@@ -80,7 +94,7 @@ async function assertExplicitNonStrictReturnsFalse() {
 
 async function assertProbeFailureDoesNotMasqueradeAsPresentAccount() {
   const api = fakeApi({
-    deleteStatuses: [204],
+    postStatuses: [204],
     getStatuses: [500],
   });
 
@@ -92,7 +106,7 @@ async function assertProbeFailureDoesNotMasqueradeAsPresentAccount() {
 
 async function assertLegacyTenantOwnedAccountsAreNormalizedBeforeRetryingDelete() {
   const api = fakeApi({
-    deleteStatuses: [422, 204],
+    postStatuses: [422, 204],
     getStatuses: [404],
     patchStatuses: [200],
   });
@@ -105,14 +119,15 @@ async function assertLegacyTenantOwnedAccountsAreNormalizedBeforeRetryingDelete(
   );
 
   assert.deepStrictEqual(api.stats(), {
-    deleteCalls: [422, 204],
+    deleteCalls: [],
+    postCalls: [422, 204],
     patchCalls: [200],
   });
 }
 
 async function assertBlankSlugFailsClosedInStrictMode() {
   const api = fakeApi({
-    deleteStatuses: [204],
+    postStatuses: [204],
     getStatuses: [404],
   });
 
@@ -124,7 +139,7 @@ async function assertBlankSlugFailsClosedInStrictMode() {
 
 async function assertBatchCleanupAggregatesAllFailures() {
   const api = fakeApi({
-    deleteStatuses: [500, 500, 500, 500, 500],
+    postStatuses: [500, 500, 500, 500, 500],
     getStatuses: [200, 200, 200, 200, 200],
   });
 
@@ -140,6 +155,43 @@ async function assertBatchCleanupAggregatesAllFailures() {
       error instanceof AggregateError
       && error.errors.length === 2,
   );
+}
+
+async function assertDeleteFallbackStillWorksWithoutPost() {
+  const api = fakeApi({
+    deleteStatuses: [204],
+    getStatuses: [404],
+  });
+
+  delete api.post;
+
+  await cleanupOnboardedAccount(
+    api,
+    'https://example.test',
+    'token',
+    'legacy-delete-only-account',
+  );
+}
+
+async function assertMissingForceDeleteRouteFallsBackToDelete() {
+  const api = fakeApi({
+    deleteStatuses: [204],
+    postStatuses: [404],
+    getStatuses: [200, 404],
+  });
+
+  await cleanupOnboardedAccount(
+    api,
+    'https://example.test',
+    'token',
+    'missing-force-delete-route-account',
+  );
+
+  assert.deepStrictEqual(api.stats(), {
+    deleteCalls: [204],
+    postCalls: [404],
+    patchCalls: [],
+  });
 }
 
 async function assertCleanupFailureIsSurfacedAlongsidePrimaryFailure() {
@@ -162,6 +214,8 @@ async function assertCleanupFailureIsSurfacedAlongsidePrimaryFailure() {
   await assertLegacyTenantOwnedAccountsAreNormalizedBeforeRetryingDelete();
   await assertBlankSlugFailsClosedInStrictMode();
   await assertBatchCleanupAggregatesAllFailures();
+  await assertDeleteFallbackStillWorksWithoutPost();
+  await assertMissingForceDeleteRouteFallsBackToDelete();
   await assertCleanupFailureIsSurfacedAlongsidePrimaryFailure();
   console.log('Account onboarding cleanup contract tests passed.');
 })().catch((error) => {
