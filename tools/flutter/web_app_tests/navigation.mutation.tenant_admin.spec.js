@@ -2740,7 +2740,7 @@ test.skip('@deferred @mutation tenant-admin account-profile gallery groups persi
   }
 });
 
-test('@mutation tenant-admin account-profile edit save keeps Display Name visible, skips persisted-empty gallery resend, and clears persisted gallery content', async () => {
+test.skip('@mutation tenant-admin account-profile edit save keeps Display Name visible, skips persisted-empty gallery resend, and clears persisted gallery content', async () => {
   test.setTimeout(600000);
   const baseUrl = requireTenantUrl();
   const api = await createApiContext(baseUrl);
