@@ -954,6 +954,26 @@ async function clickSaveChanges(page) {
   await saveButton.click({ noWaitAfter: true });
 }
 
+function requestPostDataContainsAll(request, expectedFragments = []) {
+  const body = request.postData() || '';
+  return expectedFragments.every((fragment) => body.includes(fragment));
+}
+
+function waitForSuccessfulAccountProfilePatchResponse(
+  page,
+  profileId,
+  { requestMustContain = [] } = {},
+) {
+  return page.waitForResponse((candidate) => {
+    return (
+      candidate.request().method() === 'PATCH' &&
+      candidate.url().includes(`/admin/api/v1/account_profiles/${profileId}`) &&
+      candidate.status() < 400 &&
+      requestPostDataContainsAll(candidate.request(), requestMustContain)
+    );
+  });
+}
+
 async function countVisibleMatches(locator) {
   return locator
     .evaluateAll((elements) =>
@@ -2816,18 +2836,14 @@ test('@mutation tenant-admin account-profile edit save keeps Display Name visibl
     };
     await page.route(galleryEndpoint, failClosedUnexpectedGalleryRoute);
 
-    const persistedEmptyProfileSaveResponsePromise = page.waitForResponse(
-      (candidate) => {
-        return (
-          candidate.request().method() === 'PATCH' &&
-          candidate.url().includes(`/admin/api/v1/account_profiles/${profileId}`) &&
-          candidate.status() < 400
-        );
-      },
-    );
-    await clickSaveChanges(page);
-    const persistedEmptyProfileSaveResponse =
-      await persistedEmptyProfileSaveResponsePromise;
+    const persistedEmptyProfileSaveResponsePromise =
+      waitForSuccessfulAccountProfilePatchResponse(page, profileId, {
+        requestMustContain: [updatedDisplayName],
+      });
+    const [persistedEmptyProfileSaveResponse] = await Promise.all([
+      persistedEmptyProfileSaveResponsePromise,
+      clickSaveChanges(page),
+    ]);
     const persistedEmptyProfileSavePayload = normalizePayload(
       await persistedEmptyProfileSaveResponse.json(),
     );
@@ -2881,15 +2897,10 @@ test('@mutation tenant-admin account-profile edit save keeps Display Name visibl
     await page.getByRole('button', { name: 'Usar' }).click();
     await fillFlutterTextField(page, 'Descrição da foto', photoDescription);
 
-    const gallerySeedProfileSaveResponsePromise = page.waitForResponse(
-      (candidate) => {
-        return (
-          candidate.request().method() === 'PATCH' &&
-          candidate.url().includes(`/admin/api/v1/account_profiles/${profileId}`) &&
-          candidate.status() < 400
-        );
-      },
-    );
+    const gallerySeedProfileSaveResponsePromise =
+      waitForSuccessfulAccountProfilePatchResponse(page, profileId, {
+        requestMustContain: [updatedDisplayName],
+      });
     const gallerySeedSaveResponsePromise = page.waitForResponse((candidate) => {
       return (
         candidate.request().method() === 'POST' &&
@@ -2897,8 +2908,10 @@ test('@mutation tenant-admin account-profile edit save keeps Display Name visibl
         candidate.status() < 400
       );
     });
-    await clickSaveChanges(page);
-    await gallerySeedProfileSaveResponsePromise;
+    await Promise.all([
+      gallerySeedProfileSaveResponsePromise,
+      clickSaveChanges(page),
+    ]);
     const gallerySeedSaveResponse = await gallerySeedSaveResponsePromise;
     const gallerySeedSavePayload = normalizePayload(
       await gallerySeedSaveResponse.json(),
@@ -2974,13 +2987,10 @@ test('@mutation tenant-admin account-profile edit save keeps Display Name visibl
       'Expected removing the only gallery group to remove the visible subtitle field before save.',
     );
 
-    const clearAllProfileSaveResponsePromise = page.waitForResponse((candidate) => {
-      return (
-        candidate.request().method() === 'PATCH' &&
-        candidate.url().includes(`/admin/api/v1/account_profiles/${profileId}`) &&
-        candidate.status() < 400
-      );
-    });
+    const clearAllProfileSaveResponsePromise =
+      waitForSuccessfulAccountProfilePatchResponse(page, profileId, {
+        requestMustContain: [updatedDisplayName],
+      });
     const clearAllGallerySaveResponsePromise = page.waitForResponse((candidate) => {
       return (
         candidate.request().method() === 'POST' &&
@@ -2988,8 +2998,10 @@ test('@mutation tenant-admin account-profile edit save keeps Display Name visibl
         candidate.status() < 400
       );
     });
-    await clickSaveChanges(page);
-    await clearAllProfileSaveResponsePromise;
+    await Promise.all([
+      clearAllProfileSaveResponsePromise,
+      clickSaveChanges(page),
+    ]);
     const clearAllGallerySaveResponse = await clearAllGallerySaveResponsePromise;
     const clearAllGalleryRequestBody =
       clearAllGallerySaveResponse.request().postData() || '';
