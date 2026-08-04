@@ -328,6 +328,23 @@ async function deleteAccountProfileType(api, baseUrl, token, profileType) {
   ).toContain(response.status());
 }
 
+async function forceDeleteAccountProfile(api, baseUrl, token, profileId) {
+  if (!profileId) {
+    return;
+  }
+  const response = await api.post(
+    buildUrl(baseUrl, `/admin/api/v1/account_profiles/${profileId}/force_delete`),
+    {
+      headers: authHeaders(token),
+      failOnStatusCode: false,
+    },
+  );
+  expect(
+    [404, 200, 204],
+    `Directions profile cleanup must force-delete ${profileId} or observe it already missing.`,
+  ).toContain(response.status());
+}
+
 async function createDirectionsProfileType(api, baseUrl, token) {
   const unique = Date.now();
   const type = `pw-directions-brand-${unique}`;
@@ -1067,6 +1084,7 @@ test('@mutation NAV-DIR-BRAND-01 Waze and Uber brand controls render on shared d
       if (accountSlug) {
         await cleanupOnboardedAccount(api, baseUrl, token, accountSlug);
       }
+      await forceDeleteAccountProfile(api, baseUrl, token, profileId);
       await deleteEventType(api, baseUrl, token, eventTypeId);
       await deleteAccountProfileType(api, baseUrl, token, profileType);
     });

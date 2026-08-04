@@ -3,6 +3,7 @@
 const crypto = require('crypto');
 const {
   fixture,
+  filterOwnedEventRows,
   rowFingerprint,
   runKey,
   shouldContinuePagedFetch,
@@ -971,9 +972,9 @@ async function resetOwnedFixtureArtifacts(api, baseUrl, token) {
   if (primaryProfileId) {
     ownedEventIdentifiers.push(
       ...(
-        await listAdminFixtureEvents(api, baseUrl, token, {
+        filterOwnedEventRows(await listAdminFixtureEvents(api, baseUrl, token, {
           venueProfileId: primaryProfileId,
-        })
+        }))
       ).map((row) => row?.event_id?.toString().trim() || row?.id?.toString().trim() || row?.slug?.toString().trim() || '')
         .filter(Boolean),
     );
@@ -982,9 +983,9 @@ async function resetOwnedFixtureArtifacts(api, baseUrl, token) {
   if (relatedProfileId) {
     ownedEventIdentifiers.push(
       ...(
-        await listAdminFixtureEvents(api, baseUrl, token, {
+        filterOwnedEventRows(await listAdminFixtureEvents(api, baseUrl, token, {
           relatedProfileId,
-        })
+        }))
       ).map((row) => row?.event_id?.toString().trim() || row?.id?.toString().trim() || row?.slug?.toString().trim() || '')
         .filter(Boolean),
     );
