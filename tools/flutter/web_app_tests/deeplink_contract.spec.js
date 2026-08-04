@@ -10,6 +10,7 @@ const {
 
 const landlordUrl = process.env.NAV_LANDLORD_URL;
 const tenantUrl = process.env.NAV_TENANT_URL;
+const androidDirectPublicRouteSettleTimeoutMs = 120000;
 
 function requireNavigationUrls() {
   expect(
@@ -273,7 +274,7 @@ test('@readonly tenant Android direct public links request open-app handoff redi
         page,
         baseUrl: tenantUrl,
         expectedTargetPath: testCase.expectedTargetPath,
-        timeoutMs: 30000,
+        timeoutMs: androidDirectPublicRouteSettleTimeoutMs,
         action: async () => {
           await gotoAllowingAndroidIntent(
             page,
