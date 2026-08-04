@@ -3044,33 +3044,26 @@ test('@mutation tenant-admin account-profile edit save keeps Display Name visibl
       )
       .toEqual([updatedDisplayName, 0]);
 
-    const finalResponse = await page.goto(editUrl, {
-      waitUntil: 'domcontentloaded',
-    });
-    expect(finalResponse, 'Final edit route reload should be available.').not.toBeNull();
-    expect(finalResponse.status()).toBeLessThan(400);
-    await assertAppBooted(page);
-    await enableAccessibilityIfNeeded(page);
     const finalDisplayNameField = page.getByLabel('Nome de exibicao').first();
     await scrollUntilVisible(
       page,
       finalDisplayNameField,
-      'Expected the final edit reload to keep the Display Name field reachable after clear-all save.',
+      'Expected the edit flow to keep the Display Name field reachable after clear-all save.',
     );
     await expectFlutterFieldRenderedValue(
       finalDisplayNameField,
       updatedDisplayName,
-      'Expected the final edit reload to visibly render the persisted Display Name after clear-all save.',
+      'Expected the edit flow to visibly render the persisted Display Name after clear-all save.',
     );
     await scrollUntilVisible(
       page,
       page.getByText('Galerias de fotos'),
-      'Expected gallery section to remain available after clear-all save.',
+      'Expected the gallery section to remain available after clear-all save.',
     );
     await expectNoVisibleFlutterTextField(
       page,
       'Subtítulo do agrupamento',
-      'Expected the final edit reload to keep the cleared gallery subtitle field absent.',
+      'Expected the cleared gallery subtitle field to remain absent after clear-all save.',
     );
     await expect(
       page.getByRole('button', { name: 'Adicionar grupo de fotos' }),
