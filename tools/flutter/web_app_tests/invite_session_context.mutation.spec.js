@@ -516,6 +516,34 @@ async function deleteAccountProfileType(api, baseUrl, token, profileType) {
   expectDeleteSucceeded(response, `Account profile type ${profileType}`);
 }
 
+async function forceDeleteAccountProfile(api, baseUrl, token, profileId) {
+  if (!profileId) {
+    return;
+  }
+
+  const response = await api.post(
+    buildUrl(baseUrl, `/admin/api/v1/account_profiles/${profileId}/force_delete`),
+    {
+      headers: authHeaders(token),
+      failOnStatusCode: false,
+      timeout: 15000,
+    },
+  );
+  expectDeleteSucceeded(response, `Account profile ${profileId}`);
+}
+
+async function forceDeleteAccountProfiles(api, baseUrl, token, profileIds) {
+  const uniqueProfileIds = [...new Set(
+    (profileIds || [])
+      .map((profileId) => profileId?.toString().trim())
+      .filter(Boolean),
+  )];
+
+  for (const profileId of uniqueProfileIds) {
+    await forceDeleteAccountProfile(api, baseUrl, token, profileId);
+  }
+}
+
 async function findExistingSeedEvent(api, baseUrl, token) {
   for (let page = 1; page <= 10; page += 1) {
     const url = new URL(buildUrl(baseUrl, '/admin/api/v1/events'));
@@ -560,6 +588,7 @@ async function createSeedEvent(api, baseUrl, token) {
   let eventTypeId = '';
   let createdProfileType = '';
   const cleanupAccountSlugs = [];
+  const cleanupProfileIds = [];
 
   try {
     const eventType = await createEventType(api, baseUrl, token, uniqueSuffix);
@@ -576,6 +605,9 @@ async function createSeedEvent(api, baseUrl, token) {
     );
     if (physicalHost.account_slug) {
       cleanupAccountSlugs.push(physicalHost.account_slug);
+    }
+    if (physicalHost.id) {
+      cleanupProfileIds.push(physicalHost.id);
     }
 
     const start = new Date(Date.now() + 10 * 24 * 60 * 60 * 1000);
@@ -623,6 +655,7 @@ async function createSeedEvent(api, baseUrl, token) {
       eventTypeId,
       createdProfileType,
       cleanupAccountSlugs,
+      cleanupProfileIds,
     };
   } catch (error) {
     await runCleanupPreservingPrimaryError(error, async () => {
@@ -633,6 +666,7 @@ async function createSeedEvent(api, baseUrl, token) {
         token,
         cleanupAccountSlugs,
       );
+      await forceDeleteAccountProfiles(api, baseUrl, token, cleanupProfileIds);
       await deleteEventType(api, baseUrl, token, eventTypeId);
       await deleteAccountProfileType(
         api,
@@ -652,6 +686,7 @@ async function createInvitePreviewSeedEvent(api, baseUrl, token) {
   let eventTypeId = '';
   let createdProfileType = '';
   const cleanupAccountSlugs = [];
+  const cleanupProfileIds = [];
 
   try {
     const eventType = await createEventType(api, baseUrl, token, uniqueSuffix);
@@ -683,6 +718,11 @@ async function createInvitePreviewSeedEvent(api, baseUrl, token) {
     cleanupAccountSlugs.push(
       ...[host.account_slug, band.account_slug, exhibitor.account_slug]
         .map((slug) => slug?.toString().trim())
+        .filter(Boolean),
+    );
+    cleanupProfileIds.push(
+      ...[host.id, band.id, exhibitor.id]
+        .map((profileId) => profileId?.toString().trim())
         .filter(Boolean),
     );
 
@@ -751,6 +791,7 @@ async function createInvitePreviewSeedEvent(api, baseUrl, token) {
       eventTypeId,
       createdProfileType,
       cleanupAccountSlugs,
+      cleanupProfileIds,
     };
   } catch (error) {
     await runCleanupPreservingPrimaryError(error, async () => {
@@ -761,6 +802,7 @@ async function createInvitePreviewSeedEvent(api, baseUrl, token) {
         token,
         cleanupAccountSlugs,
       );
+      await forceDeleteAccountProfiles(api, baseUrl, token, cleanupProfileIds);
       await deleteEventType(api, baseUrl, token, eventTypeId);
       await deleteAccountProfileType(
         api,
@@ -1043,6 +1085,15 @@ test('@mutation INVITE-SESSION-CONTEXT invite landing exposes dynamic share meta
               ...(secondSeeded?.cleanupAccountSlugs || []),
             ],
           );
+          await forceDeleteAccountProfiles(
+            api,
+            baseUrl,
+            session.token,
+            [
+              ...(seeded?.cleanupProfileIds || []),
+              ...(secondSeeded?.cleanupProfileIds || []),
+            ],
+          );
           await deleteEventType(api, baseUrl, session.token, seeded?.eventTypeId || '');
           await deleteEventType(api, baseUrl, session.token, secondSeeded?.eventTypeId || '');
           await deleteAccountProfileType(
@@ -1132,6 +1183,12 @@ test('@mutation INVITE-SESSION-CONTEXT Android direct invite and event links gen
             baseUrl,
             session.token,
             seeded.cleanupAccountSlugs,
+          );
+          await forceDeleteAccountProfiles(
+            api,
+            baseUrl,
+            session.token,
+            seeded.cleanupProfileIds,
           );
           await deleteEventType(api, baseUrl, session.token, seeded.eventTypeId);
           await deleteAccountProfileType(
