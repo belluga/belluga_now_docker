@@ -443,6 +443,35 @@ async function deleteAccountProfileType(api, baseUrl, token, profileType) {
   );
 }
 
+async function forceDeleteAccountProfile(api, baseUrl, token, profileId) {
+  const normalizedId = profileId?.toString().trim() || '';
+  if (!normalizedId) {
+    return;
+  }
+
+  const response = await api.post(
+    buildUrl(
+      baseUrl,
+      `/admin/api/v1/account_profiles/${encodeURIComponent(normalizedId)}/force_delete`,
+    ),
+    {
+      headers: authHeaders(token),
+      failOnStatusCode: false,
+    },
+  );
+  await deleteWithSuccessExpectation(
+    response,
+    `Force delete account profile ${normalizedId}`,
+  );
+}
+
+async function forceDeleteAccountProfiles(api, baseUrl, token, profileIds) {
+  const normalizedIds = Array.isArray(profileIds) ? profileIds : [];
+  for (const profileId of [...new Set(normalizedIds.map((id) => id?.toString().trim()).filter(Boolean))]) {
+    await forceDeleteAccountProfile(api, baseUrl, token, profileId);
+  }
+}
+
 async function deleteEventType(api, baseUrl, token, eventTypeId) {
   if (!eventTypeId) {
     return;
@@ -1003,6 +1032,12 @@ async function resetOwnedFixtureArtifacts(api, baseUrl, token) {
     {
       strict: true,
     },
+  );
+  await forceDeleteAccountProfiles(
+    api,
+    baseUrl,
+    token,
+    [primaryProfileId, relatedProfileId],
   );
 
   const eventTypes = await listEventTypes(api, baseUrl, token);
