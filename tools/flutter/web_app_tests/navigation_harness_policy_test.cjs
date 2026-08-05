@@ -949,8 +949,18 @@ function assertCiEquivalentContractSurfacesStayWired() {
     );
     assert.match(
       architectureWrapperSource,
+      /python3 tool\/ci\/run_vscode_problems_gate\.py/,
+      'architecture gate wrapper must use the local VS Code Problems bridge gate outside CI',
+    );
+    assert.match(
+      architectureWrapperSource,
+      /\[\[ -n "\$\{CI:-\}" \|\| -n "\$\{GITHUB_ACTIONS:-\}" \]\]/,
+      'architecture gate wrapper must branch between local Problems evidence and CI analyzer evidence',
+    );
+    assert.match(
+      architectureWrapperSource,
       /fvm dart analyze "\$\{ANALYZE_PATHS\[@\]\}" --format machine/,
-      'architecture gate wrapper must run flutter analyze over the canonical explicit Dart surface',
+      'architecture gate wrapper must keep the CI-owned analyzer over the canonical explicit Dart surface',
     );
 
     const workspaceWrapperSource = fs.readFileSync(flutterWorkspaceTestWrapper, 'utf8');

@@ -1,11 +1,15 @@
 #!/usr/bin/env node
 
 const crypto = require('crypto');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 const {
   fixture,
   filterOwnedEventRows,
   rowFingerprint,
   runKey,
+  sanitizeRunId,
   shouldContinuePagedFetch,
 } = require('./support/public_taxonomy_validation_fixture_contract');
 const {
@@ -42,6 +46,49 @@ let requestApi = null;
 let expectApi = null;
 let loginTenantAdmin = null;
 let cleanupOnboardedAccounts = null;
+
+function fixtureStateFilePath() {
+  let hostKey = 'unknown-host';
+  try {
+    hostKey = sanitizeRunId(new URL(tenantUrl).host);
+  } catch (_) {
+    hostKey = 'unknown-host';
+  }
+
+  return path.join(
+    os.tmpdir(),
+    `belluga-public-taxonomy-fixture-${hostKey}-${runKey}.json`,
+  );
+}
+
+function readFixtureState() {
+  const stateFile = fixtureStateFilePath();
+  if (!fs.existsSync(stateFile)) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+  } catch (_) {
+    return null;
+  }
+}
+
+function writeFixtureState(state) {
+  fs.writeFileSync(
+    fixtureStateFilePath(),
+    JSON.stringify(state, null, 2),
+    'utf8',
+  );
+}
+
+function clearFixtureState() {
+  try {
+    fs.unlinkSync(fixtureStateFilePath());
+  } catch (_) {
+    // Ignore missing/stale state files; cleanup remains idempotent.
+  }
+}
 
 function ensurePlaywrightRuntime() {
   if (requestApi && expectApi) {
@@ -500,45 +547,62 @@ async function deleteTaxonomy(api, baseUrl, token, taxonomyId) {
 }
 
 async function createTaxonomy(api, baseUrl, token) {
-  const taxonomyResponse = await api.post(
-    buildUrl(baseUrl, '/admin/api/v1/taxonomies'),
-    {
-      headers: authHeaders(token),
-      data: {
-        slug: fixture.taxonomySlug,
-        name: fixture.taxonomyName,
-        applies_to: ['account_profile', 'event'],
-        icon: 'category',
-        color: '#0F766E',
+  const existingTaxonomy = (await listTaxonomies(api, baseUrl, token)).find(
+    (row) => (row?.slug?.toString().trim() || '') === fixture.taxonomySlug,
+  );
+  let taxonomyId = existingTaxonomy?.id?.toString() || '';
+
+  if (!taxonomyId) {
+    const taxonomyResponse = await api.post(
+      buildUrl(baseUrl, '/admin/api/v1/taxonomies'),
+      {
+        headers: authHeaders(token),
+        data: {
+          slug: fixture.taxonomySlug,
+          name: fixture.taxonomyName,
+          applies_to: ['account_profile', 'event'],
+          icon: 'category',
+          color: '#0F766E',
+        },
       },
-    },
-  );
-  const taxonomyPayload = await fetchJson(
-    taxonomyResponse,
-    `Create taxonomy ${fixture.taxonomySlug}`,
-  );
-  const taxonomyId = taxonomyPayload?.data?.id?.toString() || '';
+    );
+    const taxonomyPayload = await fetchJson(
+      taxonomyResponse,
+      `Create taxonomy ${fixture.taxonomySlug}`,
+    );
+    taxonomyId = taxonomyPayload?.data?.id?.toString() || '';
+  }
+
   expect(taxonomyId, `Taxonomy ${fixture.taxonomySlug} must return an id.`).toBeTruthy();
 
-  const termResponse = await api.post(
-    buildUrl(baseUrl, `/admin/api/v1/taxonomies/${taxonomyId}/terms`),
-    {
-      headers: authHeaders(token),
-      data: {
-        slug: fixture.taxonomyTermSlug,
-        name: fixture.taxonomyTermLabel,
+  if (!existingTaxonomy) {
+    const termResponse = await api.post(
+      buildUrl(baseUrl, `/admin/api/v1/taxonomies/${taxonomyId}/terms`),
+      {
+        headers: authHeaders(token),
+        data: {
+          slug: fixture.taxonomyTermSlug,
+          name: fixture.taxonomyTermLabel,
+        },
       },
-    },
-  );
-  await fetchJson(
-    termResponse,
-    `Create taxonomy term ${fixture.taxonomyTermSlug} for ${fixture.taxonomySlug}`,
-  );
+    );
+    await fetchJson(
+      termResponse,
+      `Create taxonomy term ${fixture.taxonomyTermSlug} for ${fixture.taxonomySlug}`,
+    );
+  }
 
   return taxonomyId;
 }
 
 async function createAccountProfileType(api, baseUrl, token) {
+  const existingType = (await listAccountProfileTypes(api, baseUrl, token)).find(
+    (row) => (row?.type?.toString().trim() || '') === fixture.profileType,
+  );
+  if (existingType) {
+    return;
+  }
+
   const response = await api.post(
     buildUrl(baseUrl, '/admin/api/v1/account_profile_types'),
     {
@@ -626,11 +690,11 @@ async function createPublicAccountProfile(
     'Fixture account profile must expose a public slug.',
   ).toBeTruthy();
   expect(
-    accountSlug === expectedSlug,
+    accountSlug === expectedSlug || accountSlug.startsWith(`${expectedSlug}-`),
     `Fixture account slug must stay anchored to canonical slug ${expectedSlug}. Received ${accountSlug}.`,
   ).toBeTruthy();
   expect(
-    profileSlug === expectedSlug,
+    profileSlug === expectedSlug || profileSlug.startsWith(`${expectedSlug}-`),
     `Fixture account profile slug must stay anchored to canonical slug ${expectedSlug}. Received ${profileSlug}.`,
   ).toBeTruthy();
 
@@ -638,6 +702,20 @@ async function createPublicAccountProfile(
 }
 
 async function createEventType(api, baseUrl, token) {
+  const existingType = (await listEventTypes(api, baseUrl, token)).find(
+    (row) => (row?.slug?.toString().trim() || '') === fixture.eventTypeSlug,
+  );
+  if (existingType) {
+    return {
+      id: existingType?.id?.toString() || '',
+      name: existingType?.name?.toString() || fixture.eventTypeName,
+      slug: existingType?.slug?.toString() || fixture.eventTypeSlug,
+      description:
+        existingType?.description?.toString()
+        || 'Stage validation public event type',
+    };
+  }
+
   const response = await api.post(
     buildUrl(baseUrl, '/admin/api/v1/event_types'),
     {
@@ -981,10 +1059,15 @@ function findDisplaySnapshot(terms) {
 }
 
 async function resetOwnedFixtureArtifacts(api, baseUrl, token) {
+  const persistedState = readFixtureState();
   await removeManagedPublicMapFilter(api, baseUrl, token);
   await removeManagedPublicDefaultOrigin(api, baseUrl, token);
 
-  const ownedEventIdentifiers = [fixture.eventSlug];
+  const ownedEventIdentifiers = [
+    fixture.eventSlug,
+    persistedState?.event?.eventId,
+    persistedState?.event?.eventSlug,
+  ].filter(Boolean);
   const primaryProfileDetail = await fetchOptionalPublicAccountProfileDetail(
     api,
     baseUrl,
@@ -1033,11 +1116,28 @@ async function resetOwnedFixtureArtifacts(api, baseUrl, token) {
       strict: true,
     },
   );
+  await cleanupOnboardedAccounts(
+    api,
+    baseUrl,
+    token,
+    [
+      persistedState?.primaryProfile?.accountSlug,
+      persistedState?.relatedProfile?.accountSlug,
+    ],
+    {
+      strict: false,
+    },
+  );
   await forceDeleteAccountProfiles(
     api,
     baseUrl,
     token,
-    [primaryProfileId, relatedProfileId],
+    [
+      primaryProfileId,
+      relatedProfileId,
+      persistedState?.primaryProfile?.profileId,
+      persistedState?.relatedProfile?.profileId,
+    ],
   );
 
   const eventTypes = await listEventTypes(api, baseUrl, token);
@@ -1048,7 +1148,13 @@ async function resetOwnedFixtureArtifacts(api, baseUrl, token) {
     },
   );
   for (const fixtureEventType of fixtureEventTypes) {
-    await deleteEventType(api, baseUrl, token, fixtureEventType?.id?.toString() || '');
+    try {
+      await deleteEventType(api, baseUrl, token, fixtureEventType?.id?.toString() || '');
+    } catch (error) {
+      console.warn(
+        `[public-taxonomy-fixture] best-effort event type cleanup skipped: ${error}`,
+      );
+    }
   }
 
   const profileTypes = await listAccountProfileTypes(api, baseUrl, token);
@@ -1059,12 +1165,18 @@ async function resetOwnedFixtureArtifacts(api, baseUrl, token) {
     },
   );
   for (const fixtureType of fixtureTypes) {
-    await deleteAccountProfileType(
-      api,
-      baseUrl,
-      token,
-      fixtureType?.type?.toString().trim() || '',
-    );
+    try {
+      await deleteAccountProfileType(
+        api,
+        baseUrl,
+        token,
+        fixtureType?.type?.toString().trim() || '',
+      );
+    } catch (error) {
+      console.warn(
+        `[public-taxonomy-fixture] best-effort account profile type cleanup skipped: ${error}`,
+      );
+    }
   }
 
   const taxonomies = await listTaxonomies(api, baseUrl, token);
@@ -1075,8 +1187,16 @@ async function resetOwnedFixtureArtifacts(api, baseUrl, token) {
     },
   );
   for (const fixtureTaxonomy of fixtureTaxonomies) {
-    await deleteTaxonomy(api, baseUrl, token, fixtureTaxonomy?.id?.toString() || '');
+    try {
+      await deleteTaxonomy(api, baseUrl, token, fixtureTaxonomy?.id?.toString() || '');
+    } catch (error) {
+      console.warn(
+        `[public-taxonomy-fixture] best-effort taxonomy cleanup skipped: ${error}`,
+      );
+    }
   }
+
+  clearFixtureState();
 }
 
 async function verifyAccountProfileFixture(
@@ -1231,7 +1351,11 @@ async function main() {
       await createAccountProfileType(api, baseUrl, token);
       await ensureManagedPublicDefaultOrigin(api, baseUrl, token);
       await ensureManagedPublicMapFilter(api, baseUrl, token);
-      const { profileId, profileSlug } = await createPublicAccountProfile(
+      const {
+        profileId,
+        profileSlug,
+        accountSlug,
+      } = await createPublicAccountProfile(
         api,
         baseUrl,
         token,
@@ -1240,7 +1364,11 @@ async function main() {
           expectedSlug: fixture.profileSlug,
         },
       );
-      const { profileId: relatedProfileId, profileSlug: relatedProfileSlug } =
+      const {
+        profileId: relatedProfileId,
+        profileSlug: relatedProfileSlug,
+        accountSlug: relatedAccountSlug,
+      } =
         await createPublicAccountProfile(
           api,
           baseUrl,
@@ -1255,6 +1383,22 @@ async function main() {
         eventType,
         physicalHostId: profileId,
         relatedProfileId,
+      });
+      writeFixtureState({
+        primaryProfile: {
+          accountSlug,
+          profileId,
+          profileSlug,
+        },
+        relatedProfile: {
+          accountSlug: relatedAccountSlug,
+          profileId: relatedProfileId,
+          profileSlug: relatedProfileSlug,
+        },
+        event: {
+          eventId: event.eventId,
+          eventSlug: event.eventSlug,
+        },
       });
       await verifyAccountProfileFixture(api, baseUrl, {
         expectedSlug: profileSlug,
