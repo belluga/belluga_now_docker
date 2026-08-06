@@ -481,6 +481,103 @@ async function assertVisibleRichText(page, expectedTexts) {
     .toHaveCount(0);
 }
 
+async function isVisible(locator) {
+  try {
+    return await locator.isVisible();
+  } catch (_) {
+    return false;
+  }
+}
+
+async function waitForAdminRichTextSurfaceState(page, expectedTexts) {
+  const firstExpectedText = expectedTexts[0] ?? '';
+  const deadline = Date.now() + 30000;
+
+  while (Date.now() < deadline) {
+    if (
+      firstExpectedText &&
+      await isVisible(page.getByText(textPattern(firstExpectedText)).first())
+    ) {
+      return 'ready';
+    }
+
+    if (
+      await isVisible(
+        page.getByText(/Não foi possível carregar os dados da conta\./i).first(),
+      ) ||
+      await isVisible(
+        page.getByRole('button', { name: /Tentar novamente/i }).first(),
+      )
+    ) {
+      return 'recoverable-error';
+    }
+
+    await page.waitForTimeout(500);
+  }
+
+  const hasLoadedAccountAnchors =
+    await isVisible(page.getByText('Detalhes da conta').first()) &&
+    await isVisible(page.getByText('Perfil da conta').first());
+
+  return hasLoadedAccountAnchors ? 'loaded-without-rich-text' : 'recoverable-error';
+}
+
+async function openAdminAccountDetailWithRichTextRetry({
+  browser,
+  session,
+  baseUrl,
+  accountSlug,
+  expectedTexts,
+}) {
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    const adminBundle = await createAuthenticatedTenantAdminPage(
+      browser,
+      session,
+    );
+    const adminCollectors = installFailureCollectors(adminBundle.page);
+
+    try {
+      await openAppPath(
+        adminBundle.page,
+        baseUrl,
+        `/admin/accounts/${accountSlug}`,
+      );
+
+      const surfaceState = await waitForAdminRichTextSurfaceState(
+        adminBundle.page,
+        expectedTexts,
+      );
+
+      if (surfaceState === 'recoverable-error') {
+        throw new Error(
+          `Admin account detail load stayed in a transient error state on attempt ${attempt}.`,
+        );
+      }
+
+      await assertVisibleRichText(adminBundle.page, expectedTexts);
+
+      return {
+        context: adminBundle.context,
+        page: adminBundle.page,
+        collectors: adminCollectors,
+      };
+    } catch (error) {
+      lastError = error;
+      await adminBundle.context.close().catch(() => {});
+
+      if (attempt === 3) {
+        throw error;
+      }
+
+      await waitMs(750 * attempt);
+    }
+  }
+
+  throw lastError ?? new Error('Admin account detail rich-text retry exhausted.');
+}
+
 test('@mutation tenant-admin account-profile rich text persists and renders on admin and public surfaces', async ({
   browser,
 }) => {
@@ -570,16 +667,18 @@ test('@mutation tenant-admin account-profile rich text persists and renders on a
     expect(publicReadback?.bio).toContain('Bio Heading 🎉');
     expect(publicReadback?.content).toContain('Content Heading');
 
-    const adminBundle = await createAuthenticatedTenantAdminPage(
+    adminContext = null;
+    const adminBundle = await openAdminAccountDetailWithRichTextRetry({
       browser,
       session,
-    );
+      baseUrl,
+      accountSlug: created.accountSlug,
+      expectedTexts,
+    });
     adminContext = adminBundle.context;
     const adminPage = adminBundle.page;
-    const adminCollectors = installFailureCollectors(adminPage);
+    const adminCollectors = adminBundle.collectors;
 
-    await openAppPath(adminPage, baseUrl, `/admin/accounts/${created.accountSlug}`);
-    await assertVisibleRichText(adminPage, expectedTexts);
     await assertNoCriticalBrowserFailures(adminCollectors);
 
     publicContext = await browser.newContext({

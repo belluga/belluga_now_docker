@@ -98,6 +98,108 @@ function expectDeleteSucceeded(response, label) {
   ).toContain(response.status());
 }
 
+function expectResponseHtmlPattern(html, pattern, label) {
+  expect(
+    html,
+    label,
+  ).toMatch(pattern);
+}
+
+function assertInviteResponseHtmlMetadata({
+  html,
+  eventTitle,
+  inviteUrl,
+  expectedImage,
+}) {
+  const titlePattern = new RegExp(
+    `<title>${escapeRegExp(eventTitle)}\\s*\\|\\s*Guarappari</title>`,
+    'i',
+  );
+  const ogTitlePattern = new RegExp(
+    `<meta[^>]+property="og:title"[^>]+content="${escapeRegExp(eventTitle)}\\s*\\|\\s*Guarappari"`,
+    'i',
+  );
+  const twitterTitlePattern = new RegExp(
+    `<meta[^>]+name="twitter:title"[^>]+content="${escapeRegExp(eventTitle)}\\s*\\|\\s*Guarappari"`,
+    'i',
+  );
+  const descriptionPattern = new RegExp(
+    `<meta[^>]+property="og:description"[^>]+content="[^"]*${escapeRegExp(eventTitle)}[^"]*"`,
+    'i',
+  );
+  const ogUrlPattern = new RegExp(
+    `<meta[^>]+property="og:url"[^>]+content="${escapeRegExp(inviteUrl)}"`,
+    'i',
+  );
+  const canonicalPattern = new RegExp(
+    `<link[^>]+rel="canonical"[^>]+href="${escapeRegExp(inviteUrl)}"`,
+    'i',
+  );
+
+  expectResponseHtmlPattern(
+    html,
+    titlePattern,
+    'Invite landing HTML must expose the seeded event title in <title> before Flutter boot mutates document.title.',
+  );
+  expectResponseHtmlPattern(
+    html,
+    ogTitlePattern,
+    'Invite landing HTML must expose the seeded event title in og:title.',
+  );
+  expectResponseHtmlPattern(
+    html,
+    twitterTitlePattern,
+    'Invite landing HTML must expose the seeded event title in twitter:title.',
+  );
+  expectResponseHtmlPattern(
+    html,
+    descriptionPattern,
+    'Invite landing HTML must expose an og:description that mentions the seeded event title.',
+  );
+  expectResponseHtmlPattern(
+    html,
+    ogUrlPattern,
+    'Invite landing HTML must expose the invite URL in og:url.',
+  );
+  expectResponseHtmlPattern(
+    html,
+    canonicalPattern,
+    'Invite landing HTML must expose the invite URL as canonical.',
+  );
+
+  if (expectedImage) {
+    const ogImagePattern = new RegExp(
+      `<meta[^>]+property="og:image"[^>]+content="${escapeRegExp(expectedImage)}"`,
+      'i',
+    );
+    const twitterImagePattern = new RegExp(
+      `<meta[^>]+name="twitter:image"[^>]+content="${escapeRegExp(expectedImage)}"`,
+      'i',
+    );
+    expectResponseHtmlPattern(
+      html,
+      ogImagePattern,
+      'Invite landing HTML must expose the expected og:image URL.',
+    );
+    expectResponseHtmlPattern(
+      html,
+      twitterImagePattern,
+      'Invite landing HTML must expose the expected twitter:image URL.',
+    );
+  } else {
+    expectResponseHtmlPattern(
+      html,
+      /<meta[^>]+property="og:image"[^>]+content="[^"]+"/i,
+      'Invite landing HTML must expose a non-empty og:image fallback.',
+    );
+    expectResponseHtmlPattern(
+      html,
+      /<meta[^>]+name="twitter:image"[^>]+content="[^"]+"/i,
+      'Invite landing HTML must expose a non-empty twitter:image fallback.',
+    );
+  }
+}
+
 async function loginTenantAdmin(api, baseUrl) {
   return loginTenantAdminWithRequiredCredentials({
     api,
@@ -961,63 +1063,14 @@ test('@mutation INVITE-SESSION-CONTEXT invite landing exposes dynamic share meta
       });
       expect(response, 'Invite landing response should be available.').not.toBeNull();
       expect(response.status()).toBeLessThan(400);
-
-      await expect(page).toHaveTitle(new RegExp(escapeRegExp(eventTitle), 'i'), {
-        timeout: appBootTimeoutMs,
-      });
-      await expect(page.locator('head meta[property="og:title"]')).toHaveAttribute(
-        'content',
-        new RegExp(escapeRegExp(eventTitle), 'i'),
-        {
-          timeout: appBootTimeoutMs,
-        },
-      );
-      await expect(page.locator('head meta[name="twitter:title"]')).toHaveAttribute(
-        'content',
-        new RegExp(escapeRegExp(eventTitle), 'i'),
-        {
-          timeout: appBootTimeoutMs,
-        },
-      );
-      await expect(page.locator('head meta[property="og:description"]')).toHaveAttribute(
-        'content',
-        new RegExp(escapeRegExp(eventTitle), 'i'),
-        {
-          timeout: appBootTimeoutMs,
-        },
-      );
-      await expect(page.locator('head meta[property="og:url"]')).toHaveAttribute(
-        'content',
-        inviteUrl,
-        {
-          timeout: appBootTimeoutMs,
-        },
-      );
-      await expect(page.locator('head link[rel="canonical"]')).toHaveAttribute(
-        'href',
-        inviteUrl,
-        {
-          timeout: appBootTimeoutMs,
-        },
-      );
       const expectedImage = textValue(preview?.invite?.event_image_url);
-      const ogImage = page.locator('head meta[property="og:image"]');
-      const twitterImage = page.locator('head meta[name="twitter:image"]');
-      if (expectedImage) {
-        await expect(ogImage).toHaveAttribute('content', expectedImage, {
-          timeout: appBootTimeoutMs,
-        });
-        await expect(twitterImage).toHaveAttribute('content', expectedImage, {
-          timeout: appBootTimeoutMs,
-        });
-      } else {
-        await expect(ogImage).toHaveAttribute('content', /.+/, {
-          timeout: appBootTimeoutMs,
-        });
-        await expect(twitterImage).toHaveAttribute('content', /.+/, {
-          timeout: appBootTimeoutMs,
-        });
-      }
+      const inviteHtml = await response.text();
+      assertInviteResponseHtmlMetadata({
+        html: inviteHtml,
+        eventTitle,
+        inviteUrl,
+        expectedImage,
+      });
 
       await openInvitePreview({
         page,

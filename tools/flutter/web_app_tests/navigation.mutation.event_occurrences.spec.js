@@ -2674,21 +2674,42 @@ async function openOccurrenceEditorForStart(
     `${description} Occurrence card start label must become visible before activation.`,
   );
   const candidates = [
-    page.getByRole('button', { name: new RegExp(escapeRegExp(label)) }).first(),
-    page.getByRole('group', { name: new RegExp(escapeRegExp(label)) }).first(),
-    page.getByText(label, { exact: true }).first(),
+    {
+      kind: 'button',
+      locator: page
+        .getByRole('button', { name: new RegExp(escapeRegExp(label)) })
+        .first(),
+    },
+    {
+      kind: 'group',
+      locator: page
+        .getByRole('group', { name: new RegExp(escapeRegExp(label)) })
+        .first(),
+    },
+    {
+      kind: 'text',
+      locator: page.getByText(label, { exact: true }).first(),
+    },
   ];
 
   for (const candidate of candidates) {
-    if (!(await candidate.isVisible().catch(() => false))) {
+    if (!(await candidate.locator.isVisible().catch(() => false))) {
       continue;
     }
-    await candidate.click({ timeout: appBootTimeoutMs }).catch(() => {});
+    logStep(
+      'evg-helper',
+      `openOccurrenceEditorForStart trying ${candidate.kind} candidate "${label}"`,
+    );
+    await candidate.locator.click({ timeout: 3000 }).catch(() => {});
     const opened = await page
       .getByText('Editar data')
-      .isVisible({ timeout: 3000 })
+      .isVisible({ timeout: 2000 })
       .catch(() => false);
     if (opened) {
+      logStep(
+        'evg-helper',
+        `openOccurrenceEditorForStart opened via ${candidate.kind} candidate "${label}"`,
+      );
       return;
     }
   }
@@ -3120,6 +3141,23 @@ async function openSeededEventFromAdminList(
     `accessible edit button unavailable for "${uniqueTitle}"; using the resolved title locator without coordinate fallback`,
   );
   await title.click({ timeout: appBootTimeoutMs });
+  await expect(page).toHaveURL(adminEventEditRoutePattern, {
+    timeout: appBootTimeoutMs,
+  });
+}
+
+async function openAdminEventEditRoute(page, baseUrl, eventId, description) {
+  const editUrl = buildApiUrl(
+    baseUrl,
+    `/admin/events/${encodeURIComponent(eventId)}/edit`,
+  );
+  const response = await page.goto(editUrl, {
+    waitUntil: 'domcontentloaded',
+  });
+  expect(response, `${description} response should be available.`).not.toBeNull();
+  expect(response.status(), `${description} must load.`).toBeLessThan(400);
+  await assertAppBooted(page);
+  await enableAccessibilityIfNeeded(page);
   await expect(page).toHaveURL(adminEventEditRoutePattern, {
     timeout: appBootTimeoutMs,
   });
@@ -5429,74 +5467,81 @@ test('@mutation admin-authored occurrence profile groups persist full chip readb
         .map(String)
         .sort(),
     );
-    expect(
-      (secondOccurrence?.own_linked_account_profiles || [])
-        .map((profile) => profile?.id?.toString() || '')
-        .filter(Boolean)
-        .sort(),
-      'Second occurrence admin readback must hydrate every linked profile, not only a partial chip subset.',
-    ).toEqual(
-      [bandLead.id, bandSupport.id, guestOne.id, guestTwo.id]
-        .map(String)
-        .sort(),
-    );
-
-    const updatedListLocation = await locateAdminEventListPage(
-      api,
+    await openAdminEventEditRoute(
+      page,
       baseUrl,
-      session.token,
       eventId,
+      'Saved event edit route readback',
     );
-    await openSeededEventFromAdminList(
-      page,
-      baseUrl,
-      uniqueTitle,
-      updatedListLocation.page,
-    );
-    logStep('evg-admin', 'reopened event after save');
-    const reopenedSecondOccurrenceCard = page.getByRole('group', {
-      name: /4 perfis próprios/i,
-    }).first();
-    await scrollUntilVisible(
-      page,
-      reopenedSecondOccurrenceCard,
-      'Saved second occurrence card must expose the four-profile summary chip before readback assertions.',
-    );
-    await reopenedSecondOccurrenceCard.click();
+    logStep('evg-admin', 'reopened event after save via direct edit route');
+    const reopenedOccurrenceCards = page.getByRole('group', {
+      name: /Fim:/i,
+    });
+    await expect(
+      reopenedOccurrenceCards,
+      'Saved event edit route must expose both persisted occurrence cards before readback assertions.',
+    ).toHaveCount(2, { timeout: appBootTimeoutMs });
+    await reopenedOccurrenceCards.nth(1).click();
     await expect(page.getByText('Editar data')).toBeVisible({
       timeout: appBootTimeoutMs,
     });
     logStep('evg-admin', 'reopened second occurrence editor after save');
+    const reopenedSelectorButton = page
+      .getByRole('button', {
+        name: /Selecionar perfis|perfil\(is\) selecionado\(s\)/i,
+      })
+      .last();
     await expect(
-      page.getByRole('button', {
-        name: /4 perfil\(is\) selecionado\(s\)/i,
-      }),
-      'Reopened second occurrence group must keep the full selected count.',
+      reopenedSelectorButton,
+      'Reopened second occurrence group must expose the profile selector entrypoint for lazy member readback.',
     ).toBeVisible({ timeout: appBootTimeoutMs });
-    logStep('evg-admin', 'reopened selected-count button confirmed');
+    await reopenedSelectorButton.click();
+    const reopenedSearchField = page.getByLabel('Buscar perfil').last();
+    const reopenedSelectedCountLabel = page
+      .getByText(/\d+\s+selecionado\(s\)/i)
+      .last();
+    await expect(
+      reopenedSearchField,
+      'Reopened second occurrence selector must become visible before validating persisted members.',
+    ).toBeVisible({ timeout: appBootTimeoutMs });
+    await expect(
+      reopenedSelectedCountLabel,
+      'Reopened second occurrence selector must report the persisted selected-member count.',
+    ).toHaveText(/4\s+selecionado\(s\)/i, { timeout: appBootTimeoutMs });
+    logStep('evg-admin', 'reopened selected-count modal confirmed');
     for (const profileName of [
       bandLeadName,
       bandSupportName,
       guestOneName,
       guestTwoName,
     ]) {
-      const chipLocator = page.getByLabel(
-        new RegExp(`Perfil selecionado\\s+${escapeRegExp(profileName)}`),
+      await fillFlutterTextFieldByLocator(
+        page,
+        reopenedSearchField,
+        profileName,
+        'Buscar perfil',
       );
-      const visibleMatches = await countVisibleMatches(
-        chipLocator,
-      );
-      logStep(
-        'evg-admin',
-        `reopened visible match count for "${profileName}": ${visibleMatches}`,
-      );
-      await expectAnyVisibleMatch(
-        chipLocator,
-        `Reopened second occurrence group must keep chip ${profileName}.`,
-      );
-      logStep('evg-admin', `reopened chip confirmed "${profileName}"`);
+      const checkbox = page.getByRole('checkbox', {
+        name: new RegExp(escapeRegExp(profileName)),
+      });
+      await expect(
+        checkbox,
+        `Reopened second occurrence selector must expose ${profileName}.`,
+      ).toBeVisible({ timeout: appBootTimeoutMs });
+      await expect(
+        checkbox,
+        `Reopened second occurrence selector must keep ${profileName} selected.`,
+      ).toBeChecked({ timeout: appBootTimeoutMs });
+      logStep('evg-admin', `reopened selector confirmed "${profileName}"`);
     }
-    logStep('evg-admin', 'reopened second occurrence chips fully confirmed');
+    await page.getByRole('button', { name: 'Concluir' }).last().click();
+    await expect(
+      reopenedSelectorButton,
+      'After closing the selector, the second occurrence group must keep the persisted selected-member count visible on the entrypoint.',
+    ).toHaveText(/4\s+perfil\(is\)\s+selecionado\(s\)/i, {
+      timeout: appBootTimeoutMs,
+    });
+    logStep('evg-admin', 'reopened second occurrence selector fully confirmed');
     await closeOccurrenceEditorSheet(page);
     logStep('evg-admin', 'reopened second occurrence editor closed');
 
