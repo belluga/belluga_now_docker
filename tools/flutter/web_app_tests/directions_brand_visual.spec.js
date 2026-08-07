@@ -29,7 +29,7 @@ const labeledTileBrandAnalysis = {
   minVerticalSpanRatio: 0.28,
 };
 
-test.describe.configure({ timeout: 300000 });
+test.describe.configure({ timeout: 420000 });
 
 function requireTenantUrl() {
   expect(

@@ -1281,8 +1281,18 @@ if [[ "${flutter_gitlink_workflow_audit_required}" -eq 1 ]]; then
     exit 1
   fi
 
+  if ! grep -Fq 'python3 tool/ci/run_vscode_problems_gate.py' flutter-app/tool/ci/run_stage_promotion_architecture_gate.sh; then
+    echo "ERROR: run_stage_promotion_architecture_gate.sh must use the local VS Code Problems bridge gate outside CI." >&2
+    exit 1
+  fi
+
+  if ! grep -Fq 'if [[ -n "${CI:-}" || -n "${GITHUB_ACTIONS:-}" ]]; then' flutter-app/tool/ci/run_stage_promotion_architecture_gate.sh; then
+    echo "ERROR: run_stage_promotion_architecture_gate.sh must branch between local Problems evidence and CI analyzer evidence." >&2
+    exit 1
+  fi
+
   if ! grep -Fq 'fvm dart analyze "${ANALYZE_PATHS[@]}" --format machine' flutter-app/tool/ci/run_stage_promotion_architecture_gate.sh; then
-    echo "ERROR: run_stage_promotion_architecture_gate.sh must run flutter analyze over the canonical explicit Dart surface." >&2
+    echo "ERROR: run_stage_promotion_architecture_gate.sh must keep the CI-owned flutter analyze over the canonical explicit Dart surface." >&2
     exit 1
   fi
 
