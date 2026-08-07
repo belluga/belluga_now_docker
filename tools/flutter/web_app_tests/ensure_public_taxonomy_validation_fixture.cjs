@@ -799,7 +799,6 @@ async function createPublicEvent(
                   id: 'featured-profiles',
                   label: 'Featured Profiles',
                   order: 0,
-                  account_profile_ids: [relatedProfileId],
                 },
               ]
             : [],
@@ -818,11 +817,35 @@ async function createPublicEvent(
 
   const eventId = payload?.data?.event_id?.toString() || '';
   expect(eventId, 'Fixture event must return an event_id.').toBeTruthy();
+  const occurrenceId = payload?.data?.occurrences?.[0]?.occurrence_id?.toString() || '';
+  expect(
+    occurrenceId,
+    'Fixture event must return the persisted occurrence_id for canonical member patching.',
+  ).toBeTruthy();
   const eventSlug = payload?.data?.slug?.toString() || '';
   expect(
     eventSlug === fixture.eventSlug || eventSlug.startsWith(`${fixture.eventSlug}-`),
     `Fixture event slug must stay anchored to canonical slug ${fixture.eventSlug}. Received ${eventSlug}.`,
   ).toBeTruthy();
+
+  if (relatedProfileId) {
+    const groupPatchResponse = await api.patch(
+      buildUrl(
+        baseUrl,
+        `/admin/api/v1/events/${eventId}/occurrences/${occurrenceId}/profile_groups/featured-profiles/members`,
+      ),
+      {
+        headers: authHeaders(token),
+        data: {
+          add_ids: [relatedProfileId],
+        },
+      },
+    );
+    await fetchJson(
+      groupPatchResponse,
+      `Patch public event fixture members for ${fixture.eventTitle}`,
+    );
+  }
 
   return {
     eventId,
