@@ -105,22 +105,35 @@ function expectResponseHtmlPattern(html, pattern, label) {
   ).toMatch(pattern);
 }
 
+function extractInviteHtmlSiteName(html) {
+  const siteNameMatch = html.match(
+    /<meta[^>]+property="og:site_name"[^>]+content="([^"]+)"/i,
+  );
+  const siteName = siteNameMatch?.[1]?.toString().trim() || '';
+  expect(
+    siteName,
+    'Invite landing HTML must expose a non-empty og:site_name for dynamic share-title validation.',
+  ).toBeTruthy();
+  return siteName;
+}
+
 function assertInviteResponseHtmlMetadata({
   html,
   eventTitle,
   inviteUrl,
   expectedImage,
 }) {
+  const siteName = extractInviteHtmlSiteName(html);
   const titlePattern = new RegExp(
-    `<title>${escapeRegExp(eventTitle)}\\s*\\|\\s*Guarappari</title>`,
+    `<title>${escapeRegExp(eventTitle)}\\s*\\|\\s*${escapeRegExp(siteName)}</title>`,
     'i',
   );
   const ogTitlePattern = new RegExp(
-    `<meta[^>]+property="og:title"[^>]+content="${escapeRegExp(eventTitle)}\\s*\\|\\s*Guarappari"`,
+    `<meta[^>]+property="og:title"[^>]+content="${escapeRegExp(eventTitle)}\\s*\\|\\s*${escapeRegExp(siteName)}"`,
     'i',
   );
   const twitterTitlePattern = new RegExp(
-    `<meta[^>]+name="twitter:title"[^>]+content="${escapeRegExp(eventTitle)}\\s*\\|\\s*Guarappari"`,
+    `<meta[^>]+name="twitter:title"[^>]+content="${escapeRegExp(eventTitle)}\\s*\\|\\s*${escapeRegExp(siteName)}"`,
     'i',
   );
   const descriptionPattern = new RegExp(
