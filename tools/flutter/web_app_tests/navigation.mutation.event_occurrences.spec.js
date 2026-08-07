@@ -1072,7 +1072,13 @@ async function createSingleOccurrenceProgrammedEvent(
   api,
   baseUrl,
   token,
-  { eventType, physicalHost, relatedProfiles, uniqueSuffix },
+  {
+    eventType,
+    physicalHost,
+    relatedProfiles,
+    uniqueSuffix,
+    onCreatedEventId = null,
+  },
 ) {
   const occurrenceParty = relatedProfiles[1] || relatedProfiles[0];
   expect(
@@ -1149,6 +1155,9 @@ async function createSingleOccurrenceProgrammedEvent(
     occurrenceId,
     'Single-occurrence programmed event must return occurrence_id for canonical member patching.',
   ).toBeTruthy();
+  if (typeof onCreatedEventId === 'function') {
+    onCreatedEventId(eventId);
+  }
   const groupMembersResponse = await api.patch(
     buildApiUrl(
       baseUrl,
@@ -1175,7 +1184,14 @@ async function createProgrammedMultiOccurrenceEvent(
   api,
   baseUrl,
   token,
-  { eventType, physicalHost, programmingHost, relatedProfiles, uniqueSuffix },
+  {
+    eventType,
+    physicalHost,
+    programmingHost,
+    relatedProfiles,
+    uniqueSuffix,
+    onCreatedEventId = null,
+  },
 ) {
   const eventParty = relatedProfiles[0];
   const occurrenceParty = relatedProfiles[1];
@@ -1284,6 +1300,9 @@ async function createProgrammedMultiOccurrenceEvent(
     secondOccurrenceId,
     'Programmed event second occurrence must return occurrence_id for canonical member patching.',
   ).toBeTruthy();
+  if (typeof onCreatedEventId === 'function') {
+    onCreatedEventId(eventId);
+  }
   const firstGroupResponse = await api.patch(
     buildApiUrl(
       baseUrl,
@@ -4384,6 +4403,9 @@ test.skip('@deferred @mutation tenant-admin event occurrence FAB persists second
         physicalHost,
         relatedProfiles,
         uniqueSuffix: `${uniqueSuffix}-single-programacao`,
+        onCreatedEventId: (createdEventId) => {
+          singleProgrammedEventId = createdEventId;
+        },
       },
     );
     const singleProgrammedEvent = singleProgrammed.data;
@@ -4480,6 +4502,9 @@ test.skip('@deferred @mutation tenant-admin event occurrence FAB persists second
         programmingHost,
         relatedProfiles,
         uniqueSuffix: `${uniqueSuffix}-programacao`,
+        onCreatedEventId: (createdEventId) => {
+          programmedEventId = createdEventId;
+        },
       },
     );
     const programmedEvent = programmed.data;
@@ -5107,6 +5132,9 @@ test('@mutation repeated public event detail GET/hydration keeps programming pay
         programmingHost,
         relatedProfiles,
         uniqueSuffix: `${uniqueSuffix}-stable-a`,
+        onCreatedEventId: (createdEventId) => {
+          firstEventId = createdEventId;
+        },
       },
     );
     const secondProgrammed = await createProgrammedMultiOccurrenceEvent(
@@ -5119,6 +5147,9 @@ test('@mutation repeated public event detail GET/hydration keeps programming pay
         programmingHost,
         relatedProfiles,
         uniqueSuffix: `${uniqueSuffix}-stable-b`,
+        onCreatedEventId: (createdEventId) => {
+          secondEventId = createdEventId;
+        },
       },
     );
 

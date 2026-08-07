@@ -82,6 +82,20 @@ function writeFixtureState(state) {
   );
 }
 
+function mergeFixtureState(patch) {
+  const current = readFixtureState() || {};
+  const next = { ...current };
+  for (const key of ['primaryProfile', 'relatedProfile', 'event']) {
+    if (patch[key]) {
+      next[key] = {
+        ...(current[key] || {}),
+        ...patch[key],
+      };
+    }
+  }
+  writeFixtureState(next);
+}
+
 function clearFixtureState() {
   try {
     fs.unlinkSync(fixtureStateFilePath());
@@ -1385,8 +1399,15 @@ async function main() {
         {
           name: fixture.profileName,
           expectedSlug: fixture.profileSlug,
+          },
+        );
+      mergeFixtureState({
+        primaryProfile: {
+          accountSlug,
+          profileId,
+          profileSlug,
         },
-      );
+      });
       const {
         profileId: relatedProfileId,
         profileSlug: relatedProfileSlug,
@@ -1401,23 +1422,20 @@ async function main() {
             expectedSlug: fixture.relatedProfileSlug,
           },
         );
+      mergeFixtureState({
+        relatedProfile: {
+          accountSlug: relatedAccountSlug,
+          profileId: relatedProfileId,
+          profileSlug: relatedProfileSlug,
+        },
+      });
       const eventType = await createEventType(api, baseUrl, token);
       const event = await createPublicEvent(api, baseUrl, token, {
         eventType,
         physicalHostId: profileId,
         relatedProfileId,
       });
-      writeFixtureState({
-        primaryProfile: {
-          accountSlug,
-          profileId,
-          profileSlug,
-        },
-        relatedProfile: {
-          accountSlug: relatedAccountSlug,
-          profileId: relatedProfileId,
-          profileSlug: relatedProfileSlug,
-        },
+      mergeFixtureState({
         event: {
           eventId: event.eventId,
           eventSlug: event.eventSlug,
