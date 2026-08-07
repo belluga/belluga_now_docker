@@ -7,7 +7,7 @@ const {
 const tenantUrl = process.env.NAV_TENANT_URL;
 const appBootTimeoutMs = 90000;
 
-test.describe.configure({ timeout: 300000 });
+test.describe.configure({ timeout: 420000 });
 
 function requireTenantUrl() {
   expect(

@@ -304,27 +304,13 @@ function spawnSmokeScriptForPolicyTest(suite, env) {
     const isolatedEnv = {
       ...process.env,
     };
-    for (const key of [
-      'NAV_LOCAL_ENV_FILE',
-      'NAV_WEB_TEST_TYPE',
-      'NAV_DEPLOY_LANE',
-      'NAV_ADMIN_EMAIL',
-      'NAV_ADMIN_PASSWORD',
-      'NAV_LANDLORD_URL',
-      'NAV_TENANT_URL',
-      'NAV_WEB_SHARD',
-      'NAV_WEB_ALLOW_NONLOCAL_MUTATION_HOSTS',
-      'NAV_RUNTIME_DB_MUTATION_ALLOWED',
-      'NAV_INVITE_FALLBACK_EVENT_SLUG',
-      'NAV_INVITE_FALLBACK_OCCURRENCE_ID',
-      'NAV_INVITE_FALLBACK_EVENT_TITLE',
-      'NAV_TEST_RUN_ID',
-      'NAV_WEB_OUTPUT_DIR',
-      'DEPLOY_LANE',
-      'GITHUB_REF_NAME',
-    ]) {
-      delete isolatedEnv[key];
+    for (const key of Object.keys(isolatedEnv)) {
+      if (key.startsWith('NAV_')) {
+        delete isolatedEnv[key];
+      }
     }
+    delete isolatedEnv.DEPLOY_LANE;
+    delete isolatedEnv.GITHUB_REF_NAME;
     Object.assign(isolatedEnv, env);
     if (!isolatedEnv.NAV_WEB_OUTPUT_DIR) {
       isolatedEnv.NAV_WEB_OUTPUT_DIR = path.join(
