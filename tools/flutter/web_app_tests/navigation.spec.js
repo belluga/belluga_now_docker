@@ -735,30 +735,31 @@ test('@mutation tenant agenda UI state matches tenant agenda API payload', async
     const managedFixtureVisibleOnInitialHomePayload = payloadSamples.some(
       (sample) => sample.fixtureVisible,
     );
-    if (managedFixtureVisibleOnInitialHomePayload) {
-      const managedFixtureLabel =
-        managedFixtureCandidate?.title?.toString().trim() || fixture.eventTitle;
-      const managedFixtureTitle = page
-        .getByText(new RegExp(escapeRegExp(managedFixtureLabel), 'i'))
-        .first();
-      const visibleManagedFixtureTitle = await scrollPageUntilLocatorVisible(
-        page,
-        managedFixtureTitle,
-        {
-          timeout: appBootTimeoutMs,
-        },
-      );
-      expect(
-        visibleManagedFixtureTitle,
-        `Managed home agenda fixture ${managedFixtureLabel} must render somewhere in the tenant home agenda feed when it is already present in the initial home agenda payload.`,
-      ).toBeTruthy();
-      await expect(
-        visibleManagedFixtureTitle,
-        `Managed home agenda fixture ${managedFixtureLabel} must render on the tenant home surface when it is already present in the initial home agenda payload.`,
-      ).toBeVisible({
+    const managedFixtureLabel =
+      managedFixtureCandidate?.title?.toString().trim() || fixture.eventTitle;
+    const managedFixtureTitle = page
+      .getByText(new RegExp(escapeRegExp(managedFixtureLabel), 'i'))
+      .first();
+    const visibleManagedFixtureTitle = await scrollPageUntilLocatorVisible(
+      page,
+      managedFixtureTitle,
+      {
         timeout: appBootTimeoutMs,
-      });
-    }
+      },
+    );
+    const renderExpectationQualifier = managedFixtureVisibleOnInitialHomePayload
+      ? 'it is already present in the initial home agenda payload'
+      : 'the home feed paginates into the later agenda page that contains it';
+    expect(
+      visibleManagedFixtureTitle,
+      `Managed home agenda fixture ${managedFixtureLabel} must render on the tenant home surface when ${renderExpectationQualifier}.`,
+    ).toBeTruthy();
+    await expect(
+      visibleManagedFixtureTitle,
+      `Managed home agenda fixture ${managedFixtureLabel} must render on the tenant home surface when ${renderExpectationQualifier}.`,
+    ).toBeVisible({
+      timeout: appBootTimeoutMs,
+    });
   }
 
   const summary = summarizeCriticalBrowserFailures(collectors);
