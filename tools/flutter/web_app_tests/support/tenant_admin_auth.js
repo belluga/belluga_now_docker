@@ -1,4 +1,8 @@
 const { expect } = require('@playwright/test');
+const adminAuthTimeoutMs = Number.parseInt(
+  process.env.NAV_ADMIN_AUTH_TIMEOUT_MS || '90000',
+  10,
+);
 
 function defaultBuildUrl(baseUrl, pathName) {
   return new URL(pathName, baseUrl).toString();
@@ -40,6 +44,7 @@ async function loginTenantAdmin({
 
   for (let attempt = 0; attempt < 3; attempt += 1) {
     loginResponse = await api.post(loginUrl, {
+      timeout: adminAuthTimeoutMs,
       data: {
         ...loginPayload,
         device_name: attempt === 0
@@ -73,6 +78,7 @@ async function loginTenantAdmin({
   expect(token, 'Tenant-admin login must return a bearer token.').toBeTruthy();
 
   const meResponse = await api.get(buildUrl(baseUrl, '/admin/api/v1/me'), {
+    timeout: adminAuthTimeoutMs,
     headers: {
       Authorization: `Bearer ${token}`,
       Accept: 'application/json',

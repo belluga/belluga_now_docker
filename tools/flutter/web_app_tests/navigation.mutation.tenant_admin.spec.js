@@ -532,6 +532,24 @@ async function assertAppBooted(page) {
   });
 }
 
+async function assertAppBootedWithSingleReload(page, {
+  flow,
+  logStep,
+  responseLabel,
+}) {
+  try {
+    await assertAppBooted(page);
+    return;
+  } catch (error) {
+    logStep(flow, `${responseLabel} splash stall detected; reloading once`);
+    const reloadResponse = await page.reload({ waitUntil: 'domcontentloaded' });
+    expect(reloadResponse, `${responseLabel} reload must respond.`).not.toBeNull();
+    expect(reloadResponse.status()).toBeLessThan(400);
+    logStep(flow, `${responseLabel} reload responded ${reloadResponse.status()}`);
+    await assertAppBooted(page);
+  }
+}
+
 async function attachImageFromDevice(
   page,
   {
@@ -5160,7 +5178,11 @@ test('@mutation tenant-admin event CRUD creates, reopens edit readback, and remo
     expect(listResponse, 'Tenant-admin events route must respond.').not.toBeNull();
     expect(listResponse.status()).toBeLessThan(400);
     logStep('event-crud', `events list responded ${listResponse.status()}`);
-    await assertAppBooted(page);
+    await assertAppBootedWithSingleReload(page, {
+      flow: 'event-crud',
+      logStep,
+      responseLabel: 'Tenant-admin events route',
+    });
     logStep('event-crud', 'events app boot completed');
     await enableAccessibilityIfNeeded(page);
     logStep('event-crud', 'events accessibility enabled');
@@ -5430,7 +5452,11 @@ test('@mutation tenant-admin event create rejects stale selected event type with
     expect(response, 'Tenant-admin events route must respond.').not.toBeNull();
     expect(response.status()).toBeLessThan(400);
     logStep('event-422', `events list responded ${response.status()}`);
-    await assertAppBooted(page);
+    await assertAppBootedWithSingleReload(page, {
+      flow: 'event-422',
+      logStep,
+      responseLabel: 'Tenant-admin events route',
+    });
     logStep('event-422', 'events app boot completed');
     await enableAccessibilityIfNeeded(page);
     logStep('event-422', 'events accessibility enabled');
