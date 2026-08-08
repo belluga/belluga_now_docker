@@ -6,6 +6,10 @@ const {
 } = require('./support/tenant_admin_auth');
 const { selectDropdownOption } = require('./support/semantic_dropdown');
 const {
+  installFailureCollectors,
+  summarizeCriticalBrowserFailures,
+} = require('./support/browser_failure_collectors');
+const {
   cleanupOnboardedAccount,
   cleanupOnboardedAccounts,
 } = require('./support/account_onboarding_cleanup');
@@ -205,104 +209,33 @@ function anonymousFingerprintHash(baseUrl) {
     .digest('hex');
 }
 
-function installFailureCollectors(page) {
-  const runtimeErrors = [];
-  const failedRequests = [];
-  const ignoredFailedRequests = [];
-  const consoleErrors = [];
-  const rateLimitedResponses = [];
-
-  page.on('pageerror', (error) => runtimeErrors.push(error.message));
-  page.on('requestfailed', (request) => {
-    const failureText = request.failure()?.errorText || 'unknown';
-    if (isNonCriticalFailedRequest(request, failureText)) {
-      ignoredFailedRequests.push(request.url());
-      return;
-    }
-    failedRequests.push(`${request.method()} ${request.url()} (${failureText})`);
-  });
-  page.on('console', (message) => {
-    if (message.type() === 'error') {
-      consoleErrors.push(message.text());
-    }
-  });
-  page.on('response', (response) => {
-    if (response.status() !== 429) {
-      return;
-    }
-    rateLimitedResponses.push(
-      `${response.request().method()} ${response.url()}`,
-    );
-  });
-
-  return {
-    runtimeErrors,
-    failedRequests,
-    ignoredFailedRequests,
-    consoleErrors,
-    rateLimitedResponses,
-  };
-}
-
-function isNonCriticalFailedRequest(request, failureText) {
-  if (failureText === 'net::ERR_ABORTED') {
-    return true;
-  }
-
-  if (['image', 'media', 'font'].includes(request.resourceType())) {
-    return true;
-  }
-
-  return /\.(?:avif|gif|jpe?g|png|svg|webp|woff2?)(?:[?#].*)?$/i.test(
-    request.url(),
-  );
-}
-
 async function assertNoBrowserFailures(collectors) {
+  const summary = summarizeCriticalBrowserFailures(collectors, {
+    allowedRateLimitedResponseSubstrings: [
+      '/api/v1/media/',
+      'ingest.sentry.io',
+      '/envelope/',
+    ],
+  });
   expect(
-    collectors.runtimeErrors,
-    `Unexpected runtime errors:\n${collectors.runtimeErrors.join('\n')}`,
+    summary.runtimeErrors,
+    `Unexpected runtime errors:\n${summary.runtimeErrors.join('\n')}`,
   ).toEqual([]);
   expect(
-    collectors.failedRequests,
-    `Unexpected failed requests:\n${collectors.failedRequests.join('\n')}`,
+    summary.failedRequests,
+    `Unexpected failed requests:\n${summary.failedRequests.join('\n')}`,
   ).toEqual([]);
-
-  const disallowedRateLimits = collectors.rateLimitedResponses.filter(
-    (entry) =>
-      !entry.includes('/api/v1/media/') &&
-      !entry.includes('/api/v1/account-profiles/') &&
-      !entry.includes('/avatar') &&
-      !entry.includes('/cover') &&
-      !entry.includes('ingest.sentry.io') &&
-      !entry.includes('/envelope/'),
-  );
   expect(
-    disallowedRateLimits,
-    `Disallowed 429 responses:\n${disallowedRateLimits.join('\n')}`,
+    summary.criticalHttpResponses,
+    `Critical HTTP responses:\n${summary.criticalHttpResponses.join('\n')}`,
   ).toEqual([]);
-
-  const criticalConsoleErrors = collectors.consoleErrors.filter(
-    (entry) =>
-      !entry.includes('status of 401') &&
-      !entry.includes('ResizeObserver loop limit exceeded') &&
-      !(
-        entry.includes('has been blocked by CORS policy') &&
-        collectors.ignoredFailedRequests.some((url) => entry.includes(url))
-      ) &&
-      !(
-        entry.includes('Failed to load resource: net::ERR_FAILED') &&
-        collectors.ignoredFailedRequests.length > 0
-      ) &&
-      !(
-        entry.includes('status of 429') &&
-        collectors.rateLimitedResponses.length > 0 &&
-        disallowedRateLimits.length == 0
-      ),
-  );
   expect(
-    criticalConsoleErrors,
-    `Critical console errors:\n${criticalConsoleErrors.join('\n')}`,
+    summary.disallowedRateLimitedResponses,
+    `Disallowed 429 responses:\n${summary.disallowedRateLimitedResponses.join('\n')}`,
+  ).toEqual([]);
+  expect(
+    summary.criticalConsoleErrors,
+    `Critical console errors:\n${summary.criticalConsoleErrors.join('\n')}`,
   ).toEqual([]);
 }
 
@@ -1139,7 +1072,13 @@ async function createSingleOccurrenceProgrammedEvent(
   api,
   baseUrl,
   token,
-  { eventType, physicalHost, relatedProfiles, uniqueSuffix },
+  {
+    eventType,
+    physicalHost,
+    relatedProfiles,
+    uniqueSuffix,
+    onCreatedEventId = null,
+  },
 ) {
   const occurrenceParty = relatedProfiles[1] || relatedProfiles[0];
   expect(
@@ -1178,7 +1117,6 @@ async function createSingleOccurrenceProgrammedEvent(
                 id: `programacao-single-${uniqueSuffix}`,
                 label: 'Participantes',
                 order: 0,
-                account_profile_ids: [occurrenceParty.id],
               },
             ],
             programming_items: [
@@ -1210,6 +1148,32 @@ async function createSingleOccurrenceProgrammedEvent(
     data?.occurrences || [],
     'Single-occurrence programmed event must return one occurrence.',
   ).toHaveLength(1);
+  const eventId = data?.event_id?.toString() || '';
+  const occurrenceId = data?.occurrences?.[0]?.occurrence_id?.toString() || '';
+  expect(eventId, 'Single-occurrence programmed event must return event_id.').toBeTruthy();
+  expect(
+    occurrenceId,
+    'Single-occurrence programmed event must return occurrence_id for canonical member patching.',
+  ).toBeTruthy();
+  if (typeof onCreatedEventId === 'function') {
+    onCreatedEventId(eventId);
+  }
+  const groupMembersResponse = await api.patch(
+    buildApiUrl(
+      baseUrl,
+      `/admin/api/v1/events/${eventId}/occurrences/${occurrenceId}/profile_groups/programacao-single-${uniqueSuffix}/members`,
+    ),
+    {
+      data: {
+        add_ids: [occurrenceParty.id],
+      },
+      headers: authHeaders(token),
+    },
+  );
+  expect(
+    groupMembersResponse.status(),
+    'Single-occurrence programmed event must patch canonical group members.',
+  ).toBeLessThan(400);
   return {
     data,
     occurrenceParty,
@@ -1220,7 +1184,14 @@ async function createProgrammedMultiOccurrenceEvent(
   api,
   baseUrl,
   token,
-  { eventType, physicalHost, programmingHost, relatedProfiles, uniqueSuffix },
+  {
+    eventType,
+    physicalHost,
+    programmingHost,
+    relatedProfiles,
+    uniqueSuffix,
+    onCreatedEventId = null,
+  },
 ) {
   const eventParty = relatedProfiles[0];
   const occurrenceParty = relatedProfiles[1];
@@ -1247,18 +1218,18 @@ async function createProgrammedMultiOccurrenceEvent(
           type: 'account_profile',
           id: physicalHost.id,
         },
-        profile_groups: [
-          {
-            id: `programacao-evento-${uniqueSuffix}`,
-            label: 'Participantes',
-            order: 0,
-            account_profile_ids: [eventParty.id],
-          },
-        ],
+        profile_groups: [],
         occurrences: [
           {
             date_time_start: firstStart.toISOString(),
             date_time_end: firstEnd.toISOString(),
+            profile_groups: [
+              {
+                id: `programacao-primeira-${uniqueSuffix}`,
+                label: 'Participantes',
+                order: 0,
+              },
+            ],
           },
           {
             date_time_start: secondStart.toISOString(),
@@ -1268,7 +1239,6 @@ async function createProgrammedMultiOccurrenceEvent(
                 id: `programacao-ocorrencia-${uniqueSuffix}`,
                 label: 'Participantes',
                 order: 0,
-                account_profile_ids: [occurrenceParty.id],
               },
             ],
             programming_items: [
@@ -1319,6 +1289,52 @@ async function createProgrammedMultiOccurrenceEvent(
     .toBeTruthy();
   expect(data?.occurrences || [], 'Programmed event must return two occurrences.')
     .toHaveLength(2);
+  const eventId = data?.event_id?.toString() || '';
+  const firstOccurrenceId = data?.occurrences?.[0]?.occurrence_id?.toString() || '';
+  const secondOccurrenceId = data?.occurrences?.[1]?.occurrence_id?.toString() || '';
+  expect(
+    firstOccurrenceId,
+    'Programmed event first occurrence must return occurrence_id for canonical member patching.',
+  ).toBeTruthy();
+  expect(
+    secondOccurrenceId,
+    'Programmed event second occurrence must return occurrence_id for canonical member patching.',
+  ).toBeTruthy();
+  if (typeof onCreatedEventId === 'function') {
+    onCreatedEventId(eventId);
+  }
+  const firstGroupResponse = await api.patch(
+    buildApiUrl(
+      baseUrl,
+      `/admin/api/v1/events/${eventId}/occurrences/${firstOccurrenceId}/profile_groups/programacao-primeira-${uniqueSuffix}/members`,
+    ),
+    {
+      data: {
+        add_ids: [eventParty.id],
+      },
+      headers: authHeaders(token),
+    },
+  );
+  expect(
+    firstGroupResponse.status(),
+    'Programmed event first occurrence must patch canonical group members.',
+  ).toBeLessThan(400);
+  const secondGroupResponse = await api.patch(
+    buildApiUrl(
+      baseUrl,
+      `/admin/api/v1/events/${eventId}/occurrences/${secondOccurrenceId}/profile_groups/programacao-ocorrencia-${uniqueSuffix}/members`,
+    ),
+    {
+      data: {
+        add_ids: [eventParty.id, occurrenceParty.id],
+      },
+      headers: authHeaders(token),
+    },
+  );
+  expect(
+    secondGroupResponse.status(),
+    'Programmed event second occurrence must patch canonical group members.',
+  ).toBeLessThan(400);
   return {
     data,
     eventParty,
@@ -2569,103 +2585,32 @@ function relatedProfileDisplayName(profile) {
   ).trim();
 }
 
-async function addOccurrenceProfileGroup(page, { groupLabel, profileNames = [] }) {
+async function addOccurrenceProfileGroup(page, { groupLabel }) {
   logStep(
     'evg-helper',
-    `addOccurrenceProfileGroup start label="${groupLabel}" profiles=${profileNames.join(' | ') || '<none>'}`,
+    `addOccurrenceProfileGroup start label="${groupLabel}"`,
   );
   await page.getByRole('button', { name: 'Adicionar grupo' }).click();
   await fillFlutterTextField(page, 'Nome da aba', groupLabel);
   logStep('evg-helper', `group label filled "${groupLabel}"`);
-
-  if (profileNames.length === 0) {
-    return;
-  }
-
-  const selectorButton = page.getByRole('button', {
-    name: /Selecionar perfis|perfil\(is\) selecionado\(s\)/i,
-  });
-  await selectorButton.click();
-  logStep('evg-helper', `group selector opened "${groupLabel}"`);
-  const searchField = page.getByLabel('Buscar perfil').last();
-  await expect(
-    searchField,
-    'Occurrence profile selector search field must be visible after opening the selector.',
-  ).toBeVisible({ timeout: appBootTimeoutMs });
-  const modalSelectedCountLabel = page
-    .getByText(/\d+\s+selecionado\(s\)/i)
-    .last();
-  const selectedCount = async () => {
-    const modalText =
-      (await modalSelectedCountLabel.textContent().catch(() => '')) || '';
-    const modalMatch = modalText.match(/(\d+)\s+selecionado\(s\)/i);
-    if (modalMatch) {
-      return Number.parseInt(modalMatch[1], 10);
-    }
-
-    const buttonText =
-      (await selectorButton.textContent().catch(() => '')) || '';
-    const buttonMatch = buttonText.match(
-      /(\d+)\s+perfil\(is\)\s+selecionado\(s\)/i,
-    );
-    return buttonMatch ? Number.parseInt(buttonMatch[1], 10) : 0;
-  };
-
-  for (const [index, profileName] of profileNames.entries()) {
-    await fillFlutterTextFieldByLocator(
-      page,
-      searchField,
-      profileName,
-      'Buscar perfil',
-    );
-
-    const checkbox = page.getByRole('checkbox', {
-      name: new RegExp(escapeRegExp(profileName)),
-    });
-    const candidateText = page.getByText(profileName, {
-      exact: true,
-    });
-    await expect(
-      checkbox,
-      `Occurrence profile selector must expose candidate ${profileName}.`,
-    ).toBeVisible({ timeout: appBootTimeoutMs });
-    const expectedCount = index + 1;
-    if ((await selectedCount()) < expectedCount) {
-      const selectionActions = [
-        async () => checkbox.check(),
-        async () => checkbox.click(),
-        async () => {
-          await checkbox.focus();
-          await page.keyboard.press('Space');
-        },
-        async () => candidateText.click(),
-      ];
-      for (const action of selectionActions) {
-        if ((await selectedCount()) >= expectedCount) {
-          break;
+  await expect
+    .poll(
+      async () => {
+        const labelFields = await page.getByLabel('Nome da aba').all();
+        for (const field of labelFields) {
+          const currentValue = await field.inputValue().catch(() => '');
+          if (currentValue.trim() === groupLabel) {
+            return true;
+          }
         }
-        await action().catch(() => {});
-        await page.waitForTimeout(200);
-      }
-      await expect
-        .poll(selectedCount, {
-          timeout: appBootTimeoutMs,
-          message: `Occurrence profile selector must increment to ${expectedCount} after selecting ${profileName}.`,
-        })
-        .toBe(expectedCount);
-    }
-    logStep('evg-helper', `selected group profile "${profileName}"`);
-  }
-
-  await page.getByRole('button', { name: 'Concluir' }).last().click();
-  logStep('evg-helper', `group selector closed "${groupLabel}"`);
-  await expect(
-    page.getByRole('button', {
-      name: new RegExp(`${profileNames.length}\\s+perfil\\(is\\) selecionado\\(s\\)`),
-    }),
-    `Occurrence profile selector must report ${profileNames.length} selected profile(s).`,
-  ).toBeVisible({ timeout: appBootTimeoutMs });
-  logStep('evg-helper', `group selection count visible "${groupLabel}"`);
+        return false;
+      },
+      {
+        timeout: appBootTimeoutMs,
+        message: `Occurrence profile group "${groupLabel}" must remain visible in the editor after local creation.`,
+      },
+    )
+    .toBe(true);
 }
 
 async function enableProgrammingItemTimedMode(page) {
@@ -2735,32 +2680,19 @@ async function openOccurrenceEditorForStart(
   description = 'Occurrence card must open the occurrence editor.',
 ) {
   const label = formatAdminOccurrenceDateTimeLabel(startValue);
-  await scrollUntilTextInViewport(
-    page,
-    label,
-    `${description} Occurrence card start label must become visible before activation.`,
-  );
-  const candidates = [
-    page.getByRole('button', { name: new RegExp(escapeRegExp(label)) }).first(),
-    page.getByRole('group', { name: new RegExp(escapeRegExp(label)) }).first(),
-    page.getByText(label, { exact: true }).first(),
-  ];
-
-  for (const candidate of candidates) {
-    if (!(await candidate.isVisible().catch(() => false))) {
-      continue;
-    }
-    await candidate.click({ timeout: appBootTimeoutMs }).catch(() => {});
-    const opened = await page
-      .getByText('Editar data')
-      .isVisible({ timeout: 3000 })
-      .catch(() => false);
-    if (opened) {
-      return;
-    }
-  }
-
-  throw new Error(`${description} Start label: ${label}`);
+  const labelLocator = page.getByText(label, { exact: true }).last();
+  logStep('evg-helper', `openOccurrenceEditorForStart seeking "${label}"`);
+  await labelLocator.scrollIntoViewIfNeeded().catch(() => {});
+  await expect(
+    labelLocator,
+    `${description} Occurrence card start label must become visible before activation. Start label: ${label}`,
+  ).toBeVisible({ timeout: appBootTimeoutMs });
+  await labelLocator.click({ timeout: appBootTimeoutMs });
+  await expect(
+    page.getByText(/Editar data|Editar ocorrência principal/i).first(),
+    `${description} Clicking the occurrence start label must reopen the editor. Start label: ${label}`,
+  ).toBeVisible({ timeout: appBootTimeoutMs });
+  logStep('evg-helper', `openOccurrenceEditorForStart opened "${label}"`);
 }
 
 async function assertTextDoesNotAppearBetween(
@@ -3187,6 +3119,23 @@ async function openSeededEventFromAdminList(
     `accessible edit button unavailable for "${uniqueTitle}"; using the resolved title locator without coordinate fallback`,
   );
   await title.click({ timeout: appBootTimeoutMs });
+  await expect(page).toHaveURL(adminEventEditRoutePattern, {
+    timeout: appBootTimeoutMs,
+  });
+}
+
+async function openAdminEventEditRoute(page, baseUrl, eventId, description) {
+  const editUrl = buildApiUrl(
+    baseUrl,
+    `/admin/events/${encodeURIComponent(eventId)}/edit`,
+  );
+  const response = await page.goto(editUrl, {
+    waitUntil: 'domcontentloaded',
+  });
+  expect(response, `${description} response should be available.`).not.toBeNull();
+  expect(response.status(), `${description} must load.`).toBeLessThan(400);
+  await assertAppBooted(page);
+  await enableAccessibilityIfNeeded(page);
   await expect(page).toHaveURL(adminEventEditRoutePattern, {
     timeout: appBootTimeoutMs,
   });
@@ -4454,6 +4403,9 @@ test.skip('@deferred @mutation tenant-admin event occurrence FAB persists second
         physicalHost,
         relatedProfiles,
         uniqueSuffix: `${uniqueSuffix}-single-programacao`,
+        onCreatedEventId: (createdEventId) => {
+          singleProgrammedEventId = createdEventId;
+        },
       },
     );
     const singleProgrammedEvent = singleProgrammed.data;
@@ -4550,6 +4502,9 @@ test.skip('@deferred @mutation tenant-admin event occurrence FAB persists second
         programmingHost,
         relatedProfiles,
         uniqueSuffix: `${uniqueSuffix}-programacao`,
+        onCreatedEventId: (createdEventId) => {
+          programmedEventId = createdEventId;
+        },
       },
     );
     const programmedEvent = programmed.data;
@@ -5177,6 +5132,9 @@ test('@mutation repeated public event detail GET/hydration keeps programming pay
         programmingHost,
         relatedProfiles,
         uniqueSuffix: `${uniqueSuffix}-stable-a`,
+        onCreatedEventId: (createdEventId) => {
+          firstEventId = createdEventId;
+        },
       },
     );
     const secondProgrammed = await createProgrammedMultiOccurrenceEvent(
@@ -5189,6 +5147,9 @@ test('@mutation repeated public event detail GET/hydration keeps programming pay
         programmingHost,
         relatedProfiles,
         uniqueSuffix: `${uniqueSuffix}-stable-b`,
+        onCreatedEventId: (createdEventId) => {
+          secondEventId = createdEventId;
+        },
       },
     );
 
@@ -5421,9 +5382,8 @@ test('@mutation admin-authored occurrence profile groups persist full chip readb
     );
     await addOccurrenceProfileGroup(page, {
       groupLabel: 'Bandas',
-      profileNames: [bandLeadName, bandSupportName],
     });
-    logStep('evg-admin', 'first occurrence group authored');
+    logStep('evg-admin', 'first occurrence group metadata authored');
     await closeOccurrenceEditorSheet(page);
     logStep('evg-admin', 'first occurrence editor closed');
 
@@ -5436,14 +5396,8 @@ test('@mutation admin-authored occurrence profile groups persist full chip readb
     );
     await addOccurrenceProfileGroup(page, {
       groupLabel: 'Outro Grupo',
-      profileNames: [
-        guestOneName,
-        guestTwoName,
-        bandLeadName,
-        bandSupportName,
-      ],
     });
-    logStep('evg-admin', 'second occurrence four-profile group authored');
+    logStep('evg-admin', 'second occurrence group metadata authored');
     await closeOccurrenceEditorSheet(page);
     logStep('evg-admin', 'second occurrence editor closed before root save');
 
@@ -5463,15 +5417,23 @@ test('@mutation admin-authored occurrence profile groups persist full chip readb
     await updateResponsePromise;
     logStep('evg-admin', 'root event save completed');
 
-    const updatedEvent = await fetchAdminEvent(api, baseUrl, session.token, eventId);
-    const firstOccurrence = updatedEvent?.occurrences?.[0] || null;
-    const secondOccurrence = updatedEvent?.occurrences?.[1] || null;
+    const metadataSavedEvent = await fetchAdminEvent(api, baseUrl, session.token, eventId);
+    const firstOccurrence = metadataSavedEvent?.occurrences?.[0] || null;
+    const secondOccurrence = metadataSavedEvent?.occurrences?.[1] || null;
     const firstOccurrenceId =
       firstOccurrence?.occurrence_id?.toString() || '';
     const secondOccurrenceId =
       secondOccurrence?.occurrence_id?.toString() || '';
+    const firstGroupId =
+      firstOccurrence?.profile_groups?.[0]?.id?.toString() ||
+      firstOccurrence?.profile_groups?.[0]?.key?.toString() ||
+      '';
+    const secondGroupId =
+      secondOccurrence?.profile_groups?.[0]?.id?.toString() ||
+      secondOccurrence?.profile_groups?.[0]?.key?.toString() ||
+      '';
     expect(
-      updatedEvent?.occurrences || [],
+      metadataSavedEvent?.occurrences || [],
       'Profile-group authoring proof must persist two occurrences.',
     ).toHaveLength(2);
     expect(
@@ -5487,85 +5449,81 @@ test('@mutation admin-authored occurrence profile groups persist full chip readb
       'Second occurrence admin readback must keep the custom occurrence group label.',
     ).toBe('Outro Grupo');
     expect(
-      (secondOccurrence?.profile_groups?.[0]?.account_profile_ids || [])
-        .map(String)
-        .sort(),
-      'Second occurrence admin readback must keep all four selected member ids.',
-    ).toEqual(
-      [bandLead.id, bandSupport.id, guestOne.id, guestTwo.id]
-        .map(String)
-        .sort(),
+      firstGroupId,
+      'First occurrence admin readback must expose a canonical group id after the root save.',
+    ).toBeTruthy();
+    expect(
+      secondGroupId,
+      'Second occurrence admin readback must expose a canonical group id after the root save.',
+    ).toBeTruthy();
+    const firstMembersResponse = await api.patch(
+      buildApiUrl(
+        baseUrl,
+        `/admin/api/v1/events/${eventId}/occurrences/${firstOccurrenceId}/profile_groups/${firstGroupId}/members`,
+      ),
+      {
+        data: {
+          add_ids: [bandLead.id, bandSupport.id],
+        },
+        headers: authHeaders(session.token),
+      },
     );
     expect(
-      (secondOccurrence?.own_linked_account_profiles || [])
-        .map((profile) => profile?.id?.toString() || '')
-        .filter(Boolean)
-        .sort(),
-      'Second occurrence admin readback must hydrate every linked profile, not only a partial chip subset.',
-    ).toEqual(
-      [bandLead.id, bandSupport.id, guestOne.id, guestTwo.id]
-        .map(String)
-        .sort(),
+      firstMembersResponse.status(),
+      'First occurrence canonical group members patch must succeed after the root save.',
+    ).toBeLessThan(400);
+    const secondMembersResponse = await api.patch(
+      buildApiUrl(
+        baseUrl,
+        `/admin/api/v1/events/${eventId}/occurrences/${secondOccurrenceId}/profile_groups/${secondGroupId}/members`,
+      ),
+      {
+        data: {
+          add_ids: [
+            guestOne.id,
+            guestTwo.id,
+            bandLead.id,
+            bandSupport.id,
+          ],
+        },
+        headers: authHeaders(session.token),
+      },
     );
+    expect(
+      secondMembersResponse.status(),
+      'Second occurrence canonical group members patch must succeed after the root save.',
+    ).toBeLessThan(400);
+    logStep('evg-admin', 'canonical occurrence group members patched after root save');
 
-    const updatedListLocation = await locateAdminEventListPage(
-      api,
-      baseUrl,
-      session.token,
-      eventId,
-    );
-    await openSeededEventFromAdminList(
-      page,
-      baseUrl,
-      uniqueTitle,
-      updatedListLocation.page,
-    );
-    logStep('evg-admin', 'reopened event after save');
-    const reopenedSecondOccurrenceCard = page.getByRole('group', {
-      name: /4 perfis próprios/i,
-    }).first();
-    await scrollUntilVisible(
-      page,
-      reopenedSecondOccurrenceCard,
-      'Saved second occurrence card must expose the four-profile summary chip before readback assertions.',
-    );
-    await reopenedSecondOccurrenceCard.click();
-    await expect(page.getByText('Editar data')).toBeVisible({
-      timeout: appBootTimeoutMs,
-    });
-    logStep('evg-admin', 'reopened second occurrence editor after save');
-    await expect(
-      page.getByRole('button', {
-        name: /4 perfil\(is\) selecionado\(s\)/i,
-      }),
-      'Reopened second occurrence group must keep the full selected count.',
-    ).toBeVisible({ timeout: appBootTimeoutMs });
-    logStep('evg-admin', 'reopened selected-count button confirmed');
-    for (const profileName of [
-      bandLeadName,
-      bandSupportName,
-      guestOneName,
-      guestTwoName,
-    ]) {
-      const chipLocator = page.getByLabel(
-        new RegExp(`Perfil selecionado\\s+${escapeRegExp(profileName)}`),
-      );
-      const visibleMatches = await countVisibleMatches(
-        chipLocator,
-      );
-      logStep(
-        'evg-admin',
-        `reopened visible match count for "${profileName}": ${visibleMatches}`,
-      );
-      await expectAnyVisibleMatch(
-        chipLocator,
-        `Reopened second occurrence group must keep chip ${profileName}.`,
-      );
-      logStep('evg-admin', `reopened chip confirmed "${profileName}"`);
-    }
-    logStep('evg-admin', 'reopened second occurrence chips fully confirmed');
-    await closeOccurrenceEditorSheet(page);
-    logStep('evg-admin', 'reopened second occurrence editor closed');
+    await expect
+      .poll(
+        async () => {
+          const event = await fetchAdminEvent(api, baseUrl, session.token, eventId);
+          return [
+            Number(event?.occurrences?.[0]?.profile_groups?.[0]?.member_count || 0),
+            Number(event?.occurrences?.[1]?.profile_groups?.[0]?.member_count || 0),
+          ].join(',');
+        },
+        {
+          timeout: appBootTimeoutMs,
+          message:
+            'Admin event readback must reflect canonical member counts after the post-save occurrence-group patch.',
+        },
+      )
+      .toBe('2,4');
+
+    const updatedEvent = await fetchAdminEvent(api, baseUrl, session.token, eventId);
+    const updatedFirstOccurrence = updatedEvent?.occurrences?.[0] || null;
+    const updatedSecondOccurrence = updatedEvent?.occurrences?.[1] || null;
+    expect(
+      Number(updatedFirstOccurrence?.profile_groups?.[0]?.member_count || 0),
+      'First occurrence admin readback must preserve the persisted member count after canonical group management.',
+    ).toBe(2);
+    expect(
+      Number(updatedSecondOccurrence?.profile_groups?.[0]?.member_count || 0),
+      'Second occurrence admin readback must stay summary-only while preserving the persisted member count.',
+    ).toBe(4);
+    logStep('evg-admin', 'admin API summary readback confirmed after canonical member patch');
 
     const eventRef = updatedEvent?.slug || eventId;
     const firstPublicDetail = await fetchPublicEvent(

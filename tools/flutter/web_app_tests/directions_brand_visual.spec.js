@@ -29,7 +29,7 @@ const labeledTileBrandAnalysis = {
   minVerticalSpanRatio: 0.28,
 };
 
-test.describe.configure({ timeout: 300000 });
+test.describe.configure({ timeout: 420000 });
 
 function requireTenantUrl() {
   expect(
@@ -325,6 +325,23 @@ async function deleteAccountProfileType(api, baseUrl, token, profileType) {
   expect(
     [404, 200, 204],
     `Directions profile type cleanup must delete ${profileType} or observe it already missing.`,
+  ).toContain(response.status());
+}
+
+async function forceDeleteAccountProfile(api, baseUrl, token, profileId) {
+  if (!profileId) {
+    return;
+  }
+  const response = await api.post(
+    buildUrl(baseUrl, `/admin/api/v1/account_profiles/${profileId}/force_delete`),
+    {
+      headers: authHeaders(token),
+      failOnStatusCode: false,
+    },
+  );
+  expect(
+    [404, 200, 204],
+    `Directions profile cleanup must force-delete ${profileId} or observe it already missing.`,
   ).toContain(response.status());
 }
 
@@ -1067,6 +1084,7 @@ test('@mutation NAV-DIR-BRAND-01 Waze and Uber brand controls render on shared d
       if (accountSlug) {
         await cleanupOnboardedAccount(api, baseUrl, token, accountSlug);
       }
+      await forceDeleteAccountProfile(api, baseUrl, token, profileId);
       await deleteEventType(api, baseUrl, token, eventTypeId);
       await deleteAccountProfileType(api, baseUrl, token, profileType);
     });

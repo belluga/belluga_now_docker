@@ -1,23 +1,20 @@
 #!/usr/bin/env node
 
 const crypto = require('crypto');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 const {
   fixture,
   filterOwnedEventRows,
-  filterOwnedProfileRows,
-  paginationLastPage,
   rowFingerprint,
   runKey,
+  sanitizeRunId,
   shouldContinuePagedFetch,
 } = require('./support/public_taxonomy_validation_fixture_contract');
 const {
   requireLiveMutationContract,
 } = require('./support/live_navigation_mutation_contract');
-const {
-  buildAccountSlugIndexById,
-  readCanonicalAccountSlugFromProfileDetail,
-  resolveAccountSlugFromIndexByProfileRecord,
-} = require('./support/public_taxonomy_cleanup_resolution');
 
 requireLiveMutationContract({
   scriptLabel: 'Public taxonomy validation fixture bootstrap',
@@ -48,8 +45,64 @@ let anonymousIdentityTokenPromise = null;
 let requestApi = null;
 let expectApi = null;
 let loginTenantAdmin = null;
-let cleanupOnboardedAccount = null;
 let cleanupOnboardedAccounts = null;
+
+function fixtureStateFilePath() {
+  let hostKey = 'unknown-host';
+  try {
+    hostKey = sanitizeRunId(new URL(tenantUrl).host);
+  } catch (_) {
+    hostKey = 'unknown-host';
+  }
+
+  return path.join(
+    os.tmpdir(),
+    `belluga-public-taxonomy-fixture-${hostKey}-${runKey}.json`,
+  );
+}
+
+function readFixtureState() {
+  const stateFile = fixtureStateFilePath();
+  if (!fs.existsSync(stateFile)) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+  } catch (_) {
+    return null;
+  }
+}
+
+function writeFixtureState(state) {
+  fs.writeFileSync(
+    fixtureStateFilePath(),
+    JSON.stringify(state, null, 2),
+    'utf8',
+  );
+}
+
+function mergeFixtureState(patch) {
+  const current = readFixtureState() || {};
+  const next = { ...current };
+  for (const key of ['primaryProfile', 'relatedProfile', 'event']) {
+    if (patch[key]) {
+      next[key] = {
+        ...(current[key] || {}),
+        ...patch[key],
+      };
+    }
+  }
+  writeFixtureState(next);
+}
+
+function clearFixtureState() {
+  try {
+    fs.unlinkSync(fixtureStateFilePath());
+  } catch (_) {
+    // Ignore missing/stale state files; cleanup remains idempotent.
+  }
+}
 
 function ensurePlaywrightRuntime() {
   if (requestApi && expectApi) {
@@ -59,7 +112,6 @@ function ensurePlaywrightRuntime() {
   ({ request: requestApi, expect: expectApi } = require('@playwright/test'));
   ({ loginTenantAdmin } = require('./support/tenant_admin_auth'));
   ({
-    cleanupOnboardedAccount,
     cleanupOnboardedAccounts,
   } = require('./support/account_onboarding_cleanup'));
 }
@@ -211,61 +263,6 @@ async function listEventTypes(api, baseUrl, token) {
       headers: authHeaders(token),
       label: 'Event type registry list',
       pageSize: 500,
-    },
-  );
-}
-
-async function listAdminAccounts(api, baseUrl, token) {
-  return fetchPagedRows(
-    api,
-    (pageNumber, pageSize) => {
-      const url = new URL(buildUrl(baseUrl, '/admin/api/v1/accounts'));
-      url.searchParams.set('page', pageNumber.toString());
-      url.searchParams.set('page_size', pageSize.toString());
-      return url.toString();
-    },
-    {
-      headers: authHeaders(token),
-      label: 'Admin accounts list',
-      pageSize: 200,
-    },
-  );
-}
-
-async function listAdminAccountProfiles(api, baseUrl, token) {
-  return fetchPagedRows(
-    api,
-    (pageNumber, pageSize) => {
-      const url = new URL(buildUrl(baseUrl, '/admin/api/v1/account_profiles'));
-      url.searchParams.set('page', pageNumber.toString());
-      url.searchParams.set('page_size', pageSize.toString());
-      return url.toString();
-    },
-    {
-      headers: authHeaders(token),
-      label: 'Admin account profile list',
-      // Keep the fixture aligned with the protected admin endpoint contract.
-      pageSize: 50,
-    },
-  );
-}
-
-async function listAdminEvents(api, baseUrl, token) {
-  return fetchPagedRows(
-    api,
-    (pageNumber, pageSize) => {
-      const url = new URL(buildUrl(baseUrl, '/admin/api/v1/events'));
-      url.searchParams.set('page', pageNumber.toString());
-      url.searchParams.set('page_size', pageSize.toString());
-      // Cleanup must see all buckets, otherwise stale past fixtures can keep
-      // event types referenced and block idempotent re-seeding.
-      url.searchParams.set('temporal', 'past,now,future');
-      return url.toString();
-    },
-    {
-      headers: authHeaders(token),
-      label: 'Admin events list',
-      pageSize: 50,
     },
   );
 }
@@ -469,65 +466,6 @@ async function removeManagedPublicDefaultOrigin(api, baseUrl, token) {
   await fetchJson(response, 'Clear managed map_ui default_origin settings');
 }
 
-async function fetchAdminAccountProfileDetail(api, baseUrl, token, profileId) {
-  const response = await api.get(
-    buildUrl(baseUrl, `/admin/api/v1/account_profiles/${profileId}`),
-    {
-      headers: authHeaders(token),
-      failOnStatusCode: false,
-    },
-  );
-  expect(
-    response.status(),
-    `Admin account profile detail ${profileId} must be readable for deterministic fixture cleanup.`,
-  ).toBe(200);
-  const payload = await response.json();
-  return payload?.data || payload;
-}
-
-async function resolveCanonicalAccountSlugForCleanup(
-  api,
-  baseUrl,
-  token,
-  row,
-  accountSlugById = new Map(),
-) {
-  const directSlug =
-    row?.account_slug?.toString().trim()
-    || row?.account?.slug?.toString().trim()
-    || '';
-  if (directSlug) {
-    return directSlug;
-  }
-
-  const rowAccountSlug = resolveAccountSlugFromIndexByProfileRecord(accountSlugById, row);
-  if (rowAccountSlug) {
-    return rowAccountSlug;
-  }
-
-  const profileId = row?.id?.toString().trim() || '';
-  expect(
-    profileId,
-    `Owned taxonomy fixture cleanup row ${rowFingerprint(row)} must expose an id when account_slug is absent.`,
-  ).toBeTruthy();
-
-  const detail = await fetchAdminAccountProfileDetail(api, baseUrl, token, profileId);
-  const resolvedSlug = readCanonicalAccountSlugFromProfileDetail(detail);
-  if (resolvedSlug) {
-    return resolvedSlug;
-  }
-
-  const resolvedSlugFromAccountId = resolveAccountSlugFromIndexByProfileRecord(
-    accountSlugById,
-    detail,
-  );
-  expect(
-    resolvedSlugFromAccountId,
-    `Owned taxonomy fixture profile ${profileId} must expose canonical account.slug or a resolvable account_id on admin readback for strict cleanup. Row: ${rowFingerprint(row)}`,
-  ).toBeTruthy();
-  return resolvedSlugFromAccountId;
-}
-
 async function deleteWithSuccessExpectation(response, label) {
   const status = response.status();
   expect(
@@ -566,6 +504,35 @@ async function deleteAccountProfileType(api, baseUrl, token, profileType) {
   );
 }
 
+async function forceDeleteAccountProfile(api, baseUrl, token, profileId) {
+  const normalizedId = profileId?.toString().trim() || '';
+  if (!normalizedId) {
+    return;
+  }
+
+  const response = await api.post(
+    buildUrl(
+      baseUrl,
+      `/admin/api/v1/account_profiles/${encodeURIComponent(normalizedId)}/force_delete`,
+    ),
+    {
+      headers: authHeaders(token),
+      failOnStatusCode: false,
+    },
+  );
+  await deleteWithSuccessExpectation(
+    response,
+    `Force delete account profile ${normalizedId}`,
+  );
+}
+
+async function forceDeleteAccountProfiles(api, baseUrl, token, profileIds) {
+  const normalizedIds = Array.isArray(profileIds) ? profileIds : [];
+  for (const profileId of [...new Set(normalizedIds.map((id) => id?.toString().trim()).filter(Boolean))]) {
+    await forceDeleteAccountProfile(api, baseUrl, token, profileId);
+  }
+}
+
 async function deleteEventType(api, baseUrl, token, eventTypeId) {
   if (!eventTypeId) {
     return;
@@ -594,45 +561,62 @@ async function deleteTaxonomy(api, baseUrl, token, taxonomyId) {
 }
 
 async function createTaxonomy(api, baseUrl, token) {
-  const taxonomyResponse = await api.post(
-    buildUrl(baseUrl, '/admin/api/v1/taxonomies'),
-    {
-      headers: authHeaders(token),
-      data: {
-        slug: fixture.taxonomySlug,
-        name: fixture.taxonomyName,
-        applies_to: ['account_profile', 'event'],
-        icon: 'category',
-        color: '#0F766E',
+  const existingTaxonomy = (await listTaxonomies(api, baseUrl, token)).find(
+    (row) => (row?.slug?.toString().trim() || '') === fixture.taxonomySlug,
+  );
+  let taxonomyId = existingTaxonomy?.id?.toString() || '';
+
+  if (!taxonomyId) {
+    const taxonomyResponse = await api.post(
+      buildUrl(baseUrl, '/admin/api/v1/taxonomies'),
+      {
+        headers: authHeaders(token),
+        data: {
+          slug: fixture.taxonomySlug,
+          name: fixture.taxonomyName,
+          applies_to: ['account_profile', 'event'],
+          icon: 'category',
+          color: '#0F766E',
+        },
       },
-    },
-  );
-  const taxonomyPayload = await fetchJson(
-    taxonomyResponse,
-    `Create taxonomy ${fixture.taxonomySlug}`,
-  );
-  const taxonomyId = taxonomyPayload?.data?.id?.toString() || '';
+    );
+    const taxonomyPayload = await fetchJson(
+      taxonomyResponse,
+      `Create taxonomy ${fixture.taxonomySlug}`,
+    );
+    taxonomyId = taxonomyPayload?.data?.id?.toString() || '';
+  }
+
   expect(taxonomyId, `Taxonomy ${fixture.taxonomySlug} must return an id.`).toBeTruthy();
 
-  const termResponse = await api.post(
-    buildUrl(baseUrl, `/admin/api/v1/taxonomies/${taxonomyId}/terms`),
-    {
-      headers: authHeaders(token),
-      data: {
-        slug: fixture.taxonomyTermSlug,
-        name: fixture.taxonomyTermLabel,
+  if (!existingTaxonomy) {
+    const termResponse = await api.post(
+      buildUrl(baseUrl, `/admin/api/v1/taxonomies/${taxonomyId}/terms`),
+      {
+        headers: authHeaders(token),
+        data: {
+          slug: fixture.taxonomyTermSlug,
+          name: fixture.taxonomyTermLabel,
+        },
       },
-    },
-  );
-  await fetchJson(
-    termResponse,
-    `Create taxonomy term ${fixture.taxonomyTermSlug} for ${fixture.taxonomySlug}`,
-  );
+    );
+    await fetchJson(
+      termResponse,
+      `Create taxonomy term ${fixture.taxonomyTermSlug} for ${fixture.taxonomySlug}`,
+    );
+  }
 
   return taxonomyId;
 }
 
 async function createAccountProfileType(api, baseUrl, token) {
+  const existingType = (await listAccountProfileTypes(api, baseUrl, token)).find(
+    (row) => (row?.type?.toString().trim() || '') === fixture.profileType,
+  );
+  if (existingType) {
+    return;
+  }
+
   const response = await api.post(
     buildUrl(baseUrl, '/admin/api/v1/account_profile_types'),
     {
@@ -720,11 +704,11 @@ async function createPublicAccountProfile(
     'Fixture account profile must expose a public slug.',
   ).toBeTruthy();
   expect(
-    accountSlug === expectedSlug,
+    accountSlug === expectedSlug || accountSlug.startsWith(`${expectedSlug}-`),
     `Fixture account slug must stay anchored to canonical slug ${expectedSlug}. Received ${accountSlug}.`,
   ).toBeTruthy();
   expect(
-    profileSlug === expectedSlug,
+    profileSlug === expectedSlug || profileSlug.startsWith(`${expectedSlug}-`),
     `Fixture account profile slug must stay anchored to canonical slug ${expectedSlug}. Received ${profileSlug}.`,
   ).toBeTruthy();
 
@@ -732,6 +716,20 @@ async function createPublicAccountProfile(
 }
 
 async function createEventType(api, baseUrl, token) {
+  const existingType = (await listEventTypes(api, baseUrl, token)).find(
+    (row) => (row?.slug?.toString().trim() || '') === fixture.eventTypeSlug,
+  );
+  if (existingType) {
+    return {
+      id: existingType?.id?.toString() || '',
+      name: existingType?.name?.toString() || fixture.eventTypeName,
+      slug: existingType?.slug?.toString() || fixture.eventTypeSlug,
+      description:
+        existingType?.description?.toString()
+        || 'Stage validation public event type',
+    };
+  }
+
   const response = await api.post(
     buildUrl(baseUrl, '/admin/api/v1/event_types'),
     {
@@ -815,7 +813,6 @@ async function createPublicEvent(
                   id: 'featured-profiles',
                   label: 'Featured Profiles',
                   order: 0,
-                  account_profile_ids: [relatedProfileId],
                 },
               ]
             : [],
@@ -834,19 +831,45 @@ async function createPublicEvent(
 
   const eventId = payload?.data?.event_id?.toString() || '';
   expect(eventId, 'Fixture event must return an event_id.').toBeTruthy();
+  const occurrenceId = payload?.data?.occurrences?.[0]?.occurrence_id?.toString() || '';
+  expect(
+    occurrenceId,
+    'Fixture event must return the persisted occurrence_id for canonical member patching.',
+  ).toBeTruthy();
   const eventSlug = payload?.data?.slug?.toString() || '';
   expect(
     eventSlug === fixture.eventSlug || eventSlug.startsWith(`${fixture.eventSlug}-`),
     `Fixture event slug must stay anchored to canonical slug ${fixture.eventSlug}. Received ${eventSlug}.`,
   ).toBeTruthy();
 
+  if (relatedProfileId) {
+    const groupPatchResponse = await api.patch(
+      buildUrl(
+        baseUrl,
+        `/admin/api/v1/events/${eventId}/occurrences/${occurrenceId}/profile_groups/featured-profiles/members`,
+      ),
+      {
+        headers: authHeaders(token),
+        data: {
+          add_ids: [relatedProfileId],
+        },
+      },
+    );
+    await fetchJson(
+      groupPatchResponse,
+      `Patch public event fixture members for ${fixture.eventTitle}`,
+    );
+  }
+
   return {
     eventId,
     eventSlug,
+    physicalHostId,
+    relatedProfileId,
   };
 }
 
-async function fetchPublicAccountProfiles(api, baseUrl) {
+async function fetchPublicAccountProfiles(api, baseUrl, { search = null } = {}) {
   const anonymousToken = await resolveAnonymousIdentityToken(api, baseUrl);
   return fetchPagedRows(
     api,
@@ -854,6 +877,9 @@ async function fetchPublicAccountProfiles(api, baseUrl) {
       const url = new URL(buildUrl(baseUrl, '/api/v1/account_profiles'));
       url.searchParams.set('page', pageNumber.toString());
       url.searchParams.set('per_page', pageSize.toString());
+      if (search) {
+        url.searchParams.set('search', search);
+      }
       return url.toString();
     },
     {
@@ -882,14 +908,56 @@ async function fetchPublicAccountProfileDetail(api, baseUrl, slug) {
   return payload?.data || payload;
 }
 
-async function fetchPublicEvents(api, baseUrl) {
+async function fetchOptionalPublicAccountProfileDetail(api, baseUrl, slug) {
+  const anonymousToken = await resolveAnonymousIdentityToken(api, baseUrl);
+  const response = await api.get(
+    buildUrl(baseUrl, `/api/v1/account_profiles/${slug}`),
+    {
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${anonymousToken}`,
+      },
+      failOnStatusCode: false,
+    },
+  );
+
+  if (response.status() === 404) {
+    return null;
+  }
+
+  const payload = await fetchJson(response, `Optional public account profile detail ${slug}`);
+  return payload?.data || payload;
+}
+
+function readAccountProfileId(candidate) {
+  return (
+    candidate?.id?.toString().trim()
+    || candidate?._id?.toString().trim()
+    || ''
+  );
+}
+
+async function fetchPublicEvents(
+  api,
+  baseUrl,
+  {
+    venueProfileId = null,
+    relatedProfileId = null,
+  } = {},
+) {
   const anonymousToken = await resolveAnonymousIdentityToken(api, baseUrl);
   return fetchPagedRows(
     api,
     (pageNumber, pageSize) => {
       const url = new URL(buildUrl(baseUrl, '/api/v1/events'));
       url.searchParams.set('page', pageNumber.toString());
-      url.searchParams.set('per_page', pageSize.toString());
+      url.searchParams.set('page_size', pageSize.toString());
+      if (venueProfileId) {
+        url.searchParams.set('venue_profile_id', venueProfileId);
+      }
+      if (relatedProfileId) {
+        url.searchParams.set('related_account_profile_id', relatedProfileId);
+      }
       return url.toString();
     },
     {
@@ -898,6 +966,44 @@ async function fetchPublicEvents(api, baseUrl) {
         Authorization: `Bearer ${anonymousToken}`,
       },
       label: 'Public events list',
+      pageSize: 50,
+    },
+  );
+}
+
+async function listAdminFixtureEvents(
+  api,
+  baseUrl,
+  token,
+  {
+    venueProfileId = null,
+    relatedProfileId = null,
+  } = {},
+) {
+  expect(
+    Boolean(venueProfileId) || Boolean(relatedProfileId),
+    'Fixture admin event cleanup requires at least one profile filter.',
+  ).toBeTruthy();
+
+  return fetchPagedRows(
+    api,
+    (pageNumber, pageSize) => {
+      const url = new URL(buildUrl(baseUrl, '/admin/api/v1/events'));
+      url.searchParams.set('page', pageNumber.toString());
+      url.searchParams.set('page_size', pageSize.toString());
+      url.searchParams.set('status', 'published');
+      url.searchParams.set('temporal', 'past,now,future');
+      if (venueProfileId) {
+        url.searchParams.set('venue_profile_id', venueProfileId);
+      }
+      if (relatedProfileId) {
+        url.searchParams.set('related_account_profile_id', relatedProfileId);
+      }
+      return url.toString();
+    },
+    {
+      headers: authHeaders(token),
+      label: 'Admin fixture events list',
       pageSize: 50,
     },
   );
@@ -990,102 +1096,157 @@ function findDisplaySnapshot(terms) {
 }
 
 async function resetOwnedFixtureArtifacts(api, baseUrl, token) {
+  const persistedState = readFixtureState();
   await removeManagedPublicMapFilter(api, baseUrl, token);
   await removeManagedPublicDefaultOrigin(api, baseUrl, token);
 
-  const adminEvents = await listAdminEvents(api, baseUrl, token);
-  const ownedEvents = adminEvents.filter((row) => {
-    const slug = row?.slug?.toString().trim() || '';
-    return (
-      filterOwnedEventRows([row]).length > 0 ||
-      slug.startsWith(stageValidationPrefixes.eventSlug)
-    );
-  });
+  const ownedEventIdentifiers = [
+    fixture.eventSlug,
+    persistedState?.event?.eventId,
+    persistedState?.event?.eventSlug,
+  ].filter(Boolean);
+  const primaryProfileDetail = await fetchOptionalPublicAccountProfileDetail(
+    api,
+    baseUrl,
+    fixture.profileSlug,
+  );
+  const relatedProfileDetail = await fetchOptionalPublicAccountProfileDetail(
+    api,
+    baseUrl,
+    fixture.relatedProfileSlug,
+  );
+  const primaryProfileId = readAccountProfileId(primaryProfileDetail);
+  const relatedProfileId = readAccountProfileId(relatedProfileDetail);
 
-  for (const row of ownedEvents) {
-    const eventId = row?.event_id?.toString().trim() || row?.id?.toString().trim() || '';
-    await deleteEvent(api, baseUrl, token, eventId);
+  if (primaryProfileId) {
+    ownedEventIdentifiers.push(
+      ...(
+        filterOwnedEventRows(await listAdminFixtureEvents(api, baseUrl, token, {
+          venueProfileId: primaryProfileId,
+        }))
+      ).map((row) => row?.event_id?.toString().trim() || row?.id?.toString().trim() || row?.slug?.toString().trim() || '')
+        .filter(Boolean),
+    );
   }
 
-  const adminProfiles = await listAdminAccountProfiles(api, baseUrl, token);
-  const ownedProfiles = adminProfiles.filter((row) => {
-    const slug = row?.slug?.toString().trim() || '';
-    return (
-      filterOwnedProfileRows([row]).length > 0 ||
-      slug.startsWith(stageValidationPrefixes.profileSlug) ||
-      slug.startsWith(stageValidationPrefixes.relatedProfileSlug)
-    );
-  });
-  const adminAccounts = await listAdminAccounts(api, baseUrl, token);
-  const accountSlugById = buildAccountSlugIndexById(adminAccounts);
-  const ownedAccountSlugs = [];
-  for (const row of ownedProfiles) {
-    ownedAccountSlugs.push(
-      await resolveCanonicalAccountSlugForCleanup(api, baseUrl, token, row, accountSlugById),
+  if (relatedProfileId) {
+    ownedEventIdentifiers.push(
+      ...(
+        filterOwnedEventRows(await listAdminFixtureEvents(api, baseUrl, token, {
+          relatedProfileId,
+        }))
+      ).map((row) => row?.event_id?.toString().trim() || row?.id?.toString().trim() || row?.slug?.toString().trim() || '')
+        .filter(Boolean),
     );
   }
-  ownedAccountSlugs.push(fixture.profileSlug, fixture.relatedProfileSlug);
+
+  for (const eventIdentifier of [...new Set(ownedEventIdentifiers)]) {
+    await deleteEvent(api, baseUrl, token, eventIdentifier);
+  }
 
   await cleanupOnboardedAccounts(
     api,
     baseUrl,
     token,
-    [...new Set(ownedAccountSlugs)],
+    [fixture.profileSlug, fixture.relatedProfileSlug],
     {
       strict: true,
     },
+  );
+  await cleanupOnboardedAccounts(
+    api,
+    baseUrl,
+    token,
+    [
+      persistedState?.primaryProfile?.accountSlug,
+      persistedState?.relatedProfile?.accountSlug,
+    ],
+    {
+      strict: false,
+    },
+  );
+  await forceDeleteAccountProfiles(
+    api,
+    baseUrl,
+    token,
+    [
+      primaryProfileId,
+      relatedProfileId,
+      persistedState?.primaryProfile?.profileId,
+      persistedState?.relatedProfile?.profileId,
+    ],
   );
 
   const eventTypes = await listEventTypes(api, baseUrl, token);
   const fixtureEventTypes = eventTypes.filter(
     (row) => {
       const slug = row?.slug?.toString().trim() || '';
-      return (
-        slug === fixture.eventTypeSlug ||
-        slug.startsWith(stageValidationPrefixes.eventTypeSlug)
-      );
+      return slug === fixture.eventTypeSlug;
     },
   );
   for (const fixtureEventType of fixtureEventTypes) {
-    await deleteEventType(api, baseUrl, token, fixtureEventType?.id?.toString() || '');
+    try {
+      await deleteEventType(api, baseUrl, token, fixtureEventType?.id?.toString() || '');
+    } catch (error) {
+      console.warn(
+        `[public-taxonomy-fixture] best-effort event type cleanup skipped: ${error}`,
+      );
+    }
   }
 
   const profileTypes = await listAccountProfileTypes(api, baseUrl, token);
   const fixtureTypes = profileTypes.filter(
     (row) => {
       const type = row?.type?.toString().trim() || '';
-      return (
-        type === fixture.profileType ||
-        type.startsWith(stageValidationPrefixes.profileType)
-      );
+      return type === fixture.profileType;
     },
   );
   for (const fixtureType of fixtureTypes) {
-    await deleteAccountProfileType(
-      api,
-      baseUrl,
-      token,
-      fixtureType?.type?.toString().trim() || '',
-    );
+    try {
+      await deleteAccountProfileType(
+        api,
+        baseUrl,
+        token,
+        fixtureType?.type?.toString().trim() || '',
+      );
+    } catch (error) {
+      console.warn(
+        `[public-taxonomy-fixture] best-effort account profile type cleanup skipped: ${error}`,
+      );
+    }
   }
 
   const taxonomies = await listTaxonomies(api, baseUrl, token);
   const fixtureTaxonomies = taxonomies.filter(
     (row) => {
       const slug = row?.slug?.toString().trim() || '';
-      return (
-        slug === fixture.taxonomySlug ||
-        slug.startsWith(stageValidationPrefixes.taxonomySlug)
-      );
+      return slug === fixture.taxonomySlug;
     },
   );
   for (const fixtureTaxonomy of fixtureTaxonomies) {
-    await deleteTaxonomy(api, baseUrl, token, fixtureTaxonomy?.id?.toString() || '');
+    try {
+      await deleteTaxonomy(api, baseUrl, token, fixtureTaxonomy?.id?.toString() || '');
+    } catch (error) {
+      console.warn(
+        `[public-taxonomy-fixture] best-effort taxonomy cleanup skipped: ${error}`,
+      );
+    }
   }
+
+  clearFixtureState();
 }
 
-async function verifyAccountProfileFixture(api, baseUrl, expectedSlug) {
-  const rows = await fetchPublicAccountProfiles(api, baseUrl);
+async function verifyAccountProfileFixture(
+  api,
+  baseUrl,
+  {
+    expectedSlug,
+    expectedName,
+  },
+) {
+  const rows = await fetchPublicAccountProfiles(api, baseUrl, {
+    search: expectedName,
+  });
   const candidate = rows.find((row) => row?.slug === expectedSlug);
   expect(
     candidate,
@@ -1115,8 +1276,20 @@ async function verifyAccountProfileFixture(api, baseUrl, expectedSlug) {
   ).toBe(listSnapshot.label || listSnapshot.name);
 }
 
-async function verifyEventFixture(api, baseUrl, { eventId, eventSlug }) {
-  const rows = await fetchPublicEvents(api, baseUrl);
+async function verifyEventFixture(
+  api,
+  baseUrl,
+  {
+    eventId,
+    eventSlug,
+    physicalHostId,
+    relatedProfileId,
+  },
+) {
+  const rows = await fetchPublicEvents(api, baseUrl, {
+    venueProfileId: physicalHostId,
+    relatedProfileId,
+  });
   const candidate = rows.find((row) => {
     const rowEventId = row?.event_id?.toString().trim();
     const rowSlug = row?.slug?.toString().trim();
@@ -1215,16 +1388,31 @@ async function main() {
       await createAccountProfileType(api, baseUrl, token);
       await ensureManagedPublicDefaultOrigin(api, baseUrl, token);
       await ensureManagedPublicMapFilter(api, baseUrl, token);
-      const { profileId, profileSlug } = await createPublicAccountProfile(
+      const {
+        profileId,
+        profileSlug,
+        accountSlug,
+      } = await createPublicAccountProfile(
         api,
         baseUrl,
         token,
         {
           name: fixture.profileName,
           expectedSlug: fixture.profileSlug,
+          },
+        );
+      mergeFixtureState({
+        primaryProfile: {
+          accountSlug,
+          profileId,
+          profileSlug,
         },
-      );
-      const { profileId: relatedProfileId, profileSlug: relatedProfileSlug } =
+      });
+      const {
+        profileId: relatedProfileId,
+        profileSlug: relatedProfileSlug,
+        accountSlug: relatedAccountSlug,
+      } =
         await createPublicAccountProfile(
           api,
           baseUrl,
@@ -1234,14 +1422,33 @@ async function main() {
             expectedSlug: fixture.relatedProfileSlug,
           },
         );
+      mergeFixtureState({
+        relatedProfile: {
+          accountSlug: relatedAccountSlug,
+          profileId: relatedProfileId,
+          profileSlug: relatedProfileSlug,
+        },
+      });
       const eventType = await createEventType(api, baseUrl, token);
       const event = await createPublicEvent(api, baseUrl, token, {
         eventType,
         physicalHostId: profileId,
         relatedProfileId,
       });
-      await verifyAccountProfileFixture(api, baseUrl, profileSlug);
-      await verifyAccountProfileFixture(api, baseUrl, relatedProfileSlug);
+      mergeFixtureState({
+        event: {
+          eventId: event.eventId,
+          eventSlug: event.eventSlug,
+        },
+      });
+      await verifyAccountProfileFixture(api, baseUrl, {
+        expectedSlug: profileSlug,
+        expectedName: fixture.profileName,
+      });
+      await verifyAccountProfileFixture(api, baseUrl, {
+        expectedSlug: relatedProfileSlug,
+        expectedName: fixture.relatedProfileName,
+      });
       await verifyEventFixture(api, baseUrl, event);
       await verifyAgendaFixture(api, baseUrl, event);
       await ensureManagedPublicDefaultOrigin(api, baseUrl, token);

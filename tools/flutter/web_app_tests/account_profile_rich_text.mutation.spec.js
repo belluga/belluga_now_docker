@@ -6,6 +6,10 @@ const {
 const {
   cleanupOnboardedAccount,
 } = require('./support/account_onboarding_cleanup');
+const {
+  installFailureCollectors,
+  summarizeCriticalBrowserFailures,
+} = require('./support/browser_failure_collectors');
 
 const tenantUrl = process.env.NAV_TENANT_URL;
 const appBootTimeoutMs = 90000;
@@ -67,74 +71,27 @@ async function waitMs(delayMs) {
   await new Promise((resolve) => setTimeout(resolve, delayMs));
 }
 
-function installFailureCollectors(page) {
-  const runtimeErrors = [];
-  const failedRequests = [];
-  const consoleErrors = [];
-
-  page.on('pageerror', (error) => runtimeErrors.push(error.message));
-  page.on('requestfailed', (requestEntry) => {
-    const failureText = requestEntry.failure()?.errorText || 'unknown';
-    if (isNonCriticalFailedRequest(requestEntry, failureText)) {
-      return;
-    }
-    failedRequests.push(
-      `${requestEntry.method()} ${requestEntry.url()} (${failureText})`,
-    );
-  });
-  page.on('console', (message) => {
-    if (message.type() === 'error') {
-      consoleErrors.push(message.text());
-    }
-  });
-
-  return { runtimeErrors, failedRequests, consoleErrors };
-}
-
-function isNonCriticalFailedRequest(requestEntry, failureText) {
-  if (failureText === 'net::ERR_ABORTED') {
-    return true;
-  }
-
-  if (['image', 'media', 'font'].includes(requestEntry.resourceType())) {
-    return true;
-  }
-
-  return /\.(?:avif|gif|jpe?g|png|svg|webp|woff2?)(?:[?#].*)?$/i.test(
-    requestEntry.url(),
-  );
-}
-
-function isNonCriticalConsoleError(entry) {
-  if (
-    entry.includes('status of 401') ||
-    entry.includes('ResizeObserver loop limit exceeded') ||
-    entry === 'Failed to load resource: net::ERR_FAILED'
-  ) {
-    return true;
-  }
-
-  return /https?:\/\/[^'"\s]+\.(?:avif|gif|jpe?g|png|svg|webp|woff2?)(?:[?#][^'"\s]*)?/.test(
-    entry,
-  );
-}
-
 async function assertNoCriticalBrowserFailures(collectors) {
+  const summary = summarizeCriticalBrowserFailures(collectors);
   expect(
-    collectors.runtimeErrors,
-    `Unexpected runtime errors:\n${collectors.runtimeErrors.join('\n')}`,
+    summary.runtimeErrors,
+    `Unexpected runtime errors:\n${summary.runtimeErrors.join('\n')}`,
   ).toEqual([]);
   expect(
-    collectors.failedRequests,
-    `Unexpected failed requests:\n${collectors.failedRequests.join('\n')}`,
+    summary.failedRequests,
+    `Unexpected failed requests:\n${summary.failedRequests.join('\n')}`,
   ).toEqual([]);
-
-  const criticalConsoleErrors = collectors.consoleErrors.filter(
-    (entry) => !isNonCriticalConsoleError(entry),
-  );
   expect(
-    criticalConsoleErrors,
-    `Critical console errors:\n${criticalConsoleErrors.join('\n')}`,
+    summary.criticalHttpResponses,
+    `Critical HTTP responses:\n${summary.criticalHttpResponses.join('\n')}`,
+  ).toEqual([]);
+  expect(
+    summary.disallowedRateLimitedResponses,
+    `Disallowed 429 responses:\n${summary.disallowedRateLimitedResponses.join('\n')}`,
+  ).toEqual([]);
+  expect(
+    summary.criticalConsoleErrors,
+    `Critical console errors:\n${summary.criticalConsoleErrors.join('\n')}`,
   ).toEqual([]);
 }
 
@@ -524,6 +481,103 @@ async function assertVisibleRichText(page, expectedTexts) {
     .toHaveCount(0);
 }
 
+async function isVisible(locator) {
+  try {
+    return await locator.isVisible();
+  } catch (_) {
+    return false;
+  }
+}
+
+async function waitForAdminRichTextSurfaceState(page, expectedTexts) {
+  const firstExpectedText = expectedTexts[0] ?? '';
+  const deadline = Date.now() + 30000;
+
+  while (Date.now() < deadline) {
+    if (
+      firstExpectedText &&
+      await isVisible(page.getByText(textPattern(firstExpectedText)).first())
+    ) {
+      return 'ready';
+    }
+
+    if (
+      await isVisible(
+        page.getByText(/Não foi possível carregar os dados da conta\./i).first(),
+      ) ||
+      await isVisible(
+        page.getByRole('button', { name: /Tentar novamente/i }).first(),
+      )
+    ) {
+      return 'recoverable-error';
+    }
+
+    await page.waitForTimeout(500);
+  }
+
+  const hasLoadedAccountAnchors =
+    await isVisible(page.getByText('Detalhes da conta').first()) &&
+    await isVisible(page.getByText('Perfil da conta').first());
+
+  return hasLoadedAccountAnchors ? 'loaded-without-rich-text' : 'recoverable-error';
+}
+
+async function openAdminAccountDetailWithRichTextRetry({
+  browser,
+  session,
+  baseUrl,
+  accountSlug,
+  expectedTexts,
+}) {
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    const adminBundle = await createAuthenticatedTenantAdminPage(
+      browser,
+      session,
+    );
+    const adminCollectors = installFailureCollectors(adminBundle.page);
+
+    try {
+      await openAppPath(
+        adminBundle.page,
+        baseUrl,
+        `/admin/accounts/${accountSlug}`,
+      );
+
+      const surfaceState = await waitForAdminRichTextSurfaceState(
+        adminBundle.page,
+        expectedTexts,
+      );
+
+      if (surfaceState === 'recoverable-error') {
+        throw new Error(
+          `Admin account detail load stayed in a transient error state on attempt ${attempt}.`,
+        );
+      }
+
+      await assertVisibleRichText(adminBundle.page, expectedTexts);
+
+      return {
+        context: adminBundle.context,
+        page: adminBundle.page,
+        collectors: adminCollectors,
+      };
+    } catch (error) {
+      lastError = error;
+      await adminBundle.context.close().catch(() => {});
+
+      if (attempt === 3) {
+        throw error;
+      }
+
+      await waitMs(750 * attempt);
+    }
+  }
+
+  throw lastError ?? new Error('Admin account detail rich-text retry exhausted.');
+}
+
 test('@mutation tenant-admin account-profile rich text persists and renders on admin and public surfaces', async ({
   browser,
 }) => {
@@ -613,16 +667,18 @@ test('@mutation tenant-admin account-profile rich text persists and renders on a
     expect(publicReadback?.bio).toContain('Bio Heading 🎉');
     expect(publicReadback?.content).toContain('Content Heading');
 
-    const adminBundle = await createAuthenticatedTenantAdminPage(
+    adminContext = null;
+    const adminBundle = await openAdminAccountDetailWithRichTextRetry({
       browser,
       session,
-    );
+      baseUrl,
+      accountSlug: created.accountSlug,
+      expectedTexts,
+    });
     adminContext = adminBundle.context;
     const adminPage = adminBundle.page;
-    const adminCollectors = installFailureCollectors(adminPage);
+    const adminCollectors = adminBundle.collectors;
 
-    await openAppPath(adminPage, baseUrl, `/admin/accounts/${created.accountSlug}`);
-    await assertVisibleRichText(adminPage, expectedTexts);
     await assertNoCriticalBrowserFailures(adminCollectors);
 
     publicContext = await browser.newContext({

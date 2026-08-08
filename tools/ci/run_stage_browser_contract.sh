@@ -550,6 +550,15 @@ run_navigation_smoke() {
 
   ensure_navigation_urls
   ensure_contract_run_id "${target}"
+  if [[ "${NAV_STAGE_BROWSER_SKIP_FIXTURE_ENSURE:-0}" == "1" ]]; then
+    if [[ -z "${NAV_TEST_RUN_ID:-}" ]]; then
+      echo "ERROR: NAV_STAGE_BROWSER_SKIP_FIXTURE_ENSURE=1 requires NAV_TEST_RUN_ID or a persisted local-public run id." >&2
+      exit 1
+    fi
+    echo "INFO: reusing managed fixture run ${NAV_TEST_RUN_ID}; skipping fixture ensure."
+  elif (( FULL_SEQUENCE_FIXTURE_ENSURED == 0 )); then
+    fixture_ensure "${target}"
+  fi
   export NAV_PUBLIC_TAXONOMY_MANAGED_FIXTURE=1
 
   case "${suite}" in

@@ -3,6 +3,10 @@ const { test, expect, request } = require('@playwright/test');
 const {
   loginTenantAdmin: loginTenantAdminWithRequiredCredentials,
 } = require('./support/tenant_admin_auth');
+const {
+  installFailureCollectors,
+  summarizeCriticalBrowserFailures,
+} = require('./support/browser_failure_collectors');
 
 const tenantUrl = process.env.NAV_TENANT_URL;
 const appBootTimeoutMs = 90000;
@@ -58,74 +62,27 @@ function normalizePayload(payload) {
   return payload;
 }
 
-function installFailureCollectors(page) {
-  const runtimeErrors = [];
-  const failedRequests = [];
-  const consoleErrors = [];
-
-  page.on('pageerror', (error) => runtimeErrors.push(error.message));
-  page.on('requestfailed', (requestEntry) => {
-    const failureText = requestEntry.failure()?.errorText || 'unknown';
-    if (isNonCriticalFailedRequest(requestEntry, failureText)) {
-      return;
-    }
-    failedRequests.push(
-      `${requestEntry.method()} ${requestEntry.url()} (${failureText})`,
-    );
-  });
-  page.on('console', (message) => {
-    if (message.type() === 'error') {
-      consoleErrors.push(message.text());
-    }
-  });
-
-  return { runtimeErrors, failedRequests, consoleErrors };
-}
-
-function isNonCriticalFailedRequest(requestEntry, failureText) {
-  if (failureText === 'net::ERR_ABORTED') {
-    return true;
-  }
-
-  if (['image', 'media', 'font'].includes(requestEntry.resourceType())) {
-    return true;
-  }
-
-  return /\.(?:avif|gif|jpe?g|png|svg|webp|woff2?)(?:[?#].*)?$/i.test(
-    requestEntry.url(),
-  );
-}
-
-function isNonCriticalConsoleError(entry) {
-  if (
-    entry.includes('status of 401') ||
-    entry.includes('ResizeObserver loop limit exceeded') ||
-    entry === 'Failed to load resource: net::ERR_FAILED'
-  ) {
-    return true;
-  }
-
-  return /https?:\/\/[^'"\s]+\.(?:avif|gif|jpe?g|png|svg|webp|woff2?)(?:[?#][^'"\s]*)?/.test(
-    entry,
-  );
-}
-
 async function assertNoCriticalBrowserFailures(collectors) {
+  const summary = summarizeCriticalBrowserFailures(collectors);
   expect(
-    collectors.runtimeErrors,
-    `Unexpected runtime errors:\n${collectors.runtimeErrors.join('\n')}`,
+    summary.runtimeErrors,
+    `Unexpected runtime errors:\n${summary.runtimeErrors.join('\n')}`,
   ).toEqual([]);
   expect(
-    collectors.failedRequests,
-    `Unexpected failed requests:\n${collectors.failedRequests.join('\n')}`,
+    summary.failedRequests,
+    `Unexpected failed requests:\n${summary.failedRequests.join('\n')}`,
   ).toEqual([]);
-
-  const criticalConsoleErrors = collectors.consoleErrors.filter(
-    (entry) => !isNonCriticalConsoleError(entry),
-  );
   expect(
-    criticalConsoleErrors,
-    `Critical console errors:\n${criticalConsoleErrors.join('\n')}`,
+    summary.criticalHttpResponses,
+    `Critical HTTP responses:\n${summary.criticalHttpResponses.join('\n')}`,
+  ).toEqual([]);
+  expect(
+    summary.disallowedRateLimitedResponses,
+    `Disallowed 429 responses:\n${summary.disallowedRateLimitedResponses.join('\n')}`,
+  ).toEqual([]);
+  expect(
+    summary.criticalConsoleErrors,
+    `Critical console errors:\n${summary.criticalConsoleErrors.join('\n')}`,
   ).toEqual([]);
 }
 
@@ -482,25 +439,133 @@ async function locateAdminEventListPlacement(api, baseUrl, token, eventId) {
   );
 }
 
-async function scrollToSeededEventCard(page, uniqueTitle, expectedApiPage) {
-  const semanticCard = page
-    .getByRole('button', {
-      name: new RegExp(`Editar evento\\s+${escapeRegExp(uniqueTitle)}`, 'i'),
-    })
+function matchesAdminEventsListResponse(candidate, baseUrl) {
+  const method = candidate.request().method().toUpperCase();
+  if (method !== 'GET') {
+    return false;
+  }
+
+  const actual = new URL(candidate.url());
+  const expected = new URL(buildUrl(baseUrl, '/admin/api/v1/events'));
+  return actual.origin === expected.origin && actual.pathname === expected.pathname;
+}
+
+async function waitForAdminEventsListUiReady(page) {
+  const firstEditButton = page
+    .getByRole('button', { name: /^Editar evento / })
     .first();
-  const listAnchors = page.getByRole('button', { name: /^Editar evento / });
-  const maxAttempts = Math.max(24, expectedApiPage * 18);
+  const emptyState = page.getByText('Nenhum evento cadastrado').first();
+  await expect
+    .poll(
+      async () => {
+        if (await firstEditButton.isVisible().catch(() => false)) {
+          return 'rows';
+        }
+        if (await emptyState.isVisible().catch(() => false)) {
+          return 'empty';
+        }
+        return 'loading';
+      },
+      {
+        timeout: appBootTimeoutMs,
+        message:
+          'Tenant-admin events list must finish hydrating before admin navigation scans it.',
+      },
+    )
+    .not.toBe('loading');
+}
+
+async function countTextInViewport(page, text) {
   const viewport =
     page.viewportSize() ||
     (await page.evaluate(() => ({
       width: window.innerWidth,
       height: window.innerHeight,
     })));
-  await page.mouse.move(viewport.width * 0.55, viewport.height * 0.78);
+
+  const locator = page.getByText(text, { exact: true });
+  const count = await locator.count();
+  let visibleInViewport = 0;
+  for (let index = 0; index < count; index += 1) {
+    const item = locator.nth(index);
+    if (!(await item.isVisible().catch(() => false))) {
+      continue;
+    }
+    const box = await item.boundingBox().catch(() => null);
+    if (!box) {
+      continue;
+    }
+    const intersectsViewport =
+      box.x < viewport.width &&
+      box.x + box.width > 0 &&
+      box.y < viewport.height &&
+      box.y + box.height > 0;
+    if (intersectsViewport) {
+      visibleInViewport += 1;
+    }
+  }
+
+  return visibleInViewport;
+}
+
+async function waitForTextInViewport(page, text, description) {
+  await expect
+    .poll(() => countTextInViewport(page, text), {
+      timeout: appBootTimeoutMs,
+    })
+    .toBeGreaterThan(0, description);
+}
+
+async function scrollScrollableViewport(page, deltaY) {
+  const viewport =
+    page.viewportSize() ||
+    (await page.evaluate(() => ({
+      width: window.innerWidth,
+      height: window.innerHeight,
+    })));
+  await page.mouse.move(viewport.width * 0.62, viewport.height * 0.72);
+  await page.mouse.wheel(0, deltaY).catch(() => {});
+  await page.evaluate(
+    ({ xRatio, yRatio, delta }) => {
+      const x = window.innerWidth * xRatio;
+      const y = window.innerHeight * yRatio;
+      let current = document.elementFromPoint(x, y);
+      while (current) {
+        if (
+          current instanceof HTMLElement &&
+          current.scrollHeight > current.clientHeight + 1
+        ) {
+          current.scrollBy(0, delta);
+          return true;
+        }
+        current = current.parentElement;
+      }
+      window.scrollBy(0, delta);
+      return false;
+    },
+    {
+      xRatio: 0.62,
+      yRatio: 0.72,
+      delta: deltaY,
+    },
+  ).catch(() => false);
+}
+
+async function scrollToSeededEventTitle(page, uniqueTitle, expectedApiPage) {
+  const titlePattern = new RegExp(escapeRegExp(uniqueTitle));
+  const candidates = [
+    page.getByRole('group', { name: titlePattern }).first(),
+    page.getByLabel(titlePattern).first(),
+    page.getByText(titlePattern).first(),
+  ];
+  const listAnchors = page.getByRole('button', { name: /^Editar evento / });
+  const maxAttempts = Math.max(24, expectedApiPage * 18);
 
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-    if (await semanticCard.isVisible().catch(() => false)) {
-      return { locator: semanticCard };
+    for (const candidate of candidates) {
+      if (await candidate.isVisible().catch(() => false)) {
+        return candidate;
+      }
     }
 
     const anchorCount = await listAnchors.count().catch(() => 0);
@@ -514,6 +579,17 @@ async function scrollToSeededEventCard(page, uniqueTitle, expectedApiPage) {
   }
 
   return null;
+}
+
+async function nudgeAdminEventListRefresh(page) {
+  const futureChip = page.getByRole('button', { name: /^Futuros$/ }).first();
+  if (!(await futureChip.isVisible().catch(() => false))) {
+    return;
+  }
+  await futureChip.click({ timeout: appBootTimeoutMs });
+  await page.waitForTimeout(700);
+  await futureChip.click({ timeout: appBootTimeoutMs });
+  await page.waitForTimeout(900);
 }
 
 async function expectAdminEditFormForEvent(page, uniqueTitle, uniqueRichHeading) {
@@ -531,22 +607,110 @@ async function openSeededEventFromAdminList(
   uniqueRichHeading,
   placement = { page: 1, index: 0 },
 ) {
-  await openAppPath(page, baseUrl, '/admin/events');
+  async function openList() {
+    let listResponse = null;
+    const captureListResponse = (candidate) => {
+      if (!listResponse && matchesAdminEventsListResponse(candidate, baseUrl)) {
+        listResponse = candidate;
+      }
+    };
+    page.on('response', captureListResponse);
+    const response = await page.goto(buildUrl(baseUrl, '/admin/events'), {
+      waitUntil: 'domcontentloaded',
+    });
+    expect(response, 'Events list response should be available.').not.toBeNull();
+    expect(response.status()).toBeLessThan(400);
+    await assertAppBooted(page);
+    await enableAccessibilityIfNeeded(page);
+    try {
+      await waitForAdminEventsListUiReady(page);
+      await page.waitForTimeout(300);
+    } finally {
+      page.off('response', captureListResponse);
+    }
 
-  const card = await scrollToSeededEventCard(
-    page,
-    uniqueTitle,
-    placement.page,
-  );
-  if (card) {
-    await card.locator.scrollIntoViewIfNeeded({ timeout: appBootTimeoutMs }).catch(() => {});
-    await card.locator.click({ timeout: appBootTimeoutMs });
+    if (!listResponse) {
+      return;
+    }
+
+    expect(
+      listResponse.status(),
+      'Tenant-admin events list response must succeed before UI assertions.',
+    ).toBeGreaterThanOrEqual(200);
+    expect(
+      listResponse.status(),
+      'Tenant-admin events list response must succeed before UI assertions.',
+    ).toBeLessThan(300);
+  }
+
+  await openList();
+  const titlePattern = new RegExp(`Editar evento ${escapeRegExp(uniqueTitle)}`);
+  const accessibleEditButton = page.getByRole('button', {
+    name: titlePattern,
+  });
+
+  async function resolveTitleCandidate() {
+    const hasAccessibleEditButton =
+      (await accessibleEditButton.count().catch(() => 0)) > 0;
+    if (hasAccessibleEditButton) {
+      return {
+        locator: accessibleEditButton.first(),
+        isAccessibleEditButton: true,
+      };
+    }
+
+    const visibleTitle = await scrollToSeededEventTitle(
+      page,
+      uniqueTitle,
+      placement.page,
+    );
+    return {
+      locator: visibleTitle,
+      isAccessibleEditButton: false,
+    };
+  }
+
+  let titleCandidate = await resolveTitleCandidate();
+  if (!titleCandidate.locator) {
+    const reloadListResponsePromise = page.waitForResponse(
+      (candidate) => matchesAdminEventsListResponse(candidate, baseUrl),
+      { timeout: appBootTimeoutMs },
+    );
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await assertAppBooted(page);
+    await enableAccessibilityIfNeeded(page);
+    const listResponse = await reloadListResponsePromise;
+    expect(
+      listResponse.status(),
+      'Tenant-admin events list reload response must succeed before UI assertions.',
+    ).toBeGreaterThanOrEqual(200);
+    expect(
+      listResponse.status(),
+      'Tenant-admin events list reload response must succeed before UI assertions.',
+    ).toBeLessThan(300);
+    await waitForAdminEventsListUiReady(page);
+    titleCandidate = await resolveTitleCandidate();
+  }
+  if (!titleCandidate.locator) {
+    await nudgeAdminEventListRefresh(page);
+    await waitForAdminEventsListUiReady(page);
+    titleCandidate = await resolveTitleCandidate();
+  }
+  if (titleCandidate.locator) {
+    await titleCandidate.locator.scrollIntoViewIfNeeded({ timeout: appBootTimeoutMs }).catch(() => {});
+    await titleCandidate.locator.click({ timeout: appBootTimeoutMs });
     await expect(page).toHaveURL(/\/admin\/events\/[^/]+\/edit(?:\?.*)?$/, {
       timeout: appBootTimeoutMs,
     });
     await expectAdminEditFormForEvent(page, uniqueTitle, uniqueRichHeading);
     return;
   }
+
+  await waitForTextInViewport(
+    page,
+    uniqueTitle,
+    `Seeded admin event card "${uniqueTitle}" must be reachable before editing.`,
+  );
 
   throw new Error(
     `Seeded admin event card "${uniqueTitle}" was present in the admin API `

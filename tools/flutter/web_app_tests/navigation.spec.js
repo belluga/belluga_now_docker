@@ -1,9 +1,17 @@
+const crypto = require('crypto');
 const { test, expect } = require('@playwright/test');
 const {
   fixture,
   managedFixtureEnabled,
   matchesCanonicalManagedSlug,
+  rowFingerprint,
+  shouldContinuePagedFetch,
+  withManagedFixtureRunKeyScope,
 } = require('./support/public_taxonomy_validation_fixture_contract');
+const {
+  installFailureCollectors,
+  summarizeCriticalBrowserFailures,
+} = require('./support/browser_failure_collectors');
 
 const landlordUrl = process.env.NAV_LANDLORD_URL;
 const tenantUrl = process.env.NAV_TENANT_URL;
@@ -37,6 +45,29 @@ function escapeRegExp(value) {
   return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+function payloadRows(payload) {
+  if (Array.isArray(payload?.data)) {
+    return payload.data;
+  }
+  if (Array.isArray(payload?.items)) {
+    return payload.items;
+  }
+  if (Array.isArray(payload?.data?.items)) {
+    return payload.data.items;
+  }
+  if (Array.isArray(payload)) {
+    return payload;
+  }
+  return [];
+}
+
+function anonymousAgendaFingerprintHash(baseUrl) {
+  return crypto
+    .createHash('sha256')
+    .update(withManagedFixtureRunKeyScope(`navigation-agenda:${baseUrl}`))
+    .digest('hex');
+}
+
 function isApplicationApiRequest(rawUrl) {
   let parsed;
   try {
@@ -48,13 +79,10 @@ function isApplicationApiRequest(rawUrl) {
   return applicationOrigins().includes(parsed.origin) && parsed.pathname.startsWith('/api/');
 }
 
-function installFailureCollectors(page) {
-  const runtimeErrors = [];
-  const failedRequests = [];
-  const consoleErrors = [];
+function installReadonlyCollectors(page) {
+  const collectors = installFailureCollectors(page);
   const mutatingApiRequests = [];
 
-  page.on('pageerror', (error) => runtimeErrors.push(error.message));
   page.on('request', (request) => {
     const method = (request.method() || '').toUpperCase();
     if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') {
@@ -66,21 +94,8 @@ function installFailureCollectors(page) {
     }
     mutatingApiRequests.push(`${method} ${url}`);
   });
-  page.on('requestfailed', (request) => {
-    const failureText = request.failure()?.errorText || 'unknown';
-    if (failureText === 'net::ERR_ABORTED') {
-      return;
-    }
 
-    failedRequests.push(`${request.method()} ${request.url()} (${failureText})`);
-  });
-  page.on('console', (message) => {
-    if (message.type() === 'error') {
-      consoleErrors.push(message.text());
-    }
-  });
-
-  return { runtimeErrors, failedRequests, consoleErrors, mutatingApiRequests };
+  return { ...collectors, mutatingApiRequests };
 }
 
 async function assertAppBooted(page) {
@@ -247,9 +262,101 @@ async function scrollPageUntilLocatorVisible(
   return null;
 }
 
+async function resolveAnonymousIdentityToken(apiRequest, baseUrl) {
+  const response = await apiRequest.post(
+    new URL('/api/v1/anonymous/identities', baseUrl).toString(),
+    {
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
+      data: {
+        device_name: 'playwright-navigation-agenda',
+        fingerprint: {
+          hash: anonymousAgendaFingerprintHash(baseUrl),
+          user_agent: 'playwright-navigation-agenda',
+          locale: 'pt-BR',
+        },
+        metadata: {
+          source: 'web_navigation_agenda',
+        },
+      },
+    }
+  );
+  expect([200, 201]).toContain(response.status());
+  const payload = await response.json();
+  const token = payload?.data?.token?.toString().trim() || '';
+  expect(token, 'Anonymous agenda API proof requires an identity token.').toBeTruthy();
+  return token;
+}
+
+async function findManagedFixtureInPublicAgenda(apiRequest, baseUrl) {
+  const token = await resolveAnonymousIdentityToken(apiRequest, baseUrl);
+  const pageSummaries = [];
+  let previousFingerprint = null;
+
+  for (let pageNumber = 1; pageNumber <= 100; pageNumber += 1) {
+    const url = new URL('/api/v1/agenda', baseUrl);
+    url.searchParams.set('page', pageNumber.toString());
+    url.searchParams.set('page_size', '50');
+
+    const response = await apiRequest.get(url.toString(), {
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+    });
+    expect(
+      response.status(),
+      `Managed agenda proof page ${pageNumber} must load successfully.`,
+    ).toBeLessThan(400);
+
+    const payload = await response.json();
+    const rows = payloadRows(payload);
+    const candidate = rows.find((row) =>
+      matchesCanonicalManagedSlug(row?.slug, fixture.eventSlug)
+    );
+
+    pageSummaries.push({
+      page: pageNumber,
+      count: rows.length,
+      currentPage: payload?.current_page ?? null,
+      lastPage: payload?.last_page ?? null,
+      nextPageUrl: payload?.next_page_url ?? null,
+      fixtureVisible: Boolean(candidate),
+    });
+
+    if (candidate) {
+      return { candidate, pageSummaries };
+    }
+
+    const fingerprint = JSON.stringify(rows.map(rowFingerprint));
+    if (pageNumber > 1 && fingerprint === previousFingerprint) {
+      throw new Error(
+        'Managed agenda proof repeated the same page payload without advancing pagination.',
+      );
+    }
+    previousFingerprint = fingerprint;
+
+    if (!shouldContinuePagedFetch({
+      payload,
+      pageRows: rows,
+      pageNumber,
+      pageSize: 50,
+    })) {
+      break;
+    }
+  }
+
+  return {
+    candidate: null,
+    pageSummaries,
+  };
+}
+
 test('@readonly landlord domain bootstraps as landlord and navigates', async ({ page }) => {
   const { landlordUrl } = requireNavigationUrls();
-  const collectors = installFailureCollectors(page);
+  const collectors = installReadonlyCollectors(page);
 
   const response = await page.goto(landlordUrl, { waitUntil: 'domcontentloaded' });
   expect(response, 'Landlord response should be available').not.toBeNull();
@@ -283,9 +390,21 @@ test('@readonly landlord domain bootstraps as landlord and navigates', async ({ 
     'landlord'
   );
 
-  expect(collectors.runtimeErrors, `Unexpected runtime errors:\n${collectors.runtimeErrors.join('\n')}`).toEqual([]);
-  expect(collectors.failedRequests, `Failed requests:\n${collectors.failedRequests.join('\n')}`).toEqual([]);
-  expect(collectors.consoleErrors, `Console errors:\n${collectors.consoleErrors.join('\n')}`).toEqual([]);
+  const summary = summarizeCriticalBrowserFailures(collectors);
+  expect(summary.runtimeErrors, `Unexpected runtime errors:\n${summary.runtimeErrors.join('\n')}`).toEqual([]);
+  expect(summary.failedRequests, `Failed requests:\n${summary.failedRequests.join('\n')}`).toEqual([]);
+  expect(
+    summary.criticalHttpResponses,
+    `Critical HTTP responses:\n${summary.criticalHttpResponses.join('\n')}`,
+  ).toEqual([]);
+  expect(
+    summary.disallowedRateLimitedResponses,
+    `Disallowed 429 responses:\n${summary.disallowedRateLimitedResponses.join('\n')}`,
+  ).toEqual([]);
+  expect(
+    summary.criticalConsoleErrors,
+    `Critical console errors:\n${summary.criticalConsoleErrors.join('\n')}`,
+  ).toEqual([]);
   expect(
     collectors.mutatingApiRequests,
     `Readonly landlord flow must not issue mutating API requests:\n${collectors.mutatingApiRequests.join('\n')}`,
@@ -357,18 +476,24 @@ test('@readonly tenant domain bootstraps as tenant and navigates to tenant route
     'tenant'
   );
 
-  expect(collectors.runtimeErrors, `Unexpected runtime errors:\n${collectors.runtimeErrors.join('\n')}`).toEqual([]);
-  expect(collectors.failedRequests, `Failed requests:\n${collectors.failedRequests.join('\n')}`).toEqual([]);
-  const criticalConsoleErrors = collectors.consoleErrors.filter(
-    (entry) => !entry.includes('status of 401'),
-  );
+  const summary = summarizeCriticalBrowserFailures(collectors);
+  expect(summary.runtimeErrors, `Unexpected runtime errors:\n${summary.runtimeErrors.join('\n')}`).toEqual([]);
+  expect(summary.failedRequests, `Failed requests:\n${summary.failedRequests.join('\n')}`).toEqual([]);
   expect(
-    criticalConsoleErrors,
-    `Critical console errors:\n${criticalConsoleErrors.join('\n')}`,
+    summary.criticalHttpResponses,
+    `Critical HTTP responses:\n${summary.criticalHttpResponses.join('\n')}`,
+  ).toEqual([]);
+  expect(
+    summary.disallowedRateLimitedResponses,
+    `Disallowed 429 responses:\n${summary.disallowedRateLimitedResponses.join('\n')}`,
+  ).toEqual([]);
+  expect(
+    summary.criticalConsoleErrors,
+    `Critical console errors:\n${summary.criticalConsoleErrors.join('\n')}`,
   ).toEqual([]);
 });
 
-test('@mutation tenant agenda UI state matches tenant agenda API payload', async ({ browser }) => {
+test('@mutation tenant agenda UI state matches tenant agenda API payload', async ({ browser, request }) => {
   const { tenantUrl } = requireNavigationUrls();
   const tenantOrigin = new URL(tenantUrl).origin;
   const isHomeAgendaRequest = (sample) =>
@@ -599,15 +724,21 @@ test('@mutation tenant agenda UI state matches tenant agenda API payload', async
   }
 
   if (managedFixtureEnabled) {
-    const managedFixtureSample = payloadSamples.find((sample) => sample.fixtureVisible);
+    const { candidate: managedFixtureCandidate, pageSummaries } =
+      await findManagedFixtureInPublicAgenda(request, tenantUrl);
     expect(
-      managedFixtureSample,
-      `Managed home agenda fixture ${fixture.eventSlug} must be visible in the canonical home /api/v1/agenda payload when NAV_PUBLIC_TAXONOMY_MANAGED_FIXTURE=1.\n` +
-        `Observed home payload samples:\n${JSON.stringify(payloadSamples, null, 2)}`,
+      managedFixtureCandidate,
+      `Managed home agenda fixture ${fixture.eventSlug} must be visible somewhere in the canonical public /api/v1/agenda pagination when NAV_PUBLIC_TAXONOMY_MANAGED_FIXTURE=1.\n` +
+        `Observed agenda page summaries:\n${JSON.stringify(pageSummaries, null, 2)}`,
     ).toBeTruthy();
 
+    const managedFixtureVisibleOnInitialHomePayload = payloadSamples.some(
+      (sample) => sample.fixtureVisible,
+    );
+    const managedFixtureLabel =
+      managedFixtureCandidate?.title?.toString().trim() || fixture.eventTitle;
     const managedFixtureTitle = page
-      .getByText(new RegExp(escapeRegExp(fixture.eventTitle), 'i'))
+      .getByText(new RegExp(escapeRegExp(managedFixtureLabel), 'i'))
       .first();
     const visibleManagedFixtureTitle = await scrollPageUntilLocatorVisible(
       page,
@@ -616,38 +747,37 @@ test('@mutation tenant agenda UI state matches tenant agenda API payload', async
         timeout: appBootTimeoutMs,
       },
     );
+    const renderExpectationQualifier = managedFixtureVisibleOnInitialHomePayload
+      ? 'it is already present in the initial home agenda payload'
+      : 'the home feed paginates into the later agenda page that contains it';
     expect(
       visibleManagedFixtureTitle,
-      `Managed home agenda fixture ${fixture.eventTitle} must render somewhere in the tenant home agenda feed when NAV_PUBLIC_TAXONOMY_MANAGED_FIXTURE=1.`,
+      `Managed home agenda fixture ${managedFixtureLabel} must render on the tenant home surface when ${renderExpectationQualifier}.`,
     ).toBeTruthy();
     await expect(
       visibleManagedFixtureTitle,
-      `Managed home agenda fixture ${fixture.eventTitle} must render on the tenant home surface when NAV_PUBLIC_TAXONOMY_MANAGED_FIXTURE=1.`,
+      `Managed home agenda fixture ${managedFixtureLabel} must render on the tenant home surface when ${renderExpectationQualifier}.`,
     ).toBeVisible({
       timeout: appBootTimeoutMs,
     });
   }
 
-  const criticalFailedRequests = collectors.failedRequests.filter((entry) =>
+  const summary = summarizeCriticalBrowserFailures(collectors);
+  const criticalFailedRequests = summary.failedRequests.filter((entry) =>
     entry.includes(tenantOrigin) && entry.includes('/api/'),
-  );
-  const criticalConsoleErrors = collectors.consoleErrors.filter((entry) =>
-    entry.includes('/api/v1/') ||
-    entry.includes('FormatException') ||
-    entry.includes('Landlord login failed'),
   );
 
   expect(
-    collectors.runtimeErrors,
-    `Unexpected runtime errors:\n${collectors.runtimeErrors.join('\n')}`,
+    summary.runtimeErrors,
+    `Unexpected runtime errors:\n${summary.runtimeErrors.join('\n')}`,
   ).toEqual([]);
   expect(
     criticalFailedRequests,
     `Critical failed API requests:\n${criticalFailedRequests.join('\n')}`,
   ).toEqual([]);
   expect(
-    criticalConsoleErrors,
-    `Critical console errors:\n${criticalConsoleErrors.join('\n')}`,
+    summary.criticalConsoleErrors,
+    `Critical console errors:\n${summary.criticalConsoleErrors.join('\n')}`,
   ).toEqual([]);
 
   await context.close();

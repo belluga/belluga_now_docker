@@ -98,6 +98,121 @@ function expectDeleteSucceeded(response, label) {
   ).toContain(response.status());
 }
 
+function expectResponseHtmlPattern(html, pattern, label) {
+  expect(
+    html,
+    label,
+  ).toMatch(pattern);
+}
+
+function extractInviteHtmlSiteName(html) {
+  const siteNameMatch = html.match(
+    /<meta[^>]+property="og:site_name"[^>]+content="([^"]+)"/i,
+  );
+  const siteName = siteNameMatch?.[1]?.toString().trim() || '';
+  expect(
+    siteName,
+    'Invite landing HTML must expose a non-empty og:site_name for dynamic share-title validation.',
+  ).toBeTruthy();
+  return siteName;
+}
+
+function assertInviteResponseHtmlMetadata({
+  html,
+  eventTitle,
+  inviteUrl,
+  expectedImage,
+}) {
+  const siteName = extractInviteHtmlSiteName(html);
+  const titlePattern = new RegExp(
+    `<title>${escapeRegExp(eventTitle)}\\s*\\|\\s*${escapeRegExp(siteName)}</title>`,
+    'i',
+  );
+  const ogTitlePattern = new RegExp(
+    `<meta[^>]+property="og:title"[^>]+content="${escapeRegExp(eventTitle)}\\s*\\|\\s*${escapeRegExp(siteName)}"`,
+    'i',
+  );
+  const twitterTitlePattern = new RegExp(
+    `<meta[^>]+name="twitter:title"[^>]+content="${escapeRegExp(eventTitle)}\\s*\\|\\s*${escapeRegExp(siteName)}"`,
+    'i',
+  );
+  const descriptionPattern = new RegExp(
+    `<meta[^>]+property="og:description"[^>]+content="[^"]*${escapeRegExp(eventTitle)}[^"]*"`,
+    'i',
+  );
+  const ogUrlPattern = new RegExp(
+    `<meta[^>]+property="og:url"[^>]+content="${escapeRegExp(inviteUrl)}"`,
+    'i',
+  );
+  const canonicalPattern = new RegExp(
+    `<link[^>]+rel="canonical"[^>]+href="${escapeRegExp(inviteUrl)}"`,
+    'i',
+  );
+
+  expectResponseHtmlPattern(
+    html,
+    titlePattern,
+    'Invite landing HTML must expose the seeded event title in <title> before Flutter boot mutates document.title.',
+  );
+  expectResponseHtmlPattern(
+    html,
+    ogTitlePattern,
+    'Invite landing HTML must expose the seeded event title in og:title.',
+  );
+  expectResponseHtmlPattern(
+    html,
+    twitterTitlePattern,
+    'Invite landing HTML must expose the seeded event title in twitter:title.',
+  );
+  expectResponseHtmlPattern(
+    html,
+    descriptionPattern,
+    'Invite landing HTML must expose an og:description that mentions the seeded event title.',
+  );
+  expectResponseHtmlPattern(
+    html,
+    ogUrlPattern,
+    'Invite landing HTML must expose the invite URL in og:url.',
+  );
+  expectResponseHtmlPattern(
+    html,
+    canonicalPattern,
+    'Invite landing HTML must expose the invite URL as canonical.',
+  );
+
+  if (expectedImage) {
+    const ogImagePattern = new RegExp(
+      `<meta[^>]+property="og:image"[^>]+content="${escapeRegExp(expectedImage)}"`,
+      'i',
+    );
+    const twitterImagePattern = new RegExp(
+      `<meta[^>]+name="twitter:image"[^>]+content="${escapeRegExp(expectedImage)}"`,
+      'i',
+    );
+    expectResponseHtmlPattern(
+      html,
+      ogImagePattern,
+      'Invite landing HTML must expose the expected og:image URL.',
+    );
+    expectResponseHtmlPattern(
+      html,
+      twitterImagePattern,
+      'Invite landing HTML must expose the expected twitter:image URL.',
+    );
+  } else {
+    expectResponseHtmlPattern(
+      html,
+      /<meta[^>]+property="og:image"[^>]+content="[^"]+"/i,
+      'Invite landing HTML must expose a non-empty og:image fallback.',
+    );
+    expectResponseHtmlPattern(
+      html,
+      /<meta[^>]+name="twitter:image"[^>]+content="[^"]+"/i,
+      'Invite landing HTML must expose a non-empty twitter:image fallback.',
+    );
+  }
+}
+
 async function loginTenantAdmin(api, baseUrl) {
   return loginTenantAdminWithRequiredCredentials({
     api,
@@ -516,6 +631,34 @@ async function deleteAccountProfileType(api, baseUrl, token, profileType) {
   expectDeleteSucceeded(response, `Account profile type ${profileType}`);
 }
 
+async function forceDeleteAccountProfile(api, baseUrl, token, profileId) {
+  if (!profileId) {
+    return;
+  }
+
+  const response = await api.post(
+    buildUrl(baseUrl, `/admin/api/v1/account_profiles/${profileId}/force_delete`),
+    {
+      headers: authHeaders(token),
+      failOnStatusCode: false,
+      timeout: 15000,
+    },
+  );
+  expectDeleteSucceeded(response, `Account profile ${profileId}`);
+}
+
+async function forceDeleteAccountProfiles(api, baseUrl, token, profileIds) {
+  const uniqueProfileIds = [...new Set(
+    (profileIds || [])
+      .map((profileId) => profileId?.toString().trim())
+      .filter(Boolean),
+  )];
+
+  for (const profileId of uniqueProfileIds) {
+    await forceDeleteAccountProfile(api, baseUrl, token, profileId);
+  }
+}
+
 async function findExistingSeedEvent(api, baseUrl, token) {
   for (let page = 1; page <= 10; page += 1) {
     const url = new URL(buildUrl(baseUrl, '/admin/api/v1/events'));
@@ -560,6 +703,7 @@ async function createSeedEvent(api, baseUrl, token) {
   let eventTypeId = '';
   let createdProfileType = '';
   const cleanupAccountSlugs = [];
+  const cleanupProfileIds = [];
 
   try {
     const eventType = await createEventType(api, baseUrl, token, uniqueSuffix);
@@ -576,6 +720,9 @@ async function createSeedEvent(api, baseUrl, token) {
     );
     if (physicalHost.account_slug) {
       cleanupAccountSlugs.push(physicalHost.account_slug);
+    }
+    if (physicalHost.id) {
+      cleanupProfileIds.push(physicalHost.id);
     }
 
     const start = new Date(Date.now() + 10 * 24 * 60 * 60 * 1000);
@@ -623,6 +770,7 @@ async function createSeedEvent(api, baseUrl, token) {
       eventTypeId,
       createdProfileType,
       cleanupAccountSlugs,
+      cleanupProfileIds,
     };
   } catch (error) {
     await runCleanupPreservingPrimaryError(error, async () => {
@@ -633,6 +781,7 @@ async function createSeedEvent(api, baseUrl, token) {
         token,
         cleanupAccountSlugs,
       );
+      await forceDeleteAccountProfiles(api, baseUrl, token, cleanupProfileIds);
       await deleteEventType(api, baseUrl, token, eventTypeId);
       await deleteAccountProfileType(
         api,
@@ -652,6 +801,7 @@ async function createInvitePreviewSeedEvent(api, baseUrl, token) {
   let eventTypeId = '';
   let createdProfileType = '';
   const cleanupAccountSlugs = [];
+  const cleanupProfileIds = [];
 
   try {
     const eventType = await createEventType(api, baseUrl, token, uniqueSuffix);
@@ -685,6 +835,11 @@ async function createInvitePreviewSeedEvent(api, baseUrl, token) {
         .map((slug) => slug?.toString().trim())
         .filter(Boolean),
     );
+    cleanupProfileIds.push(
+      ...[host.id, band.id, exhibitor.id]
+        .map((profileId) => profileId?.toString().trim())
+        .filter(Boolean),
+    );
 
     const start = new Date(Date.now() + 10 * 24 * 60 * 60 * 1000);
     const end = new Date(start.getTime() + 2 * 60 * 60 * 1000);
@@ -716,13 +871,11 @@ async function createInvitePreviewSeedEvent(api, baseUrl, token) {
                 id: 'bandas',
                 label: 'Bandas',
                 order: 0,
-                account_profile_ids: [band.id],
               },
               {
                 id: 'expositores',
                 label: 'Expositores',
                 order: 1,
-                account_profile_ids: [exhibitor.id],
               },
             ],
           },
@@ -742,6 +895,33 @@ async function createInvitePreviewSeedEvent(api, baseUrl, token) {
       `Invite preview seed event must be created. Response: ${JSON.stringify(payload)}`,
     ).toBe(201);
     eventId = payload?.data?.event_id?.toString() || '';
+    const occurrenceId =
+      payload?.data?.occurrences?.[0]?.occurrence_id?.toString() || '';
+    expect(
+      occurrenceId,
+      'Invite preview seed event must return occurrence_id for canonical member patching.',
+    ).toBeTruthy();
+    for (const [groupId, profileId] of [
+      ['bandas', band.id],
+      ['expositores', exhibitor.id],
+    ]) {
+      const membersResponse = await api.patch(
+        buildUrl(
+          baseUrl,
+          `/admin/api/v1/events/${eventId}/occurrences/${occurrenceId}/profile_groups/${groupId}/members`,
+        ),
+        {
+          data: {
+            add_ids: [profileId],
+          },
+          headers: authHeaders(token),
+        },
+      );
+      expect(
+        membersResponse.status(),
+        `Invite preview seed event must patch canonical members for group ${groupId}.`,
+      ).toBeLessThan(400);
+    }
     return {
       event: payload?.data,
       title,
@@ -751,6 +931,7 @@ async function createInvitePreviewSeedEvent(api, baseUrl, token) {
       eventTypeId,
       createdProfileType,
       cleanupAccountSlugs,
+      cleanupProfileIds,
     };
   } catch (error) {
     await runCleanupPreservingPrimaryError(error, async () => {
@@ -761,6 +942,7 @@ async function createInvitePreviewSeedEvent(api, baseUrl, token) {
         token,
         cleanupAccountSlugs,
       );
+      await forceDeleteAccountProfiles(api, baseUrl, token, cleanupProfileIds);
       await deleteEventType(api, baseUrl, token, eventTypeId);
       await deleteAccountProfileType(
         api,
@@ -919,63 +1101,14 @@ test('@mutation INVITE-SESSION-CONTEXT invite landing exposes dynamic share meta
       });
       expect(response, 'Invite landing response should be available.').not.toBeNull();
       expect(response.status()).toBeLessThan(400);
-
-      await expect(page).toHaveTitle(new RegExp(escapeRegExp(eventTitle), 'i'), {
-        timeout: appBootTimeoutMs,
-      });
-      await expect(page.locator('head meta[property="og:title"]')).toHaveAttribute(
-        'content',
-        new RegExp(escapeRegExp(eventTitle), 'i'),
-        {
-          timeout: appBootTimeoutMs,
-        },
-      );
-      await expect(page.locator('head meta[name="twitter:title"]')).toHaveAttribute(
-        'content',
-        new RegExp(escapeRegExp(eventTitle), 'i'),
-        {
-          timeout: appBootTimeoutMs,
-        },
-      );
-      await expect(page.locator('head meta[property="og:description"]')).toHaveAttribute(
-        'content',
-        new RegExp(escapeRegExp(eventTitle), 'i'),
-        {
-          timeout: appBootTimeoutMs,
-        },
-      );
-      await expect(page.locator('head meta[property="og:url"]')).toHaveAttribute(
-        'content',
-        inviteUrl,
-        {
-          timeout: appBootTimeoutMs,
-        },
-      );
-      await expect(page.locator('head link[rel="canonical"]')).toHaveAttribute(
-        'href',
-        inviteUrl,
-        {
-          timeout: appBootTimeoutMs,
-        },
-      );
       const expectedImage = textValue(preview?.invite?.event_image_url);
-      const ogImage = page.locator('head meta[property="og:image"]');
-      const twitterImage = page.locator('head meta[name="twitter:image"]');
-      if (expectedImage) {
-        await expect(ogImage).toHaveAttribute('content', expectedImage, {
-          timeout: appBootTimeoutMs,
-        });
-        await expect(twitterImage).toHaveAttribute('content', expectedImage, {
-          timeout: appBootTimeoutMs,
-        });
-      } else {
-        await expect(ogImage).toHaveAttribute('content', /.+/, {
-          timeout: appBootTimeoutMs,
-        });
-        await expect(twitterImage).toHaveAttribute('content', /.+/, {
-          timeout: appBootTimeoutMs,
-        });
-      }
+      const inviteHtml = await response.text();
+      assertInviteResponseHtmlMetadata({
+        html: inviteHtml,
+        eventTitle,
+        inviteUrl,
+        expectedImage,
+      });
 
       await openInvitePreview({
         page,
@@ -1041,6 +1174,15 @@ test('@mutation INVITE-SESSION-CONTEXT invite landing exposes dynamic share meta
             [
               ...(seeded?.cleanupAccountSlugs || []),
               ...(secondSeeded?.cleanupAccountSlugs || []),
+            ],
+          );
+          await forceDeleteAccountProfiles(
+            api,
+            baseUrl,
+            session.token,
+            [
+              ...(seeded?.cleanupProfileIds || []),
+              ...(secondSeeded?.cleanupProfileIds || []),
             ],
           );
           await deleteEventType(api, baseUrl, session.token, seeded?.eventTypeId || '');
@@ -1132,6 +1274,12 @@ test('@mutation INVITE-SESSION-CONTEXT Android direct invite and event links gen
             baseUrl,
             session.token,
             seeded.cleanupAccountSlugs,
+          );
+          await forceDeleteAccountProfiles(
+            api,
+            baseUrl,
+            session.token,
+            seeded.cleanupProfileIds,
           );
           await deleteEventType(api, baseUrl, session.token, seeded.eventTypeId);
           await deleteAccountProfileType(

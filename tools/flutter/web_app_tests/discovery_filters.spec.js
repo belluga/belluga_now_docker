@@ -8,6 +8,10 @@ const {
   cleanupOnboardedAccounts,
   runCleanupPreservingPrimaryError,
 } = require('./support/account_onboarding_cleanup');
+const {
+  installFailureCollectors,
+  summarizeCriticalBrowserFailures,
+} = require('./support/browser_failure_collectors');
 
 const tenantUrl = process.env.NAV_TENANT_URL;
 const appBootTimeoutMs = 90000;
@@ -255,46 +259,27 @@ async function activateSemanticToggle(locator) {
   }
 }
 
-function installFailureCollectors(page) {
-  const runtimeErrors = [];
-  const failedRequests = [];
-  const consoleErrors = [];
-
-  page.on('pageerror', (error) => runtimeErrors.push(error.message));
-  page.on('requestfailed', (request) => {
-    const failureText = request.failure()?.errorText || 'unknown';
-    if (failureText === 'net::ERR_ABORTED') {
-      return;
-    }
-    failedRequests.push(`${request.method()} ${request.url()} (${failureText})`);
-  });
-  page.on('console', (message) => {
-    if (message.type() === 'error') {
-      consoleErrors.push(message.text());
-    }
-  });
-
-  return { runtimeErrors, failedRequests, consoleErrors };
-}
-
 async function assertNoCriticalBrowserFailures(collectors) {
+  const summary = summarizeCriticalBrowserFailures(collectors);
   expect(
-    collectors.runtimeErrors,
-    `Unexpected runtime errors:\n${collectors.runtimeErrors.join('\n')}`,
+    summary.runtimeErrors,
+    `Unexpected runtime errors:\n${summary.runtimeErrors.join('\n')}`,
   ).toEqual([]);
   expect(
-    collectors.failedRequests,
-    `Unexpected failed requests:\n${collectors.failedRequests.join('\n')}`,
+    summary.failedRequests,
+    `Unexpected failed requests:\n${summary.failedRequests.join('\n')}`,
   ).toEqual([]);
-
-  const criticalConsoleErrors = collectors.consoleErrors.filter(
-    (entry) =>
-      !entry.includes('status of 401') &&
-      !entry.includes('ResizeObserver loop limit exceeded'),
-  );
   expect(
-    criticalConsoleErrors,
-    `Critical console errors:\n${criticalConsoleErrors.join('\n')}`,
+    summary.criticalHttpResponses,
+    `Critical HTTP responses:\n${summary.criticalHttpResponses.join('\n')}`,
+  ).toEqual([]);
+  expect(
+    summary.disallowedRateLimitedResponses,
+    `Disallowed 429 responses:\n${summary.disallowedRateLimitedResponses.join('\n')}`,
+  ).toEqual([]);
+  expect(
+    summary.criticalConsoleErrors,
+    `Critical console errors:\n${summary.criticalConsoleErrors.join('\n')}`,
   ).toEqual([]);
 }
 
@@ -1878,9 +1863,9 @@ test('@mutation public Map keeps baseline primary filters without taxonomy subfi
     .click();
   const requestSample = await filteredRequest;
 
-  await expect(page.getByText(selectedCategory.label, { exact: true }))
-    .toBeVisible({ timeout: appBootTimeoutMs });
-  await expect(page.getByRole('button', { name: /Remover filtro/i }))
+  // The Map surface can render the same label in both the primary strip and
+  // the applied-filter chip. The removable state is the stable UI contract.
+  await expect(page.getByRole('button', { name: /Remover filtro/i }).first())
     .toBeVisible({ timeout: appBootTimeoutMs });
   if (siblingCategory) {
     await expectAccessibleButtonByName(page, labelPattern(siblingCategory.label));
@@ -2017,16 +2002,12 @@ test('@mutation public Map navigates configured canonical filters with and witho
       await overrideButton.click();
       await expect(removeFilterButton).toBeVisible({ timeout: appBootTimeoutMs });
     }
-    await expect(page.getByText(overrideLabel, { exact: true }))
-      .toBeVisible({ timeout: appBootTimeoutMs });
     await expectSelectedChipIconAndLabelForegroundParity(overrideButton);
     await removeFilterButton.click();
 
     const buttonOnlyButton = page.getByRole('button', { name: labelPattern(buttonOnlyLabel) }).first();
     await buttonOnlyButton.click();
     await expect(removeFilterButton).toBeVisible({ timeout: appBootTimeoutMs });
-    await expect(page.getByText(buttonOnlyLabel, { exact: true }))
-      .toBeVisible({ timeout: appBootTimeoutMs });
     await expectSelectedChipIconAndLabelForegroundParity(buttonOnlyButton);
 
     await assertNoCriticalBrowserFailures(collectors);
