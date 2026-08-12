@@ -191,6 +191,12 @@ async function fetchJson(response, label) {
   return response.json();
 }
 
+async function fetchSingleEnvelopeRows(api, url, { headers, label }) {
+  const response = await api.get(url, { headers });
+  const payload = await fetchJson(response, label);
+  return normalizeRows(payload, label);
+}
+
 async function fetchPagedRows(api, buildPageUrl, { headers, label, pageSize }) {
   const rows = [];
   let previousFingerprint = null;
@@ -217,52 +223,34 @@ async function fetchPagedRows(api, buildPageUrl, { headers, label, pageSize }) {
 }
 
 async function listTaxonomies(api, baseUrl, token) {
-  return fetchPagedRows(
+  return fetchSingleEnvelopeRows(
     api,
-    (pageNumber, pageSize) => {
-      const url = new URL(buildUrl(baseUrl, '/admin/api/v1/taxonomies'));
-      url.searchParams.set('page', pageNumber.toString());
-      url.searchParams.set('page_size', pageSize.toString());
-      return url.toString();
-    },
+    buildUrl(baseUrl, '/admin/api/v1/taxonomies'),
     {
       headers: authHeaders(token),
       label: 'Taxonomy registry list',
-      pageSize: 500,
     },
   );
 }
 
 async function listAccountProfileTypes(api, baseUrl, token) {
-  return fetchPagedRows(
+  return fetchSingleEnvelopeRows(
     api,
-    (pageNumber, pageSize) => {
-      const url = new URL(buildUrl(baseUrl, '/admin/api/v1/account_profile_types'));
-      url.searchParams.set('page', pageNumber.toString());
-      url.searchParams.set('page_size', pageSize.toString());
-      return url.toString();
-    },
+    buildUrl(baseUrl, '/admin/api/v1/account_profile_types'),
     {
       headers: authHeaders(token),
       label: 'Account profile type registry list',
-      pageSize: 500,
     },
   );
 }
 
 async function listEventTypes(api, baseUrl, token) {
-  return fetchPagedRows(
+  return fetchSingleEnvelopeRows(
     api,
-    (pageNumber, pageSize) => {
-      const url = new URL(buildUrl(baseUrl, '/admin/api/v1/event_types'));
-      url.searchParams.set('page', pageNumber.toString());
-      url.searchParams.set('page_size', pageSize.toString());
-      return url.toString();
-    },
+    buildUrl(baseUrl, '/admin/api/v1/event_types'),
     {
       headers: authHeaders(token),
       label: 'Event type registry list',
-      pageSize: 500,
     },
   );
 }

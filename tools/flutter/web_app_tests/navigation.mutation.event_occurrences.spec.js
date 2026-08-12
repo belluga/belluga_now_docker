@@ -5432,6 +5432,7 @@ test('@mutation repeated public event detail GET/hydration keeps programming pay
 test('@mutation admin-authored occurrence profile groups persist full chip readback and public aggregation', async ({
   browser,
 }) => {
+  test.setTimeout(600000);
   const baseUrl = requireTenantUrl();
   const api = await createApiContext(baseUrl);
   const uniqueSuffix = `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;

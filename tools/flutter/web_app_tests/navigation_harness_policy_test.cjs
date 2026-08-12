@@ -1055,6 +1055,16 @@ function assertCiEquivalentContractSurfacesStayWired() {
   );
   assert.match(
     localPublicWrapperSource,
+    /ERROR: \$\{target\} host-overrides-apply requires NAV_ORIGIN_IP\. Refusing to fall back to public DNS during browser contract execution\./,
+    'stage browser wrapper must fail closed when host-overrides-apply is requested without NAV_ORIGIN_IP',
+  );
+  assert.doesNotMatch(
+    localPublicWrapperSource,
+    /host override step is a no-op and public DNS remains authoritative/,
+    'stage browser wrapper must not silently allow public-DNS fallback during host-overrides-apply',
+  );
+  assert.match(
+    localPublicWrapperSource,
     /bash "\$\{ROOT_DIR\}\/tools\/flutter\/run_web_navigation_smoke\.sh" "\$\{suite\}"/,
     'stage browser wrapper must delegate browser smoke to the canonical runner',
   );
@@ -2568,13 +2578,28 @@ function assertStageFixturePublicEventListUsesCanonicalPageSize() {
     /async function verifyAccountProfileFixture[\s\S]*?fetchPublicAccountProfiles\(api, baseUrl, \{\s*search: expectedName,\s*\}\)/,
     'stage fixture public account-profile verification must use the canonical public search contract for the owned fixture profile instead of scanning the entire catalog',
   );
+  assert.match(
+    fixtureScriptSource,
+    /async function listTaxonomies[\s\S]*?fetchSingleEnvelopeRows\(\s*api,\s*buildUrl\(baseUrl, '\/admin\/api\/v1\/taxonomies'\)/,
+    'stage fixture cleanup must treat taxonomy registry as the canonical single-envelope admin list contract',
+  );
+  assert.match(
+    fixtureScriptSource,
+    /async function listAccountProfileTypes[\s\S]*?fetchSingleEnvelopeRows\(\s*api,\s*buildUrl\(baseUrl, '\/admin\/api\/v1\/account_profile_types'\)/,
+    'stage fixture cleanup must treat account profile type registry as the canonical single-envelope admin list contract',
+  );
+  assert.match(
+    fixtureScriptSource,
+    /async function listEventTypes[\s\S]*?fetchSingleEnvelopeRows\(\s*api,\s*buildUrl\(baseUrl, '\/admin\/api\/v1\/event_types'\)/,
+    'stage fixture cleanup must treat event type registry as the canonical single-envelope admin list contract',
+  );
 }
 
 function assertCanonicalNavigationTimeoutBudget() {
   const source = fs.readFileSync(smokeScript, 'utf8');
   assert.match(
     source,
-    /if \[\[ "\$\{SUITE\}" == "mutation" \]\]; then[\s\S]*?SUITE_TIMEOUT_SECONDS=2700[\s\S]*?elif \[\[ "\$\{SUITE\}" == "diagnostic" \]\]; then[\s\S]*?SUITE_TIMEOUT_SECONDS=1200[\s\S]*?else[\s\S]*?SUITE_TIMEOUT_SECONDS=1800/,
+    /if \[\[ "\$\{SUITE\}" == "mutation" \]\]; then[\s\S]*?SUITE_TIMEOUT_SECONDS=3600[\s\S]*?elif \[\[ "\$\{SUITE\}" == "diagnostic" \]\]; then[\s\S]*?SUITE_TIMEOUT_SECONDS=1200[\s\S]*?else[\s\S]*?SUITE_TIMEOUT_SECONDS=1800/,
     'canonical web navigation runner must keep the shared timeout budget aligned with the approved readonly/mutation/diagnostic suite deadlines',
   );
 }

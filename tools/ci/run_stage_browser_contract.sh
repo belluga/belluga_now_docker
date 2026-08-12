@@ -530,11 +530,13 @@ fixture_cleanup() {
 }
 
 apply_host_overrides() {
+  local target="$1"
+
   ensure_navigation_urls
 
   if [[ -z "${NAV_ORIGIN_IP:-}" ]]; then
-    echo "INFO: no NAV_ORIGIN_IP provided; host override step is a no-op and public DNS remains authoritative."
-    return 0
+    echo "ERROR: ${target} host-overrides-apply requires NAV_ORIGIN_IP. Refusing to fall back to public DNS during browser contract execution." >&2
+    exit 1
   fi
 
   bash "${ROOT_DIR}/.github/scripts/manage_navigation_host_overrides.sh" apply
@@ -700,7 +702,7 @@ main() {
       fixture_ensure "${target}"
       ;;
     local-public:host-overrides-apply|stage:host-overrides-apply)
-      apply_host_overrides
+      apply_host_overrides "${target}"
       ;;
     local-public:readonly|stage:readonly)
       run_navigation_smoke "${target}" readonly
