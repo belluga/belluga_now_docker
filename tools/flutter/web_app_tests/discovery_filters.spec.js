@@ -2384,7 +2384,6 @@ test('@mutation Profile Discovery hides non-publicly-discoverable types and keep
     await openTenantPath(page, baseUrl, '/descobrir');
     await expect(page.getByText('Descubra', { exact: true }))
       .toBeVisible({ timeout: appBootTimeoutMs });
-
     const panel = filterPanel(page, /Painel de filtros de perfis/i);
     await expect(panel).toBeVisible({ timeout: appBootTimeoutMs });
     await expect(

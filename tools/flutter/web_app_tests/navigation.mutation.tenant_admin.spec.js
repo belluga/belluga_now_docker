@@ -69,6 +69,49 @@ function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+const u04PickerDebugEnabled = process.env.U04_DEBUG_PICKER === '1';
+
+async function logU04PickerSemanticSnapshot(page, needle) {
+  if (!u04PickerDebugEnabled) {
+    return;
+  }
+
+  const snapshot = await page.evaluate((rawNeedle) => {
+    const needleValue = rawNeedle.toLowerCase();
+    const rows = [];
+    for (const element of document.querySelectorAll('[role]')) {
+      const role = element.getAttribute('role') || '';
+      const name = element.getAttribute('aria-label') || '';
+      const text = (element.textContent || '').trim();
+      const checked = element.getAttribute('aria-checked') || '';
+      const selected = element.getAttribute('aria-selected') || '';
+      const blob = `${role} ${name} ${text}`.toLowerCase();
+      if (
+        !blob.includes(needleValue) &&
+        !blob.includes('adicionar perfis') &&
+        !blob.includes('selecionado')
+      ) {
+        continue;
+      }
+      rows.push({
+        role,
+        name,
+        text,
+        checked,
+        selected,
+      });
+      if (rows.length >= 30) {
+        break;
+      }
+    }
+    return rows;
+  }, needle);
+
+  const rendered = `[U04 picker semantic snapshot] ${JSON.stringify(snapshot, null, 2)}\n`;
+  console.log(rendered);
+  require('fs').appendFileSync('/tmp/u04_picker_debug.log', rendered);
+}
+
 function urlsMatchIgnoringQuery(candidateUrl, expectedUrl) {
   try {
     const candidate = new URL(candidateUrl);
@@ -1461,6 +1504,29 @@ async function fetchAdminProfile(api, baseUrl, token, profileId) {
   return normalizePayload(await response.json());
 }
 
+async function fetchAdminNestedGroupMembers(
+  api,
+  baseUrl,
+  token,
+  profileId,
+  groupId,
+) {
+  const response = await api.get(
+    buildApiUrl(
+      baseUrl,
+      `/admin/api/v1/account_profiles/${profileId}/nested_profile_groups/${groupId}/members`,
+    ),
+    {
+      headers: authHeaders(token),
+    },
+  );
+  expect(
+    response.status(),
+    'Nested-group member readback must succeed against the dedicated authority.',
+  ).toBe(200);
+  return await response.json();
+}
+
 async function fetchAdminEvent(api, baseUrl, token, eventId) {
   const response = await api.get(
     buildApiUrl(baseUrl, `/admin/api/v1/events/${eventId}`),
@@ -1887,6 +1953,64 @@ async function waitForTaxonomyRegistry(api, baseUrl, token, slugs) {
     .toBeTruthy();
 }
 
+async function waitForAccountProfileTypeRegistry(api, baseUrl, token, types) {
+  await expect
+    .poll(
+      async () => {
+        const response = await api.get(
+          buildApiUrl(baseUrl, '/admin/api/v1/account_profile_types'),
+          {
+            headers: authHeaders(token),
+          },
+        );
+        if (response.status() >= 400) {
+          return false;
+        }
+        const payload = await response.json();
+        const rows = Array.isArray(payload?.data) ? payload.data : [];
+        const available = new Set(
+          rows.map((entry) => entry?.type?.toString()).filter(Boolean),
+        );
+        return types.every((type) => available.has(type));
+      },
+      {
+        timeout: appBootTimeoutMs,
+        message:
+          'Expected newly created account profile types to appear in the admin registry before opening onboarding flows.',
+      },
+    )
+    .toBeTruthy();
+}
+
+async function waitForEventTypeRegistry(api, baseUrl, token, slugs) {
+  await expect
+    .poll(
+      async () => {
+        const response = await api.get(
+          buildApiUrl(baseUrl, '/admin/api/v1/event_types?page=1&page_size=500'),
+          {
+            headers: authHeaders(token),
+          },
+        );
+        if (response.status() >= 400) {
+          return false;
+        }
+        const payload = await response.json();
+        const rows = Array.isArray(payload?.data) ? payload.data : [];
+        const available = new Set(
+          rows.map((entry) => entry?.slug?.toString()).filter(Boolean),
+        );
+        return slugs.every((slug) => available.has(slug));
+      },
+      {
+        timeout: appBootTimeoutMs,
+        message:
+          'Expected newly created event types to appear in the admin registry before opening event create flows.',
+      },
+    )
+    .toBeTruthy();
+}
+
 async function createAccountProfileType(
   api,
   baseUrl,
@@ -1932,6 +2056,7 @@ async function createAccountProfileType(
   expect(response.status(), `Account profile type ${type} must be created.`).toBe(
     201,
   );
+  await waitForAccountProfileTypeRegistry(api, baseUrl, token, [type]);
   return response.json();
 }
 
@@ -2041,6 +2166,7 @@ async function createEventType(
     },
   );
   expect(response.status(), `Event type ${slug} must be created.`).toBe(201);
+  await waitForEventTypeRegistry(api, baseUrl, token, [slug]);
   return response.json();
 }
 
@@ -4442,6 +4568,527 @@ test.skip('@deferred @mutation tenant-admin account profile nested tabs obey pro
   }
 });
 
+test('@mutation U04-ACCOUNT-GROUP-HEAD tenant-admin account-profile group heads persist independently, adopt canonical ids, and delete after confirmation', async () => {
+  test.setTimeout(900000);
+  const baseUrl = requireTenantUrl();
+  const api = await createApiContext(baseUrl);
+  let browserContext;
+  let freshBrowser;
+  let session = null;
+  let nestedTypeKey = null;
+  let primaryError = null;
+  const createdAccountSlugs = [];
+
+  try {
+    session = await loginTenantAdmin(api, baseUrl);
+    const unique = Date.now();
+    const nestedType = (
+      await createAccountProfileType(api, baseUrl, session.token, {
+        type: `pw-u04-nested-${unique}`,
+        label: `PW U04 Nested ${unique}`,
+        allowedTaxonomies: [],
+        markerColor: '#0E7A6A',
+        capabilities: {
+          is_queryable: true,
+          is_favoritable: false,
+          is_poi_enabled: false,
+          has_avatar: false,
+          has_cover: false,
+          has_taxonomies: false,
+          has_nested_profile_groups: true,
+        },
+      })
+    )?.data;
+    nestedTypeKey = nestedType?.type?.toString() || '';
+    expect(nestedTypeKey, 'U04 nested profile type must be created.').toBeTruthy();
+
+    const xapuri = await createAccountProfileForType(
+      api,
+      baseUrl,
+      session.token,
+      {
+        name: `Xapuri U04 ${unique}`,
+        profileType: nestedType,
+      },
+    );
+    createdAccountSlugs.push(xapuri.accountSlug);
+    expect(xapuri.profileId, 'U04 Xapuri candidate must have an id.').toBeTruthy();
+    expect(xapuri.displayName, 'U04 Xapuri candidate must expose display name.').toBeTruthy();
+
+    const nestedParent = await createAccountProfileForType(
+      api,
+      baseUrl,
+      session.token,
+      {
+        name: `PW U04 Nested Parent ${unique}`,
+        profileType: nestedType,
+      },
+    );
+    createdAccountSlugs.push(nestedParent.accountSlug);
+    expect(nestedParent.profileId, 'U04 nested parent must have an id.').toBeTruthy();
+
+    const pageBundle = await createFreshAuthenticatedTenantAdminPage(session);
+    freshBrowser = pageBundle.browser;
+    browserContext = pageBundle.context;
+    const page = pageBundle.page;
+    const collectors = installFailureCollectors(page);
+    const nestedEditUrl = buildApiUrl(
+      baseUrl,
+      `/admin/accounts/${nestedParent.accountSlug}/profiles/${nestedParent.profileId}/edit`,
+    );
+    const aggregateProfileWrites = [];
+    const trackAggregateProfileWrite = (request) => {
+      const method = request.method().toUpperCase();
+      if (method !== 'PATCH') {
+        return;
+      }
+      let url;
+      try {
+        url = new URL(request.url());
+      } catch (_) {
+        return;
+      }
+      if (url.pathname === `/admin/api/v1/account_profiles/${nestedParent.profileId}`) {
+        aggregateProfileWrites.push(url.toString());
+      }
+    };
+    page.on('request', trackAggregateProfileWrite);
+
+    const nestedEditResponse = await page.goto(nestedEditUrl, {
+      waitUntil: 'domcontentloaded',
+    });
+    expect(nestedEditResponse, 'U04 nested edit route must respond.').not.toBeNull();
+    expect(nestedEditResponse.status()).toBeLessThan(400);
+    await assertAppBooted(page);
+    await enableAccessibilityIfNeeded(page);
+    await scrollUntilVisible(
+      page,
+      page.getByText('Abas de contas vinculadas'),
+      'U04 nested parent must expose the canonical nested-group editor.',
+    );
+
+    const createGroupResponsePromise = page.waitForResponse((candidate) => {
+      return (
+        candidate.request().method() === 'POST' &&
+        candidate.url().includes(
+          `/admin/api/v1/account_profiles/${nestedParent.profileId}/nested_profile_groups`,
+        ) &&
+        candidate.status() < 400
+      );
+    });
+    await page.getByRole('button', { name: 'Adicionar grupo' }).click();
+    await expect(page.getByText('Novo grupo')).toBeVisible({
+      timeout: appBootTimeoutMs,
+    });
+    await fillFlutterTextField(page, 'Nome do grupo', 'Parceiros');
+    await page.getByRole('button', { name: 'Criar grupo' }).click();
+    const createGroupResponse = await createGroupResponsePromise;
+    const createGroupPayload = normalizePayload(await createGroupResponse.json());
+    const createdGroupFromResponse = normalizeList(
+      createGroupPayload?.nested_profile_groups,
+    ).find((group) => group?.label === 'Parceiros');
+    const createdGroupIdFromResponse =
+      createdGroupFromResponse?.id?.toString().trim() || '';
+    expect(
+      createdGroupIdFromResponse,
+      'Dedicated nested-group create must return a persisted group id.',
+    ).toBeTruthy();
+    await expect(page.getByText('Parceiros', { exact: true })).toBeVisible({
+      timeout: appBootTimeoutMs,
+    });
+    await expect(page.getByText('0 perfis vinculados', { exact: true })).toBeVisible({
+      timeout: appBootTimeoutMs,
+    });
+
+    let createdGroupId = createdGroupIdFromResponse;
+    await expect
+      .poll(
+        async () => {
+          const nestedReadback = await fetchAdminProfile(
+            api,
+            baseUrl,
+            session.token,
+            nestedParent.profileId,
+          );
+          const persistedGroup = normalizeList(
+            nestedReadback?.nested_profile_groups,
+          ).find((group) => group?.label === 'Parceiros');
+          createdGroupId = persistedGroup?.id?.toString().trim() || '';
+          return [
+            createdGroupId,
+            persistedGroup?.label?.toString() || '',
+            Number(persistedGroup?.member_count || 0),
+          ].join('|');
+        },
+        {
+          timeout: appBootTimeoutMs,
+          message:
+            'U04 nested-group create must persist the group head immediately in authoritative readback.',
+        },
+      )
+      .toBe(`${createdGroupIdFromResponse}|Parceiros|0`);
+
+    await page.getByRole('button', { name: 'Gerenciar perfis' }).click();
+    await expect(page.getByRole('button', { name: 'Adicionar perfis' })).toBeVisible({
+      timeout: appBootTimeoutMs,
+    });
+    await page.getByRole('button', { name: 'Adicionar perfis' }).click();
+
+    await fillFlutterTextField(page, 'Buscar perfil', xapuri.displayName);
+    const addMemberResponsePromise = page.waitForResponse((candidate) => {
+      return (
+        candidate.request().method() === 'PATCH' &&
+        candidate.url().includes(
+          `/admin/api/v1/account_profiles/${nestedParent.profileId}/nested_profile_groups/${createdGroupId}/members`,
+        ) &&
+        candidate.status() < 400
+      );
+    });
+    const xapuriCheckbox = page.getByRole('checkbox', {
+      name: new RegExp(escapeRegExp(xapuri.displayName)),
+    });
+    await expect(xapuriCheckbox).toBeVisible({
+      timeout: appBootTimeoutMs,
+    });
+    await logU04PickerSemanticSnapshot(page, xapuri.displayName);
+    let xapuriChecked = false;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      await xapuriCheckbox.click();
+      await page.waitForTimeout(150);
+      xapuriChecked =
+        ((await xapuriCheckbox.getAttribute('aria-checked').catch(() => '')) || '') ===
+        'true';
+      if (xapuriChecked) {
+        break;
+      }
+    }
+    await logU04PickerSemanticSnapshot(page, xapuri.displayName);
+    expect(
+      xapuriChecked,
+      'U04 nested-group candidate checkbox must become checked through semantic row interaction.',
+    ).toBe(true);
+    await expect(page.getByText('1 selecionado(s)', { exact: true })).toBeVisible({
+      timeout: appBootTimeoutMs,
+    });
+    await page.getByRole('button', { name: 'Adicionar' }).last().click();
+    const addMemberResponse = await addMemberResponsePromise;
+    const addMemberPayload = normalizePayload(await addMemberResponse.json());
+    logStep(
+      'u04-group-head',
+      `dedicated add-members response aggregate revision ${Number(addMemberPayload?.aggregate_revision || 0)}`,
+    );
+
+    await expect
+      .poll(
+        async () => {
+          const nestedSummaryReadback = await fetchAdminProfile(
+            api,
+            baseUrl,
+            session.token,
+            nestedParent.profileId,
+          );
+          const persistedGroup = normalizeList(
+            nestedSummaryReadback?.nested_profile_groups,
+          ).find((group) => group?.id?.toString() === createdGroupId);
+          const nestedMembersReadback = await fetchAdminNestedGroupMembers(
+            api,
+            baseUrl,
+            session.token,
+            nestedParent.profileId,
+            createdGroupId,
+          );
+          const memberIds = normalizeList(nestedMembersReadback?.data).map((member) =>
+            member?.id?.toString(),
+          );
+          return [
+            Number(nestedSummaryReadback?.aggregate_revision || 0),
+            Number(persistedGroup?.member_count || 0),
+            memberIds.includes(xapuri.profileId?.toString()) ? 'present' : 'missing',
+          ].join('|');
+        },
+        {
+          timeout: appBootTimeoutMs,
+          message:
+            'U04 nested-group member add must target the persisted group id and survive authoritative readback.',
+        },
+      )
+      .toBe('3|1|present');
+
+    const backToEditButton = page.getByRole('button', { name: /voltar/i }).first();
+    if (await backToEditButton.isVisible().catch(() => false)) {
+      await backToEditButton.click();
+      await expect(page.getByText('Editar Perfil')).toBeVisible({
+        timeout: appBootTimeoutMs,
+      });
+    } else {
+      const reloadedResponse = await page.goto(nestedEditUrl, {
+        waitUntil: 'domcontentloaded',
+      });
+      expect(reloadedResponse, 'U04 nested edit route reload must respond.').not.toBeNull();
+      expect(reloadedResponse.status()).toBeLessThan(400);
+      await assertAppBooted(page);
+      await enableAccessibilityIfNeeded(page);
+    }
+    await scrollUntilVisible(
+      page,
+      page.getByText('Parceiros', { exact: true }),
+      'U04 persisted group must stay visible after returning from member management.',
+    );
+    await expect(page.getByText('1 perfil vinculado', { exact: true })).toBeVisible({
+      timeout: appBootTimeoutMs,
+    });
+    logStep('u04-group-head', 'returned to edit with 1 linked profile');
+
+    const removeGroupButton = page.getByRole('button', { name: 'Remover grupo' }).first();
+    const deleteGroupDialogTitle = page.getByText('Excluir grupo', { exact: true });
+    logStep('u04-group-head', 'preparing first destructive-confirmation open');
+    await scrollUntilVisible(
+      page,
+      removeGroupButton,
+      'U04 remove-group action must stay actionable after returning from member management.',
+    );
+    await expect(removeGroupButton).toBeEnabled({
+      timeout: appBootTimeoutMs,
+    });
+    await removeGroupButton.focus();
+    await page.keyboard.press('Enter');
+    logStep('u04-group-head', 'first destructive-confirmation trigger sent');
+    await expect(deleteGroupDialogTitle).toBeVisible({
+      timeout: appBootTimeoutMs,
+    });
+    logStep('u04-group-head', 'first destructive-confirmation visible');
+    await page.getByRole('button', { name: 'Cancelar' }).click();
+    await expect(deleteGroupDialogTitle).toHaveCount(0, {
+      timeout: appBootTimeoutMs,
+    });
+    logStep('u04-group-head', 'first destructive-confirmation cancelled');
+    await expect(page.getByText('Parceiros', { exact: true })).toBeVisible({
+      timeout: appBootTimeoutMs,
+    });
+    const cancelledDeleteReadback = await fetchAdminProfile(
+      api,
+      baseUrl,
+      session.token,
+      nestedParent.profileId,
+    );
+    expect(
+      normalizeList(cancelledDeleteReadback?.nested_profile_groups).some(
+        (group) => group?.id?.toString() === createdGroupId,
+      ),
+      'Cancelling the destructive confirmation must preserve the persisted group head.',
+    ).toBe(true);
+    logStep(
+      'u04-group-head',
+      `authoritative aggregate revision before confirmed delete ${Number(cancelledDeleteReadback?.aggregate_revision || 0)}`,
+    );
+
+    const deleteGroupRequestPromise = page.waitForRequest((candidate) => {
+      return (
+        candidate.method() === 'DELETE' &&
+        candidate.url().includes(
+          `/admin/api/v1/account_profiles/${nestedParent.profileId}/nested_profile_groups/${createdGroupId}`,
+        )
+      );
+    });
+    const deleteGroupResponsePromise = page.waitForResponse((candidate) => {
+      return (
+        candidate.request().method() === 'DELETE' &&
+        candidate.url().includes(
+          `/admin/api/v1/account_profiles/${nestedParent.profileId}/nested_profile_groups/${createdGroupId}`,
+        )
+      );
+    });
+    logStep('u04-group-head', 'preparing confirmed delete');
+    await scrollUntilVisible(
+      page,
+      removeGroupButton,
+      'U04 confirmed delete action must stay actionable after cancellation.',
+    );
+    await expect(removeGroupButton).toBeEnabled({
+      timeout: appBootTimeoutMs,
+    });
+    await removeGroupButton.focus();
+    await page.keyboard.press('Enter');
+    logStep('u04-group-head', 'confirmed delete trigger sent');
+    await expect(deleteGroupDialogTitle).toBeVisible({
+      timeout: appBootTimeoutMs,
+    });
+    logStep('u04-group-head', 'confirmed delete dialog visible');
+    const confirmDeleteButton = page.getByRole('button', { name: 'Excluir' }).last();
+    await confirmDeleteButton.focus();
+    await page.keyboard.press('Enter');
+    logStep('u04-group-head', 'confirmed delete button triggered');
+    const deleteGroupRequest = await deleteGroupRequestPromise;
+    logStep(
+      'u04-group-head',
+      `confirmed delete request sent ${deleteGroupRequest.method()} ${deleteGroupRequest.url()} body=${deleteGroupRequest.postData() || ''}`,
+    );
+    const deleteGroupResponse = await deleteGroupResponsePromise;
+    logStep(
+      'u04-group-head',
+      `confirmed delete response received ${deleteGroupResponse.status()}`,
+    );
+    expect(
+      deleteGroupResponse.status(),
+      'Confirmed delete request must succeed against the dedicated authority.',
+    ).toBeLessThan(400);
+    await expect(page.getByText('Parceiros', { exact: true })).toHaveCount(0, {
+      timeout: appBootTimeoutMs,
+    });
+    logStep('u04-group-head', 'ui no longer renders the deleted group');
+    await expect
+      .poll(
+        async () => {
+          const nestedReadback = await fetchAdminProfile(
+            api,
+            baseUrl,
+            session.token,
+            nestedParent.profileId,
+          );
+          return normalizeList(nestedReadback?.nested_profile_groups).some(
+            (group) => group?.id?.toString() === createdGroupId,
+          )
+            ? 'present'
+            : 'deleted';
+        },
+        {
+          timeout: appBootTimeoutMs,
+          message:
+            'Confirmed delete must remove the persisted group head from authoritative readback.',
+        },
+      )
+      .toBe('deleted');
+
+    const overLimitLabel = `Limite U04 ${unique}`;
+    for (let index = 0; index < 12; index += 1) {
+      const seedGroupResponse = await api.post(
+        buildApiUrl(
+          baseUrl,
+          `/admin/api/v1/account_profiles/${nestedParent.profileId}/nested_profile_groups`,
+        ),
+        {
+          data: {
+            label: `Grupo limite ${index + 1}`,
+          },
+          headers: authHeaders(session.token),
+        },
+      );
+      expect(
+        seedGroupResponse.status(),
+        'Seeded nested groups must fill the backend limit before the over-ceiling create check.',
+      ).toBeLessThan(400);
+    }
+    const overLimitCreateResponsePromise = page.waitForResponse((candidate) => {
+      return (
+        candidate.request().method() === 'POST' &&
+        candidate.url().includes(
+          `/admin/api/v1/account_profiles/${nestedParent.profileId}/nested_profile_groups`,
+        ) &&
+        candidate.status() >= 400
+      );
+    });
+    const overLimitAddGroupButton = page.getByRole('button', {
+      name: 'Adicionar grupo',
+    });
+    await scrollUntilVisible(
+      page,
+      overLimitAddGroupButton,
+      'U04 over-limit create must keep the dedicated add-group action reachable on the stale local route state.',
+    );
+    await expect(overLimitAddGroupButton).toBeEnabled({
+      timeout: appBootTimeoutMs,
+    });
+    logStep(
+      'u04-group-head',
+      'over-limit create path still exposes a locally actionable add-group trigger before the backend rejection.',
+    );
+    await overLimitAddGroupButton.focus();
+    await page.keyboard.press('Enter');
+    await expect(page.getByText('Novo grupo')).toBeVisible({
+      timeout: appBootTimeoutMs,
+    });
+    await fillFlutterTextField(page, 'Nome do grupo', overLimitLabel);
+    await page.getByRole('button', { name: 'Criar grupo' }).last().click();
+    const overLimitCreateResponse = await overLimitCreateResponsePromise;
+    expect(
+      overLimitCreateResponse.status(),
+      'The thirteenth nested-group create attempt must fail on the dedicated backend boundary.',
+    ).toBeGreaterThanOrEqual(400);
+    await expect(
+      page.getByText(
+        /Nested profile groups exceed the configured limit|Limite de grupos|Não foi possível criar o grupo/i,
+      ),
+    ).toBeVisible({
+      timeout: appBootTimeoutMs,
+    });
+    await expect(page.getByText(overLimitLabel, { exact: true })).toHaveCount(0, {
+      timeout: appBootTimeoutMs,
+    });
+    await expect
+      .poll(
+        async () => {
+          const nestedReadback = await fetchAdminProfile(
+            api,
+            baseUrl,
+            session.token,
+            nestedParent.profileId,
+          );
+          const groups = normalizeList(nestedReadback?.nested_profile_groups);
+          return [
+            groups.length,
+            groups.some((group) => group?.label === overLimitLabel)
+              ? 'present'
+              : 'absent',
+          ].join('|');
+        },
+        {
+          timeout: appBootTimeoutMs,
+          message:
+            'Over-ceiling nested-group create must preserve authoritative state and leave no phantom local group.',
+        },
+      )
+      .toBe('12|absent');
+
+    page.off('request', trackAggregateProfileWrite);
+    expect(
+      aggregateProfileWrites,
+      'U04 dedicated group create/delete flow must not fall back to aggregate account-profile PATCH writes.',
+    ).toHaveLength(0);
+    await assertNoBrowserFailures(collectors, {
+      allowedConsoleErrorSubstrings: [
+        'Failed to load resource: the server responded with a status of 422',
+      ],
+      allowedResponseStatuses: [422],
+    });
+  } catch (error) {
+    primaryError = error;
+    throw error;
+  } finally {
+    await runCleanupPreservingPrimaryError(primaryError, async () => {
+      for (const cleanup of [
+        ...createdAccountSlugs
+          .filter(Boolean)
+          .map(
+            (slug) => () =>
+              cleanupOnboardedAccount(api, baseUrl, session?.token, slug),
+          ),
+        nestedTypeKey
+          ? () => deleteAccountProfileType(api, baseUrl, session?.token, nestedTypeKey)
+          : null,
+      ].filter(Boolean)) {
+        await cleanup();
+      }
+      if (browserContext) {
+        await browserContext.close();
+      }
+      if (freshBrowser) {
+        await freshBrowser.close().catch(() => {});
+      }
+      await api.dispose();
+    });
+  }
+});
+
 test.skip('@deferred @mutation U06-CANDIDATE-PICKER server-owned nested and contact candidate search persists through the canonical picker', async () => {
   test.setTimeout(900000);
   const baseUrl = requireTenantUrl();
@@ -5025,6 +5672,12 @@ test('@mutation tenant-admin account onboarding rejects stale selected profile t
     browserContext = pageBundle.context;
     const page = pageBundle.page;
     const collectors = installFailureCollectors(page);
+    const profileTypesLoaded = page.waitForResponse((candidate) => {
+      if (!candidate.url().includes('/admin/api/v1/account_profile_types')) {
+        return false;
+      }
+      return candidate.status() === 200;
+    });
 
     const response = await page.goto(buildApiUrl(baseUrl, '/admin/accounts/create'), {
       waitUntil: 'domcontentloaded',
@@ -5033,6 +5686,14 @@ test('@mutation tenant-admin account onboarding rejects stale selected profile t
     expect(response.status()).toBeLessThan(400);
     await assertAppBooted(page);
     await enableAccessibilityIfNeeded(page);
+    const profileTypesPayload = await (await profileTypesLoaded).json();
+    const loadedTypes = Array.isArray(profileTypesPayload?.data)
+      ? profileTypesPayload.data
+      : [];
+    expect(
+      loadedTypes.some((entry) => entry?.type === profileTypeKey),
+      `Expected stale profile type ${profileTypeKey} in account onboarding type payload.`,
+    ).toBe(true);
 
     await selectDropdownOption(page, {
       flow: 'account-422',
@@ -5482,6 +6143,12 @@ test('@mutation tenant-admin event create rejects stale selected event type with
       timeout: appBootTimeoutMs,
     });
     logStep('event-422', 'create form opened');
+    const eventTypesLoaded = page.waitForResponse((candidate) => {
+      if (!candidate.url().includes('/admin/api/v1/event_types')) {
+        return false;
+      }
+      return candidate.status() === 200;
+    });
 
     await fillFlutterTextField(page, 'Título', `PW Invalid Event ${unique}`);
     logStep('event-422', 'title filled');
@@ -5491,6 +6158,14 @@ test('@mutation tenant-admin event create rejects stale selected event type with
       'Expected the event type section to become reachable in the create form.',
     );
     logStep('event-422', 'event type section visible');
+    const eventTypesPayload = await (await eventTypesLoaded).json();
+    const loadedEventTypes = Array.isArray(eventTypesPayload?.data)
+      ? eventTypesPayload.data
+      : [];
+    expect(
+      loadedEventTypes.some((entry) => entry?.slug === eventTypeSlug),
+      `Expected stale event type ${eventTypeSlug} in event create type payload.`,
+    ).toBe(true);
     await selectDropdownOption(page, {
       flow: 'event-422',
       fieldLabel: 'Tipo',

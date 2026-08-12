@@ -32,6 +32,20 @@ function requireTenantUrl() {
   return tenantUrl;
 }
 
+function requireLocalPublicTenantUrl() {
+  const baseUrl = requireTenantUrl();
+  const parsed = new URL(baseUrl);
+  expect(
+    parsed.protocol,
+    `Public card theme runtime proof must use HTTPS local-public tunnel hosts. Received ${baseUrl}.`,
+  ).toBe('https:');
+  expect(
+    parsed.hostname.toLowerCase(),
+    `Public card theme runtime proof must target the local-public tenant tunnel host, never a production custom domain. Received ${baseUrl}.`,
+  ).toMatch(/^[a-z0-9-]+\.belluga\.space$/);
+  return baseUrl;
+}
+
 function buildUrl(baseUrl, pathName, searchParams = {}) {
   const url = new URL(pathName, baseUrl);
   for (const [key, value] of Object.entries(searchParams)) {
@@ -557,11 +571,9 @@ async function createDiagnosticEvent(
         type: 'account_profile',
         id: host.id,
       },
-      profile_groups: [],
       occurrences: [
         {
           ...futureWindow(daysFromNow),
-          profile_groups: resolvedOccurrenceGroups,
         },
       ],
       publication: {
@@ -579,11 +591,50 @@ async function createDiagnosticEvent(
   ).toBe(201);
   const event = body?.data;
   const occurrenceId = firstOccurrenceId(event);
+  const canonicalOccurrenceGroupIds = new Map();
+  for (const group of resolvedOccurrenceGroups) {
+    const createGroupResponse = await api.post(
+      buildUrl(
+        baseUrl,
+        `/admin/api/v1/events/${event.event_id}/occurrences/${occurrenceId}/profile_groups`,
+      ),
+      {
+        headers: authHeaders(token),
+        data: {
+          label: group.label,
+        },
+      },
+    );
+    const createGroupBody = await createGroupResponse.json().catch(async () => ({
+      raw: await createGroupResponse.text().catch(() => ''),
+    }));
+    expect(
+      createGroupResponse.status(),
+      `Runtime-proof event must create occurrence group ${group.label}. Response: ${JSON.stringify(createGroupBody)}`,
+    ).toBe(201);
+    const canonicalGroupId =
+      (Array.isArray(createGroupBody?.data?.profile_groups)
+        ? createGroupBody.data.profile_groups.find(
+            (candidate) => candidate?.label === group.label,
+          ) || createGroupBody.data.profile_groups.at(-1)
+        : null)?.id?.toString() || '';
+    expect(
+      canonicalGroupId,
+      `Runtime-proof event must return a canonical id for occurrence group ${group.label}.`,
+    ).toBeTruthy();
+    canonicalOccurrenceGroupIds.set(group.id, canonicalGroupId);
+  }
   for (const group of occurrenceGroupMembers) {
+    const canonicalGroupId =
+      canonicalOccurrenceGroupIds.get(group.groupId) || group.groupId;
+    expect(
+      canonicalGroupId,
+      `Runtime-proof event must resolve a canonical occurrence group id before patching members for ${group.groupId}.`,
+    ).toBeTruthy();
     const responseGroupMembers = await api.patch(
       buildUrl(
         baseUrl,
-        `/admin/api/v1/events/${event.event_id}/occurrences/${occurrenceId}/profile_groups/${group.groupId}/members`,
+        `/admin/api/v1/events/${event.event_id}/occurrences/${occurrenceId}/profile_groups/${canonicalGroupId}/members`,
       ),
       {
         headers: authHeaders(token),
@@ -850,7 +901,7 @@ async function waitForMyEventsHomeProof(page, eventTitle) {
 }
 
 async function main() {
-  const baseUrl = requireTenantUrl();
+  const baseUrl = requireLocalPublicTenantUrl();
   ensureDir(screenshotDir);
   const api = await createApiContext(baseUrl);
   const browser = await chromium.launch({

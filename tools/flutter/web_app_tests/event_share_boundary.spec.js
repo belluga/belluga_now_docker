@@ -293,7 +293,6 @@ async function createSeedEvent(api, baseUrl, token) {
           type: 'account_profile',
           id: physicalHost.id,
         },
-        profile_groups: [],
         occurrences: [
           {
             date_time_start: start.toISOString(),
