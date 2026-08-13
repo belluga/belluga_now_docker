@@ -652,7 +652,7 @@ full_sequence_cleanup() {
   fi
 
   if (( FULL_SEQUENCE_HOST_OVERRIDES_RESET != 0 || FULL_SEQUENCE_HOST_OVERRIDES_APPLIED != 0 )); then
-    reset_host_overrides || cleanup_status=$?
+    reset_host_overrides "${FULL_SEQUENCE_TARGET}" || cleanup_status=$?
   fi
 
   if (( original_status == 0 && cleanup_status != 0 )); then
@@ -704,7 +704,7 @@ run_full_sequence() {
 
   fixture_ensure "${target}"
   FULL_SEQUENCE_FIXTURE_ENSURED=1
-  apply_host_overrides
+  apply_host_overrides "${target}"
   FULL_SEQUENCE_HOST_OVERRIDES_APPLIED=1
   run_navigation_smoke "${target}" readonly
   run_navigation_smoke "${target}" mutation

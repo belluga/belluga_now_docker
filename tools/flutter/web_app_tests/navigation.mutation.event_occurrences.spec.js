@@ -5827,8 +5827,6 @@ test('@mutation admin-authored occurrence profile groups persist full chip readb
         },
       )
       .toBe('2,4');
-    page.off('request', trackAggregateEventWrite);
-
     const updatedEvent = await fetchAdminEvent(api, baseUrl, session.token, eventId);
     const updatedFirstOccurrence = updatedEvent?.occurrences?.[0] || null;
     const updatedSecondOccurrence = updatedEvent?.occurrences?.[1] || null;
