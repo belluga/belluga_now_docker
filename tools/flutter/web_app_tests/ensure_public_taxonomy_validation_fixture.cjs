@@ -191,6 +191,12 @@ async function fetchJson(response, label) {
   return response.json();
 }
 
+async function fetchSingleEnvelopeRows(api, url, { headers, label }) {
+  const response = await api.get(url, { headers });
+  const payload = await fetchJson(response, label);
+  return normalizeRows(payload, label);
+}
+
 async function fetchPagedRows(api, buildPageUrl, { headers, label, pageSize }) {
   const rows = [];
   let previousFingerprint = null;
@@ -217,52 +223,34 @@ async function fetchPagedRows(api, buildPageUrl, { headers, label, pageSize }) {
 }
 
 async function listTaxonomies(api, baseUrl, token) {
-  return fetchPagedRows(
+  return fetchSingleEnvelopeRows(
     api,
-    (pageNumber, pageSize) => {
-      const url = new URL(buildUrl(baseUrl, '/admin/api/v1/taxonomies'));
-      url.searchParams.set('page', pageNumber.toString());
-      url.searchParams.set('page_size', pageSize.toString());
-      return url.toString();
-    },
+    buildUrl(baseUrl, '/admin/api/v1/taxonomies'),
     {
       headers: authHeaders(token),
       label: 'Taxonomy registry list',
-      pageSize: 500,
     },
   );
 }
 
 async function listAccountProfileTypes(api, baseUrl, token) {
-  return fetchPagedRows(
+  return fetchSingleEnvelopeRows(
     api,
-    (pageNumber, pageSize) => {
-      const url = new URL(buildUrl(baseUrl, '/admin/api/v1/account_profile_types'));
-      url.searchParams.set('page', pageNumber.toString());
-      url.searchParams.set('page_size', pageSize.toString());
-      return url.toString();
-    },
+    buildUrl(baseUrl, '/admin/api/v1/account_profile_types'),
     {
       headers: authHeaders(token),
       label: 'Account profile type registry list',
-      pageSize: 500,
     },
   );
 }
 
 async function listEventTypes(api, baseUrl, token) {
-  return fetchPagedRows(
+  return fetchSingleEnvelopeRows(
     api,
-    (pageNumber, pageSize) => {
-      const url = new URL(buildUrl(baseUrl, '/admin/api/v1/event_types'));
-      url.searchParams.set('page', pageNumber.toString());
-      url.searchParams.set('page_size', pageSize.toString());
-      return url.toString();
-    },
+    buildUrl(baseUrl, '/admin/api/v1/event_types'),
     {
       headers: authHeaders(token),
       label: 'Event type registry list',
-      pageSize: 500,
     },
   );
 }
@@ -766,6 +754,49 @@ async function createEventType(api, baseUrl, token) {
   };
 }
 
+async function createOccurrenceProfileGroup(
+  api,
+  baseUrl,
+  token,
+  {
+    eventId,
+    occurrenceId,
+    label,
+    assertionLabel,
+  },
+) {
+  const response = await api.post(
+    buildUrl(
+      baseUrl,
+      `/admin/api/v1/events/${eventId}/occurrences/${occurrenceId}/profile_groups`,
+    ),
+    {
+      headers: authHeaders(token),
+      data: {
+        label,
+      },
+    },
+  );
+  const payload = await response.json().catch(async () => ({
+    raw: await response.text().catch(() => ''),
+  }));
+  expect(
+    response.status(),
+    `${assertionLabel} must succeed. Response: ${JSON.stringify(payload)}`,
+  ).toBe(201);
+  const groups = Array.isArray(payload?.data?.profile_groups)
+    ? payload.data.profile_groups
+    : [];
+  const createdGroup =
+    groups.find((group) => group?.label === label) || groups.at(-1) || null;
+  const groupId = createdGroup?.id?.toString() || '';
+  expect(groupId, `${assertionLabel} must return a canonical group id.`).toBeTruthy();
+  return {
+    data: payload?.data || null,
+    groupId,
+  };
+}
+
 async function createPublicEvent(
   api,
   baseUrl,
@@ -802,20 +833,10 @@ async function createPublicEvent(
         type: 'account_profile',
         id: physicalHostId,
       },
-      profile_groups: [],
       occurrences: [
         {
           date_time_start: start.toISOString(),
           date_time_end: end.toISOString(),
-          profile_groups: relatedProfileId
-            ? [
-                {
-                  id: 'featured-profiles',
-                  label: 'Featured Profiles',
-                  order: 0,
-                },
-              ]
-            : [],
         },
       ],
       publication: {
@@ -843,10 +864,21 @@ async function createPublicEvent(
   ).toBeTruthy();
 
   if (relatedProfileId) {
+    const createdGroup = await createOccurrenceProfileGroup(
+      api,
+      baseUrl,
+      token,
+      {
+        eventId,
+        occurrenceId,
+        label: 'Featured Profiles',
+        assertionLabel: `Create public event fixture occurrence group for ${fixture.eventTitle}`,
+      },
+    );
     const groupPatchResponse = await api.patch(
       buildUrl(
         baseUrl,
-        `/admin/api/v1/events/${eventId}/occurrences/${occurrenceId}/profile_groups/featured-profiles/members`,
+        `/admin/api/v1/events/${eventId}/occurrences/${occurrenceId}/profile_groups/${createdGroup.groupId}/members`,
       ),
       {
         headers: authHeaders(token),

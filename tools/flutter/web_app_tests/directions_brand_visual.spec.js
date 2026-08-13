@@ -468,7 +468,6 @@ async function createDirectionsEvent(
           type: 'account_profile',
           id: physicalHostId,
         },
-        profile_groups: [],
         occurrences: [
           {
             date_time_start: start.toISOString(),
