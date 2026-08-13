@@ -12,6 +12,9 @@ readonly REQUIRED_NODE_MAJOR="${REQUIRED_NODE_MAJOR:-24}"
 readonly CONTRACT_STATE_HASH="$(printf '%s' "${ROOT_DIR}" | sha256sum | awk '{print substr($1,1,16)}')"
 readonly CONTRACT_STATE_DIR="${TMPDIR:-/tmp}/belluga-stage-browser-contract-${CONTRACT_STATE_HASH}"
 readonly LOCAL_PUBLIC_RUN_ID_FILE="${CONTRACT_STATE_DIR}/local-public.run-id"
+readonly LOCAL_PUBLIC_LOOPBACK_BRIDGE_PID_FILE="${CONTRACT_STATE_DIR}/local-public.loopback-bridge.pid"
+readonly LOCAL_PUBLIC_LOOPBACK_BRIDGE_LOG_FILE="${CONTRACT_STATE_DIR}/local-public.loopback-bridge.log"
+readonly LOCAL_PUBLIC_LOOPBACK_BRIDGE_SCRIPT="${ROOT_DIR}/tools/ci/manage_local_navigation_loopback_bridge.py"
 
 FULL_SEQUENCE_ACTIVE=0
 FULL_SEQUENCE_FIXTURE_ENSURED=0
@@ -125,6 +128,48 @@ read_persisted_contract_run_id() {
   fi
 
   printf '%s\n' "${persisted_run_id}"
+}
+
+is_loopback_origin_ip() {
+  case "${NAV_ORIGIN_IP:-}" in
+    127.0.0.1|localhost)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+manage_local_public_loopback_bridge() {
+  local action="$1"
+  ensure_contract_state_dir
+  sudo python3 "${LOCAL_PUBLIC_LOOPBACK_BRIDGE_SCRIPT}" \
+    "${action}" \
+    "${LOCAL_PUBLIC_LOOPBACK_BRIDGE_PID_FILE}" \
+    "${LOCAL_PUBLIC_LOOPBACK_BRIDGE_LOG_FILE}"
+}
+
+ensure_local_public_loopback_bridge() {
+  local target="$1"
+  if [[ "${target}" != "local-public" ]]; then
+    return 0
+  fi
+  if ! is_loopback_origin_ip; then
+    return 0
+  fi
+  manage_local_public_loopback_bridge start
+}
+
+reset_local_public_loopback_bridge() {
+  local target="$1"
+  if [[ "${target}" != "local-public" ]]; then
+    return 0
+  fi
+  sudo python3 "${LOCAL_PUBLIC_LOOPBACK_BRIDGE_SCRIPT}" \
+    stop \
+    "${LOCAL_PUBLIC_LOOPBACK_BRIDGE_PID_FILE}" \
+    "${LOCAL_PUBLIC_LOOPBACK_BRIDGE_LOG_FILE}"
 }
 
 load_local_public_navigation_env() {
@@ -296,8 +341,10 @@ probe_public_edge() {
 }
 
 warmup_environment() {
-  local label="$1"
+  local target="$1"
+  local label="$2"
   ensure_navigation_urls
+  ensure_local_public_loopback_bridge "${target}"
   bash "${ROOT_DIR}/.github/scripts/warmup_navigation_environment_over_https.sh" "${label}"
 }
 
@@ -357,6 +404,7 @@ assert_served_index_runtime_markers_match_local() {
 
 check_local_public_provenance() {
   ensure_landlord_url
+  ensure_local_public_loopback_bridge local-public
   LANDLORD_DOMAIN="${NAV_LANDLORD_URL}" DEPLOY_LANE="${LOCAL_BUILD_LANE}" \
     bash "${ROOT_DIR}/.github/scripts/check_deployed_web_provenance.sh" "${LOCAL_BUILD_LANE}"
 }
@@ -539,10 +587,13 @@ apply_host_overrides() {
     exit 1
   fi
 
+  ensure_local_public_loopback_bridge "${target}"
   bash "${ROOT_DIR}/.github/scripts/manage_navigation_host_overrides.sh" apply
 }
 
 reset_host_overrides() {
+  local target="${1:-}"
+  reset_local_public_loopback_bridge "${target}"
   bash "${ROOT_DIR}/.github/scripts/manage_navigation_host_overrides.sh" reset
 }
 
@@ -583,7 +634,7 @@ cleanup_local_public_browser_state() {
   local cleanup_status=0
 
   fixture_cleanup local-public || cleanup_status=$?
-  reset_host_overrides || cleanup_status=$?
+  reset_host_overrides local-public || cleanup_status=$?
 
   return "${cleanup_status}"
 }
@@ -622,13 +673,13 @@ run_full_sequence() {
   case "${target}" in
     local-public)
       label="stage-full"
-      reset_host_overrides
+      reset_host_overrides "${target}"
       FULL_SEQUENCE_HOST_OVERRIDES_RESET=1
       run_local_public_build
       ;;
     stage)
       label="stage"
-      reset_host_overrides
+      reset_host_overrides "${target}"
       FULL_SEQUENCE_HOST_OVERRIDES_RESET=1
       ;;
     *)
@@ -640,7 +691,7 @@ run_full_sequence() {
   install_navigation_deps
   verify_playwright_browser
   probe_public_edge "${label}"
-  warmup_environment "${label}"
+  warmup_environment "${target}" "${label}"
 
   case "${target}" in
     local-public)
@@ -687,10 +738,10 @@ main() {
       probe_public_edge stage
       ;;
     local-public:warmup)
-      warmup_environment stage-full
+      warmup_environment "${target}" stage-full
       ;;
     stage:warmup)
-      warmup_environment stage
+      warmup_environment "${target}" stage
       ;;
     local-public:provenance)
       check_local_public_provenance
@@ -714,7 +765,7 @@ main() {
       fixture_cleanup "${target}"
       ;;
     local-public:host-overrides-reset|stage:host-overrides-reset)
-      reset_host_overrides
+      reset_host_overrides "${target}"
       ;;
     local-public:full|stage:full)
       trap 'full_sequence_cleanup $?' EXIT

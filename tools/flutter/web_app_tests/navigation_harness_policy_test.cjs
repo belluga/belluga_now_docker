@@ -1050,6 +1050,26 @@ function assertCiEquivalentContractSurfacesStayWired() {
   );
   assert.match(
     localPublicWrapperSource,
+    /LOCAL_PUBLIC_LOOPBACK_BRIDGE_PID_FILE="\$\{CONTRACT_STATE_DIR\}\/local-public\.loopback-bridge\.pid"/,
+    'stage browser wrapper must persist local-public loopback bridge state in deterministic contract state',
+  );
+  assert.match(
+    localPublicWrapperSource,
+    /ensure_local_public_loopback_bridge\(\)\s*\{[\s\S]*?manage_local_public_loopback_bridge start/,
+    'stage browser wrapper must start a managed loopback bridge for explicit local-public loopback origin runs',
+  );
+  assert.match(
+    localPublicWrapperSource,
+    /warmup_environment\(\)\s*\{[\s\S]*?ensure_local_public_loopback_bridge "\$\{target\}"/,
+    'stage browser wrapper must prepare the managed loopback bridge before local-public warmup origin probes',
+  );
+  assert.match(
+    localPublicWrapperSource,
+    /check_local_public_provenance\(\)\s*\{[\s\S]*?ensure_local_public_loopback_bridge local-public/,
+    'stage browser wrapper must prepare the managed loopback bridge before local-public provenance origin probes',
+  );
+  assert.match(
+    localPublicWrapperSource,
     /bash "\$\{ROOT_DIR\}\/\.github\/scripts\/manage_navigation_host_overrides\.sh" apply/,
     'stage browser wrapper must route stage host overrides through the canonical host-override script when an origin IP is present',
   );
@@ -1062,6 +1082,11 @@ function assertCiEquivalentContractSurfacesStayWired() {
     localPublicWrapperSource,
     /host override step is a no-op and public DNS remains authoritative/,
     'stage browser wrapper must not silently allow public-DNS fallback during host-overrides-apply',
+  );
+  assert.match(
+    localPublicWrapperSource,
+    /reset_host_overrides\(\)\s*\{[\s\S]*?reset_local_public_loopback_bridge "\$\{target\}"/,
+    'stage browser wrapper must stop the managed loopback bridge when host overrides reset',
   );
   assert.match(
     localPublicWrapperSource,
@@ -1149,6 +1174,7 @@ function assertLocalNavigationEnvAutomationIsSafe() {
   const example = fs.readFileSync(localNavigationEnvExample, 'utf8');
   assert.match(example, /^# NAV_LANDLORD_URL=http:\/\/localhost$/m);
   assert.match(example, /^# NAV_TENANT_URL=http:\/\/localhost$/m);
+  assert.match(example, /^NAV_ORIGIN_IP=127\.0\.0\.1$/m);
   assert.match(example, /^NAV_DEPLOY_LANE=local$/m);
   assert.match(
     example,
