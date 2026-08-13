@@ -1196,6 +1196,11 @@ if ! grep -Fq 'bash "${ROOT_DIR}/.github/scripts/check_deployed_web_provenance.s
   exit 1
 fi
 
+if ! grep -Fq 'host-overrides-apply requires NAV_ORIGIN_IP. Refusing to fall back to public DNS during browser contract execution.' tools/ci/run_stage_browser_contract.sh; then
+  echo "ERROR: stage browser wrapper must fail closed when host-overrides-apply runs without NAV_ORIGIN_IP." >&2
+  exit 1
+fi
+
 if ! grep -Fq 'npm ci' tools/ci/run_stage_browser_contract.sh; then
   echo "ERROR: stage browser wrapper must install navigation dependencies via npm ci." >&2
   exit 1

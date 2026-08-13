@@ -145,6 +145,12 @@
           "@mutation tenant-admin persisted WhatsApp edit saves without a draft key and preserves server-owned id"
         ]
       },
+      "account-group-head": {
+        "grep_extra": "U04-ACCOUNT-GROUP-HEAD",
+        "expected_titles": [
+          "@mutation U04-ACCOUNT-GROUP-HEAD tenant-admin account-profile group heads persist independently, adopt canonical ids, and delete after confirmation"
+        ]
+      },
       "u06-candidate-picker": {
         "grep_extra": "U06-CANDIDATE-PICKER",
         "expected_titles": [
