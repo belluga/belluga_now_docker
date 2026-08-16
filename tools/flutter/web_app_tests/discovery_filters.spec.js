@@ -1245,9 +1245,26 @@ async function createNearbyAccountProfile(
   const profile = data?.account_profile || {};
   const id = profile?.id?.toString() || '';
   expect(id, `Account profile ${name} must return id.`).toBeTruthy();
+  const accountSlug = account?.slug?.toString() || '';
+  expect(accountSlug, `Account profile ${name} must expose an account slug.`).toBeTruthy();
+  const publishResponse = await api.patch(
+    buildUrl(baseUrl, `/admin/api/v1/accounts/${accountSlug}`),
+    {
+      headers: authHeaders(token),
+      data: {
+        publication: {
+          status: 'published',
+        },
+      },
+    },
+  );
+  expect(
+    publishResponse.status(),
+    `Account profile ${name} parent Account must publish successfully before public discovery proof.`,
+  ).toBe(200);
   return {
     id,
-    accountSlug: account?.slug?.toString() || '',
+    accountSlug,
     displayName: profile?.display_name?.toString() || name,
     slug: profile?.slug?.toString() || '',
     profileType,

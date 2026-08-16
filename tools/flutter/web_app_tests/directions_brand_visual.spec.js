@@ -406,8 +406,25 @@ async function createDirectionsProfile(api, baseUrl, token, profileType) {
   );
   expect(response.status(), 'Directions account onboarding must succeed.').toBe(201);
   const payload = await response.json();
+  const accountSlug = textValue(payload?.data?.account?.slug);
+  expect(accountSlug, 'Directions onboarding must return an account slug.').toBeTruthy();
+  const publishResponse = await api.patch(
+    buildUrl(baseUrl, `/admin/api/v1/accounts/${accountSlug}`),
+    {
+      headers: authHeaders(token),
+      data: {
+        publication: {
+          status: 'published',
+        },
+      },
+    },
+  );
+  expect(
+    publishResponse.status(),
+    'Directions account must publish successfully before public route proof.',
+  ).toBe(200);
   return {
-    accountSlug: textValue(payload?.data?.account?.slug),
+    accountSlug,
     profileId: textValue(payload?.data?.account_profile?.id),
     profileSlug: textValue(
       payload?.data?.account_profile?.slug,

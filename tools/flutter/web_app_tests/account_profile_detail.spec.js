@@ -442,8 +442,22 @@ async function createPoiAccountProfile(api, baseUrl, token, profileType) {
   const data = normalizePayload(payload);
   const profile = data?.account_profile || {};
   const account = data?.account || {};
+  const accountSlug = account?.slug?.toString() || '';
+  expect(accountSlug, 'Created POI account must expose an account slug.').toBeTruthy();
+  const publishResponse = await api.patch(
+    buildUrl(baseUrl, `/admin/api/v1/accounts/${accountSlug}`),
+    {
+      data: {
+        publication: {
+          status: 'published',
+        },
+      },
+      headers: await authHeaders(token),
+    },
+  );
+  expect(publishResponse.status(), 'Created POI account must publish successfully.').toBe(200);
   return {
-    accountSlug: account?.slug?.toString() || '',
+    accountSlug,
     profileId: profile?.id?.toString() || '',
     profileSlug: profile?.slug?.toString() || account?.slug?.toString() || '',
     displayName: profile?.display_name?.toString() || account?.name?.toString(),
