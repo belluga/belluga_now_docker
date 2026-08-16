@@ -6082,7 +6082,6 @@ test('@mutation tenant-admin event CRUD creates, reopens edit readback, and remo
   let session = null;
   let eventTypeId = null;
   let eventId = null;
-  let createdPublicationStatus = 'draft';
   let primaryError = null;
 
   try {
@@ -6215,8 +6214,10 @@ test('@mutation tenant-admin event CRUD creates, reopens edit readback, and remo
     ).toBe(selectedStart.isoDate);
     const createdEvent = normalizePayload(await createRequest.json());
     eventId = createdEvent?.event_id?.toString() || null;
-    createdPublicationStatus =
-      createdEvent?.publication?.status?.toString().trim() || 'draft';
+    expect(
+      createdEvent?.publication?.status?.toString().trim() || '',
+      'Tenant-admin event bootstrap create must persist draft publication status.',
+    ).toBe('draft');
     expect(eventId, 'Created event must expose event_id.').toBeTruthy();
     await expect(page).toHaveURL(
       new RegExp(`/admin/events/${escapeRegExp(eventId)}/edit$`),
@@ -6225,6 +6226,19 @@ test('@mutation tenant-admin event CRUD creates, reopens edit readback, and remo
       },
     );
     logStep('event-crud', `redirected to edit route ${page.url()}`);
+    await expect
+      .poll(
+        async () => {
+          const event = await fetchAdminEvent(api, baseUrl, session.token, eventId);
+          return event?.publication?.status?.toString().trim() || '';
+        },
+        {
+          timeout: appBootTimeoutMs,
+          message:
+            'Expected tenant-admin event bootstrap create to read back as draft on the canonical admin endpoint.',
+        },
+      )
+      .toBe('draft');
 
     const initialEditTitleField = page
       .locator('input[data-semantics-role="text-field"]')
@@ -6240,6 +6254,13 @@ test('@mutation tenant-admin event CRUD creates, reopens edit readback, and remo
       'Expected bootstrap create redirect to preserve the persisted title on the edit route.',
     );
 
+    const returnToEventsListDataPromise = page.waitForResponse((candidate) => {
+      return (
+        candidate.request().method() === 'GET' &&
+        candidate.url().includes('/admin/api/v1/events') &&
+        candidate.status() === 200
+      );
+    });
     const returnToEventsListResponse = await page.goto(buildApiUrl(baseUrl, '/admin/events'), {
       waitUntil: 'domcontentloaded',
     });
@@ -6254,13 +6275,14 @@ test('@mutation tenant-admin event CRUD creates, reopens edit readback, and remo
     await expect(page.getByRole('button', { name: 'Novo evento' }).last()).toBeVisible({
       timeout: appBootTimeoutMs,
     });
+    await returnToEventsListDataPromise;
     await ensureAdminEventPublicationFilterSelected(page, 'published');
     await expectAdminEventAbsentFromList(
       page,
       initialTitle,
       'Expected a draft event to stay hidden while the tenant-admin list remains on the default Publicados filter.',
     );
-    await ensureAdminEventPublicationFilterSelected(page, createdPublicationStatus);
+    await ensureAdminEventPublicationFilterSelected(page, 'draft');
 
     await openEventFromAdminList(page, initialTitle, eventId);
 
@@ -6318,6 +6340,13 @@ test('@mutation tenant-admin event CRUD creates, reopens edit readback, and remo
       .toBe(`${updatedTitle}|${selectedStart.isoDate}`);
     logStep('event-crud', 'updated title persisted through admin readback');
 
+    const postUpdateEventsListDataPromise = page.waitForResponse((candidate) => {
+      return (
+        candidate.request().method() === 'GET' &&
+        candidate.url().includes('/admin/api/v1/events') &&
+        candidate.status() === 200
+      );
+    });
     const postUpdateEventsListResponse = await page.goto(
       buildApiUrl(baseUrl, '/admin/events'),
       {
@@ -6335,13 +6364,14 @@ test('@mutation tenant-admin event CRUD creates, reopens edit readback, and remo
     await expect(page.getByRole('button', { name: 'Novo evento' }).last()).toBeVisible({
       timeout: appBootTimeoutMs,
     });
+    await postUpdateEventsListDataPromise;
     await ensureAdminEventPublicationFilterSelected(page, 'published');
     await expectAdminEventAbsentFromList(
       page,
       updatedTitle,
       'Expected the draft event to remain hidden on the default Publicados filter after saving edits.',
     );
-    await ensureAdminEventPublicationFilterSelected(page, createdPublicationStatus);
+    await ensureAdminEventPublicationFilterSelected(page, 'draft');
 
     await openEventMenuFromAdminList(page, updatedTitle);
     logStep('event-crud', 'event menu opened');
