@@ -2,6 +2,7 @@ const fs = require('fs');
 const { expect } = require('@playwright/test');
 const dropdownDebugEnabled = process.env.DEBUG_SEMANTIC_DROPDOWN === '1';
 const dropdownDebugLogPath = process.env.DEBUG_SEMANTIC_DROPDOWN_LOG || '';
+const semanticScrollTimeoutMs = 1000;
 
 function cssAttributeValue(value) {
   return JSON.stringify(value).replace(/'/g, "\\'");
@@ -267,6 +268,23 @@ async function resolveOption(page, optionText) {
   return null;
 }
 
+async function resolveVisibleOption(page, optionText) {
+  for (const candidate of optionLocators(page, optionText)) {
+    for (const locator of await enumerateLocatorCandidates(candidate.locator)) {
+      const isVisible = await locator.isVisible().catch(() => false);
+      if (!isVisible) {
+        continue;
+      }
+      return {
+        locator,
+        strategy: candidate.strategy,
+      };
+    }
+  }
+
+  return null;
+}
+
 async function searchDropdownOptions(page, optionText, record) {
   const locationSearchField = page.getByRole('textbox', {
     name: /Buscar local/i,
@@ -413,12 +431,12 @@ async function scrollDropdownSurface(page) {
 }
 
 async function revealDropdownOption(page, optionText, record) {
-  if (await resolveOption(page, optionText)) {
+  if (await resolveVisibleOption(page, optionText)) {
     return true;
   }
 
   await searchDropdownOptions(page, optionText, record);
-  if (await resolveOption(page, optionText)) {
+  if (await resolveVisibleOption(page, optionText)) {
     return true;
   }
 
@@ -428,12 +446,12 @@ async function revealDropdownOption(page, optionText, record) {
       break;
     }
     await page.waitForTimeout(100);
-    if (await resolveOption(page, optionText)) {
+    if (await resolveVisibleOption(page, optionText)) {
       return true;
     }
   }
 
-  return Boolean(await resolveOption(page, optionText));
+  return Boolean(await resolveVisibleOption(page, optionText));
 }
 
 async function waitForDropdownSurface(page, optionText, timeout = 5000) {
@@ -459,18 +477,21 @@ async function waitForDropdownSurface(page, optionText, timeout = 5000) {
 
 async function waitForOption(page, optionText) {
   await expect
-    .poll(async () => Boolean(await resolveOption(page, optionText)), {
+    .poll(async () => Boolean(await resolveVisibleOption(page, optionText)), {
       timeout: 30000,
       message: `Dropdown option "${optionText}" must become semantically visible.`,
     })
     .toBe(true);
-  return resolveOption(page, optionText);
+  return resolveVisibleOption(page, optionText);
 }
 
 async function clickFirstVisible(locator, clickOptions = {}) {
   let visibleLocator = null;
 
   for (const candidate of await enumerateLocatorCandidates(locator)) {
+    await candidate
+      .scrollIntoViewIfNeeded({ timeout: semanticScrollTimeoutMs })
+      .catch(() => {});
     const isVisible = await candidate.isVisible().catch(() => false);
     const isEnabled = await candidate.isEnabled().catch(() => false);
     if (isVisible && isEnabled) {
@@ -494,7 +515,9 @@ async function clickFirstVisible(locator, clickOptions = {}) {
 
   for (const attempt of clickAttempts) {
     try {
-      await visibleLocator.scrollIntoViewIfNeeded().catch(() => {});
+      await visibleLocator
+        .scrollIntoViewIfNeeded({ timeout: semanticScrollTimeoutMs })
+        .catch(() => {});
       await visibleLocator.click({
         ...clickOptions,
         ...attempt,
@@ -511,13 +534,15 @@ async function clickFirstVisible(locator, clickOptions = {}) {
 
 async function focusFirstVisible(locator) {
   for (const candidate of await enumerateLocatorCandidates(locator)) {
+    await candidate
+      .scrollIntoViewIfNeeded({ timeout: semanticScrollTimeoutMs })
+      .catch(() => {});
     const isVisible = await candidate.isVisible().catch(() => false);
     const isEnabled = await candidate.isEnabled().catch(() => false);
     if (!isVisible || !isEnabled) {
       continue;
     }
 
-    await candidate.scrollIntoViewIfNeeded().catch(() => {});
     await candidate.focus().catch(() => {});
     return true;
   }
