@@ -932,6 +932,24 @@ async function fillFlutterTextField(page, label, value) {
 }
 
 async function clickFirstVisibleLocator(locator, message) {
+  await expect
+    .poll(
+      async () => {
+        const count = await locator.count().catch(() => 0);
+        for (let index = 0; index < count; index += 1) {
+          if (await locator.nth(index).isVisible().catch(() => false)) {
+            return true;
+          }
+        }
+        return false;
+      },
+      {
+        timeout: 5000,
+        message,
+      },
+    )
+    .toBe(true);
+
   const count = await locator.count().catch(() => 0);
   for (let index = 0; index < count; index += 1) {
     const candidate = locator.nth(index);
@@ -943,13 +961,20 @@ async function clickFirstVisibleLocator(locator, message) {
   throw new Error(message);
 }
 
+function localIsoDate(date) {
+  const year = String(date.getFullYear());
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 function targetCalendarSelection(daysFromNow) {
   const target = new Date();
   target.setDate(target.getDate() + daysFromNow);
   target.setHours(12, 0, 0, 0);
   return {
     date: target,
-    isoDate: target.toISOString().slice(0, 10),
+    isoDate: localIsoDate(target),
     day: String(target.getDate()),
   };
 }
@@ -971,7 +996,6 @@ async function pickReadOnlyTenantAdminEventDateTime(page, { daysFromNow }) {
   const currentDayButtons = page.getByRole('button', {
     name: new RegExp(`^${escapeRegExp(currentDay)},`),
   });
-  await expect(currentDayButtons.first()).toBeVisible({ timeout: 5000 });
   await clickFirstVisibleLocator(
     currentDayButtons,
     `Expected the date picker to expose the currently selected day ${currentDay}.`,
@@ -984,12 +1008,10 @@ async function pickReadOnlyTenantAdminEventDateTime(page, { daysFromNow }) {
   const confirmButtons = page.getByRole('button', {
     name: /^(OK|Confirmar)$/i,
   });
-  await expect(confirmButtons.first()).toBeVisible({ timeout: appBootTimeoutMs });
   await clickFirstVisibleLocator(
     confirmButtons,
     'Expected the date picker confirmation button to be visible.',
   );
-  await expect(confirmButtons.first()).toBeVisible({ timeout: appBootTimeoutMs });
   await clickFirstVisibleLocator(
     confirmButtons,
     'Expected the time picker confirmation button to be visible.',
@@ -1624,11 +1646,15 @@ function firstOccurrenceIsoDate(payload) {
   if (!rawStart) {
     return '';
   }
+  const directMatch = rawStart.match(/^(\d{4}-\d{2}-\d{2})T/);
+  if (directMatch) {
+    return directMatch[1];
+  }
   const parsed = new Date(rawStart);
   if (Number.isNaN(parsed.getTime())) {
     return '';
   }
-  return parsed.toISOString().slice(0, 10);
+  return localIsoDate(parsed);
 }
 
 async function waitForAccountDeletion(api, baseUrl, token, profileId) {
