@@ -943,12 +943,20 @@ async function clickFirstVisibleLocator(locator, message) {
   throw new Error(message);
 }
 
-async function pickReadOnlyTenantAdminEventDateTime(page, { daysFromNow }) {
+function targetCalendarSelection(daysFromNow) {
   const target = new Date();
   target.setDate(target.getDate() + daysFromNow);
   target.setHours(12, 0, 0, 0);
-  const targetDay = String(target.getDate());
-  const targetDayButtonName = new RegExp(`^${escapeRegExp(targetDay)},`);
+  return {
+    date: target,
+    isoDate: target.toISOString().slice(0, 10),
+    day: String(target.getDate()),
+  };
+}
+
+async function pickReadOnlyTenantAdminEventDateTime(page, { daysFromNow }) {
+  const selection = targetCalendarSelection(daysFromNow);
+  const currentDay = String(new Date().getDate());
 
   const openPickerButton = page.getByRole('button', {
     name: /Selecionar data e hora/i,
@@ -960,14 +968,18 @@ async function pickReadOnlyTenantAdminEventDateTime(page, { daysFromNow }) {
   );
   await openPickerButton.click();
 
-  const dayButtons = page.getByRole('button', {
-    name: targetDayButtonName,
+  const currentDayButtons = page.getByRole('button', {
+    name: new RegExp(`^${escapeRegExp(currentDay)},`),
   });
-  await expect(dayButtons.first()).toBeVisible({ timeout: 5000 });
+  await expect(currentDayButtons.first()).toBeVisible({ timeout: 5000 });
   await clickFirstVisibleLocator(
-    dayButtons,
-    `Expected the date picker to expose a visible day button for ${targetDay}.`,
+    currentDayButtons,
+    `Expected the date picker to expose the currently selected day ${currentDay}.`,
   );
+  for (let step = 0; step < daysFromNow; step += 1) {
+    await page.keyboard.press('ArrowRight');
+  }
+  await page.keyboard.press('Enter');
 
   const confirmButtons = page.getByRole('button', {
     name: /^(OK|Confirmar)$/i,
@@ -992,6 +1004,8 @@ async function pickReadOnlyTenantAdminEventDateTime(page, { daysFromNow }) {
       },
     )
     .toBe(0);
+
+  return selection;
 }
 
 async function countVisibleLocators(locator) {
@@ -1599,6 +1613,22 @@ async function fetchAdminEvent(api, baseUrl, token, eventId) {
   );
   expect(response.status(), 'Tenant-admin event readback must succeed.').toBe(200);
   return normalizePayload(await response.json());
+}
+
+function firstOccurrenceIsoDate(payload) {
+  const firstOccurrence = normalizeList(payload?.occurrences)[0] || {};
+  const rawStart =
+    firstOccurrence?.date_time_start?.toString() ||
+    firstOccurrence?.dateTimeStart?.toString() ||
+    '';
+  if (!rawStart) {
+    return '';
+  }
+  const parsed = new Date(rawStart);
+  if (Number.isNaN(parsed.getTime())) {
+    return '';
+  }
+  return parsed.toISOString().slice(0, 10);
 }
 
 async function waitForAccountDeletion(api, baseUrl, token, profileId) {
@@ -6048,7 +6078,9 @@ test('@mutation tenant-admin event CRUD creates, reopens edit readback, and remo
     });
     await page.waitForTimeout(250);
     logStep('event-crud', 'event type selected');
-    await pickReadOnlyTenantAdminEventDateTime(page, { daysFromNow: 1 });
+    const selectedStart = await pickReadOnlyTenantAdminEventDateTime(page, {
+      daysFromNow: 1,
+    });
     logStep('event-crud', 'event start picked');
     await scrollUntilVisible(
       page,
@@ -6088,6 +6120,11 @@ test('@mutation tenant-admin event CRUD creates, reopens edit readback, and remo
     const createRequest = await createRequestPromise;
     logStep('event-crud', `create backend responded ${createRequest.status()}`);
     expect(createRequest.status(), 'Tenant-admin event create must succeed.').toBe(201);
+    const createRequestPayload = createRequest.request().postDataJSON();
+    expect(
+      firstOccurrenceIsoDate(createRequestPayload),
+      'Tenant-admin event create must submit the selected occurrence date.',
+    ).toBe(selectedStart.isoDate);
     const createdEvent = normalizePayload(await createRequest.json());
     eventId = createdEvent?.event_id?.toString() || null;
     createdPublicationStatus =
@@ -6173,15 +6210,18 @@ test('@mutation tenant-admin event CRUD creates, reopens edit readback, and remo
       .poll(
         async () => {
           const event = await fetchAdminEvent(api, baseUrl, session.token, eventId);
-          return event?.title?.toString() || '';
+          return [
+            event?.title?.toString() || '',
+            firstOccurrenceIsoDate(event),
+          ].join('|');
         },
         {
           timeout: appBootTimeoutMs,
           message:
-            'Expected tenant-admin event edit save to persist the updated title.',
+            'Expected tenant-admin event edit save to persist the updated title and selected occurrence date.',
         },
       )
-      .toBe(updatedTitle);
+      .toBe(`${updatedTitle}|${selectedStart.isoDate}`);
     logStep('event-crud', 'updated title persisted through admin readback');
 
     const postUpdateEventsListResponse = await page.goto(
@@ -6356,7 +6396,9 @@ test('@mutation tenant-admin event create rejects stale selected event type with
     });
     await page.waitForTimeout(250);
     logStep('event-422', 'event type selected');
-    await pickReadOnlyTenantAdminEventDateTime(page, { daysFromNow: 1 });
+    const selectedStart = await pickReadOnlyTenantAdminEventDateTime(page, {
+      daysFromNow: 1,
+    });
     logStep('event-422', 'event start picked');
     await scrollUntilVisible(
       page,
@@ -6392,6 +6434,11 @@ test('@mutation tenant-admin event create rejects stale selected event type with
 
     const createRequest = await createRequestPromise;
     logStep('event-422', `backend responded ${createRequest.status()}`);
+    const createRequestPayload = createRequest.request().postDataJSON();
+    expect(
+      firstOccurrenceIsoDate(createRequestPayload),
+      'Stale selected event type proof must still submit the chosen occurrence date.',
+    ).toBe(selectedStart.isoDate);
     expect(
       createRequest.status(),
       'Stale selected event type must fail with backend 422 instead of succeeding silently.',
