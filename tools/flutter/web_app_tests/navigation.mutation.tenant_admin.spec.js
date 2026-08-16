@@ -981,7 +981,6 @@ function targetCalendarSelection(daysFromNow) {
 
 async function pickReadOnlyTenantAdminEventDateTime(page, { daysFromNow }) {
   const selection = targetCalendarSelection(daysFromNow);
-  const currentDay = String(new Date().getDate());
 
   const openPickerButton = page.getByRole('button', {
     name: /Selecionar data e hora/i,
@@ -993,17 +992,13 @@ async function pickReadOnlyTenantAdminEventDateTime(page, { daysFromNow }) {
   );
   await openPickerButton.click();
 
-  const currentDayButtons = page.getByRole('button', {
-    name: new RegExp(`^${escapeRegExp(currentDay)},`),
+  const targetDayButtons = page.getByRole('button', {
+    name: new RegExp(`^${escapeRegExp(selection.day)}(?:,|$)`),
   });
   await clickFirstVisibleLocator(
-    currentDayButtons,
-    `Expected the date picker to expose the currently selected day ${currentDay}.`,
+    targetDayButtons,
+    `Expected the date picker to expose the target day ${selection.day}.`,
   );
-  for (let step = 0; step < daysFromNow; step += 1) {
-    await page.keyboard.press('ArrowRight');
-  }
-  await page.keyboard.press('Enter');
 
   const confirmButtons = page.getByRole('button', {
     name: /^(OK|Confirmar)$/i,
@@ -1705,6 +1700,12 @@ function eventTitleLocator(page, eventTitle) {
   }).first();
 }
 
+function eventTitleLocators(page, eventTitle) {
+  return page.getByRole('button', {
+    name: new RegExp(escapeRegExp(eventTitle), 'i'),
+  });
+}
+
 function publicationStatusFilterLabel(status) {
   switch ((status || '').trim()) {
     case 'draft':
@@ -1720,21 +1721,55 @@ function publicationStatusFilterLabel(status) {
   }
 }
 
-async function ensureAdminEventPublicationFilterSelected(page, status) {
-  const label = publicationStatusFilterLabel(status);
-  if (!label || label === 'Publicados') {
-    return;
-  }
-
-  const checkbox = page.getByRole('checkbox', {
+function adminEventPublicationFilterCheckbox(page, label) {
+  return page.getByRole('checkbox', {
     name: new RegExp(`^${escapeRegExp(label)}$`, 'i'),
   }).first();
+}
+
+async function expectAdminEventPublicationFilterChecked(page, label, expectedChecked, message) {
+  const checkbox = adminEventPublicationFilterCheckbox(page, label);
   await scrollUntilVisible(
     page,
     checkbox,
     `Expected publication filter "${label}" to be reachable in the tenant-admin events list.`,
   );
   await expect(checkbox).toBeVisible({ timeout: appBootTimeoutMs });
+  await expect
+    .poll(
+      async () => (await checkbox.getAttribute('aria-checked').catch(() => '')) || '',
+      {
+        timeout: appBootTimeoutMs,
+        message,
+      },
+    )
+    .toBe(expectedChecked ? 'true' : 'false');
+}
+
+async function ensureAdminEventPublicationFilterSelected(page, status) {
+  const label = publicationStatusFilterLabel(status);
+  if (!label) {
+    return;
+  }
+
+  if (label === 'Publicados') {
+    await expectAdminEventPublicationFilterChecked(
+      page,
+      label,
+      true,
+      'Expected the default tenant-admin events filter to keep Publicados selected.',
+    );
+    return;
+  }
+
+  const checkbox = adminEventPublicationFilterCheckbox(page, label);
+  const publishedCheckbox = adminEventPublicationFilterCheckbox(page, 'Publicados');
+  await expectAdminEventPublicationFilterChecked(
+    page,
+    'Publicados',
+    true,
+    'Expected the tenant-admin events list to default to Publicados before switching filters.',
+  );
 
   if (((await checkbox.getAttribute('aria-checked').catch(() => '')) || '') !== 'true') {
     await checkbox.click();
@@ -1742,13 +1777,40 @@ async function ensureAdminEventPublicationFilterSelected(page, status) {
 
   await expect
     .poll(
-      async () => (await checkbox.getAttribute('aria-checked').catch(() => '')) || '',
+      async () => {
+        return JSON.stringify({
+          target: (await checkbox.getAttribute('aria-checked').catch(() => '')) || '',
+          published:
+            (await publishedCheckbox.getAttribute('aria-checked').catch(() => '')) || '',
+        });
+      },
       {
         timeout: appBootTimeoutMs,
-        message: `Expected publication filter "${label}" to stay selected in the tenant-admin events list.`,
+        message: `Expected publication filter "${label}" to become the exclusive tenant-admin events selection.`,
       },
     )
-    .toBe('true');
+    .toBe(JSON.stringify({ target: 'true', published: 'false' }));
+}
+
+async function expectAdminEventAbsentFromList(page, eventTitle, message) {
+  const candidates = eventTitleLocators(page, eventTitle);
+  await expect
+    .poll(
+      async () => {
+        const count = await candidates.count().catch(() => 0);
+        for (let index = 0; index < count; index += 1) {
+          if (await candidates.nth(index).isVisible().catch(() => false)) {
+            return true;
+          }
+        }
+        return false;
+      },
+      {
+        timeout: appBootTimeoutMs,
+        message,
+      },
+    )
+    .toBe(false);
 }
 
 async function openEventFromAdminList(page, eventTitle, eventId) {
@@ -6192,6 +6254,12 @@ test('@mutation tenant-admin event CRUD creates, reopens edit readback, and remo
     await expect(page.getByRole('button', { name: 'Novo evento' }).last()).toBeVisible({
       timeout: appBootTimeoutMs,
     });
+    await ensureAdminEventPublicationFilterSelected(page, 'published');
+    await expectAdminEventAbsentFromList(
+      page,
+      initialTitle,
+      'Expected a draft event to stay hidden while the tenant-admin list remains on the default Publicados filter.',
+    );
     await ensureAdminEventPublicationFilterSelected(page, createdPublicationStatus);
 
     await openEventFromAdminList(page, initialTitle, eventId);
@@ -6267,6 +6335,12 @@ test('@mutation tenant-admin event CRUD creates, reopens edit readback, and remo
     await expect(page.getByRole('button', { name: 'Novo evento' }).last()).toBeVisible({
       timeout: appBootTimeoutMs,
     });
+    await ensureAdminEventPublicationFilterSelected(page, 'published');
+    await expectAdminEventAbsentFromList(
+      page,
+      updatedTitle,
+      'Expected the draft event to remain hidden on the default Publicados filter after saving edits.',
+    );
     await ensureAdminEventPublicationFilterSelected(page, createdPublicationStatus);
 
     await openEventMenuFromAdminList(page, updatedTitle);
