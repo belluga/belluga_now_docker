@@ -700,7 +700,31 @@ async function createPublicAccountProfile(
     `Fixture account profile slug must stay anchored to canonical slug ${expectedSlug}. Received ${profileSlug}.`,
   ).toBeTruthy();
 
+  await publishAccount(api, baseUrl, token, accountSlug);
+
   return { profileId, profileSlug, accountSlug };
+}
+
+async function publishAccount(api, baseUrl, token, accountSlug) {
+  const response = await api.patch(
+    buildUrl(baseUrl, `/admin/api/v1/accounts/${accountSlug}`),
+    {
+      headers: authHeaders(token),
+      data: {
+        publication: {
+          status: 'published',
+        },
+      },
+    },
+  );
+  const payload = await fetchJson(
+    response,
+    `Publish fixture account ${accountSlug}`,
+  );
+  expect(
+    payload?.data?.publication?.status?.toString() || '',
+    `Fixture account ${accountSlug} must persist the canonical published status before public verification.`,
+  ).toBe('published');
 }
 
 async function createEventType(api, baseUrl, token) {
