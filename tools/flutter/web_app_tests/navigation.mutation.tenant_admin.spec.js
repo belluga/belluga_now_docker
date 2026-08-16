@@ -931,6 +931,160 @@ async function fillFlutterTextField(page, label, value) {
   );
 }
 
+async function clickFirstVisibleLocator(locator, message) {
+  await expect
+    .poll(
+      async () => {
+        const count = await locator.count().catch(() => 0);
+        for (let index = 0; index < count; index += 1) {
+          if (await locator.nth(index).isVisible().catch(() => false)) {
+            return true;
+          }
+        }
+        return false;
+      },
+      {
+        timeout: 5000,
+        message,
+      },
+    )
+    .toBe(true);
+
+  const count = await locator.count().catch(() => 0);
+  for (let index = 0; index < count; index += 1) {
+    const candidate = locator.nth(index);
+    if (await candidate.isVisible().catch(() => false)) {
+      await candidate.click();
+      return;
+    }
+  }
+  throw new Error(message);
+}
+
+function localIsoDate(date) {
+  const year = String(date.getFullYear());
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function targetCalendarSelection(daysFromNow) {
+  const reference = new Date();
+  reference.setHours(12, 0, 0, 0);
+  const target = new Date(reference);
+  target.setDate(target.getDate() + daysFromNow);
+  target.setHours(12, 0, 0, 0);
+  return {
+    date: target,
+    isoDate: localIsoDate(target),
+    day: String(target.getDate()),
+    monthDelta:
+      (target.getFullYear() - reference.getFullYear()) * 12 +
+      (target.getMonth() - reference.getMonth()),
+  };
+}
+
+function assertEventDatePickerBoundaryCoverage() {
+  const augustBoundary = targetCalendarSelectionFromReference(
+    new Date(2026, 7, 31, 12, 0, 0, 0),
+    1,
+  );
+  expect(
+    augustBoundary.monthDelta,
+    'Tenant-admin event date picker helper must navigate from August 31 to September 1.',
+  ).toBe(1);
+
+  const decemberBoundary = targetCalendarSelectionFromReference(
+    new Date(2026, 11, 31, 12, 0, 0, 0),
+    1,
+  );
+  expect(
+    decemberBoundary.monthDelta,
+    'Tenant-admin event date picker helper must navigate from December 31 to January 1.',
+  ).toBe(1);
+}
+
+function targetCalendarSelectionFromReference(baseDate, daysFromNow) {
+  const reference = new Date(baseDate);
+  reference.setHours(12, 0, 0, 0);
+  const target = new Date(reference);
+  target.setDate(target.getDate() + daysFromNow);
+  target.setHours(12, 0, 0, 0);
+  return {
+    date: target,
+    isoDate: localIsoDate(target),
+    day: String(target.getDate()),
+    monthDelta:
+      (target.getFullYear() - reference.getFullYear()) * 12 +
+      (target.getMonth() - reference.getMonth()),
+  };
+}
+
+async function pickReadOnlyTenantAdminEventDateTime(page, { daysFromNow }) {
+  assertEventDatePickerBoundaryCoverage();
+  const selection = targetCalendarSelection(daysFromNow);
+
+  const openPickerButton = page.getByRole('button', {
+    name: /Selecionar data e hora/i,
+  }).first();
+  await scrollUntilVisible(
+    page,
+    openPickerButton,
+    'Expected the event date/time picker affordance to become visible before selecting the start date.',
+  );
+  await openPickerButton.click();
+
+  if (selection.monthDelta !== 0) {
+    const monthStepper = page.getByRole('button', {
+      name:
+        selection.monthDelta > 0
+          ? /^(Next month|Próximo mês)$/i
+          : /^(Previous month|Mês anterior)$/i,
+    });
+    for (let step = 0; step < Math.abs(selection.monthDelta); step += 1) {
+      await clickFirstVisibleLocator(
+        monthStepper,
+        `Expected the date picker to expose the month navigation button for step ${
+          step + 1
+        }/${Math.abs(selection.monthDelta)}.`,
+      );
+      await page.waitForTimeout(100);
+    }
+  }
+
+  const targetDayButtons = page.getByRole('button', {
+    name: new RegExp(`^${escapeRegExp(selection.day)}(?:,|$)`),
+  });
+  await clickFirstVisibleLocator(
+    targetDayButtons,
+    `Expected the date picker to expose the target day ${selection.day}.`,
+  );
+
+  const confirmButtons = page.getByRole('button', {
+    name: /^(OK|Confirmar)$/i,
+  });
+  await clickFirstVisibleLocator(
+    confirmButtons,
+    'Expected the date picker confirmation button to be visible.',
+  );
+  await clickFirstVisibleLocator(
+    confirmButtons,
+    'Expected the time picker confirmation button to be visible.',
+  );
+
+  await expect
+    .poll(
+      async () => page.getByRole('dialog').count().catch(() => 0),
+      {
+        timeout: appBootTimeoutMs,
+        message: 'Expected the date/time picker dialogs to close after both confirmations.',
+      },
+    )
+    .toBe(0);
+
+  return selection;
+}
+
 async function countVisibleLocators(locator) {
   const count = await locator.count().catch(() => 0);
   let visibleCount = 0;
@@ -1018,6 +1172,84 @@ async function clickSaveChanges(page) {
 function requestPostDataContainsAll(request, expectedFragments = []) {
   const body = request.postData() || '';
   return expectedFragments.every((fragment) => body.includes(fragment));
+}
+
+function normalizedSearchParamSet(value) {
+  return (value || '')
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .sort()
+    .join(',');
+}
+
+function responseMatchesTenantAdminEventsList(
+  candidate,
+  { status = 'published', temporal = ['now', 'future'], pageSize = 20 } = {},
+) {
+  if (candidate.request().method() !== 'GET' || candidate.status() !== 200) {
+    return false;
+  }
+
+  let url;
+  try {
+    url = new URL(candidate.url());
+  } catch {
+    return false;
+  }
+
+  if (url.pathname !== '/admin/api/v1/events') {
+    return false;
+  }
+
+  if (url.searchParams.get('page') !== '1') {
+    return false;
+  }
+  if (url.searchParams.get('page_size') !== pageSize.toString()) {
+    return false;
+  }
+  if (url.searchParams.get('status') !== status) {
+    return false;
+  }
+  if (
+    normalizedSearchParamSet(url.searchParams.get('temporal')) !==
+    normalizedSearchParamSet(temporal.join(','))
+  ) {
+    return false;
+  }
+
+  return ![
+    'date',
+    'venue_profile_id',
+    'related_account_profile_id',
+    'archived',
+    'search',
+  ].some((key) => url.searchParams.has(key));
+}
+
+function waitForTenantAdminEventsListResponse(
+  page,
+  { status = 'published', temporal = ['now', 'future'], pageSize = 20 } = {},
+) {
+  return page.waitForResponse((candidate) =>
+    responseMatchesTenantAdminEventsList(candidate, {
+      status,
+      temporal,
+      pageSize,
+    }),
+  );
+}
+
+async function waitForNoVisibleProgressIndicators(page, message) {
+  await expect
+    .poll(
+      async () => countVisibleLocators(page.getByRole('progressbar')),
+      {
+        timeout: appBootTimeoutMs,
+        message,
+      },
+    )
+    .toBe(0);
 }
 
 function waitForSuccessfulAccountProfilePatchResponse(
@@ -1538,6 +1770,26 @@ async function fetchAdminEvent(api, baseUrl, token, eventId) {
   return normalizePayload(await response.json());
 }
 
+function firstOccurrenceIsoDate(payload) {
+  const firstOccurrence = normalizeList(payload?.occurrences)[0] || {};
+  const rawStart =
+    firstOccurrence?.date_time_start?.toString() ||
+    firstOccurrence?.dateTimeStart?.toString() ||
+    '';
+  if (!rawStart) {
+    return '';
+  }
+  const directMatch = rawStart.match(/^(\d{4}-\d{2}-\d{2})T/);
+  if (directMatch) {
+    return directMatch[1];
+  }
+  const parsed = new Date(rawStart);
+  if (Number.isNaN(parsed.getTime())) {
+    return '';
+  }
+  return localIsoDate(parsed);
+}
+
 async function waitForAccountDeletion(api, baseUrl, token, profileId) {
   await expect
     .poll(
@@ -1586,6 +1838,145 @@ function eventTitleLocator(page, eventTitle) {
   }).first();
 }
 
+function eventTitleLocators(page, eventTitle) {
+  return page.getByRole('button', {
+    name: new RegExp(escapeRegExp(eventTitle), 'i'),
+  });
+}
+
+function publicationStatusFilterLabel(status) {
+  switch ((status || '').trim()) {
+    case 'draft':
+      return 'Rascunhos';
+    case 'publish_scheduled':
+      return 'Agendados';
+    case 'ended':
+      return 'Encerrados';
+    case 'published':
+      return 'Publicados';
+    default:
+      return null;
+  }
+}
+
+function adminEventPublicationFilterCheckbox(page, label) {
+  return page.getByRole('checkbox', {
+    name: new RegExp(`^${escapeRegExp(label)}$`, 'i'),
+  }).first();
+}
+
+function adminEventPublicationStatusValue(status) {
+  switch ((status || '').trim()) {
+    case 'draft':
+      return 'draft';
+    case 'publish_scheduled':
+      return 'publish_scheduled';
+    case 'ended':
+      return 'ended';
+    case 'published':
+      return 'published';
+    default:
+      return null;
+  }
+}
+
+async function expectAdminEventPublicationFilterChecked(page, label, expectedChecked, message) {
+  const checkbox = adminEventPublicationFilterCheckbox(page, label);
+  await scrollUntilVisible(
+    page,
+    checkbox,
+    `Expected publication filter "${label}" to be reachable in the tenant-admin events list.`,
+  );
+  await expect(checkbox).toBeVisible({ timeout: appBootTimeoutMs });
+  await expect
+    .poll(
+      async () => (await checkbox.getAttribute('aria-checked').catch(() => '')) || '',
+      {
+        timeout: appBootTimeoutMs,
+        message,
+      },
+    )
+    .toBe(expectedChecked ? 'true' : 'false');
+}
+
+async function ensureAdminEventPublicationFilterSelected(page, status) {
+  const label = publicationStatusFilterLabel(status);
+  if (!label) {
+    return;
+  }
+
+  if (label === 'Publicados') {
+    await expectAdminEventPublicationFilterChecked(
+      page,
+      label,
+      true,
+      'Expected the default tenant-admin events filter to keep Publicados selected.',
+    );
+    return;
+  }
+
+  const checkbox = adminEventPublicationFilterCheckbox(page, label);
+  const publishedCheckbox = adminEventPublicationFilterCheckbox(page, 'Publicados');
+  await expectAdminEventPublicationFilterChecked(
+    page,
+    'Publicados',
+    true,
+    'Expected the tenant-admin events list to default to Publicados before switching filters.',
+  );
+
+  if (((await checkbox.getAttribute('aria-checked').catch(() => '')) || '') !== 'true') {
+    const targetStatus = adminEventPublicationStatusValue(status);
+    const listRefreshPromise = targetStatus
+      ? waitForTenantAdminEventsListResponse(page, { status: targetStatus })
+      : null;
+    await checkbox.click();
+    if (listRefreshPromise) {
+      await listRefreshPromise;
+      await waitForNoVisibleProgressIndicators(
+        page,
+        `Expected the tenant-admin events list to finish rendering after switching visibility to ${label}.`,
+      );
+    }
+  }
+
+  await expect
+    .poll(
+      async () => {
+        return JSON.stringify({
+          target: (await checkbox.getAttribute('aria-checked').catch(() => '')) || '',
+          published:
+            (await publishedCheckbox.getAttribute('aria-checked').catch(() => '')) || '',
+        });
+      },
+      {
+        timeout: appBootTimeoutMs,
+        message: `Expected publication filter "${label}" to become the exclusive tenant-admin events selection.`,
+      },
+    )
+    .toBe(JSON.stringify({ target: 'true', published: 'false' }));
+}
+
+async function expectAdminEventAbsentFromList(page, eventTitle, message) {
+  const candidates = eventTitleLocators(page, eventTitle);
+  await expect
+    .poll(
+      async () => {
+        const count = await candidates.count().catch(() => 0);
+        for (let index = 0; index < count; index += 1) {
+          if (await candidates.nth(index).isVisible().catch(() => false)) {
+            return true;
+          }
+        }
+        return false;
+      },
+      {
+        timeout: appBootTimeoutMs,
+        message,
+      },
+    )
+    .toBe(false);
+}
+
 async function openEventFromAdminList(page, eventTitle, eventId) {
   const eventTitleText = eventTitleLocator(page, eventTitle);
   await scrollUntilVisible(
@@ -1610,59 +2001,16 @@ async function openEventFromAdminList(page, eventTitle, eventId) {
 }
 
 async function openEventMenuFromAdminList(page, eventTitle) {
-  const eventTitleText = eventTitleLocator(page, eventTitle);
+  const eventMenuButton = page.getByRole('button', {
+    name: new RegExp(`^Ações do evento ${escapeRegExp(eventTitle)}$`, 'i'),
+  }).first();
   await scrollUntilVisible(
     page,
-    eventTitleText,
+    eventMenuButton,
     `Expected event-card menu for "${eventTitle}" to stay reachable in the admin list.`,
   );
-  const eventBox = await eventTitleText.boundingBox();
-  expect(eventBox, `Event card for "${eventTitle}" must expose a visible box.`).not.toBeNull();
-
-  const candidateButtons = page.getByRole('button');
-  const candidateCount = await candidateButtons.count().catch(() => 0);
-  let bestCandidate = null;
-  let bestScore = Number.POSITIVE_INFINITY;
-
-  for (let index = 0; index < candidateCount; index += 1) {
-    const candidate = candidateButtons.nth(index);
-    const ariaLabel = (await candidate.getAttribute('aria-label').catch(() => '')) || '';
-    if (ariaLabel.startsWith('Editar evento ')) {
-      continue;
-    }
-    const box = await candidate.boundingBox().catch(() => null);
-    if (!box) {
-      continue;
-    }
-
-    const centerX = box.x + box.width / 2;
-    const centerY = box.y + box.height / 2;
-    const rightEdge = eventBox.x + eventBox.width;
-    const isWithinSameCardBand =
-      centerY >= eventBox.y - 24 &&
-      centerY <= eventBox.y + 72 &&
-      centerX >= rightEdge - 160 &&
-      centerX <= rightEdge + 48;
-    if (!isWithinSameCardBand) {
-      continue;
-    }
-
-    const score =
-      Math.abs(centerX - (rightEdge - 24)) +
-      Math.abs(centerY - (eventBox.y + 24)) * 2;
-    if (score >= bestScore) {
-      continue;
-    }
-
-    bestCandidate = candidate;
-    bestScore = score;
-  }
-
-  expect(
-    bestCandidate,
-    `Expected a popup-menu button near the admin event card for "${eventTitle}".`,
-  ).toBeTruthy();
-  await bestCandidate.click();
+  await expect(eventMenuButton).toBeVisible({ timeout: appBootTimeoutMs });
+  await eventMenuButton.click();
   await expect(page.getByRole('menuitem', { name: 'Remover' }).last()).toBeVisible({
     timeout: appBootTimeoutMs,
   });
@@ -1846,6 +2194,26 @@ async function createAccountProfileForType(
       created?.data?.account?.name ||
       name,
   };
+}
+
+async function publishAccount(api, baseUrl, token, accountSlug) {
+  const response = await api.patch(
+    buildApiUrl(baseUrl, `/admin/api/v1/accounts/${accountSlug}`),
+    {
+      headers: authHeaders(token),
+      data: {
+        publication: {
+          status: 'published',
+        },
+      },
+    },
+  );
+  expect(response.status(), `Account ${accountSlug} publish must succeed.`).toBe(200);
+  const payload = normalizePayload(await response.json());
+  expect(
+    payload?.publication?.status?.toString() || '',
+    `Account ${accountSlug} must persist the canonical published status.`,
+  ).toBe('published');
 }
 
 async function deleteEventType(api, baseUrl, token, eventTypeId) {
@@ -2446,9 +2814,25 @@ test('@mutation tenant-admin account-profile cover upload persists and renders a
     logStep('cover', `autosave returned ${coverUrl}`);
     expect(coverUrl, 'Cover save must return a canonical cover URL.').toBeTruthy();
 
-    const coverResponse = await api.get(coverUrl, { failOnStatusCode: false });
-    expect(coverResponse.status(), 'Persisted cover URL must be readable.').toBeLessThan(400);
-    await disposeApiResponse(coverResponse);
+    const unpublishedCoverResponse = await api.get(coverUrl, {
+      failOnStatusCode: false,
+    });
+    expect(
+      unpublishedCoverResponse.status(),
+      'Persisted cover URL must stay private while the parent Account remains unpublished.',
+    ).toBe(404);
+    await disposeApiResponse(unpublishedCoverResponse);
+
+    await publishAccount(api, baseUrl, session.token, created.accountSlug);
+
+    const publishedCoverResponse = await api.get(coverUrl, {
+      failOnStatusCode: false,
+    });
+    expect(
+      publishedCoverResponse.status(),
+      'Persisted cover URL must become publicly readable after publication.',
+    ).toBe(200);
+    await disposeApiResponse(publishedCoverResponse);
 
     const verificationPage = await browserContext.newPage();
     const verificationCollectors = installFailureCollectors(verificationPage);
@@ -2576,9 +2960,25 @@ test('@mutation tenant-admin account-profile avatar upload persists and renders 
     logStep('avatar', `autosave returned ${avatarUrl}`);
     expect(avatarUrl, 'Avatar save must return a canonical avatar URL.').toBeTruthy();
 
-    const avatarResponse = await api.get(avatarUrl, { failOnStatusCode: false });
-    expect(avatarResponse.status(), 'Persisted avatar URL must be readable.').toBeLessThan(400);
-    await disposeApiResponse(avatarResponse);
+    const unpublishedAvatarResponse = await api.get(avatarUrl, {
+      failOnStatusCode: false,
+    });
+    expect(
+      unpublishedAvatarResponse.status(),
+      'Persisted avatar URL must stay private while the parent Account remains unpublished.',
+    ).toBe(404);
+    await disposeApiResponse(unpublishedAvatarResponse);
+
+    await publishAccount(api, baseUrl, session.token, created.accountSlug);
+
+    const publishedAvatarResponse = await api.get(avatarUrl, {
+      failOnStatusCode: false,
+    });
+    expect(
+      publishedAvatarResponse.status(),
+      'Persisted avatar URL must become publicly readable after publication.',
+    ).toBe(200);
+    await disposeApiResponse(publishedAvatarResponse);
 
     const verificationPage = await browserContext.newPage();
     const verificationCollectors = installFailureCollectors(verificationPage);
@@ -5859,6 +6259,7 @@ test('@mutation tenant-admin event CRUD creates, reopens edit readback, and remo
       (candidate) => candidate.pathname.endsWith('/admin/events/create'),
       {
         timeout: appBootTimeoutMs,
+        waitUntil: 'commit',
       },
     );
     await newEventButton.click();
@@ -5886,6 +6287,10 @@ test('@mutation tenant-admin event CRUD creates, reopens edit readback, and remo
     });
     await page.waitForTimeout(250);
     logStep('event-crud', 'event type selected');
+    const selectedStart = await pickReadOnlyTenantAdminEventDateTime(page, {
+      daysFromNow: 1,
+    });
+    logStep('event-crud', 'event start picked');
     await scrollUntilVisible(
       page,
       page.getByText('Localização').first(),
@@ -5901,14 +6306,6 @@ test('@mutation tenant-admin event CRUD creates, reopens edit readback, and remo
     logStep('event-crud', 'online mode selected');
     await fillFlutterTextField(page, 'URL online', 'https://example.com/live');
     logStep('event-crud', 'online URL filled');
-    await clickVisibleAddOccurrenceAffordance(page);
-    await closeOccurrenceEditorSheet(page);
-    logStep('event-crud', 'default occurrence draft added');
-    await expect(
-      page.getByRole('button', { name: 'Editar ocorrência principal' }),
-    ).toBeVisible({
-      timeout: appBootTimeoutMs,
-    });
 
     const createRequestPromise = page.waitForResponse((candidate) => {
       return (
@@ -5916,39 +6313,107 @@ test('@mutation tenant-admin event CRUD creates, reopens edit readback, and remo
         candidate.url().includes('/admin/api/v1/events')
       );
     });
-    const returnToEventsListPromise = page.waitForURL(
-      (candidate) => candidate.pathname.endsWith('/admin/events'),
+    const redirectToEditRoutePromise = page.waitForURL(
+      (candidate) => /\/admin\/events\/[^/]+\/edit$/.test(candidate.pathname),
       {
         timeout: 30000,
+        waitUntil: 'commit',
       },
     );
 
     await Promise.all([
       createRequestPromise,
-      returnToEventsListPromise,
+      redirectToEditRoutePromise,
       page.getByRole('button', { name: 'Criar evento' }).last().click(),
     ]);
 
     const createRequest = await createRequestPromise;
     logStep('event-crud', `create backend responded ${createRequest.status()}`);
     expect(createRequest.status(), 'Tenant-admin event create must succeed.').toBe(201);
+    const createRequestPayload = createRequest.request().postDataJSON();
+    expect(
+      firstOccurrenceIsoDate(createRequestPayload),
+      'Tenant-admin event create must submit the selected occurrence date.',
+    ).toBe(selectedStart.isoDate);
     const createdEvent = normalizePayload(await createRequest.json());
     eventId = createdEvent?.event_id?.toString() || null;
+    expect(
+      createdEvent?.publication?.status?.toString().trim() || '',
+      'Tenant-admin event bootstrap create must persist draft publication status.',
+    ).toBe('draft');
     expect(eventId, 'Created event must expose event_id.').toBeTruthy();
-    logStep('event-crud', `post-create immediate route ${page.url()}`);
-    logStep(
-      'event-crud',
-      `post-create button counts create=${await countVisibleMatches(
-        page.getByRole('button', { name: 'Criar evento' }),
-      )} new=${await countVisibleMatches(
-        page.getByRole('button', { name: 'Novo evento' }),
-      )}`,
+    await expect(page).toHaveURL(
+      new RegExp(`/admin/events/${escapeRegExp(eventId)}/edit$`),
+      {
+        timeout: appBootTimeoutMs,
+      },
     );
-    await returnToEventsListPromise;
+    logStep('event-crud', `redirected to edit route ${page.url()}`);
+    await expect
+      .poll(
+        async () => {
+          const event = await fetchAdminEvent(api, baseUrl, session.token, eventId);
+          return event?.publication?.status?.toString().trim() || '';
+        },
+        {
+          timeout: appBootTimeoutMs,
+          message:
+            'Expected tenant-admin event bootstrap create to read back as draft on the canonical admin endpoint.',
+        },
+      )
+      .toBe('draft');
+
+    const initialEditTitleField = page
+      .locator('input[data-semantics-role="text-field"]')
+      .first();
+    await scrollUntilVisible(
+      page,
+      initialEditTitleField,
+      'Expected event title field to render after bootstrap create redirects to edit.',
+    );
+    await expectFlutterFieldRenderedValue(
+      initialEditTitleField,
+      initialTitle,
+      'Expected bootstrap create redirect to preserve the persisted title on the edit route.',
+    );
+
+    const returnToEventsListDataPromise = waitForTenantAdminEventsListResponse(page);
+    const returnToEventsListResponse = await page.goto(buildApiUrl(baseUrl, '/admin/events'), {
+      waitUntil: 'domcontentloaded',
+    });
+    expect(
+      returnToEventsListResponse,
+      'Tenant-admin events list must remain reachable after create redirect.',
+    ).not.toBeNull();
+    expect(returnToEventsListResponse.status()).toBeLessThan(400);
+    await assertAppBooted(page);
+    await enableAccessibilityIfNeeded(page);
     logStep('event-crud', `returned to events list ${page.url()}`);
     await expect(page.getByRole('button', { name: 'Novo evento' }).last()).toBeVisible({
       timeout: appBootTimeoutMs,
     });
+    logStep('event-crud', 'waiting for published events list response after create return');
+    await returnToEventsListDataPromise;
+    logStep('event-crud', 'published events list response settled after create return');
+    logStep('event-crud', 'waiting for visible progress indicators to clear after create return');
+    await waitForNoVisibleProgressIndicators(
+      page,
+      'Expected the tenant-admin events list to finish rendering before asserting the default Publicados visibility state.',
+    );
+    logStep('event-crud', 'visible progress indicators cleared after create return');
+    logStep('event-crud', 'verifying Publicados remains selected after create return');
+    await ensureAdminEventPublicationFilterSelected(page, 'published');
+    logStep('event-crud', 'Publicados confirmed after create return');
+    logStep('event-crud', 'verifying created draft stays absent under Publicados');
+    await expectAdminEventAbsentFromList(
+      page,
+      initialTitle,
+      'Expected a draft event to stay hidden while the tenant-admin list remains on the default Publicados filter.',
+    );
+    logStep('event-crud', 'created draft confirmed absent under Publicados');
+    logStep('event-crud', 'switching tenant-admin events list to Rascunhos after create return');
+    await ensureAdminEventPublicationFilterSelected(page, 'draft');
+    logStep('event-crud', 'Rascunhos selected after create return');
 
     await openEventFromAdminList(page, initialTitle, eventId);
 
@@ -5992,34 +6457,60 @@ test('@mutation tenant-admin event CRUD creates, reopens edit readback, and remo
       .poll(
         async () => {
           const event = await fetchAdminEvent(api, baseUrl, session.token, eventId);
-          return event?.title?.toString() || '';
+          return [
+            event?.title?.toString() || '',
+            firstOccurrenceIsoDate(event),
+          ].join('|');
         },
         {
           timeout: appBootTimeoutMs,
           message:
-            'Expected tenant-admin event edit save to persist the updated title.',
+            'Expected tenant-admin event edit save to persist the updated title and selected occurrence date.',
         },
       )
-      .toBe(updatedTitle);
+      .toBe(`${updatedTitle}|${selectedStart.isoDate}`);
     logStep('event-crud', 'updated title persisted through admin readback');
 
-    const returnToEventsListResponse = await page.goto(
+    const postUpdateEventsListDataPromise = waitForTenantAdminEventsListResponse(page);
+    const postUpdateEventsListResponse = await page.goto(
       buildApiUrl(baseUrl, '/admin/events'),
       {
         waitUntil: 'domcontentloaded',
       },
     );
     expect(
-      returnToEventsListResponse,
+      postUpdateEventsListResponse,
       'Tenant-admin events list must remain reachable after saving an existing event.',
     ).not.toBeNull();
-    expect(returnToEventsListResponse.status()).toBeLessThan(400);
+    expect(postUpdateEventsListResponse.status()).toBeLessThan(400);
     await assertAppBooted(page);
     await enableAccessibilityIfNeeded(page);
     logStep('event-crud', `returned to events list after edit save ${page.url()}`);
     await expect(page.getByRole('button', { name: 'Novo evento' }).last()).toBeVisible({
       timeout: appBootTimeoutMs,
     });
+    logStep('event-crud', 'waiting for published events list response after edit save return');
+    await postUpdateEventsListDataPromise;
+    logStep('event-crud', 'published events list response settled after edit save return');
+    logStep('event-crud', 'waiting for visible progress indicators to clear after edit save return');
+    await waitForNoVisibleProgressIndicators(
+      page,
+      'Expected the tenant-admin events list to finish rendering after edit save before asserting the default Publicados visibility state.',
+    );
+    logStep('event-crud', 'visible progress indicators cleared after edit save return');
+    logStep('event-crud', 'verifying Publicados remains selected after edit save return');
+    await ensureAdminEventPublicationFilterSelected(page, 'published');
+    logStep('event-crud', 'Publicados confirmed after edit save return');
+    logStep('event-crud', 'verifying updated draft stays absent under Publicados');
+    await expectAdminEventAbsentFromList(
+      page,
+      updatedTitle,
+      'Expected the draft event to remain hidden on the default Publicados filter after saving edits.',
+    );
+    logStep('event-crud', 'updated draft confirmed absent under Publicados');
+    logStep('event-crud', 'switching tenant-admin events list to Rascunhos after edit save return');
+    await ensureAdminEventPublicationFilterSelected(page, 'draft');
+    logStep('event-crud', 'Rascunhos selected after edit save return');
 
     await openEventMenuFromAdminList(page, updatedTitle);
     logStep('event-crud', 'event menu opened');
@@ -6133,6 +6624,7 @@ test('@mutation tenant-admin event create rejects stale selected event type with
       (candidate) => candidate.pathname.endsWith('/admin/events/create'),
       {
         timeout: appBootTimeoutMs,
+        waitUntil: 'commit',
       },
     );
     await newEventButton.click();
@@ -6174,6 +6666,10 @@ test('@mutation tenant-admin event create rejects stale selected event type with
     });
     await page.waitForTimeout(250);
     logStep('event-422', 'event type selected');
+    const selectedStart = await pickReadOnlyTenantAdminEventDateTime(page, {
+      daysFromNow: 1,
+    });
+    logStep('event-422', 'event start picked');
     await scrollUntilVisible(
       page,
       page.getByText('Localização').first(),
@@ -6189,14 +6685,6 @@ test('@mutation tenant-admin event create rejects stale selected event type with
     logStep('event-422', 'online mode selected');
     await fillFlutterTextField(page, 'URL online', 'https://example.com/live');
     logStep('event-422', 'online URL filled');
-    await clickVisibleAddOccurrenceAffordance(page);
-    await closeOccurrenceEditorSheet(page);
-    logStep('event-422', 'default occurrence draft added');
-    await expect(
-      page.getByRole('button', { name: 'Editar ocorrência principal' }),
-    ).toBeVisible({
-      timeout: appBootTimeoutMs,
-    });
 
     await deleteEventType(api, baseUrl, session.token, eventTypeId);
     eventTypeId = null;
@@ -6216,6 +6704,11 @@ test('@mutation tenant-admin event create rejects stale selected event type with
 
     const createRequest = await createRequestPromise;
     logStep('event-422', `backend responded ${createRequest.status()}`);
+    const createRequestPayload = createRequest.request().postDataJSON();
+    expect(
+      firstOccurrenceIsoDate(createRequestPayload),
+      'Stale selected event type proof must still submit the chosen occurrence date.',
+    ).toBe(selectedStart.isoDate);
     expect(
       createRequest.status(),
       'Stale selected event type must fail with backend 422 instead of succeeding silently.',
