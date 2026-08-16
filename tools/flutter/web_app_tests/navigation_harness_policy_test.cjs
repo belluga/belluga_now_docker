@@ -2606,6 +2606,16 @@ function assertStageFixturePublicEventListUsesCanonicalPageSize() {
   );
   assert.match(
     fixtureScriptSource,
+    /async function createPublicAccountProfile[\s\S]*?await publishAccount\(api, baseUrl, token, accountSlug\);/,
+    'stage fixture public account-profile bootstrap must explicitly publish the onboarded parent account before asserting public visibility under the v0.4.2 draft-on-create contract',
+  );
+  assert.match(
+    fixtureScriptSource,
+    /async function publishAccount[\s\S]*?buildUrl\(baseUrl, `\/admin\/api\/v1\/accounts\/\$\{accountSlug\}`\)[\s\S]*?publication:\s*\{[\s\S]*?status:\s*'published'/,
+    'stage fixture account publication helper must use the canonical admin account update boundary to publish owned fixture accounts',
+  );
+  assert.match(
+    fixtureScriptSource,
     /async function listTaxonomies[\s\S]*?fetchSingleEnvelopeRows\(\s*api,\s*buildUrl\(baseUrl, '\/admin\/api\/v1\/taxonomies'\)/,
     'stage fixture cleanup must treat taxonomy registry as the canonical single-envelope admin list contract',
   );
