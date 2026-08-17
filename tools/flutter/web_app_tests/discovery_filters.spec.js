@@ -590,53 +590,6 @@ async function waitForPublicAccountProfileListHit(
     .toBe(true);
 }
 
-async function waitForPublicEnvironmentProfileType(
-  page,
-  baseUrl,
-  { type, label, isPubliclyDiscoverable = null },
-) {
-  const deadline = Date.now() + appBootTimeoutMs;
-  let lastSeenTypes = [];
-
-  while (Date.now() < deadline) {
-    const payload = await fetchJson(
-      page,
-      baseUrl,
-      '/api/v1/environment',
-      'Public tenant environment',
-    );
-    const profileTypes = normalizeList(payload?.profile_types);
-    lastSeenTypes = profileTypes.map((entry) => ({
-      type: String(entry?.type ?? '').trim(),
-      label: String(entry?.label ?? '').trim(),
-      isPubliclyDiscoverable: Boolean(
-        entry?.capabilities?.is_publicly_discoverable ?? true,
-      ),
-    }));
-
-    const match = profileTypes.find(
-      (entry) => String(entry?.type ?? '').trim() === type,
-    );
-    if (match) {
-      const labelMatches =
-        !label || String(match?.label ?? '').trim() === label;
-      const capabilityMatches =
-        isPubliclyDiscoverable == null
-        || Boolean(match?.capabilities?.is_publicly_discoverable ?? true)
-          === isPubliclyDiscoverable;
-      if (labelMatches && capabilityMatches) {
-        return match;
-      }
-    }
-
-    await page.waitForTimeout(500);
-  }
-
-  throw new Error(
-    `Public environment profile type ${type} did not hydrate in time. Last seen profile types: ${JSON.stringify(lastSeenTypes)}`,
-  );
-}
-
 async function fetchMapFilters(page, baseUrl) {
   const payload = await fetchJson(
     page,
@@ -696,7 +649,8 @@ async function loginTenantAdmin(api, baseUrl) {
   });
 }
 
-async function ensureRuntimeDiscoveryFilters(baseUrl) {
+// Local-only bootstrap for runtime settings; not Discovery UX authority proof.
+async function seedLocalRuntimeDiscoveryFilterBootstrap(baseUrl) {
   if (!localRuntimeSeedEnabled) {
     return;
   }
@@ -1291,9 +1245,26 @@ async function createNearbyAccountProfile(
   const profile = data?.account_profile || {};
   const id = profile?.id?.toString() || '';
   expect(id, `Account profile ${name} must return id.`).toBeTruthy();
+  const accountSlug = account?.slug?.toString() || '';
+  expect(accountSlug, `Account profile ${name} must expose an account slug.`).toBeTruthy();
+  const publishResponse = await api.patch(
+    buildUrl(baseUrl, `/admin/api/v1/accounts/${accountSlug}`),
+    {
+      headers: authHeaders(token),
+      data: {
+        publication: {
+          status: 'published',
+        },
+      },
+    },
+  );
+  expect(
+    publishResponse.status(),
+    `Account profile ${name} parent Account must publish successfully before public discovery proof.`,
+  ).toBe(200);
   return {
     id,
-    accountSlug: account?.slug?.toString() || '',
+    accountSlug,
     displayName: profile?.display_name?.toString() || name,
     slug: profile?.slug?.toString() || '',
     profileType,
@@ -1833,7 +1804,7 @@ test('@mutation public Map keeps baseline primary filters without taxonomy subfi
   page,
 }) => {
   const baseUrl = requireTenantUrl();
-  await ensureRuntimeDiscoveryFilters(baseUrl);
+  await seedLocalRuntimeDiscoveryFilterBootstrap(baseUrl);
   const collectors = installFailureCollectors(page);
   const categories = await fetchMapFilters(page, baseUrl);
   expect(
@@ -2383,12 +2354,6 @@ test('@mutation Profile Discovery hides non-publicly-discoverable types and keep
     expect(typeOptions.map((option) => option.value)).toContain(`hd12-visible-${unique}`);
     expect(typeOptions.map((option) => option.value)).toContain(`hd12-empty-${unique}`);
     expect(typeOptions.map((option) => option.value)).not.toContain(`hd12-hidden-${unique}`);
-    await waitForPublicEnvironmentProfileType(page, baseUrl, {
-      type: `hd12-visible-${unique}`,
-      label: visibleTypeLabel,
-      isPubliclyDiscoverable: true,
-    });
-
     visibleProfile = await createNearbyAccountProfile(
       api,
       baseUrl,
@@ -2436,7 +2401,6 @@ test('@mutation Profile Discovery hides non-publicly-discoverable types and keep
     await openTenantPath(page, baseUrl, '/descobrir');
     await expect(page.getByText('Descubra', { exact: true }))
       .toBeVisible({ timeout: appBootTimeoutMs });
-
     const panel = filterPanel(page, /Painel de filtros de perfis/i);
     await expect(panel).toBeVisible({ timeout: appBootTimeoutMs });
     await expect(

@@ -745,7 +745,6 @@ async function createSeedEvent(api, baseUrl, token) {
           type: 'account_profile',
           id: physicalHost.id,
         },
-        profile_groups: [],
         occurrences: [
           {
             date_time_start: start.toISOString(),
@@ -843,6 +842,16 @@ async function createInvitePreviewSeedEvent(api, baseUrl, token) {
 
     const start = new Date(Date.now() + 10 * 24 * 60 * 60 * 1000);
     const end = new Date(start.getTime() + 2 * 60 * 60 * 1000);
+    const occurrenceGroups = [
+      {
+        label: 'Bandas',
+        profileId: band.id,
+      },
+      {
+        label: 'Expositores',
+        profileId: exhibitor.id,
+      },
+    ];
     const response = await api.post(buildUrl(baseUrl, '/admin/api/v1/events'), {
       data: {
         title,
@@ -861,23 +870,10 @@ async function createInvitePreviewSeedEvent(api, baseUrl, token) {
           type: 'account_profile',
           id: host.id,
         },
-        profile_groups: [],
         occurrences: [
           {
             date_time_start: start.toISOString(),
             date_time_end: end.toISOString(),
-            profile_groups: [
-              {
-                id: 'bandas',
-                label: 'Bandas',
-                order: 0,
-              },
-              {
-                id: 'expositores',
-                label: 'Expositores',
-                order: 1,
-              },
-            ],
           },
         ],
         publication: {
@@ -901,25 +897,53 @@ async function createInvitePreviewSeedEvent(api, baseUrl, token) {
       occurrenceId,
       'Invite preview seed event must return occurrence_id for canonical member patching.',
     ).toBeTruthy();
-    for (const [groupId, profileId] of [
-      ['bandas', band.id],
-      ['expositores', exhibitor.id],
-    ]) {
-      const membersResponse = await api.patch(
+    for (const group of occurrenceGroups) {
+      const createGroupResponse = await api.post(
         buildUrl(
           baseUrl,
-          `/admin/api/v1/events/${eventId}/occurrences/${occurrenceId}/profile_groups/${groupId}/members`,
+          `/admin/api/v1/events/${eventId}/occurrences/${occurrenceId}/profile_groups`,
         ),
         {
           data: {
-            add_ids: [profileId],
+            label: group.label,
+          },
+          headers: authHeaders(token),
+        },
+      );
+      const createGroupPayload = await createGroupResponse
+        .json()
+        .catch(async () => ({
+          raw: await createGroupResponse.text().catch(() => ''),
+        }));
+      expect(
+        createGroupResponse.status(),
+        `Invite preview seed event must create the occurrence group ${group.label}. Response: ${JSON.stringify(createGroupPayload)}`,
+      ).toBe(201);
+      const createdGroupId =
+        (Array.isArray(createGroupPayload?.data?.profile_groups)
+          ? createGroupPayload.data.profile_groups.find(
+              (candidate) => candidate?.label === group.label,
+            ) || createGroupPayload.data.profile_groups.at(-1)
+          : null)?.id?.toString() || '';
+      expect(
+        createdGroupId,
+        `Invite preview seed event must return a canonical id for the occurrence group ${group.label}.`,
+      ).toBeTruthy();
+      const membersResponse = await api.patch(
+        buildUrl(
+          baseUrl,
+          `/admin/api/v1/events/${eventId}/occurrences/${occurrenceId}/profile_groups/${createdGroupId}/members`,
+        ),
+        {
+          data: {
+            add_ids: [group.profileId],
           },
           headers: authHeaders(token),
         },
       );
       expect(
         membersResponse.status(),
-        `Invite preview seed event must patch canonical members for group ${groupId}.`,
+        `Invite preview seed event must patch canonical members for group ${group.label}.`,
       ).toBeLessThan(400);
     }
     return {

@@ -50,6 +50,8 @@ deploy_lane="${NAV_DEPLOY_LANE:-$(read_existing_value NAV_DEPLOY_LANE "${ENV_FIL
 deploy_lane="${deploy_lane:-local}"
 ignore_https="${PLAYWRIGHT_IGNORE_HTTPS_ERRORS:-$(read_existing_value PLAYWRIGHT_IGNORE_HTTPS_ERRORS "${ENV_FILE}")}"
 ignore_https="${ignore_https:-true}"
+origin_ip="${NAV_ORIGIN_IP:-$(read_existing_value NAV_ORIGIN_IP "${ENV_FILE}")}"
+origin_ip="${origin_ip:-127.0.0.1}"
 
 admin_email="${NAV_ADMIN_EMAIL:-$(read_existing_credential_value NAV_ADMIN_EMAIL "${ENV_FILE}")}"
 admin_password="${NAV_ADMIN_PASSWORD:-$(read_existing_credential_value NAV_ADMIN_PASSWORD "${ENV_FILE}")}"
@@ -67,6 +69,7 @@ trap cleanup EXIT
   echo
   printf 'NAV_LANDLORD_URL=%s\n' "${landlord_url}"
   printf 'NAV_TENANT_URL=%s\n' "${tenant_url}"
+  printf 'NAV_ORIGIN_IP=%s\n' "${origin_ip}"
   printf 'NAV_DEPLOY_LANE=%s\n' "${deploy_lane}"
   printf 'PLAYWRIGHT_IGNORE_HTTPS_ERRORS=%s\n' "${ignore_https}"
   echo
@@ -89,6 +92,7 @@ install -m 600 "${tmp_file}" "${ENV_FILE}"
 echo "Wrote ${ENV_FILE}"
 echo "Landlord URL: ${landlord_url}"
 echo "Tenant URL: ${tenant_url}"
+echo "Origin IP: ${origin_ip}"
 if [[ "${REUSE_EXISTING_FILE_VALUES}" == "1" ]]; then
   echo "Existing file reuse: enabled"
 else

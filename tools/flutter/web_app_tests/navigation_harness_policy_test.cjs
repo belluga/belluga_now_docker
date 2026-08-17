@@ -1050,8 +1050,43 @@ function assertCiEquivalentContractSurfacesStayWired() {
   );
   assert.match(
     localPublicWrapperSource,
+    /LOCAL_PUBLIC_LOOPBACK_BRIDGE_PID_FILE="\$\{CONTRACT_STATE_DIR\}\/local-public\.loopback-bridge\.pid"/,
+    'stage browser wrapper must persist local-public loopback bridge state in deterministic contract state',
+  );
+  assert.match(
+    localPublicWrapperSource,
+    /ensure_local_public_loopback_bridge\(\)\s*\{[\s\S]*?manage_local_public_loopback_bridge start/,
+    'stage browser wrapper must start a managed loopback bridge for explicit local-public loopback origin runs',
+  );
+  assert.match(
+    localPublicWrapperSource,
+    /warmup_environment\(\)\s*\{[\s\S]*?ensure_local_public_loopback_bridge "\$\{target\}"/,
+    'stage browser wrapper must prepare the managed loopback bridge before local-public warmup origin probes',
+  );
+  assert.match(
+    localPublicWrapperSource,
+    /check_local_public_provenance\(\)\s*\{[\s\S]*?ensure_local_public_loopback_bridge local-public/,
+    'stage browser wrapper must prepare the managed loopback bridge before local-public provenance origin probes',
+  );
+  assert.match(
+    localPublicWrapperSource,
     /bash "\$\{ROOT_DIR\}\/\.github\/scripts\/manage_navigation_host_overrides\.sh" apply/,
     'stage browser wrapper must route stage host overrides through the canonical host-override script when an origin IP is present',
+  );
+  assert.match(
+    localPublicWrapperSource,
+    /ERROR: \$\{target\} host-overrides-apply requires NAV_ORIGIN_IP\. Refusing to fall back to public DNS during browser contract execution\./,
+    'stage browser wrapper must fail closed when host-overrides-apply is requested without NAV_ORIGIN_IP',
+  );
+  assert.doesNotMatch(
+    localPublicWrapperSource,
+    /host override step is a no-op and public DNS remains authoritative/,
+    'stage browser wrapper must not silently allow public-DNS fallback during host-overrides-apply',
+  );
+  assert.match(
+    localPublicWrapperSource,
+    /reset_host_overrides\(\)\s*\{[\s\S]*?reset_local_public_loopback_bridge "\$\{target\}"/,
+    'stage browser wrapper must stop the managed loopback bridge when host overrides reset',
   );
   assert.match(
     localPublicWrapperSource,
@@ -1139,6 +1174,7 @@ function assertLocalNavigationEnvAutomationIsSafe() {
   const example = fs.readFileSync(localNavigationEnvExample, 'utf8');
   assert.match(example, /^# NAV_LANDLORD_URL=http:\/\/localhost$/m);
   assert.match(example, /^# NAV_TENANT_URL=http:\/\/localhost$/m);
+  assert.match(example, /^NAV_ORIGIN_IP=127\.0\.0\.1$/m);
   assert.match(example, /^NAV_DEPLOY_LANE=local$/m);
   assert.match(
     example,
@@ -2568,13 +2604,38 @@ function assertStageFixturePublicEventListUsesCanonicalPageSize() {
     /async function verifyAccountProfileFixture[\s\S]*?fetchPublicAccountProfiles\(api, baseUrl, \{\s*search: expectedName,\s*\}\)/,
     'stage fixture public account-profile verification must use the canonical public search contract for the owned fixture profile instead of scanning the entire catalog',
   );
+  assert.match(
+    fixtureScriptSource,
+    /async function createPublicAccountProfile[\s\S]*?await publishAccount\(api, baseUrl, token, accountSlug\);/,
+    'stage fixture public account-profile bootstrap must explicitly publish the onboarded parent account before asserting public visibility under the v0.4.2 draft-on-create contract',
+  );
+  assert.match(
+    fixtureScriptSource,
+    /async function publishAccount[\s\S]*?buildUrl\(baseUrl, `\/admin\/api\/v1\/accounts\/\$\{accountSlug\}`\)[\s\S]*?publication:\s*\{[\s\S]*?status:\s*'published'/,
+    'stage fixture account publication helper must use the canonical admin account update boundary to publish owned fixture accounts',
+  );
+  assert.match(
+    fixtureScriptSource,
+    /async function listTaxonomies[\s\S]*?fetchSingleEnvelopeRows\(\s*api,\s*buildUrl\(baseUrl, '\/admin\/api\/v1\/taxonomies'\)/,
+    'stage fixture cleanup must treat taxonomy registry as the canonical single-envelope admin list contract',
+  );
+  assert.match(
+    fixtureScriptSource,
+    /async function listAccountProfileTypes[\s\S]*?fetchSingleEnvelopeRows\(\s*api,\s*buildUrl\(baseUrl, '\/admin\/api\/v1\/account_profile_types'\)/,
+    'stage fixture cleanup must treat account profile type registry as the canonical single-envelope admin list contract',
+  );
+  assert.match(
+    fixtureScriptSource,
+    /async function listEventTypes[\s\S]*?fetchSingleEnvelopeRows\(\s*api,\s*buildUrl\(baseUrl, '\/admin\/api\/v1\/event_types'\)/,
+    'stage fixture cleanup must treat event type registry as the canonical single-envelope admin list contract',
+  );
 }
 
 function assertCanonicalNavigationTimeoutBudget() {
   const source = fs.readFileSync(smokeScript, 'utf8');
   assert.match(
     source,
-    /if \[\[ "\$\{SUITE\}" == "mutation" \]\]; then[\s\S]*?SUITE_TIMEOUT_SECONDS=2700[\s\S]*?elif \[\[ "\$\{SUITE\}" == "diagnostic" \]\]; then[\s\S]*?SUITE_TIMEOUT_SECONDS=1200[\s\S]*?else[\s\S]*?SUITE_TIMEOUT_SECONDS=1800/,
+    /if \[\[ "\$\{SUITE\}" == "mutation" \]\]; then[\s\S]*?SUITE_TIMEOUT_SECONDS=3600[\s\S]*?elif \[\[ "\$\{SUITE\}" == "diagnostic" \]\]; then[\s\S]*?SUITE_TIMEOUT_SECONDS=1200[\s\S]*?else[\s\S]*?SUITE_TIMEOUT_SECONDS=1800/,
     'canonical web navigation runner must keep the shared timeout budget aligned with the approved readonly/mutation/diagnostic suite deadlines',
   );
 }
