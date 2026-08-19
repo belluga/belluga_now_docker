@@ -2511,6 +2511,20 @@ function assertDormantGalleryProofResetsPublicCollectorsAfterConvergence() {
   );
 }
 
+function assertFavoritesPublicFixturesPublishParentAccounts() {
+  const source = fs.readFileSync(tenantAdminMutationSpec, 'utf8');
+  assert.match(
+    source,
+    /async function createPublicAccountProfileForType[\s\S]*?await publishAccount\(api, baseUrl, token, created\.accountSlug\);/,
+    'tenant-admin mutation harness must expose a public account-profile bootstrap that explicitly publishes the parent account before public assertions',
+  );
+  assert.match(
+    source,
+    /test\('@mutation home favorites preserve backend order and expose event status halos'[\s\S]*?const fallbackProfile = await createPublicAccountProfileForType\([\s\S]*?const upcomingLaterProfile = await createPublicAccountProfileForType\([\s\S]*?const liveProfile = await createPublicAccountProfileForType\([\s\S]*?const upcomingSoonProfile = await createPublicAccountProfileForType\(/,
+    'favorites mutation proof must publish every seeded favoritable parent account before polling the public favorites runtime under the draft-on-create contract',
+  );
+}
+
 function assertStageFixturePaginationHelperIsExhaustive() {
   assert.strictEqual(
     shouldContinuePagedFetch({
@@ -2860,6 +2874,7 @@ assertStageFixtureOwnedFiltersUseCanonicalKeysOnly();
 assertStageFixtureRunIdIsolation();
 assertStageBrowserContractPersistsLocalPublicRunId();
 assertDormantGalleryProofResetsPublicCollectorsAfterConvergence();
+assertFavoritesPublicFixturesPublishParentAccounts();
 assertStageFixturePaginationHelperIsExhaustive();
 assertStageFixturePublicEventListUsesCanonicalPageSize();
 assertCanonicalNavigationTimeoutBudget();

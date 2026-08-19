@@ -2196,6 +2196,22 @@ async function createAccountProfileForType(
   };
 }
 
+async function createPublicAccountProfileForType(
+  api,
+  baseUrl,
+  token,
+  { name, profileType },
+) {
+  const created = await createAccountProfileForType(
+    api,
+    baseUrl,
+    token,
+    { name, profileType },
+  );
+  await publishAccount(api, baseUrl, token, created.accountSlug);
+  return created;
+}
+
 async function publishAccount(api, baseUrl, token, accountSlug) {
   const response = await api.patch(
     buildApiUrl(baseUrl, `/admin/api/v1/accounts/${accountSlug}`),
@@ -4107,7 +4123,7 @@ test('@mutation home favorites preserve backend order and expose event status ha
 
     // Create fixtures out of the eventual runtime order so the UI assertion
     // catches unintended client-side sorting by title or creation time.
-    const fallbackProfile = await createAccountProfileForType(
+    const fallbackProfile = await createPublicAccountProfileForType(
       api,
       baseUrl,
       session.token,
@@ -4116,7 +4132,7 @@ test('@mutation home favorites preserve backend order and expose event status ha
         profileType: createdProfileType,
       },
     );
-    const upcomingLaterProfile = await createAccountProfileForType(
+    const upcomingLaterProfile = await createPublicAccountProfileForType(
       api,
       baseUrl,
       session.token,
@@ -4125,7 +4141,7 @@ test('@mutation home favorites preserve backend order and expose event status ha
         profileType: createdProfileType,
       },
     );
-    const liveProfile = await createAccountProfileForType(
+    const liveProfile = await createPublicAccountProfileForType(
       api,
       baseUrl,
       session.token,
@@ -4134,7 +4150,7 @@ test('@mutation home favorites preserve backend order and expose event status ha
         profileType: createdProfileType,
       },
     );
-    const upcomingSoonProfile = await createAccountProfileForType(
+    const upcomingSoonProfile = await createPublicAccountProfileForType(
       api,
       baseUrl,
       session.token,
