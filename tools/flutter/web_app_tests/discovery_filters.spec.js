@@ -2098,7 +2098,7 @@ test('@mutation Home filters honor Event Type taxonomy compatibility, hide zero-
       api,
       baseUrl,
       session.token,
-      'venue',
+      'atlas_perf_venue',
       `HD10 Venue ${unique}`,
     );
 

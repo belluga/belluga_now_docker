@@ -1779,10 +1779,6 @@ function firstOccurrenceIsoDate(payload) {
   if (!rawStart) {
     return '';
   }
-  const directMatch = rawStart.match(/^(\d{4}-\d{2}-\d{2})T/);
-  if (directMatch) {
-    return directMatch[1];
-  }
   const parsed = new Date(rawStart);
   if (Number.isNaN(parsed.getTime())) {
     return '';
@@ -6346,13 +6342,13 @@ test('@mutation tenant-admin event CRUD creates, reopens edit readback, and remo
     const createRequest = await createRequestPromise;
     logStep('event-crud', `create backend responded ${createRequest.status()}`);
     expect(createRequest.status(), 'Tenant-admin event create must succeed.').toBe(201);
+    const createdEvent = normalizePayload(await createRequest.json());
+    eventId = createdEvent?.event_id?.toString() || null;
     const createRequestPayload = createRequest.request().postDataJSON();
     expect(
       firstOccurrenceIsoDate(createRequestPayload),
       'Tenant-admin event create must submit the selected occurrence date.',
     ).toBe(selectedStart.isoDate);
-    const createdEvent = normalizePayload(await createRequest.json());
-    eventId = createdEvent?.event_id?.toString() || null;
     expect(
       createdEvent?.publication?.status?.toString().trim() || '',
       'Tenant-admin event bootstrap create must persist draft publication status.',
