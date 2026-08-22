@@ -309,7 +309,9 @@ For Flutter workspace execution inside that contract, the canonical define file 
 `flutter-app/config/defines/dev.json`; using `stage` defines in `stage-full` is
 out of contract unless an explicit user-validated exception says otherwise.
 It includes repo-owned local-public web publish/provenance proof plus readonly and
-mutation browser smoke on `belluga.site` / `belluga-test.belluga.site`.
+mutation browser smoke on landlord `belluga.site` and tenant hostname
+`belluga-test.belluga.site`. The hostname is the navigation surface; the
+corresponding database tenant record is `belluga-solutions-test`.
 When the next step is to send that exact evaluated state into the remote promotion
 lane, use `bash tools/ci/run_promotable_stage_full.sh --report <report-path>` instead
 of calling `stage-full` directly. That wrapper proves clean worktrees, governing
