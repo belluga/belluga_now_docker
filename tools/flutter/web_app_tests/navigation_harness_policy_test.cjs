@@ -1398,47 +1398,132 @@ function assertLaneNavigationResolverUsesCanonicalLocalHost() {
   const devLandlordHost = new URL(devLandlordUrl).hostname
     .toLowerCase()
     .replace(/\.+$/, '');
-  const stageLandlordUrl = readLandlord('stage');
-  const runResolver = (tenantUrl) =>
-    spawnSync('bash', [resolverScript, 'stage'], {
+  const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const runResolver = (lane, tenantUrl, landlordUrl) =>
+    spawnSync('bash', [resolverScript, lane], {
       cwd: repoRoot,
       env: {
         ...process.env,
+        GITHUB_OUTPUT: '',
         NAV_TENANT_URL_INPUT: tenantUrl,
-        NAV_LANDLORD_URL_INPUT: stageLandlordUrl,
+        NAV_LANDLORD_URL_INPUT: landlordUrl,
       },
       encoding: 'utf8',
     });
 
-  const dottedLocalHost = runResolver(`https://tenant.${devLandlordHost}.`);
-  assert.notStrictEqual(
-    dottedLocalHost.status,
-    0,
-    'stage resolver must reject a local tenant host with a DNS terminal dot',
-  );
-  assert.match(
-    `${dottedLocalHost.stdout}\n${dottedLocalHost.stderr}`,
-    new RegExp(`cannot use local ${devLandlordHost.replace(/\./g, '\\.')}`),
-  );
+  for (const lane of ['stage', 'main']) {
+    const laneLandlordUrl = readLandlord(lane);
+    const laneLandlordHost = new URL(laneLandlordUrl).hostname
+      .toLowerCase()
+      .replace(/\.+$/, '');
+    const localHostMessage = new RegExp(
+      `cannot use local ${escapeRegex(devLandlordHost)} hosts`,
+    );
 
-  const localRootHost = runResolver(`https://${devLandlordHost}.`);
-  assert.notStrictEqual(
-    localRootHost.status,
-    0,
-    'stage resolver must reject the canonical local landlord host when supplied as a tenant target with a DNS terminal dot',
-  );
-  assert.match(
-    `${localRootHost.stdout}\n${localRootHost.stderr}`,
-    new RegExp(`cannot use local ${devLandlordHost.replace(/\./g, '\\.')}`),
-  );
+    const dottedLocalHost = runResolver(
+      lane,
+      `https://tenant.${devLandlordHost}.`,
+      laneLandlordUrl,
+    );
+    assert.notStrictEqual(
+      dottedLocalHost.status,
+      0,
+      `${lane} resolver must reject a local tenant host with a DNS terminal dot`,
+    );
+    assert.match(
+      `${dottedLocalHost.stdout}\n${dottedLocalHost.stderr}`,
+      localHostMessage,
+    );
 
-  const nonLocalHost = runResolver('https://tenant.example.test');
-  assert.strictEqual(
-    nonLocalHost.status,
-    0,
-    `stage resolver must accept non-local hosts.\nstdout:\n${nonLocalHost.stdout}\nstderr:\n${nonLocalHost.stderr}`,
-  );
-  assert.match(nonLocalHost.stdout, /tenant=https:\/\/tenant\.example\.test/);
+    const localRootHost = runResolver(
+      lane,
+      `https://${devLandlordHost}.`,
+      laneLandlordUrl,
+    );
+    assert.notStrictEqual(
+      localRootHost.status,
+      0,
+      `${lane} resolver must reject the canonical local landlord host as a tenant target`,
+    );
+    assert.match(
+      `${localRootHost.stdout}\n${localRootHost.stderr}`,
+      localHostMessage,
+    );
+
+    const unicodeDottedLocalHost = runResolver(
+      lane,
+      `https://tenant.${devLandlordHost}\u3002`,
+      laneLandlordUrl,
+    );
+    assert.notStrictEqual(
+      unicodeDottedLocalHost.status,
+      0,
+      `${lane} resolver must reject a local tenant host with a Unicode DNS terminal dot`,
+    );
+    assert.match(
+      `${unicodeDottedLocalHost.stdout}\n${unicodeDottedLocalHost.stderr}`,
+      localHostMessage,
+    );
+
+    const encodedDottedLocalHost = runResolver(
+      lane,
+      `https://tenant.${devLandlordHost}%2e`,
+      laneLandlordUrl,
+    );
+    assert.notStrictEqual(
+      encodedDottedLocalHost.status,
+      0,
+      `${lane} resolver must reject percent-encoded host input instead of bypassing the local-host guard`,
+    );
+    assert.match(
+      `${encodedDottedLocalHost.stdout}\n${encodedDottedLocalHost.stderr}`,
+      /invalid tenant navigation URL/,
+    );
+
+    const dottedLaneLandlord = runResolver(
+      lane,
+      'https://tenant.example.test',
+      `https://${laneLandlordHost}.`,
+    );
+    assert.strictEqual(
+      dottedLaneLandlord.status,
+      0,
+      `${lane} resolver must canonicalize a dotted lane landlord input.\nstdout:\n${dottedLaneLandlord.stdout}\nstderr:\n${dottedLaneLandlord.stderr}`,
+    );
+
+    if (laneLandlordUrl !== devLandlordUrl) {
+      const mismatchedLandlord = runResolver(
+        lane,
+        'https://tenant.example.test',
+        devLandlordUrl,
+      );
+      assert.notStrictEqual(
+        mismatchedLandlord.status,
+        0,
+        `${lane} resolver must reject a landlord input from another lane`,
+      );
+      assert.match(
+        `${mismatchedLandlord.stdout}\n${mismatchedLandlord.stderr}`,
+        /landlord URL mismatch/,
+      );
+    }
+
+    const nonLocalHost = runResolver(
+      lane,
+      'https://tenant.example.test',
+      laneLandlordUrl,
+    );
+    assert.strictEqual(
+      nonLocalHost.status,
+      0,
+      `${lane} resolver must accept non-local hosts.\nstdout:\n${nonLocalHost.stdout}\nstderr:\n${nonLocalHost.stderr}`,
+    );
+    assert.match(
+      nonLocalHost.stdout,
+      new RegExp(`landlord=https://${escapeRegex(laneLandlordHost)}`),
+    );
+    assert.match(nonLocalHost.stdout, /tenant=https:\/\/tenant\.example\.test/);
+  }
 }
 
 function assertFixtureBootstrapRequiresExplicitMutationContract() {

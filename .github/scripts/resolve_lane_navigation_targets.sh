@@ -70,8 +70,18 @@ if not parsed.hostname:
 if parsed.username or parsed.password:
     raise SystemExit(4)
 
+hostname = parsed.hostname
+if "%" in hostname:
+    raise SystemExit(5)
+try:
+    hostname = hostname.encode("idna").decode("ascii")
+except UnicodeError:
+    raise SystemExit(6)
+hostname = hostname.rstrip(".")
+if ":" in hostname:
+    hostname = f"[{hostname}]"
 port = f":{parsed.port}" if parsed.port is not None else ""
-print(f"{parsed.scheme}://{parsed.hostname}{port}")
+print(f"{parsed.scheme}://{hostname}{port}")
 PY
 }
 
@@ -82,7 +92,14 @@ import sys
 import urllib.parse
 
 parsed = urllib.parse.urlparse(sys.argv[1])
-print((parsed.hostname or "").strip().lower().rstrip("."))
+hostname = parsed.hostname or ""
+if "%" in hostname:
+    raise SystemExit(5)
+try:
+    hostname = hostname.encode("idna").decode("ascii")
+except UnicodeError:
+    raise SystemExit(6)
+print(hostname.strip().lower().rstrip("."))
 PY
 }
 
