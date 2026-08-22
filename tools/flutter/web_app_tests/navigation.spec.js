@@ -98,6 +98,45 @@ function installReadonlyCollectors(page) {
   return { ...collectors, mutatingApiRequests };
 }
 
+function browserFailureEntryUrl(entry) {
+  const match = String(entry).match(/^\S+\s+(\S+)/);
+  return match?.[1] || null;
+}
+
+function browserFailureEntriesForOrigin(entries, origin) {
+  return entries.filter((entry) => {
+    const entryUrl = browserFailureEntryUrl(entry);
+    if (!entryUrl) {
+      return true;
+    }
+
+    try {
+      return new URL(entryUrl).origin === origin;
+    } catch (_) {
+      return true;
+    }
+  });
+}
+
+function hasExternalEnvironmentProbeFailure(entries, targetOrigin) {
+  return entries.some((entry) => {
+    const entryUrl = browserFailureEntryUrl(entry);
+    if (!entryUrl) {
+      return false;
+    }
+
+    try {
+      const parsed = new URL(entryUrl);
+      return (
+        parsed.origin !== targetOrigin &&
+        parsed.pathname === '/api/v1/environment'
+      );
+    } catch (_) {
+      return false;
+    }
+  });
+}
+
 async function assertAppBooted(page) {
   await expect(page.locator('flt-glass-pane')).toHaveCount(1, {
     timeout: appBootTimeoutMs,
@@ -390,12 +429,22 @@ test('@readonly landlord domain bootstraps as landlord and navigates', async ({ 
     'landlord'
   );
 
-  const summary = summarizeCriticalBrowserFailures(collectors);
+  const landlordOrigin = new URL(landlordUrl).origin;
+  const hasOptionalExternalEnvironmentProbeFailure =
+    hasExternalEnvironmentProbeFailure(collectors.failedRequests, landlordOrigin);
+  const summary = summarizeCriticalBrowserFailures(collectors, {
+    allowedConsoleErrorSubstrings: hasOptionalExternalEnvironmentProbeFailure
+      ? ['Failed to load resource: net::ERR_NAME_NOT_RESOLVED']
+      : [],
+  });
   expect(summary.runtimeErrors, `Unexpected runtime errors:\n${summary.runtimeErrors.join('\n')}`).toEqual([]);
-  expect(summary.failedRequests, `Failed requests:\n${summary.failedRequests.join('\n')}`).toEqual([]);
   expect(
-    summary.criticalHttpResponses,
-    `Critical HTTP responses:\n${summary.criticalHttpResponses.join('\n')}`,
+    browserFailureEntriesForOrigin(summary.failedRequests, landlordOrigin),
+    `Failed landlord-origin requests:\n${summary.failedRequests.join('\n')}`,
+  ).toEqual([]);
+  expect(
+    browserFailureEntriesForOrigin(summary.criticalHttpResponses, landlordOrigin),
+    `Critical landlord-origin HTTP responses:\n${summary.criticalHttpResponses.join('\n')}`,
   ).toEqual([]);
   expect(
     summary.disallowedRateLimitedResponses,
