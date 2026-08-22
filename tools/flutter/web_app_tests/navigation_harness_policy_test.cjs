@@ -1483,7 +1483,7 @@ function assertLaneNavigationResolverUsesCanonicalLocalHost() {
     const dottedLaneLandlord = runResolver(
       lane,
       'https://tenant.example.test',
-      `https://${laneLandlordHost}.`,
+      `https://${laneLandlordHost}.:443`,
     );
     assert.strictEqual(
       dottedLaneLandlord.status,

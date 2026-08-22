@@ -80,7 +80,8 @@ except UnicodeError:
 hostname = hostname.rstrip(".")
 if ":" in hostname:
     hostname = f"[{hostname}]"
-port = f":{parsed.port}" if parsed.port is not None else ""
+default_port = (parsed.scheme == "http" and parsed.port == 80) or (parsed.scheme == "https" and parsed.port == 443)
+port = f":{parsed.port}" if parsed.port is not None and not default_port else ""
 print(f"{parsed.scheme}://{hostname}{port}")
 PY
 }
