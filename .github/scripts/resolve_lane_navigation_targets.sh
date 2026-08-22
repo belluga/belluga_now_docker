@@ -82,7 +82,7 @@ PY
 
 is_local_host() {
   local host="$1"
-  [[ "${host}" == "belluga.space" || "${host}" == *.belluga.space ]]
+  [[ "${host}" == "belluga.site" || "${host}" == *.belluga.site ]]
 }
 
 landlord_raw="$(read_landlord_from_lane_file "${defines_file}")"
@@ -115,7 +115,7 @@ if [[ -z "${landlord_host}" || -z "${tenant_host}" ]]; then
 fi
 
 if is_local_host "${landlord_host}" || is_local_host "${tenant_host}"; then
-  echo "ERROR: lane '${lane}' cannot use local belluga.space hosts. landlord=${landlord_host} tenant=${tenant_host}" >&2
+  echo "ERROR: lane '${lane}' cannot use local belluga.site hosts. landlord=${landlord_host} tenant=${tenant_host}" >&2
   exit 1
 fi
 
