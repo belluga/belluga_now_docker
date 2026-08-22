@@ -294,7 +294,7 @@ If real browser validation is required:
 - keep the principal checkout on the reconcile branch,
 - start the local tunnel profile with `make up-dev-tunnel`,
 - point Playwright/browser automation at the tunnel-exposed local domain so navigation evidence reflects the same integrated reconcile state,
-- derive the required browser/device journeys from the touched TODO set instead of guessing a generic smoke target on each run.
+- select the required browser/device journeys from the touched implementation owners instead of guessing a generic smoke target on each run.
 
 ### Pipeline Stage/Main Proof
 
@@ -309,7 +309,7 @@ For Flutter workspace execution inside that contract, the canonical define file 
 `flutter-app/config/defines/dev.json`; using `stage` defines in `stage-full` is
 out of contract unless an explicit user-validated exception says otherwise.
 It includes repo-owned local-public web publish/provenance proof plus readonly and
-mutation browser smoke on `belluga.space` / `guarappari.belluga.space`.
+mutation browser smoke on `belluga.site` / `belluga-test.belluga.site`.
 When the next step is to send that exact evaluated state into the remote promotion
 lane, use `bash tools/ci/run_promotable_stage_full.sh --report <report-path>` instead
 of calling `stage-full` directly. That wrapper proves clean worktrees, governing

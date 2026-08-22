@@ -1326,7 +1326,7 @@ function assertLocalDiagnosticMutationHelperRequiresExplicitNonLocalOptIn() {
       NAV_WEB_TEST_TYPE: 'diagnostic',
       NAV_DEPLOY_LANE: 'local',
       NAV_RUNTIME_DB_MUTATION_ALLOWED: '1',
-      NAV_TENANT_URL: 'https://guarappari.belluga.space',
+      NAV_TENANT_URL: 'https://guarappari.belluga.site',
       NAV_DIAGNOSTIC_LOCAL_ALLOWED_TENANT_HOSTS: null,
       NAV_WEB_LOCAL_MUTATION_ALLOWED_HOSTS: null,
       NAV_WEB_ALLOW_NONLOCAL_MUTATION_HOSTS: null,
@@ -1345,7 +1345,7 @@ function assertLocalDiagnosticMutationHelperRequiresExplicitNonLocalOptIn() {
       NAV_WEB_TEST_TYPE: 'diagnostic',
       NAV_DEPLOY_LANE: 'local',
       NAV_RUNTIME_DB_MUTATION_ALLOWED: '1',
-      NAV_TENANT_URL: 'https://guarappari.belluga.space',
+      NAV_TENANT_URL: 'https://guarappari.belluga.site',
       NAV_DIAGNOSTIC_LOCAL_ALLOWED_TENANT_HOSTS: null,
       NAV_WEB_LOCAL_MUTATION_ALLOWED_HOSTS: null,
       NAV_WEB_ALLOW_NONLOCAL_MUTATION_HOSTS: '1',
@@ -1379,7 +1379,7 @@ function assertFixtureBootstrapRequiresExplicitMutationContract() {
     {
       NAV_DEPLOY_LANE: 'stage',
       NAV_TEST_RUN_ID: 'policy-stage-host-contract',
-      NAV_TENANT_URL: 'https://guarappari.belluga.space',
+      NAV_TENANT_URL: 'https://guarappari.belluga.site',
       NAV_ADMIN_EMAIL: 'policy@example.test',
       NAV_ADMIN_PASSWORD: 'policy-secret',
     },
@@ -1392,7 +1392,7 @@ function assertFixtureBootstrapRequiresExplicitRunIdOnStage() {
     path.join('tools', 'flutter', 'web_app_tests', 'ensure_public_taxonomy_validation_fixture.cjs'),
     {
       NAV_DEPLOY_LANE: 'stage',
-      NAV_TENANT_URL: 'https://guarappari.belluga.space',
+      NAV_TENANT_URL: 'https://guarappari.belluga.site',
       NAV_ADMIN_EMAIL: 'policy@example.test',
       NAV_ADMIN_PASSWORD: 'policy-secret',
       NAV_WEB_ALLOW_NONLOCAL_MUTATION_HOSTS: '1',
@@ -1406,7 +1406,7 @@ function assertFixtureBootstrapRequiresExplicitRunIdOnDev() {
     path.join('tools', 'flutter', 'web_app_tests', 'ensure_public_taxonomy_validation_fixture.cjs'),
     {
       NAV_DEPLOY_LANE: 'dev',
-      NAV_TENANT_URL: 'https://guarappari.belluga.space',
+      NAV_TENANT_URL: 'https://guarappari.belluga.site',
       NAV_ADMIN_EMAIL: 'policy@example.test',
       NAV_ADMIN_PASSWORD: 'policy-secret',
       NAV_WEB_ALLOW_NONLOCAL_MUTATION_HOSTS: '1',
@@ -1420,7 +1420,7 @@ function assertFixtureBootstrapRejectsMainLane() {
     path.join('tools', 'flutter', 'web_app_tests', 'ensure_public_taxonomy_validation_fixture.cjs'),
     {
       NAV_DEPLOY_LANE: 'main',
-      NAV_TENANT_URL: 'https://guarappari.belluga.space',
+      NAV_TENANT_URL: 'https://guarappari.belluga.site',
       NAV_ADMIN_EMAIL: 'policy@example.test',
       NAV_ADMIN_PASSWORD: 'policy-secret',
       NAV_WEB_ALLOW_NONLOCAL_MUTATION_HOSTS: '1',
@@ -1523,8 +1523,8 @@ function assertSmokeRunnerPreservesExplicitNonLocalOptIn() {
     fs.writeFileSync(
       envFile,
       [
-        'NAV_LANDLORD_URL=https://belluga.space',
-        'NAV_TENANT_URL=https://guarappari.belluga.space',
+        'NAV_LANDLORD_URL=https://belluga.site',
+        'NAV_TENANT_URL=https://guarappari.belluga.site',
         'NAV_DEPLOY_LANE=dev',
         'NAV_WEB_ALLOW_NONLOCAL_MUTATION_HOSTS=0',
         'NAV_ADMIN_EMAIL=policy@example.test',
@@ -1586,8 +1586,8 @@ function assertUnknownShardClearsReusedOutputDir() {
     fs.writeFileSync(
       envFile,
       [
-        'NAV_LANDLORD_URL=https://belluga.space',
-        'NAV_TENANT_URL=https://guarappari.belluga.space',
+        'NAV_LANDLORD_URL=https://belluga.site',
+        'NAV_TENANT_URL=https://guarappari.belluga.site',
         'NAV_DEPLOY_LANE=dev',
         'NAV_ADMIN_EMAIL=policy@example.test',
         'NAV_ADMIN_PASSWORD=policy-secret',
@@ -1685,7 +1685,7 @@ function assertDiagnosticSuiteRequiresExplicitLocalMutationContract() {
   const env = {
     NAV_LOCAL_ENV_FILE: isolatedEnvFile,
     NAV_WEB_TEST_TYPE: 'diagnostic',
-    NAV_TENANT_URL: 'https://guarappari.belluga.space',
+    NAV_TENANT_URL: 'https://guarappari.belluga.site',
     PLAYWRIGHT_IGNORE_HTTPS_ERRORS: 'true',
   };
   delete env.NAV_DEPLOY_LANE;
@@ -1720,7 +1720,7 @@ function assertDiagnosticSuiteRejectsEnvFileOnlyContract() {
       [
         'NAV_DEPLOY_LANE=local',
         'NAV_RUNTIME_DB_MUTATION_ALLOWED=1',
-        'NAV_TENANT_URL=https://guarappari.belluga.space',
+        'NAV_TENANT_URL=https://guarappari.belluga.site',
         'NAV_ADMIN_EMAIL=policy@example.test',
         'NAV_ADMIN_PASSWORD=policy-secret',
         '',
@@ -1749,8 +1749,8 @@ function assertNonLocalMutationHostsRequireExplicitOptIn() {
     fs.writeFileSync(
       envFile,
       [
-        'NAV_LANDLORD_URL=https://belluga.space',
-        'NAV_TENANT_URL=https://guarappari.belluga.space',
+        'NAV_LANDLORD_URL=https://belluga.site',
+        'NAV_TENANT_URL=https://guarappari.belluga.site',
         'NAV_ADMIN_EMAIL=policy@example.test',
         'NAV_ADMIN_PASSWORD=policy-secret',
         '',
@@ -1822,8 +1822,8 @@ function assertMutationSuiteRequiresExplicitLaneForNonLocalHosts() {
     {
       NAV_LOCAL_ENV_FILE: isolatedEnvFile,
       NAV_WEB_TEST_TYPE: 'mutation',
-      NAV_LANDLORD_URL: 'https://belluga.space',
-      NAV_TENANT_URL: 'https://guarappari.belluga.space',
+      NAV_LANDLORD_URL: 'https://belluga.site',
+      NAV_TENANT_URL: 'https://guarappari.belluga.site',
       NAV_ADMIN_EMAIL: 'policy@example.test',
       NAV_ADMIN_PASSWORD: 'policy-secret',
       NAV_WEB_ALLOW_NONLOCAL_MUTATION_HOSTS: '1',
@@ -1853,8 +1853,8 @@ function assertMutationSuiteRejectsBlankExplicitLaneForNonLocalHosts() {
       NAV_LOCAL_ENV_FILE: isolatedEnvFile,
       NAV_WEB_TEST_TYPE: 'mutation',
       NAV_DEPLOY_LANE: '',
-      NAV_LANDLORD_URL: 'https://belluga.space',
-      NAV_TENANT_URL: 'https://guarappari.belluga.space',
+      NAV_LANDLORD_URL: 'https://belluga.site',
+      NAV_TENANT_URL: 'https://guarappari.belluga.site',
       NAV_ADMIN_EMAIL: 'policy@example.test',
       NAV_ADMIN_PASSWORD: 'policy-secret',
       NAV_WEB_ALLOW_NONLOCAL_MUTATION_HOSTS: '1',
@@ -1904,7 +1904,7 @@ function assertDirectPlaywrightMutationFailsClosedOnMain() {
     {
       NAV_WEB_TEST_TYPE: 'mutation',
       NAV_DEPLOY_LANE: 'main',
-      NAV_TENANT_URL: 'https://guarappari.belluga.space',
+      NAV_TENANT_URL: 'https://guarappari.belluga.site',
       NAV_ADMIN_EMAIL: 'policy@example.test',
       NAV_ADMIN_PASSWORD: 'policy-secret',
       NAV_WEB_ALLOW_NONLOCAL_MUTATION_HOSTS: '1',
@@ -1927,7 +1927,7 @@ function assertDirectPlaywrightMutationRequiresExplicitLaneForNonLocalHosts() {
     {
       NAV_WEB_TEST_TYPE: 'mutation',
       GITHUB_REF_NAME: 'stage',
-      NAV_TENANT_URL: 'https://guarappari.belluga.space',
+      NAV_TENANT_URL: 'https://guarappari.belluga.site',
       NAV_ADMIN_EMAIL: 'policy@example.test',
       NAV_ADMIN_PASSWORD: 'policy-secret',
       NAV_WEB_ALLOW_NONLOCAL_MUTATION_HOSTS: '1',
@@ -1950,7 +1950,7 @@ function assertDirectPlaywrightMutationRejectsDeployLaneOnlyForNonLocalHosts() {
     {
       NAV_WEB_TEST_TYPE: 'mutation',
       DEPLOY_LANE: 'stage',
-      NAV_TENANT_URL: 'https://guarappari.belluga.space',
+      NAV_TENANT_URL: 'https://guarappari.belluga.site',
       NAV_ADMIN_EMAIL: 'policy@example.test',
       NAV_ADMIN_PASSWORD: 'policy-secret',
       NAV_WEB_ALLOW_NONLOCAL_MUTATION_HOSTS: '1',
@@ -1973,7 +1973,7 @@ function assertDirectPlaywrightMutationRejectsBlankExplicitLaneForNonLocalHosts(
     {
       NAV_WEB_TEST_TYPE: 'mutation',
       NAV_DEPLOY_LANE: '   ',
-      NAV_TENANT_URL: 'https://guarappari.belluga.space',
+      NAV_TENANT_URL: 'https://guarappari.belluga.site',
       NAV_ADMIN_EMAIL: 'policy@example.test',
       NAV_ADMIN_PASSWORD: 'policy-secret',
       NAV_WEB_ALLOW_NONLOCAL_MUTATION_HOSTS: '1',
@@ -2003,7 +2003,7 @@ function assertDirectPlaywrightMutationRejectsGrepSubset() {
     {
       NAV_WEB_TEST_TYPE: 'mutation',
       NAV_DEPLOY_LANE: 'stage',
-      NAV_TENANT_URL: 'https://guarappari.belluga.space',
+      NAV_TENANT_URL: 'https://guarappari.belluga.site',
       NAV_ADMIN_EMAIL: 'policy@example.test',
       NAV_ADMIN_PASSWORD: 'policy-secret',
       NAV_WEB_ALLOW_NONLOCAL_MUTATION_HOSTS: '1',
@@ -2103,7 +2103,7 @@ function assertDirectPlaywrightReadonlyRejectsMutationSpec() {
     {
       NAV_WEB_TEST_TYPE: 'readonly',
       NAV_DEPLOY_LANE: 'main',
-      NAV_TENANT_URL: 'https://guarappari.belluga.space',
+      NAV_TENANT_URL: 'https://guarappari.belluga.site',
     },
   );
   assert.notStrictEqual(
@@ -2129,7 +2129,7 @@ function assertDirectPlaywrightReadonlyRejectsReadonlySpecSubset() {
     {
       NAV_WEB_TEST_TYPE: 'readonly',
       NAV_DEPLOY_LANE: 'main',
-      NAV_TENANT_URL: 'https://guarappari.belluga.space',
+      NAV_TENANT_URL: 'https://guarappari.belluga.site',
     },
   );
   assert.notStrictEqual(
@@ -2155,7 +2155,7 @@ function assertDirectPlaywrightReadonlyRejectsTestDirRelativeSpecSelector() {
     {
       NAV_WEB_TEST_TYPE: 'readonly',
       NAV_DEPLOY_LANE: 'main',
-      NAV_TENANT_URL: 'https://guarappari.belluga.space',
+      NAV_TENANT_URL: 'https://guarappari.belluga.site',
     },
   );
   assert.notStrictEqual(
@@ -2183,7 +2183,7 @@ function assertDirectPlaywrightReadonlyRejectsDirectorySelector() {
     {
       NAV_WEB_TEST_TYPE: 'readonly',
       NAV_DEPLOY_LANE: 'main',
-      NAV_TENANT_URL: 'https://guarappari.belluga.space',
+      NAV_TENANT_URL: 'https://guarappari.belluga.site',
     },
   );
   assert.notStrictEqual(
@@ -2203,7 +2203,7 @@ function assertDirectPlaywrightReadonlyRejectsMutationGrep() {
     {
       NAV_WEB_TEST_TYPE: 'readonly',
       NAV_DEPLOY_LANE: 'main',
-      NAV_TENANT_URL: 'https://guarappari.belluga.space',
+      NAV_TENANT_URL: 'https://guarappari.belluga.site',
     },
   );
   assert.notStrictEqual(
@@ -2232,7 +2232,7 @@ function assertDirectPlaywrightReadonlyRejectsGrepInvertSuiteTrim() {
     {
       NAV_WEB_TEST_TYPE: 'readonly',
       NAV_DEPLOY_LANE: 'main',
-      NAV_TENANT_URL: 'https://guarappari.belluga.space',
+      NAV_TENANT_URL: 'https://guarappari.belluga.site',
     },
   );
   assert.notStrictEqual(
@@ -2259,7 +2259,7 @@ function assertDirectPlaywrightReadonlyRejectsGrepSubset() {
     {
       NAV_WEB_TEST_TYPE: 'readonly',
       NAV_DEPLOY_LANE: 'main',
-      NAV_TENANT_URL: 'https://guarappari.belluga.space',
+      NAV_TENANT_URL: 'https://guarappari.belluga.site',
     },
   );
   assert.notStrictEqual(
@@ -3361,7 +3361,7 @@ assert.match(
   );
 
   const corsText = (url) =>
-    `Access to XMLHttpRequest at '${url}' from origin 'https://guarappari.belluga.space' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.`;
+    `Access to XMLHttpRequest at '${url}' from origin 'https://guarappari.belluga.site' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.`;
 
   const corsMediaBlocked = buildCollectors({
     ignoredFailedRequests: [legacyMediaUrls[0]],
