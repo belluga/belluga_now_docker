@@ -1383,18 +1383,34 @@ function assertLaneNavigationResolverUsesCanonicalLocalHost() {
     'scripts',
     'resolve_lane_navigation_targets.sh',
   );
+  const readLandlord = (lane) => {
+    const definesPath = path.join(
+      repoRoot,
+      'flutter-app',
+      'config',
+      'defines',
+      `${lane}.json`,
+    );
+    const defines = JSON.parse(fs.readFileSync(definesPath, 'utf8'));
+    return defines.LANDLORD_DOMAIN;
+  };
+  const devLandlordUrl = readLandlord('dev');
+  const devLandlordHost = new URL(devLandlordUrl).hostname
+    .toLowerCase()
+    .replace(/\.+$/, '');
+  const stageLandlordUrl = readLandlord('stage');
   const runResolver = (tenantUrl) =>
     spawnSync('bash', [resolverScript, 'stage'], {
       cwd: repoRoot,
       env: {
         ...process.env,
         NAV_TENANT_URL_INPUT: tenantUrl,
-        NAV_LANDLORD_URL_INPUT: 'https://belluga.app',
+        NAV_LANDLORD_URL_INPUT: stageLandlordUrl,
       },
       encoding: 'utf8',
     });
 
-  const dottedLocalHost = runResolver('https://tenant.belluga.site.');
+  const dottedLocalHost = runResolver(`https://tenant.${devLandlordHost}.`);
   assert.notStrictEqual(
     dottedLocalHost.status,
     0,
@@ -1402,10 +1418,10 @@ function assertLaneNavigationResolverUsesCanonicalLocalHost() {
   );
   assert.match(
     `${dottedLocalHost.stdout}\n${dottedLocalHost.stderr}`,
-    /cannot use local belluga\.site hosts/,
+    new RegExp(`cannot use local ${devLandlordHost.replace(/\./g, '\\.')}`),
   );
 
-  const localRootHost = runResolver('https://belluga.site.');
+  const localRootHost = runResolver(`https://${devLandlordHost}.`);
   assert.notStrictEqual(
     localRootHost.status,
     0,
@@ -1413,7 +1429,7 @@ function assertLaneNavigationResolverUsesCanonicalLocalHost() {
   );
   assert.match(
     `${localRootHost.stdout}\n${localRootHost.stderr}`,
-    /cannot use local belluga\.site hosts/,
+    new RegExp(`cannot use local ${devLandlordHost.replace(/\./g, '\\.')}`),
   );
 
   const nonLocalHost = runResolver('https://tenant.example.test');
