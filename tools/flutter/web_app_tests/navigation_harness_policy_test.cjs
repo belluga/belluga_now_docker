@@ -7,6 +7,9 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 
 const repoRoot = path.resolve(__dirname, '..', '..', '..');
+const SYNTHETIC_LANDLORD_URL = 'https://landlord.example.test';
+const SYNTHETIC_TENANT_URL = 'https://tenant.example.test';
+const SYNTHETIC_LEGACY_URL = 'https://legacy.example.test';
 const guardScript = path.join(__dirname, 'guard_web_navigation_policy.cjs');
 const shardsScript = path.join(__dirname, 'web_navigation_shards.cjs');
 const smokeScript = path.join(repoRoot, 'tools', 'flutter', 'run_web_navigation_smoke.sh');
@@ -1326,7 +1329,7 @@ function assertLocalDiagnosticMutationHelperRequiresExplicitNonLocalOptIn() {
       NAV_WEB_TEST_TYPE: 'diagnostic',
       NAV_DEPLOY_LANE: 'local',
       NAV_RUNTIME_DB_MUTATION_ALLOWED: '1',
-      NAV_TENANT_URL: 'https://guarappari.belluga.space',
+      NAV_TENANT_URL: SYNTHETIC_TENANT_URL,
       NAV_DIAGNOSTIC_LOCAL_ALLOWED_TENANT_HOSTS: null,
       NAV_WEB_LOCAL_MUTATION_ALLOWED_HOSTS: null,
       NAV_WEB_ALLOW_NONLOCAL_MUTATION_HOSTS: null,
@@ -1345,7 +1348,7 @@ function assertLocalDiagnosticMutationHelperRequiresExplicitNonLocalOptIn() {
       NAV_WEB_TEST_TYPE: 'diagnostic',
       NAV_DEPLOY_LANE: 'local',
       NAV_RUNTIME_DB_MUTATION_ALLOWED: '1',
-      NAV_TENANT_URL: 'https://guarappari.belluga.space',
+      NAV_TENANT_URL: SYNTHETIC_TENANT_URL,
       NAV_DIAGNOSTIC_LOCAL_ALLOWED_TENANT_HOSTS: null,
       NAV_WEB_LOCAL_MUTATION_ALLOWED_HOSTS: null,
       NAV_WEB_ALLOW_NONLOCAL_MUTATION_HOSTS: '1',
@@ -1373,13 +1376,163 @@ function assertScriptStartupGuard(scriptRelativePath, env, expectedMessage) {
   assert.match(`${result.stdout}\n${result.stderr}`, expectedMessage);
 }
 
+function assertLaneNavigationResolverUsesCanonicalLocalHost() {
+  const resolverScript = path.join(
+    repoRoot,
+    '.github',
+    'scripts',
+    'resolve_lane_navigation_targets.sh',
+  );
+  const readLandlord = (lane) => {
+    const definesPath = path.join(
+      repoRoot,
+      'flutter-app',
+      'config',
+      'defines',
+      `${lane}.json`,
+    );
+    const defines = JSON.parse(fs.readFileSync(definesPath, 'utf8'));
+    return defines.LANDLORD_DOMAIN;
+  };
+  const devLandlordUrl = readLandlord('dev');
+  const devLandlordHost = new URL(devLandlordUrl).hostname
+    .toLowerCase()
+    .replace(/\.+$/, '');
+  const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const runResolver = (lane, tenantUrl, landlordUrl) =>
+    spawnSync('bash', [resolverScript, lane], {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        GITHUB_OUTPUT: '',
+        NAV_TENANT_URL_INPUT: tenantUrl,
+        NAV_LANDLORD_URL_INPUT: landlordUrl,
+      },
+      encoding: 'utf8',
+    });
+
+  for (const lane of ['stage', 'main']) {
+    const laneLandlordUrl = readLandlord(lane);
+    const laneLandlordHost = new URL(laneLandlordUrl).hostname
+      .toLowerCase()
+      .replace(/\.+$/, '');
+    const localHostMessage = new RegExp(
+      `cannot use local ${escapeRegex(devLandlordHost)} hosts`,
+    );
+
+    const dottedLocalHost = runResolver(
+      lane,
+      `https://tenant.${devLandlordHost}.`,
+      laneLandlordUrl,
+    );
+    assert.notStrictEqual(
+      dottedLocalHost.status,
+      0,
+      `${lane} resolver must reject a local tenant host with a DNS terminal dot`,
+    );
+    assert.match(
+      `${dottedLocalHost.stdout}\n${dottedLocalHost.stderr}`,
+      localHostMessage,
+    );
+
+    const localRootHost = runResolver(
+      lane,
+      `https://${devLandlordHost}.`,
+      laneLandlordUrl,
+    );
+    assert.notStrictEqual(
+      localRootHost.status,
+      0,
+      `${lane} resolver must reject the canonical local landlord host as a tenant target`,
+    );
+    assert.match(
+      `${localRootHost.stdout}\n${localRootHost.stderr}`,
+      localHostMessage,
+    );
+
+    const unicodeDottedLocalHost = runResolver(
+      lane,
+      `https://tenant.${devLandlordHost}\u3002`,
+      laneLandlordUrl,
+    );
+    assert.notStrictEqual(
+      unicodeDottedLocalHost.status,
+      0,
+      `${lane} resolver must reject a local tenant host with a Unicode DNS terminal dot`,
+    );
+    assert.match(
+      `${unicodeDottedLocalHost.stdout}\n${unicodeDottedLocalHost.stderr}`,
+      localHostMessage,
+    );
+
+    const encodedDottedLocalHost = runResolver(
+      lane,
+      `https://tenant.${devLandlordHost}%2e`,
+      laneLandlordUrl,
+    );
+    assert.notStrictEqual(
+      encodedDottedLocalHost.status,
+      0,
+      `${lane} resolver must reject percent-encoded host input instead of bypassing the local-host guard`,
+    );
+    assert.match(
+      `${encodedDottedLocalHost.stdout}\n${encodedDottedLocalHost.stderr}`,
+      /invalid tenant navigation URL/,
+    );
+
+    const dottedLaneLandlord = runResolver(
+      lane,
+      'https://tenant.example.test',
+      `https://${laneLandlordHost}.:443`,
+    );
+    assert.strictEqual(
+      dottedLaneLandlord.status,
+      0,
+      `${lane} resolver must canonicalize a dotted lane landlord input.\nstdout:\n${dottedLaneLandlord.stdout}\nstderr:\n${dottedLaneLandlord.stderr}`,
+    );
+
+    if (laneLandlordUrl !== devLandlordUrl) {
+      const mismatchedLandlord = runResolver(
+        lane,
+        'https://tenant.example.test',
+        devLandlordUrl,
+      );
+      assert.notStrictEqual(
+        mismatchedLandlord.status,
+        0,
+        `${lane} resolver must reject a landlord input from another lane`,
+      );
+      assert.match(
+        `${mismatchedLandlord.stdout}\n${mismatchedLandlord.stderr}`,
+        /landlord URL mismatch/,
+      );
+    }
+
+    const nonLocalHost = runResolver(
+      lane,
+      'https://tenant.example.test',
+      laneLandlordUrl,
+    );
+    assert.strictEqual(
+      nonLocalHost.status,
+      0,
+      `${lane} resolver must accept non-local hosts.\nstdout:\n${nonLocalHost.stdout}\nstderr:\n${nonLocalHost.stderr}`,
+    );
+    assert.match(
+      nonLocalHost.stdout,
+      new RegExp(`landlord=https://${escapeRegex(laneLandlordHost)}`),
+    );
+    assert.match(nonLocalHost.stdout, /tenant=https:\/\/tenant\.example\.test/);
+  }
+}
+
 function assertFixtureBootstrapRequiresExplicitMutationContract() {
   assertScriptStartupGuard(
     path.join('tools', 'flutter', 'web_app_tests', 'ensure_public_taxonomy_validation_fixture.cjs'),
     {
       NAV_DEPLOY_LANE: 'stage',
       NAV_TEST_RUN_ID: 'policy-stage-host-contract',
-      NAV_TENANT_URL: 'https://guarappari.belluga.space',
+      NAV_TENANT_URL: SYNTHETIC_TENANT_URL,
       NAV_ADMIN_EMAIL: 'policy@example.test',
       NAV_ADMIN_PASSWORD: 'policy-secret',
     },
@@ -1392,7 +1545,7 @@ function assertFixtureBootstrapRequiresExplicitRunIdOnStage() {
     path.join('tools', 'flutter', 'web_app_tests', 'ensure_public_taxonomy_validation_fixture.cjs'),
     {
       NAV_DEPLOY_LANE: 'stage',
-      NAV_TENANT_URL: 'https://guarappari.belluga.space',
+      NAV_TENANT_URL: SYNTHETIC_TENANT_URL,
       NAV_ADMIN_EMAIL: 'policy@example.test',
       NAV_ADMIN_PASSWORD: 'policy-secret',
       NAV_WEB_ALLOW_NONLOCAL_MUTATION_HOSTS: '1',
@@ -1406,7 +1559,7 @@ function assertFixtureBootstrapRequiresExplicitRunIdOnDev() {
     path.join('tools', 'flutter', 'web_app_tests', 'ensure_public_taxonomy_validation_fixture.cjs'),
     {
       NAV_DEPLOY_LANE: 'dev',
-      NAV_TENANT_URL: 'https://guarappari.belluga.space',
+      NAV_TENANT_URL: SYNTHETIC_TENANT_URL,
       NAV_ADMIN_EMAIL: 'policy@example.test',
       NAV_ADMIN_PASSWORD: 'policy-secret',
       NAV_WEB_ALLOW_NONLOCAL_MUTATION_HOSTS: '1',
@@ -1420,7 +1573,7 @@ function assertFixtureBootstrapRejectsMainLane() {
     path.join('tools', 'flutter', 'web_app_tests', 'ensure_public_taxonomy_validation_fixture.cjs'),
     {
       NAV_DEPLOY_LANE: 'main',
-      NAV_TENANT_URL: 'https://guarappari.belluga.space',
+      NAV_TENANT_URL: SYNTHETIC_TENANT_URL,
       NAV_ADMIN_EMAIL: 'policy@example.test',
       NAV_ADMIN_PASSWORD: 'policy-secret',
       NAV_WEB_ALLOW_NONLOCAL_MUTATION_HOSTS: '1',
@@ -1523,8 +1676,8 @@ function assertSmokeRunnerPreservesExplicitNonLocalOptIn() {
     fs.writeFileSync(
       envFile,
       [
-        'NAV_LANDLORD_URL=https://belluga.space',
-        'NAV_TENANT_URL=https://guarappari.belluga.space',
+        `NAV_LANDLORD_URL=${SYNTHETIC_LANDLORD_URL}`,
+        `NAV_TENANT_URL=${SYNTHETIC_TENANT_URL}`,
         'NAV_DEPLOY_LANE=dev',
         'NAV_WEB_ALLOW_NONLOCAL_MUTATION_HOSTS=0',
         'NAV_ADMIN_EMAIL=policy@example.test',
@@ -1586,8 +1739,8 @@ function assertUnknownShardClearsReusedOutputDir() {
     fs.writeFileSync(
       envFile,
       [
-        'NAV_LANDLORD_URL=https://belluga.space',
-        'NAV_TENANT_URL=https://guarappari.belluga.space',
+        `NAV_LANDLORD_URL=${SYNTHETIC_LANDLORD_URL}`,
+        `NAV_TENANT_URL=${SYNTHETIC_TENANT_URL}`,
         'NAV_DEPLOY_LANE=dev',
         'NAV_ADMIN_EMAIL=policy@example.test',
         'NAV_ADMIN_PASSWORD=policy-secret',
@@ -1685,7 +1838,7 @@ function assertDiagnosticSuiteRequiresExplicitLocalMutationContract() {
   const env = {
     NAV_LOCAL_ENV_FILE: isolatedEnvFile,
     NAV_WEB_TEST_TYPE: 'diagnostic',
-    NAV_TENANT_URL: 'https://guarappari.belluga.space',
+    NAV_TENANT_URL: SYNTHETIC_TENANT_URL,
     PLAYWRIGHT_IGNORE_HTTPS_ERRORS: 'true',
   };
   delete env.NAV_DEPLOY_LANE;
@@ -1720,7 +1873,7 @@ function assertDiagnosticSuiteRejectsEnvFileOnlyContract() {
       [
         'NAV_DEPLOY_LANE=local',
         'NAV_RUNTIME_DB_MUTATION_ALLOWED=1',
-        'NAV_TENANT_URL=https://guarappari.belluga.space',
+        `NAV_TENANT_URL=${SYNTHETIC_TENANT_URL}`,
         'NAV_ADMIN_EMAIL=policy@example.test',
         'NAV_ADMIN_PASSWORD=policy-secret',
         '',
@@ -1749,8 +1902,8 @@ function assertNonLocalMutationHostsRequireExplicitOptIn() {
     fs.writeFileSync(
       envFile,
       [
-        'NAV_LANDLORD_URL=https://belluga.space',
-        'NAV_TENANT_URL=https://guarappari.belluga.space',
+        `NAV_LANDLORD_URL=${SYNTHETIC_LANDLORD_URL}`,
+        `NAV_TENANT_URL=${SYNTHETIC_TENANT_URL}`,
         'NAV_ADMIN_EMAIL=policy@example.test',
         'NAV_ADMIN_PASSWORD=policy-secret',
         '',
@@ -1822,8 +1975,8 @@ function assertMutationSuiteRequiresExplicitLaneForNonLocalHosts() {
     {
       NAV_LOCAL_ENV_FILE: isolatedEnvFile,
       NAV_WEB_TEST_TYPE: 'mutation',
-      NAV_LANDLORD_URL: 'https://belluga.space',
-      NAV_TENANT_URL: 'https://guarappari.belluga.space',
+      NAV_LANDLORD_URL: SYNTHETIC_LANDLORD_URL,
+      NAV_TENANT_URL: SYNTHETIC_TENANT_URL,
       NAV_ADMIN_EMAIL: 'policy@example.test',
       NAV_ADMIN_PASSWORD: 'policy-secret',
       NAV_WEB_ALLOW_NONLOCAL_MUTATION_HOSTS: '1',
@@ -1853,8 +2006,8 @@ function assertMutationSuiteRejectsBlankExplicitLaneForNonLocalHosts() {
       NAV_LOCAL_ENV_FILE: isolatedEnvFile,
       NAV_WEB_TEST_TYPE: 'mutation',
       NAV_DEPLOY_LANE: '',
-      NAV_LANDLORD_URL: 'https://belluga.space',
-      NAV_TENANT_URL: 'https://guarappari.belluga.space',
+      NAV_LANDLORD_URL: SYNTHETIC_LANDLORD_URL,
+      NAV_TENANT_URL: SYNTHETIC_TENANT_URL,
       NAV_ADMIN_EMAIL: 'policy@example.test',
       NAV_ADMIN_PASSWORD: 'policy-secret',
       NAV_WEB_ALLOW_NONLOCAL_MUTATION_HOSTS: '1',
@@ -1904,7 +2057,7 @@ function assertDirectPlaywrightMutationFailsClosedOnMain() {
     {
       NAV_WEB_TEST_TYPE: 'mutation',
       NAV_DEPLOY_LANE: 'main',
-      NAV_TENANT_URL: 'https://guarappari.belluga.space',
+      NAV_TENANT_URL: SYNTHETIC_TENANT_URL,
       NAV_ADMIN_EMAIL: 'policy@example.test',
       NAV_ADMIN_PASSWORD: 'policy-secret',
       NAV_WEB_ALLOW_NONLOCAL_MUTATION_HOSTS: '1',
@@ -1927,7 +2080,7 @@ function assertDirectPlaywrightMutationRequiresExplicitLaneForNonLocalHosts() {
     {
       NAV_WEB_TEST_TYPE: 'mutation',
       GITHUB_REF_NAME: 'stage',
-      NAV_TENANT_URL: 'https://guarappari.belluga.space',
+      NAV_TENANT_URL: SYNTHETIC_TENANT_URL,
       NAV_ADMIN_EMAIL: 'policy@example.test',
       NAV_ADMIN_PASSWORD: 'policy-secret',
       NAV_WEB_ALLOW_NONLOCAL_MUTATION_HOSTS: '1',
@@ -1950,7 +2103,7 @@ function assertDirectPlaywrightMutationRejectsDeployLaneOnlyForNonLocalHosts() {
     {
       NAV_WEB_TEST_TYPE: 'mutation',
       DEPLOY_LANE: 'stage',
-      NAV_TENANT_URL: 'https://guarappari.belluga.space',
+      NAV_TENANT_URL: SYNTHETIC_TENANT_URL,
       NAV_ADMIN_EMAIL: 'policy@example.test',
       NAV_ADMIN_PASSWORD: 'policy-secret',
       NAV_WEB_ALLOW_NONLOCAL_MUTATION_HOSTS: '1',
@@ -1973,7 +2126,7 @@ function assertDirectPlaywrightMutationRejectsBlankExplicitLaneForNonLocalHosts(
     {
       NAV_WEB_TEST_TYPE: 'mutation',
       NAV_DEPLOY_LANE: '   ',
-      NAV_TENANT_URL: 'https://guarappari.belluga.space',
+      NAV_TENANT_URL: SYNTHETIC_TENANT_URL,
       NAV_ADMIN_EMAIL: 'policy@example.test',
       NAV_ADMIN_PASSWORD: 'policy-secret',
       NAV_WEB_ALLOW_NONLOCAL_MUTATION_HOSTS: '1',
@@ -2003,7 +2156,7 @@ function assertDirectPlaywrightMutationRejectsGrepSubset() {
     {
       NAV_WEB_TEST_TYPE: 'mutation',
       NAV_DEPLOY_LANE: 'stage',
-      NAV_TENANT_URL: 'https://guarappari.belluga.space',
+      NAV_TENANT_URL: SYNTHETIC_TENANT_URL,
       NAV_ADMIN_EMAIL: 'policy@example.test',
       NAV_ADMIN_PASSWORD: 'policy-secret',
       NAV_WEB_ALLOW_NONLOCAL_MUTATION_HOSTS: '1',
@@ -2103,7 +2256,7 @@ function assertDirectPlaywrightReadonlyRejectsMutationSpec() {
     {
       NAV_WEB_TEST_TYPE: 'readonly',
       NAV_DEPLOY_LANE: 'main',
-      NAV_TENANT_URL: 'https://guarappari.belluga.space',
+      NAV_TENANT_URL: SYNTHETIC_TENANT_URL,
     },
   );
   assert.notStrictEqual(
@@ -2129,7 +2282,7 @@ function assertDirectPlaywrightReadonlyRejectsReadonlySpecSubset() {
     {
       NAV_WEB_TEST_TYPE: 'readonly',
       NAV_DEPLOY_LANE: 'main',
-      NAV_TENANT_URL: 'https://guarappari.belluga.space',
+      NAV_TENANT_URL: SYNTHETIC_TENANT_URL,
     },
   );
   assert.notStrictEqual(
@@ -2155,7 +2308,7 @@ function assertDirectPlaywrightReadonlyRejectsTestDirRelativeSpecSelector() {
     {
       NAV_WEB_TEST_TYPE: 'readonly',
       NAV_DEPLOY_LANE: 'main',
-      NAV_TENANT_URL: 'https://guarappari.belluga.space',
+      NAV_TENANT_URL: SYNTHETIC_TENANT_URL,
     },
   );
   assert.notStrictEqual(
@@ -2183,7 +2336,7 @@ function assertDirectPlaywrightReadonlyRejectsDirectorySelector() {
     {
       NAV_WEB_TEST_TYPE: 'readonly',
       NAV_DEPLOY_LANE: 'main',
-      NAV_TENANT_URL: 'https://guarappari.belluga.space',
+      NAV_TENANT_URL: SYNTHETIC_TENANT_URL,
     },
   );
   assert.notStrictEqual(
@@ -2203,7 +2356,7 @@ function assertDirectPlaywrightReadonlyRejectsMutationGrep() {
     {
       NAV_WEB_TEST_TYPE: 'readonly',
       NAV_DEPLOY_LANE: 'main',
-      NAV_TENANT_URL: 'https://guarappari.belluga.space',
+      NAV_TENANT_URL: SYNTHETIC_TENANT_URL,
     },
   );
   assert.notStrictEqual(
@@ -2232,7 +2385,7 @@ function assertDirectPlaywrightReadonlyRejectsGrepInvertSuiteTrim() {
     {
       NAV_WEB_TEST_TYPE: 'readonly',
       NAV_DEPLOY_LANE: 'main',
-      NAV_TENANT_URL: 'https://guarappari.belluga.space',
+      NAV_TENANT_URL: SYNTHETIC_TENANT_URL,
     },
   );
   assert.notStrictEqual(
@@ -2259,7 +2412,7 @@ function assertDirectPlaywrightReadonlyRejectsGrepSubset() {
     {
       NAV_WEB_TEST_TYPE: 'readonly',
       NAV_DEPLOY_LANE: 'main',
-      NAV_TENANT_URL: 'https://guarappari.belluga.space',
+      NAV_TENANT_URL: SYNTHETIC_TENANT_URL,
     },
   );
   assert.notStrictEqual(
@@ -2508,6 +2661,20 @@ function assertDormantGalleryProofResetsPublicCollectorsAfterConvergence() {
     source,
     /test\.skip\('@deferred @mutation tenant-admin gallery data stays dormant when has_gallery is disabled'[\s\S]*?test\.setTimeout\(600000\);[\s\S]*?allow current admin edit session to settle after gallery suppression[\s\S]*?await page\.waitForTimeout\(2500\);\s*resetFailureCollectors\(collectors\);\s*await page\.waitForTimeout\(750\);\s*await assertNoBrowserFailures\(collectors\);[\s\S]*?wait for final public page to converge without gallery content[\s\S]*?allow final public page to settle after gallery suppression[\s\S]*?await publicPage\.waitForTimeout\(2500\);\s*resetFailureCollectors\(publicCollectors\);\s*await publicPage\.waitForTimeout\(750\);\s*await assertNoBrowserFailures\(collectors\);\s*await assertNoBrowserFailures\(publicCollectors\);/,
     'gallery dormant mutation proof must give both admin and public surfaces a post-suppression settle window, then clear collectors before the steady-state browser assertion',
+  );
+}
+
+function assertFavoritesPublicFixturesPublishParentAccounts() {
+  const source = fs.readFileSync(tenantAdminMutationSpec, 'utf8');
+  assert.match(
+    source,
+    /async function createPublicAccountProfileForType[\s\S]*?await publishAccount\(api, baseUrl, token, created\.accountSlug\);/,
+    'tenant-admin mutation harness must expose a public account-profile bootstrap that explicitly publishes the parent account before public assertions',
+  );
+  assert.match(
+    source,
+    /test\('@mutation home favorites preserve backend order and expose event status halos'[\s\S]*?const fallbackProfile = await createPublicAccountProfileForType\([\s\S]*?const upcomingLaterProfile = await createPublicAccountProfileForType\([\s\S]*?const liveProfile = await createPublicAccountProfileForType\([\s\S]*?const upcomingSoonProfile = await createPublicAccountProfileForType\(/,
+    'favorites mutation proof must publish every seeded favoritable parent account before polling the public favorites runtime under the draft-on-create contract',
   );
 }
 
@@ -2851,6 +3018,7 @@ assertDirectPlaywrightReadonlyRejectsDirectorySelector();
 assertDirectPlaywrightReadonlyRejectsMutationGrep();
 assertDirectPlaywrightReadonlyRejectsGrepSubset();
 assertDirectPlaywrightReadonlyRejectsGrepInvertSuiteTrim();
+assertLaneNavigationResolverUsesCanonicalLocalHost();
 assertFixtureBootstrapRequiresExplicitMutationContract();
 assertFixtureBootstrapRequiresExplicitRunIdOnStage();
 assertFixtureBootstrapRequiresExplicitRunIdOnDev();
@@ -2860,6 +3028,7 @@ assertStageFixtureOwnedFiltersUseCanonicalKeysOnly();
 assertStageFixtureRunIdIsolation();
 assertStageBrowserContractPersistsLocalPublicRunId();
 assertDormantGalleryProofResetsPublicCollectorsAfterConvergence();
+assertFavoritesPublicFixturesPublishParentAccounts();
 assertStageFixturePaginationHelperIsExhaustive();
 assertStageFixturePublicEventListUsesCanonicalPageSize();
 assertCanonicalNavigationTimeoutBudget();
@@ -3152,26 +3321,26 @@ assert.match(
   );
 
   const canonicalMediaUrls = [
-    'https://guarappari.belluga.app/api/v1/media/account-profiles/69f90390ff69090b810321b7/avatar?v=1777927056',
-    'https://guarappari.belluga.app/api/v1/media/events/6a5e373dc5e5a56ae204dcf1/cover?v=1784579391',
-    'https://guarappari.belluga.app/api/v1/media/account-profiles/69f90390ff69090b810321b7/gallery/0?v=1777927056',
-    'https://guarappari.belluga.app/api/v1/media/event-types/6a69723340782ed221064708/asset?v=1785295389',
-    'https://guarappari.belluga.app/api/v1/media/tenant/branding/default-image?v=1785295389',
+    `${SYNTHETIC_TENANT_URL}/api/v1/media/account-profiles/69f90390ff69090b810321b7/avatar?v=1777927056`,
+    `${SYNTHETIC_TENANT_URL}/api/v1/media/events/6a5e373dc5e5a56ae204dcf1/cover?v=1784579391`,
+    `${SYNTHETIC_TENANT_URL}/api/v1/media/account-profiles/69f90390ff69090b810321b7/gallery/0?v=1777927056`,
+    `${SYNTHETIC_TENANT_URL}/api/v1/media/event-types/6a69723340782ed221064708/asset?v=1785295389`,
+    `${SYNTHETIC_TENANT_URL}/api/v1/media/tenant/branding/default-image?v=1785295389`,
   ];
   const legacyMediaUrls = [
-    'https://guarappari.booraagora.com.br/account-profiles/69976b43d93abdd0650e64ec/avatar?v=1771531075',
-    'https://guarappari.com.br/events/6a5e373dc5e5a56ae204dcf1/cover?v=1784579391',
-    'https://guarappari.com.br/account-profiles/69976b43d93abdd0650e64ec/gallery/2?v=1771531075',
-    'https://guarappari.com.br/event-types/6a69723340782ed221064708/asset?v=1785295389',
-    'https://guarappari.com.br/tenant/branding/default-image?v=1785295389',
-    'https://guarappari.com.br/favicon.ico?v=1771531075',
+    `${SYNTHETIC_LEGACY_URL}/account-profiles/69976b43d93abdd0650e64ec/avatar?v=1771531075`,
+    `${SYNTHETIC_LEGACY_URL}/events/6a5e373dc5e5a56ae204dcf1/cover?v=1784579391`,
+    `${SYNTHETIC_LEGACY_URL}/account-profiles/69976b43d93abdd0650e64ec/gallery/2?v=1771531075`,
+    `${SYNTHETIC_LEGACY_URL}/event-types/6a69723340782ed221064708/asset?v=1785295389`,
+    `${SYNTHETIC_LEGACY_URL}/tenant/branding/default-image?v=1785295389`,
+    `${SYNTHETIC_LEGACY_URL}/favicon.ico?v=1771531075`,
   ];
   const nonMediaUrls = [
-    'https://guarappari.belluga.app/api/v1/agenda?page=1',
-    'https://guarappari.belluga.app/api/v1/account_profiles?page=1',
-    'https://guarappari.belluga.app/api/v1/admin/events',
-    'https://guarappari.belluga.app/admin/accounts',
-    'https://guarappari.belluga.app/manifest.json',
+    `${SYNTHETIC_TENANT_URL}/api/v1/agenda?page=1`,
+    `${SYNTHETIC_TENANT_URL}/api/v1/account_profiles?page=1`,
+    `${SYNTHETIC_TENANT_URL}/api/v1/admin/events`,
+    `${SYNTHETIC_TENANT_URL}/admin/accounts`,
+    `${SYNTHETIC_TENANT_URL}/manifest.json`,
   ];
 
   for (const url of [...canonicalMediaUrls, ...legacyMediaUrls]) {
@@ -3346,7 +3515,7 @@ assert.match(
   );
 
   const corsText = (url) =>
-    `Access to XMLHttpRequest at '${url}' from origin 'https://guarappari.belluga.space' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.`;
+    `Access to XMLHttpRequest at '${url}' from origin '${SYNTHETIC_TENANT_URL}' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.`;
 
   const corsMediaBlocked = buildCollectors({
     ignoredFailedRequests: [legacyMediaUrls[0]],
@@ -3395,11 +3564,11 @@ assert.match(
   );
 
   const allowedRateLimit = buildCollectors({
-    rateLimitedResponses: ['GET https://guarappari.example/api/v1/media/account-profiles/123/avatar'],
+    rateLimitedResponses: [`GET ${SYNTHETIC_TENANT_URL}/api/v1/media/account-profiles/123/avatar`],
     consoleErrors: [
       'Failed to load resource: the server responded with a status of 429',
     ],
-    consoleErrorUrls: ['https://guarappari.example/api/v1/media/account-profiles/123/avatar'],
+    consoleErrorUrls: [`${SYNTHETIC_TENANT_URL}/api/v1/media/account-profiles/123/avatar`],
   });
   assert.deepStrictEqual(
     summarizeCriticalBrowserFailures(allowedRateLimit, {
@@ -3416,7 +3585,7 @@ assert.match(
   );
 
   const locationlessAllowedRateLimit = buildCollectors({
-    rateLimitedResponses: ['GET https://guarappari.example/api/v1/media/account-profiles/123/avatar'],
+    rateLimitedResponses: [`GET ${SYNTHETIC_TENANT_URL}/api/v1/media/account-profiles/123/avatar`],
     consoleErrors: [
       'Failed to load resource: the server responded with a status of 429',
     ],
@@ -3455,7 +3624,7 @@ assert.match(
 
   const mixedRateLimit = buildCollectors({
     rateLimitedResponses: [
-      'GET https://guarappari.example/api/v1/media/account-profiles/123/avatar',
+      `GET ${SYNTHETIC_TENANT_URL}/api/v1/media/account-profiles/123/avatar`,
       `GET ${nonMediaUrls[0]}`,
     ],
     consoleErrors: [
@@ -3463,7 +3632,7 @@ assert.match(
       'Failed to load resource: the server responded with a status of 429',
     ],
     consoleErrorUrls: [
-      'https://guarappari.example/api/v1/media/account-profiles/123/avatar',
+      `${SYNTHETIC_TENANT_URL}/api/v1/media/account-profiles/123/avatar`,
       nonMediaUrls[0],
     ],
   });

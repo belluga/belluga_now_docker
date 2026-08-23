@@ -1779,10 +1779,6 @@ function firstOccurrenceIsoDate(payload) {
   if (!rawStart) {
     return '';
   }
-  const directMatch = rawStart.match(/^(\d{4}-\d{2}-\d{2})T/);
-  if (directMatch) {
-    return directMatch[1];
-  }
   const parsed = new Date(rawStart);
   if (Number.isNaN(parsed.getTime())) {
     return '';
@@ -2194,6 +2190,22 @@ async function createAccountProfileForType(
       created?.data?.account?.name ||
       name,
   };
+}
+
+async function createPublicAccountProfileForType(
+  api,
+  baseUrl,
+  token,
+  { name, profileType },
+) {
+  const created = await createAccountProfileForType(
+    api,
+    baseUrl,
+    token,
+    { name, profileType },
+  );
+  await publishAccount(api, baseUrl, token, created.accountSlug);
+  return created;
 }
 
 async function publishAccount(api, baseUrl, token, accountSlug) {
@@ -4107,7 +4119,7 @@ test('@mutation home favorites preserve backend order and expose event status ha
 
     // Create fixtures out of the eventual runtime order so the UI assertion
     // catches unintended client-side sorting by title or creation time.
-    const fallbackProfile = await createAccountProfileForType(
+    const fallbackProfile = await createPublicAccountProfileForType(
       api,
       baseUrl,
       session.token,
@@ -4116,7 +4128,7 @@ test('@mutation home favorites preserve backend order and expose event status ha
         profileType: createdProfileType,
       },
     );
-    const upcomingLaterProfile = await createAccountProfileForType(
+    const upcomingLaterProfile = await createPublicAccountProfileForType(
       api,
       baseUrl,
       session.token,
@@ -4125,7 +4137,7 @@ test('@mutation home favorites preserve backend order and expose event status ha
         profileType: createdProfileType,
       },
     );
-    const liveProfile = await createAccountProfileForType(
+    const liveProfile = await createPublicAccountProfileForType(
       api,
       baseUrl,
       session.token,
@@ -4134,7 +4146,7 @@ test('@mutation home favorites preserve backend order and expose event status ha
         profileType: createdProfileType,
       },
     );
-    const upcomingSoonProfile = await createAccountProfileForType(
+    const upcomingSoonProfile = await createPublicAccountProfileForType(
       api,
       baseUrl,
       session.token,
@@ -6330,13 +6342,13 @@ test('@mutation tenant-admin event CRUD creates, reopens edit readback, and remo
     const createRequest = await createRequestPromise;
     logStep('event-crud', `create backend responded ${createRequest.status()}`);
     expect(createRequest.status(), 'Tenant-admin event create must succeed.').toBe(201);
+    const createdEvent = normalizePayload(await createRequest.json());
+    eventId = createdEvent?.event_id?.toString() || null;
     const createRequestPayload = createRequest.request().postDataJSON();
     expect(
       firstOccurrenceIsoDate(createRequestPayload),
       'Tenant-admin event create must submit the selected occurrence date.',
     ).toBe(selectedStart.isoDate);
-    const createdEvent = normalizePayload(await createRequest.json());
-    eventId = createdEvent?.event_id?.toString() || null;
     expect(
       createdEvent?.publication?.status?.toString().trim() || '',
       'Tenant-admin event bootstrap create must persist draft publication status.',

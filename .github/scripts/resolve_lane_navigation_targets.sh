@@ -22,6 +22,12 @@ if [[ ! -f "${defines_file}" ]]; then
   exit 1
 fi
 
+local_defines_file="flutter-app/config/defines/dev.json"
+if [[ ! -f "${local_defines_file}" ]]; then
+  echo "ERROR: local dev defines file not found: ${local_defines_file}" >&2
+  exit 1
+fi
+
 read_landlord_from_lane_file() {
   local file_path="$1"
   python3 - "$file_path" <<'PY'
@@ -64,8 +70,19 @@ if not parsed.hostname:
 if parsed.username or parsed.password:
     raise SystemExit(4)
 
-port = f":{parsed.port}" if parsed.port is not None else ""
-print(f"{parsed.scheme}://{parsed.hostname}{port}")
+hostname = parsed.hostname
+if "%" in hostname:
+    raise SystemExit(5)
+try:
+    hostname = hostname.encode("idna").decode("ascii")
+except UnicodeError:
+    raise SystemExit(6)
+hostname = hostname.rstrip(".")
+if ":" in hostname:
+    hostname = f"[{hostname}]"
+default_port = (parsed.scheme == "http" and parsed.port == 80) or (parsed.scheme == "https" and parsed.port == 443)
+port = f":{parsed.port}" if parsed.port is not None and not default_port else ""
+print(f"{parsed.scheme}://{hostname}{port}")
 PY
 }
 
@@ -76,13 +93,15 @@ import sys
 import urllib.parse
 
 parsed = urllib.parse.urlparse(sys.argv[1])
-print((parsed.hostname or "").strip().lower())
+hostname = parsed.hostname or ""
+if "%" in hostname:
+    raise SystemExit(5)
+try:
+    hostname = hostname.encode("idna").decode("ascii")
+except UnicodeError:
+    raise SystemExit(6)
+print(hostname.strip().lower().rstrip("."))
 PY
-}
-
-is_local_host() {
-  local host="$1"
-  [[ "${host}" == "belluga.space" || "${host}" == *.belluga.space ]]
 }
 
 landlord_raw="$(read_landlord_from_lane_file "${defines_file}")"
@@ -114,8 +133,30 @@ if [[ -z "${landlord_host}" || -z "${tenant_host}" ]]; then
   exit 1
 fi
 
+local_landlord_raw="$(read_landlord_from_lane_file "${local_defines_file}")"
+if [[ -z "${local_landlord_raw}" ]]; then
+  echo "ERROR: LANDLORD_DOMAIN is missing in ${local_defines_file}." >&2
+  exit 1
+fi
+
+if ! local_landlord_url="$(normalize_url "${local_landlord_raw}")"; then
+  echo "ERROR: invalid LANDLORD_DOMAIN in ${local_defines_file}: ${local_landlord_raw}" >&2
+  exit 1
+fi
+
+local_landlord_host="$(parse_host "${local_landlord_url}")"
+if [[ -z "${local_landlord_host}" ]]; then
+  echo "ERROR: failed to parse local landlord host from ${local_defines_file}." >&2
+  exit 1
+fi
+
+is_local_host() {
+  local host="$1"
+  [[ "${host}" == "${local_landlord_host}" || "${host}" == *".${local_landlord_host}" ]]
+}
+
 if is_local_host "${landlord_host}" || is_local_host "${tenant_host}"; then
-  echo "ERROR: lane '${lane}' cannot use local belluga.space hosts. landlord=${landlord_host} tenant=${tenant_host}" >&2
+  echo "ERROR: lane '${lane}' cannot use local ${local_landlord_host} hosts. landlord=${landlord_host} tenant=${tenant_host}" >&2
   exit 1
 fi
 
