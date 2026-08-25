@@ -3,8 +3,8 @@
 /**
  * Canonical browser-failure collectors for the web navigation suites.
  *
- * Contract (Decision Baseline D-01..D-05 of
- * foundation_documentation/todos/active/post_release_hardening/TODO-post-release-web-navigation-media-image-failure-collector-normalization.md):
+ * Contract owner: foundation_documentation/todos/active/bugs-performance/high/TODO-post-release-web-navigation-media-image-failure-collector-normalization.md
+ * (Decision Baseline D-01..D-05).
  *
  * - Media/image asset failures are classified by URL SHAPE first (canonical
  *   `/api/v1/media/**` routes and explicitly enumerated legacy media path
@@ -38,8 +38,6 @@ const TAXONOMY_VERSION = 'media-url-shape-v1';
 
 const ADOPTED_SPEC_FILES = [
   'discovery_filters.spec.js',
-  'event_rich_text.mutation.spec.js',
-  'account_profile_rich_text.mutation.spec.js',
   'navigation.spec.js',
   'navigation.mutation.tenant_admin.spec.js',
   'navigation.mutation.event_occurrences.spec.js',
@@ -70,7 +68,7 @@ function hasCacheBustedVersionParam(url) {
 
 /**
  * Legacy media path shapes tolerated as known stale data until the
- * media-host-agnostic hardening TODO lands. Every entry is an explicit
+ * media-host-agnostic hardening TODO lands (owner: foundation_documentation/todos/active/bugs-performance/high/TODO-post-release-web-navigation-media-image-failure-collector-normalization.md). Every entry is an explicit
  * path pattern (no host allowlist, no catch-all wildcard).
  */
 const LEGACY_MEDIA_PATH_PATTERNS = [

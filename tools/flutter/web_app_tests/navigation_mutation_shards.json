@@ -4,7 +4,7 @@
       "apd-rich-text": {
         "grep_extra": "account-profile rich text",
         "expected_titles": [
-          "@mutation tenant-admin account-profile rich text persists and renders on admin and public surfaces"
+          "@mutation tenant-admin account-profile rich text toolbar authors HTTPS link, persists, reads back, taps in public detail, and records tap outcome"
         ]
       },
       "apd-occurrence-first": {
@@ -34,7 +34,7 @@
       "event-rich-text": {
         "grep_extra": "event rich text",
         "expected_titles": [
-          "@mutation tenant-admin event rich text persists and renders in public Sobre"
+          "@mutation tenant-admin event rich text toolbar authors HTTPS link, persists, reads back, taps in public Sobre, and records tap outcome"
         ]
       },
       "v0208-closeout": {
@@ -243,6 +243,7 @@
       "@readonly tenant open-app generates Android handoff redirects for pre-Guard action targets",
       "@readonly tenant Android direct public links request open-app handoff redirects",
       "@readonly FAV-GATE-RUNTIME web anonymous account and discovery favorite actions show app promotion modal",
+      "@readonly NAV-APD-AGENDA Account Profile Agenda groups managed occurrences by local date",
       "@deferred @readonly MAP-LOC-GRANT-01 first warm geolocation-granted map entry loads POIs from a resolved origin without public error state",
       "@deferred @readonly MAP-LOC-GRANT-02 location-permission CTA continuation loads canonical map data once browser geolocation is granted",
       "@deferred @readonly MAP-NAV-REENTRY-01 tenant home can reopen map after returning from a warm permission-gated entry",

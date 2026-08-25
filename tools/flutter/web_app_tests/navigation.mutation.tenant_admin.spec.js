@@ -9,6 +9,9 @@ const {
 } = require('./support/tenant_admin_auth');
 const { selectDropdownOption } = require('./support/semantic_dropdown');
 const {
+  selectRichTextEditorContents,
+} = require('./support/rich_text_editor');
+const {
   installFailureCollectors,
   resetFailureCollectors,
   summarizeCriticalBrowserFailures,
@@ -67,6 +70,31 @@ function resolveAbsoluteUrl(baseUrl, rawUrl) {
 
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function writeRuntimeActualRun(runtimeOutputDir, payload) {
+  fs.mkdirSync(runtimeOutputDir, { recursive: true, mode: 0o700 });
+  const outputDirectory = fs.lstatSync(runtimeOutputDir);
+  if (!outputDirectory.isDirectory() || outputDirectory.isSymbolicLink()) {
+    throw new Error('Rich-text runtime output directory must be a real directory.');
+  }
+  const actualPath = path.join(runtimeOutputDir, 'actual-run.json');
+  if (fs.existsSync(actualPath) || fs.lstatSync(runtimeOutputDir).isSymbolicLink()) {
+    throw new Error('Refusing to overwrite rich-text actual-run evidence.');
+  }
+  const temporaryPath = path.join(
+    runtimeOutputDir,
+    `.actual-run.${process.pid}.${crypto.randomBytes(8).toString('hex')}.tmp`,
+  );
+  fs.writeFileSync(temporaryPath, `${JSON.stringify(payload, null, 2)}\n`, {
+    flag: 'wx',
+    mode: 0o600,
+  });
+  try {
+    fs.linkSync(temporaryPath, actualPath);
+  } finally {
+    fs.unlinkSync(temporaryPath);
+  }
 }
 
 const u04PickerDebugEnabled = process.env.U04_DEBUG_PICKER === '1';
@@ -1169,6 +1197,23 @@ async function clickSaveChanges(page) {
   await saveButton.click({ noWaitAfter: true });
 }
 
+async function resolveUniqueFlutterTappableText(page, text) {
+  const renderedText = page.getByText(text, { exact: true });
+  await expect(renderedText).toHaveCount(1, { timeout: appBootTimeoutMs });
+  await expect(renderedText).toHaveText(text);
+
+  const tappableSemantics = renderedText.locator(
+    'xpath=ancestor-or-self::*[@flt-tappable][1]',
+  );
+  await expect(tappableSemantics).toHaveCount(1, {
+    timeout: appBootTimeoutMs,
+  });
+  await expect(tappableSemantics).toHaveAttribute('flt-tappable', '');
+  await expect(tappableSemantics).toBeVisible({ timeout: appBootTimeoutMs });
+
+  return tappableSemantics;
+}
+
 function requestPostDataContainsAll(request, expectedFragments = []) {
   const body = request.postData() || '';
   return expectedFragments.every((fragment) => body.includes(fragment));
@@ -1633,7 +1678,7 @@ async function deleteEvent(api, baseUrl, token, eventId) {
     return;
   }
 
-  await api.delete(
+  return api.delete(
     buildApiUrl(baseUrl, `/admin/api/v1/events/${eventId}`),
     {
       headers: authHeaders(token),
@@ -2233,7 +2278,7 @@ async function deleteEventType(api, baseUrl, token, eventTypeId) {
     return;
   }
 
-  await api.delete(
+  return api.delete(
     buildApiUrl(baseUrl, `/admin/api/v1/event_types/${eventTypeId}`),
     {
       headers: authHeaders(token),
@@ -2462,10 +2507,27 @@ async function deleteAccountProfileType(api, baseUrl, token, type) {
     return;
   }
 
-  await api.delete(
+  return api.delete(
     buildApiUrl(
       baseUrl,
       `/admin/api/v1/account_profile_types/${encodeURIComponent(type)}`,
+    ),
+    {
+      headers: authHeaders(token),
+      failOnStatusCode: false,
+    },
+  );
+}
+
+async function forceDeleteAccountProfile(api, baseUrl, token, profileId) {
+  if (!profileId) {
+    return;
+  }
+
+  return api.post(
+    buildApiUrl(
+      baseUrl,
+      `/admin/api/v1/account_profiles/${encodeURIComponent(profileId)}/force_delete`,
     ),
     {
       headers: authHeaders(token),
@@ -2895,6 +2957,417 @@ test('@mutation tenant-admin account-profile cover upload persists and renders a
       await freshBrowser.close().catch(() => {});
     }
     await api.dispose();
+  }
+});
+
+test('@mutation tenant-admin event rich text toolbar authors HTTPS link, persists, reads back, taps in public Sobre, and records tap outcome', async ({ browser }) => {
+  const baseUrl = requireTenantUrl();
+  const api = await createApiContext(baseUrl);
+  const startedAt = new Date().toISOString();
+  const authoredText = 'Belluga HTTPS runtime link';
+  const explicitHttpsUrl = 'https://example.com/belluga-rich-text-event';
+  const expectedHtml = `<p><a href="${explicitHttpsUrl}">${authoredText}</a></p>`;
+  let browserContext;
+  let session = null;
+  let eventId = null;
+  let eventTypeId = null;
+  let runtimeEvidence = null;
+
+  try {
+    session = await loginTenantAdmin(api, baseUrl);
+    const unique = Date.now();
+    const eventTypeName = `PW Rich Text Event Type ${unique}`;
+    const createdEventType = normalizePayload(
+      await createEventType(api, baseUrl, session.token, {
+        name: eventTypeName,
+        slug: `pw-rich-text-event-${unique}`,
+        allowedTaxonomies: [],
+      }),
+    );
+    eventTypeId = createdEventType?.id?.toString() || null;
+    expect(eventTypeId, 'Rich-text event type must be created.').toBeTruthy();
+
+    const pageBundle = await createAuthenticatedTenantAdminPage(browser, session);
+    browserContext = pageBundle.context;
+    const page = pageBundle.page;
+
+    const response = await page.goto(buildApiUrl(baseUrl, '/admin/events/create'), {
+      waitUntil: 'domcontentloaded',
+    });
+    expect(response, 'Tenant-admin event create route must respond.').not.toBeNull();
+    expect(response.status()).toBeLessThan(400);
+    await assertAppBooted(page);
+    await enableAccessibilityIfNeeded(page);
+    await fillFlutterTextField(page, 'Título', `PW Rich Text Event ${unique}`);
+    await selectDropdownOption(page, {
+      flow: 'event-rich-text-runtime',
+      fieldLabel: 'Tipo',
+      optionText: eventTypeName,
+      logStep,
+    });
+    await pickReadOnlyTenantAdminEventDateTime(page, { daysFromNow: 1 });
+    await scrollUntilVisible(
+      page,
+      page.getByText('Localização').first(),
+      'Expected the location section in the event bootstrap form.',
+    );
+    await selectDropdownOption(page, {
+      flow: 'event-rich-text-runtime',
+      fieldLabel: 'Modo',
+      optionText: 'Online',
+      logStep,
+    });
+    await fillFlutterTextField(page, 'URL online', 'https://example.com/live');
+    const createResponsePromise = page.waitForResponse((candidate) =>
+      candidate.request().method() === 'POST' &&
+      candidate.url().includes('/admin/api/v1/events'),
+    );
+    await page.getByRole('button', { name: 'Criar evento' }).last().click();
+    const createResponse = await createResponsePromise;
+    expect(createResponse.status(), 'Rich-text event bootstrap must succeed.').toBe(201);
+    eventId = normalizePayload(await createResponse.json())?.event_id?.toString() || null;
+    expect(eventId, 'Rich-text event bootstrap must return event_id.').toBeTruthy();
+    await expect(page).toHaveURL(
+      new RegExp(`/admin/events/${escapeRegExp(eventId)}/edit$`),
+      { timeout: appBootTimeoutMs },
+    );
+    await expect(page.getByRole('button', { name: 'Salvar alterações' }).last()).toBeVisible({
+      timeout: appBootTimeoutMs,
+    });
+    const editor = page.getByLabel('Descrição (opcional)', { exact: true });
+    const linkButton = page.getByRole('button', {
+      name: 'Descrição (opcional): Inserir URL',
+      exact: true,
+    });
+    await editor.click();
+    await editor.pressSequentially(authoredText, { delay: 10 });
+    await selectRichTextEditorContents(page, editor);
+    await linkButton.click();
+    const linkDialog = page.getByRole('alertdialog');
+    await expect(linkDialog).toBeVisible({ timeout: appBootTimeoutMs });
+    await expect(
+      linkDialog.getByLabel('Texto', { exact: true }),
+    ).toHaveValue(authoredText);
+    const okButton = linkDialog.getByRole('button', { name: 'Ok' });
+    await linkDialog.getByLabel('Link').fill('http://example.com/not-allowed');
+    await expect(okButton).toBeDisabled();
+    await linkDialog.getByLabel('Link').fill(explicitHttpsUrl);
+    await expect(okButton).toBeEnabled();
+    await okButton.click();
+    await expect(linkDialog).toBeHidden({ timeout: appBootTimeoutMs });
+
+    await selectDropdownOption(page, {
+      flow: 'event-rich-text-runtime',
+      fieldLabel: 'Status',
+      optionText: 'Published',
+      logStep,
+    });
+    const saveResponsePromise = page.waitForResponse((candidate) =>
+      candidate.request().method() === 'PATCH' &&
+      candidate.url().includes(`/admin/api/v1/events/${eventId}`),
+    );
+    await clickSaveChanges(page);
+    const saveResponse = await saveResponsePromise;
+    expect(saveResponse.status(), 'Rich-text Event save must succeed.').toBe(200);
+    const saveRequestPayload = saveResponse.request().postDataJSON();
+    expect(
+      saveRequestPayload?.content?.toString() || '',
+      'Event PATCH request must carry the exact authored HTTPS anchor.',
+    ).toBe(expectedHtml);
+    const savePayload = normalizePayload(await saveResponse.json());
+    expect(
+      savePayload?.content?.toString() || '',
+      'Event PATCH response must preserve the exact authored HTTPS anchor.',
+    ).toBe(expectedHtml);
+
+    const savedEvent = await fetchAdminEvent(api, baseUrl, session.token, eventId);
+    expect(savedEvent?.content?.toString() || '', 'Event backend rich-text readback must be exact.').toBe(expectedHtml);
+    expect(savedEvent?.publication?.status?.toString() || '').toBe('published');
+    const eventRouteRef =
+      savedEvent?.slug?.toString() ||
+      savedEvent?.event_id?.toString() ||
+      eventId;
+    const publicApiResponse = await api.get(
+      buildApiUrl(baseUrl, `/api/v1/events/${encodeURIComponent(eventRouteRef)}`),
+      { headers: authHeaders(session.token) },
+    );
+    expect(publicApiResponse.status(), 'Public Event API readback must succeed.').toBe(200);
+    const publicEvent = normalizePayload(await publicApiResponse.json());
+    expect(
+      publicEvent?.content?.toString() || '',
+      'Public Event API projection must preserve the exact authored HTTPS anchor.',
+    ).toBe(expectedHtml);
+    const publicResponse = await page.goto(
+      buildApiUrl(baseUrl, `/agenda/evento/${encodeURIComponent(eventRouteRef)}`),
+      { waitUntil: 'domcontentloaded' },
+    );
+    expect(publicResponse, 'Public Event route must respond.').not.toBeNull();
+    expect(publicResponse.status()).toBeLessThan(400);
+    await assertAppBooted(page);
+    await enableAccessibilityIfNeeded(page);
+    await expect(page.getByRole('button', { name: 'Sobre', exact: true })).toBeVisible({
+      timeout: appBootTimeoutMs,
+    });
+    const publicLink = await resolveUniqueFlutterTappableText(page, authoredText);
+    const popupPromise = browserContext.waitForEvent('page');
+    await publicLink.click();
+    const popup = await popupPromise;
+    await expect.poll(() => popup.url(), { timeout: appBootTimeoutMs }).toBe(explicitHttpsUrl);
+    await popup.close();
+
+    runtimeEvidence = {
+      schema_version: 2,
+      lane: 'event-web',
+      run_id: process.env.RICH_TEXT_RUNTIME_RUN_ID,
+      served_build_fingerprint: await page.evaluate(() => window.__WEB_BUILD_SHA__ || 'unknown'),
+      target_base_url: baseUrl,
+      tenant_id: new URL(baseUrl).hostname,
+      fixture_ids: [eventId, eventTypeId],
+      platform: 'web',
+      runtime_identity: 'playwright-chromium',
+      backend_identity: new URL(baseUrl).origin,
+      steps: ['toolbar_authoring', 'delta_or_html', 'backend_readback', 'public_render', 'anchor_tap', 'tap_outcome'],
+      lifecycle: {
+        started_at: startedAt,
+        completed_at: new Date().toISOString(),
+      },
+      tap_outcome: {
+        status: 'opened',
+        target_urls: [explicitHttpsUrl],
+      },
+    };
+  } finally {
+    const eventCleanup = await deleteEvent(api, baseUrl, session?.token, eventId);
+    const typeCleanup = await deleteEventType(api, baseUrl, session?.token, eventTypeId);
+    if (eventCleanup) {
+      expect([200, 204, 404]).toContain(eventCleanup.status());
+    }
+    if (typeCleanup) {
+      expect([200, 204, 404]).toContain(typeCleanup.status());
+    }
+    if (browserContext) {
+      await browserContext.close();
+    }
+    await api.dispose();
+  }
+  const runtimeOutputDir = (process.env.RICH_TEXT_RUNTIME_OUTPUT_DIR || '').trim();
+  if (runtimeOutputDir && runtimeEvidence) {
+    runtimeEvidence.lifecycle.cleanup_completed_at = new Date().toISOString();
+    runtimeEvidence.lifecycle.cleanup_succeeded = true;
+    writeRuntimeActualRun(runtimeOutputDir, runtimeEvidence);
+  }
+});
+
+test('@mutation tenant-admin account-profile rich text toolbar authors HTTPS link, persists, reads back, taps in public detail, and records tap outcome', async ({ browser }) => {
+  const baseUrl = requireTenantUrl();
+  const api = await createApiContext(baseUrl);
+  const startedAt = new Date().toISOString();
+  const bioText = 'Belluga HTTPS profile bio link';
+  const contentText = 'Belluga HTTPS profile content link';
+  const bioUrl = 'https://example.com/belluga-profile-bio';
+  const contentUrl = 'https://example.com/belluga-profile-content';
+  const expectedBio = `<p><a href="${bioUrl}">${bioText}</a></p>`;
+  const expectedContent = `<p><a href="${contentUrl}">${contentText}</a></p>`;
+  let browserContext;
+  let session = null;
+  let accountSlug = null;
+  let profileTypeKey = null;
+  let profileId = null;
+  let runtimeEvidence = null;
+
+  try {
+    session = await loginTenantAdmin(api, baseUrl);
+    const unique = Date.now();
+    const createdType = normalizePayload(
+      await createAccountProfileType(api, baseUrl, session.token, {
+        type: `pw-rich-text-${unique}`,
+        label: `PW Rich Text ${unique}`,
+        allowedTaxonomies: [],
+        markerColor: '#0F766E',
+        capabilities: {
+          is_favoritable: false,
+          is_publicly_discoverable: true,
+          is_publicly_navigable: true,
+          has_avatar: false,
+          has_cover: false,
+          has_taxonomies: false,
+          has_content: true,
+          has_bio: true,
+        },
+      }),
+    );
+    profileTypeKey = createdType?.type?.toString() || '';
+    const created = await createPublicAccountProfileForType(
+      api,
+      baseUrl,
+      session.token,
+      {
+        name: `PW Rich Text Profile ${unique}`,
+        profileType: createdType,
+      },
+    );
+    accountSlug = created.accountSlug;
+    profileId = created.profileId?.toString() || null;
+    expect(profileId, 'Rich-text account profile id must be created.').toBeTruthy();
+
+    const pageBundle = await createAuthenticatedTenantAdminPage(browser, session);
+    browserContext = pageBundle.context;
+    const page = pageBundle.page;
+    const response = await page.goto(
+      buildApiUrl(
+        baseUrl,
+        `/admin/accounts/${accountSlug}/profiles/${created.profileId}/edit`,
+      ),
+      { waitUntil: 'domcontentloaded' },
+    );
+    expect(response, 'Tenant-admin account-profile edit route must respond.').not.toBeNull();
+    expect(response.status()).toBeLessThan(400);
+    await assertAppBooted(page);
+    await enableAccessibilityIfNeeded(page);
+    const editors = [
+      {
+        locator: page.getByLabel('Conteudo', { exact: true }),
+        label: 'Conteudo',
+        text: contentText,
+        url: contentUrl,
+      },
+      {
+        locator: page.getByLabel('Bio', { exact: true }),
+        label: 'Bio',
+        text: bioText,
+        url: bioUrl,
+      },
+    ];
+    for (const editor of editors) {
+      const linkButton = page.getByRole('button', {
+        name: `${editor.label}: Inserir URL`,
+        exact: true,
+      });
+      await expect(linkButton).toHaveCount(1);
+      await linkButton.scrollIntoViewIfNeeded();
+      await expect(linkButton).toBeVisible();
+      await editor.locator.click();
+      await editor.locator.pressSequentially(editor.text, { delay: 10 });
+      await selectRichTextEditorContents(page, editor.locator);
+      await linkButton.click();
+      const dialog = page.getByRole('alertdialog');
+      await expect(dialog).toBeVisible({ timeout: appBootTimeoutMs });
+      await expect(dialog.getByLabel('Texto', { exact: true })).toHaveValue(editor.text);
+      const linkInput = dialog.getByLabel('Link');
+      await linkInput.click();
+      await linkInput.pressSequentially(editor.url, { delay: 10 });
+      await expect(linkInput).toHaveValue(editor.url);
+      await expect(dialog.getByRole('button', { name: 'Ok' })).toBeEnabled();
+      await dialog.getByRole('button', { name: 'Ok' }).click();
+      await expect(dialog).toBeHidden({ timeout: appBootTimeoutMs });
+    }
+
+    const saveResponsePromise = waitForSuccessfulAccountProfilePatchResponse(
+      page,
+      profileId,
+    );
+    await clickSaveChanges(page);
+    const saveResponse = await saveResponsePromise;
+    const saveRequestPayload = saveResponse.request().postDataJSON();
+    expect(saveRequestPayload?.bio?.toString() || '').toBe(expectedBio);
+    expect(saveRequestPayload?.content?.toString() || '').toBe(expectedContent);
+    const savePayload = normalizePayload(await saveResponse.json());
+    expect(savePayload?.bio?.toString() || '').toBe(expectedBio);
+    expect(savePayload?.content?.toString() || '').toBe(expectedContent);
+
+    const adminProfile = await fetchAdminProfile(
+      api,
+      baseUrl,
+      session.token,
+      profileId,
+    );
+    expect(adminProfile?.bio?.toString() || '').toBe(expectedBio);
+    expect(adminProfile?.content?.toString() || '').toBe(expectedContent);
+    const publicProfile = await fetchPublicProfile(
+      api,
+      baseUrl,
+      session.token,
+      created.profileSlug,
+    );
+    expect(publicProfile?.bio?.toString() || '').toBe(expectedBio);
+    expect(publicProfile?.content?.toString() || '').toBe(expectedContent);
+
+    const publicResponse = await page.goto(
+      buildApiUrl(baseUrl, `/parceiro/${encodeURIComponent(created.profileSlug)}`),
+      { waitUntil: 'domcontentloaded' },
+    );
+    expect(publicResponse, 'Public Account Profile route must respond.').not.toBeNull();
+    expect(publicResponse.status()).toBeLessThan(400);
+    await assertAppBooted(page);
+    await enableAccessibilityIfNeeded(page);
+    for (const target of [
+      { text: bioText, url: bioUrl },
+      { text: contentText, url: contentUrl },
+    ]) {
+      const publicLink = await resolveUniqueFlutterTappableText(page, target.text);
+      const popupPromise = browserContext.waitForEvent('page');
+      await publicLink.click();
+      const popup = await popupPromise;
+      await expect.poll(() => popup.url(), { timeout: appBootTimeoutMs }).toBe(target.url);
+      await popup.close();
+    }
+
+    runtimeEvidence = {
+      schema_version: 2,
+      lane: 'account-profile-web',
+      run_id: process.env.RICH_TEXT_RUNTIME_RUN_ID,
+      served_build_fingerprint: await page.evaluate(() => window.__WEB_BUILD_SHA__ || 'unknown'),
+      target_base_url: baseUrl,
+      tenant_id: new URL(baseUrl).hostname,
+      fixture_ids: [profileId, accountSlug, profileTypeKey],
+      platform: 'web',
+      runtime_identity: 'playwright-chromium',
+      backend_identity: new URL(baseUrl).origin,
+      steps: ['toolbar_authoring', 'delta_or_html', 'backend_readback', 'public_render', 'anchor_tap', 'tap_outcome'],
+      lifecycle: {
+        started_at: startedAt,
+        completed_at: new Date().toISOString(),
+      },
+      tap_outcome: {
+        status: 'opened',
+        target_urls: [bioUrl, contentUrl],
+      },
+    };
+  } finally {
+    await cleanupOnboardedAccount(
+      api,
+      baseUrl,
+      session?.token,
+      accountSlug,
+    );
+    const profileCleanup = await forceDeleteAccountProfile(
+      api,
+      baseUrl,
+      session?.token,
+      profileId,
+    );
+    if (profileCleanup) {
+      expect([200, 204, 404]).toContain(profileCleanup.status());
+    }
+    const typeCleanup = await deleteAccountProfileType(
+      api,
+      baseUrl,
+      session?.token,
+      profileTypeKey,
+    );
+    if (typeCleanup) {
+      expect([200, 204, 404]).toContain(typeCleanup.status());
+    }
+    if (browserContext) {
+      await browserContext.close();
+    }
+    await api.dispose();
+  }
+  const runtimeOutputDir = (process.env.RICH_TEXT_RUNTIME_OUTPUT_DIR || '').trim();
+  if (runtimeOutputDir && runtimeEvidence) {
+    runtimeEvidence.lifecycle.cleanup_completed_at = new Date().toISOString();
+    runtimeEvidence.lifecycle.cleanup_succeeded = true;
+    writeRuntimeActualRun(runtimeOutputDir, runtimeEvidence);
   }
 });
 

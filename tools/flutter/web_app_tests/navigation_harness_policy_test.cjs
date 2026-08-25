@@ -423,6 +423,31 @@ function assertGuardPassesCleanFixture() {
   });
 }
 
+function assertGuardAllowsScopedRichTextSelection() {
+  withTempDir((dir) => {
+    fs.writeFileSync(
+      path.join(dir, 'rich-text-selection.spec.js'),
+      [
+        "async function selectRichTextEditorContents(editor) {",
+        "  const label = await editor.getAttribute('aria-label');",
+        "  if (!['Descrição (opcional)', 'Bio', 'Conteudo'].includes(label)) throw new Error('refused');",
+        "  await editor.click();",
+        "  await editor.press('Control+A');",
+        "}",
+        "",
+      ].join('\n'),
+    );
+    const result = run('node', [guardScript], {
+      NAV_WEB_TESTS_DIR: dir,
+    });
+    assert.strictEqual(
+      result.status,
+      0,
+      'scoped rich-text content selection must not be misclassified as a dropdown fallback',
+    );
+  });
+}
+
 function assertStrictDataGuardPassesCleanFixture() {
   withTempDir((dir) => {
     fs.writeFileSync(
@@ -3039,6 +3064,7 @@ assertStartupReadonlyManagedFixtureSearchUsesCanonicalPagination();
 assertCheckedInManifestMatchesCurrentSpecTitles();
 assertAccountOnboardingCleanupContractPasses();
 assertPublicTaxonomyCleanupResolutionContractPasses();
+assertGuardAllowsScopedRichTextSelection();
 
 assertFailsForSource(
   'coordinate-click',
@@ -3276,8 +3302,6 @@ assert.match(
 {
   const adoptedSpecFiles = [
     'discovery_filters.spec.js',
-    'event_rich_text.mutation.spec.js',
-    'account_profile_rich_text.mutation.spec.js',
     'navigation.spec.js',
     'navigation.mutation.tenant_admin.spec.js',
     'navigation.mutation.event_occurrences.spec.js',
@@ -3309,15 +3333,6 @@ assert.match(
   assert.ok(
     !/ignoredFailedRequests\.length > 0/.test(eventOccurrencesSource),
     'event_occurrences must not keep the wildcard ERR_FAILED console suppression',
-  );
-
-  const eventRichTextSource = fs.readFileSync(
-    path.join(__dirname, 'event_rich_text.mutation.spec.js'),
-    'utf8',
-  );
-  assert.ok(
-    !/function isNonCriticalConsoleError\s*\(/.test(eventRichTextSource),
-    'event_rich_text must not keep a local isNonCriticalConsoleError copy',
   );
 
   const canonicalMediaUrls = [
