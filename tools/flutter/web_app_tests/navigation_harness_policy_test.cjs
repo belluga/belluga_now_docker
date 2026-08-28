@@ -3038,32 +3038,93 @@ function assertStandaloneAgendaFixtureUsesCanonicalPlaywrightRuntime() {
     'standalone Agenda fixture must use the canonical SHA-256 fingerprint helper before anonymous identity mutation',
   );
 
-  const result = spawnSync(
+  const resolutionProbe = spawnSync(
     'node',
     [
       '-e',
       [
+        "const Module = require('module');",
+        `const runnerPackage = ${JSON.stringify(path.resolve(repoRoot, 'tools', 'flutter', 'web_app_smoke_runner', 'package.json'))};`,
+        `const runtimeHelper = ${JSON.stringify(runtimeHelper)};`,
+        'const originalLoad = Module._load;',
+        'let observedParentFilename;',
+        'const playwrightStub = { request: {} };',
+        'Module._load = function(request, parent, isMain) {',
+        "  if (request === '@playwright/test') {",
+        '    observedParentFilename = parent && parent.filename;',
+        '    if (observedParentFilename !== runnerPackage) {',
+        "      throw new Error(`Playwright resolution must be anchored at ${runnerPackage}; received ${observedParentFilename || '<none>'}`);",
+        '    }',
+        '    return playwrightStub;',
+        '  }',
+        '  return originalLoad.call(this, request, parent, isMain);',
+        '};',
         `const helper = require(${JSON.stringify(runtimeHelper)});`,
         'const playwright = helper.requirePlaywrightTest();',
-        "if (typeof playwright.request !== 'object') throw new Error('missing Playwright request runtime');",
-        'process.stdout.write(helper.runnerPackage);',
+        "if (playwright !== playwrightStub || typeof playwright.request !== 'object') throw new Error('canonical Playwright resolver did not return the intercepted runtime');",
+        "if (helper.runnerPackage !== runnerPackage) throw new Error(`runtime helper exported unexpected runner package: ${helper.runnerPackage}`);",
+        'process.stdout.write(JSON.stringify({ runnerPackage: helper.runnerPackage, observedParentFilename }));',
       ].join('\n'),
     ],
     {
       cwd: os.tmpdir(),
-      env: { ...process.env },
+      env: { ...process.env, NODE_PATH: path.join(os.tmpdir(), 'unrelated-node-path') },
       encoding: 'utf8',
     },
   );
   assert.strictEqual(
-    result.status,
+    resolutionProbe.status,
     0,
-    `standalone Agenda fixture Playwright resolution must not depend on cwd or NODE_PATH.\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
+    `standalone Agenda fixture Playwright resolution must be anchored at the runner package, not cwd or NODE_PATH.\nstdout:\n${resolutionProbe.stdout}\nstderr:\n${resolutionProbe.stderr}`,
+  );
+  const resolution = JSON.parse(resolutionProbe.stdout);
+  assert.strictEqual(
+    resolution.observedParentFilename,
+    resolution.runnerPackage,
+    'standalone Agenda fixture must call @playwright/test through createRequire anchored at the runner-owned package.json',
   );
   assert.match(
-    result.stdout,
+    resolution.runnerPackage,
     /tools\/flutter\/web_app_smoke_runner\/package\.json/,
     'standalone Agenda fixture must load the runner-owned Playwright package',
+  );
+
+  const unavailableProbe = spawnSync(
+    'node',
+    [
+      '-e',
+      [
+        "const Module = require('module');",
+        'const originalLoad = Module._load;',
+        'Module._load = function(request, parent, isMain) {',
+        "  if (request === '@playwright/test') throw new Error('policy probe: missing runner-owned Playwright runtime');",
+        '  return originalLoad.call(this, request, parent, isMain);',
+        '};',
+        `const helper = require(${JSON.stringify(runtimeHelper)});`,
+        'try {',
+        '  helper.requirePlaywrightTest();',
+        "  throw new Error('expected canonical Playwright resolver to fail closed');",
+        '} catch (error) {',
+        '  process.stdout.write(error instanceof Error ? error.message : String(error));',
+        '}',
+      ].join('\n'),
+    ],
+    { cwd: os.tmpdir(), env: { ...process.env, NODE_PATH: path.join(os.tmpdir(), 'unrelated-node-path') }, encoding: 'utf8' },
+  );
+  assert.strictEqual(
+    unavailableProbe.status,
+    0,
+    `canonical Playwright resolver failure probe must complete.\nstdout:\n${unavailableProbe.stdout}\nstderr:\n${unavailableProbe.stderr}`,
+  );
+  assert.match(
+    unavailableProbe.stdout,
+    /Canonical Playwright runtime is unavailable at .*tools\/flutter\/web_app_smoke_runner\/package\.json/,
+    'standalone Agenda fixture must fail closed with the runner-owned runtime location when Playwright is unavailable',
+  );
+  assert.match(
+    unavailableProbe.stdout,
+    /policy probe: missing runner-owned Playwright runtime/,
+    'standalone Agenda fixture must preserve the original runtime-resolution error for diagnosis',
   );
 
   const fingerprintProbe = spawnSync(
