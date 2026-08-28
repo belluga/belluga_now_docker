@@ -195,31 +195,35 @@ async function cleanupOnboardedAccount(
       const stillExists = await accountStillExists(api, baseUrl, token, slug, {
         requestTimeoutMs: boundedRequestTimeoutMs,
       });
-      if (!stillExists) {
+      if (!stillExists && !archiveNeedsFinalization) {
         return;
       }
-      response = await deleteAccount(
-        api,
-        baseUrl,
-        token,
-        slug,
-        {
-          requestTimeoutMs: boundedRequestTimeoutMs,
-        },
-      );
-      status = response.status();
-      actionWasForceDelete = false;
-      if (status >= 200 && status < 300) {
-        archiveNeedsFinalization = true;
+      if (stillExists) {
+        response = await deleteAccount(
+          api,
+          baseUrl,
+          token,
+          slug,
+          {
+            requestTimeoutMs: boundedRequestTimeoutMs,
+          },
+        );
+        status = response.status();
+        actionWasForceDelete = false;
+        if (status >= 200 && status < 300) {
+          archiveNeedsFinalization = true;
+        }
       }
     }
     if (status === 404) {
-      if (archiveNeedsFinalization && actionWasForceDelete) {
+      if (archiveNeedsFinalization) {
         const stillExists = await accountStillExists(api, baseUrl, token, slug, {
           requestTimeoutMs: boundedRequestTimeoutMs,
         });
-        if (!stillExists) {
-          return;
+        if (stillExists) {
+          console.warn(
+            `[cleanupOnboardedAccount] archived row for ${slug} remains visible after force-delete returned HTTP 404.`,
+          );
         }
       } else {
         return;
@@ -262,12 +266,14 @@ async function cleanupOnboardedAccount(
         status = response.status();
         actionWasForceDelete = typeof api.post === 'function';
         if (status === 404) {
-          if (archiveNeedsFinalization && actionWasForceDelete) {
+          if (archiveNeedsFinalization) {
             const stillExists = await accountStillExists(api, baseUrl, token, slug, {
               requestTimeoutMs: boundedRequestTimeoutMs,
             });
-            if (!stillExists) {
-              return;
+            if (stillExists) {
+              console.warn(
+                `[cleanupOnboardedAccount] archived row for ${slug} remains visible after force-delete returned HTTP 404.`,
+              );
             }
           } else {
             return;

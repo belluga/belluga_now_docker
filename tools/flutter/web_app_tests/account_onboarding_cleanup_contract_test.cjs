@@ -246,6 +246,31 @@ async function assertArchivedRowDoesNotAcceptPersistent422AsFinalization() {
   });
 }
 
+async function assertArchivedRowDoesNotAcceptPersistent404AsFinalization() {
+  const api = fakeApi({
+    deleteStatuses: [200],
+    postStatuses: [404, 404],
+    getStatuses: [200, 404, 404],
+  });
+
+  await assert.rejects(
+    cleanupOnboardedAccount(
+      api,
+      'https://example.test',
+      'token',
+      'archived-account-with-persistent-404',
+      { maxAttempts: 2, baseDelayMs: 0 },
+    ),
+    /Cleanup did not remove onboarded account archived-account-with-persistent-404\./,
+  );
+
+  assert.deepStrictEqual(api.stats(), {
+    deleteCalls: [200],
+    postCalls: [404, 404],
+    patchCalls: [],
+  });
+}
+
 async function assertAlreadyAbsentAccountCompletesIdempotently() {
   const api = fakeApi({
     postStatuses: [404],
@@ -290,6 +315,7 @@ async function assertCleanupFailureIsSurfacedAlongsidePrimaryFailure() {
   await assertSoftDeleteIsFollowedByForceDeleteBeforeCleanupCompletes();
   await assertArchivedRowRetriesBoundedlyAndFailsWithoutForceFinalization();
   await assertArchivedRowDoesNotAcceptPersistent422AsFinalization();
+  await assertArchivedRowDoesNotAcceptPersistent404AsFinalization();
   await assertAlreadyAbsentAccountCompletesIdempotently();
   await assertCleanupFailureIsSurfacedAlongsidePrimaryFailure();
   console.log('Account onboarding cleanup contract tests passed.');

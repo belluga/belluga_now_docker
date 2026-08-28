@@ -547,6 +547,85 @@ function assertReadonlyShardValidationFails({ manifest, list, shard, expectedMes
   });
 }
 
+function assertSuiteValidationKeepsFullSuitesDistinctFromNamedShards() {
+  const manifest = {
+    mutation: {
+      shards: {
+        alpha: {
+          grep_extra: 'alpha',
+          expected_titles: ['@mutation alpha path'],
+        },
+        beta: {
+          grep_extra: 'beta',
+          expected_titles: ['@mutation beta path'],
+        },
+      },
+    },
+    readonly: {
+      shards: {
+        fixture: {
+          grep_extra: 'fixture',
+          expected_titles: ['@readonly-fixture fixture path'],
+        },
+      },
+      expected_titles: ['@readonly alpha path', '@readonly beta path'],
+    },
+  };
+
+  withTempDir((dir) => {
+    const manifestPath = path.join(dir, 'navigation_mutation_shards.json');
+    const readonlyAllListPath = path.join(dir, 'readonly-all.txt');
+    const readonlyShardListPath = path.join(dir, 'readonly-fixture.txt');
+    const mutationAllListPath = path.join(dir, 'mutation-all.txt');
+    fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
+    fs.writeFileSync(
+      readonlyAllListPath,
+      '  test › @readonly alpha path\n  test › @readonly beta path\n',
+    );
+    fs.writeFileSync(
+      readonlyShardListPath,
+      '  test › @readonly-fixture fixture path\n',
+    );
+    fs.writeFileSync(
+      mutationAllListPath,
+      '  test › @mutation alpha path\n  test › @mutation beta path\n',
+    );
+
+    const readonlyAll = run(
+      'node',
+      [shardsScript, 'validate', 'readonly', 'all', readonlyAllListPath],
+      { NAV_WEB_SHARD_MANIFEST: manifestPath },
+    );
+    assert.strictEqual(
+      readonlyAll.status,
+      0,
+      `readonly all must validate readonly.expected_titles, not fixture shard titles.\n${readonlyAll.stderr}`,
+    );
+
+    const readonlyShard = run(
+      'node',
+      [shardsScript, 'validate', 'readonly', 'fixture', readonlyShardListPath],
+      { NAV_WEB_SHARD_MANIFEST: manifestPath },
+    );
+    assert.strictEqual(
+      readonlyShard.status,
+      0,
+      `readonly named shard must validate only its shard titles.\n${readonlyShard.stderr}`,
+    );
+
+    const mutationAll = run(
+      'node',
+      [shardsScript, 'validate', 'mutation', 'all', mutationAllListPath],
+      { NAV_WEB_SHARD_MANIFEST: manifestPath },
+    );
+    assert.strictEqual(
+      mutationAll.status,
+      0,
+      `mutation all must continue validating the union of mutation shard titles.\n${mutationAll.stderr}`,
+    );
+  });
+}
+
 function assertSmokeRunnerResolvesReadonlyShardBeforeListing() {
   const result = spawnSmokeScriptForPolicyTest('readonly', {
     NAV_WEB_TEST_TYPE: 'readonly',
@@ -3653,6 +3732,8 @@ assertReadonlyShardValidationFails({
   shard: 'alpha',
   expectedMessage: /Missing expected titles/,
 });
+
+assertSuiteValidationKeepsFullSuitesDistinctFromNamedShards();
 
 assertSmokeRunnerResolvesReadonlyShardBeforeListing();
 
