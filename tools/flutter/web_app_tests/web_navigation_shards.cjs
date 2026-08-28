@@ -168,9 +168,11 @@ try {
       throw new Error('Missing Playwright --list output path.');
     }
 
-    const expected = ['mutation', 'readonly'].includes(suite)
+    const expected = suite === 'mutation'
       ? expectedShardedTitles(suite, shardOrAll)
-      : expectedSuiteTitles(suite);
+      : suite === 'readonly' && shardOrAll && shardOrAll !== 'all'
+        ? expectedShardedTitles(suite, shardOrAll)
+        : expectedSuiteTitles(suite);
     const actual = parseListedTitles(listPath);
     const expectedCounts = countTitles(expected);
     const actualCounts = countTitles(actual);
