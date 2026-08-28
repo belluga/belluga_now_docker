@@ -2578,17 +2578,68 @@ function assertDirectPlaywrightReadonlyRejectsGrepSubset() {
 
 function assertDirectPlaywrightReadonlyAllowsCanonicalManifestShard() {
   const result = spawnDirectPlaywrightContractProbe(
-    ['test', '--config', './playwright.config.js', '--grep', '@readonly.*NAV-APD-AGENDA', '--list'],
+    ['test', '--config', './playwright.config.js', '--grep', '@readonly-fixture(?:\\s|$).*NAV-APD-AGENDA', '--list'],
     {
       NAV_WEB_TEST_TYPE: 'readonly',
-      NAV_DEPLOY_LANE: 'main',
+      NAV_DEPLOY_LANE: 'local',
       NAV_TENANT_URL: SYNTHETIC_TENANT_URL,
+      NAV_ACCOUNT_PROFILE_AGENDA_READONLY_FIXTURE: '1',
     },
   );
   assert.strictEqual(
     result.status,
     0,
     `direct Playwright readonly manifest shard must be accepted.\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
+  );
+}
+
+function assertDirectPlaywrightReadonlyFixtureShardFailsClosedWithoutFixture() {
+  const result = spawnDirectPlaywrightContractProbe(
+    ['test', '--config', './playwright.config.js', '--grep', '@readonly-fixture(?:\\s|$).*NAV-APD-AGENDA', '--list'],
+    {
+      NAV_WEB_TEST_TYPE: 'readonly',
+      NAV_DEPLOY_LANE: 'local',
+      NAV_TENANT_URL: SYNTHETIC_TENANT_URL,
+    },
+  );
+  assert.notStrictEqual(result.status, 0, 'fixture shard must reject missing fixture flag before listing');
+  assert.match(
+    `${result.stdout}\n${result.stderr}`,
+    /requires NAV_ACCOUNT_PROFILE_AGENDA_READONLY_FIXTURE=1; no ambient fixture fallback is allowed/,
+  );
+}
+
+function assertDirectPlaywrightReadonlyFixtureShardRejectsDisabledFixtureFlag() {
+  const result = spawnDirectPlaywrightContractProbe(
+    ['test', '--config', './playwright.config.js', '--grep', '@readonly-fixture(?:\\s|$).*NAV-APD-AGENDA', '--list'],
+    {
+      NAV_WEB_TEST_TYPE: 'readonly',
+      NAV_DEPLOY_LANE: 'local',
+      NAV_TENANT_URL: SYNTHETIC_TENANT_URL,
+      NAV_ACCOUNT_PROFILE_AGENDA_READONLY_FIXTURE: '0',
+    },
+  );
+  assert.notStrictEqual(result.status, 0, 'fixture shard must reject a disabled fixture flag before listing');
+  assert.match(
+    `${result.stdout}\n${result.stderr}`,
+    /requires NAV_ACCOUNT_PROFILE_AGENDA_READONLY_FIXTURE=1; no ambient fixture fallback is allowed/,
+  );
+}
+
+function assertDirectPlaywrightReadonlyFixtureShardRejectsMain() {
+  const result = spawnDirectPlaywrightContractProbe(
+    ['test', '--config', './playwright.config.js', '--grep', '@readonly-fixture(?:\\s|$).*NAV-APD-AGENDA', '--list'],
+    {
+      NAV_WEB_TEST_TYPE: 'readonly',
+      NAV_DEPLOY_LANE: 'main',
+      NAV_TENANT_URL: SYNTHETIC_TENANT_URL,
+      NAV_ACCOUNT_PROFILE_AGENDA_READONLY_FIXTURE: '1',
+    },
+  );
+  assert.notStrictEqual(result.status, 0, 'fixture shard must remain unavailable on main');
+  assert.match(
+    `${result.stdout}\n${result.stderr}`,
+    /shard is restricted to NAV_DEPLOY_LANE=local/,
   );
 }
 
@@ -3249,7 +3300,8 @@ function collectTaggedTitles(tag) {
     const source = fs.readFileSync(sourcePath, 'utf8');
     let match;
     while ((match = titleRegex.exec(source))) {
-      if (match[2].includes(tag)) {
+      const marker = tag ? new RegExp(`${tag}(?:\\s|$)`) : null;
+      if (!marker || marker.test(match[2])) {
         titles.push(match[2]);
       }
     }
@@ -3264,6 +3316,7 @@ function assertCheckedInManifestMatchesCurrentSpecTitles() {
   );
 
   const readonlyActual = collectTaggedTitles('@readonly');
+  const allActual = collectTaggedTitles('');
   const readonlyExpected = [...checkedInManifest.readonly.expected_titles].sort();
   assert.deepStrictEqual(
     readonlyActual,
@@ -3273,7 +3326,7 @@ function assertCheckedInManifestMatchesCurrentSpecTitles() {
 
   for (const [shardName, shard] of Object.entries(checkedInManifest.readonly.shards || {})) {
     const shardRegex = new RegExp(shard.grep_extra);
-    const selected = readonlyActual.filter((title) => shardRegex.test(title)).sort();
+    const selected = allActual.filter((title) => shardRegex.test(title)).sort();
     const expected = [...(shard.expected_titles || [])].sort();
     assert.deepStrictEqual(
       selected,
@@ -3352,6 +3405,9 @@ assertDirectPlaywrightReadonlyRejectsDirectorySelector();
 assertDirectPlaywrightReadonlyRejectsMutationGrep();
 assertDirectPlaywrightReadonlyRejectsGrepSubset();
 assertDirectPlaywrightReadonlyAllowsCanonicalManifestShard();
+assertDirectPlaywrightReadonlyFixtureShardFailsClosedWithoutFixture();
+assertDirectPlaywrightReadonlyFixtureShardRejectsDisabledFixtureFlag();
+assertDirectPlaywrightReadonlyFixtureShardRejectsMain();
 assertDirectPlaywrightReadonlyRejectsGrepInvertSuiteTrim();
 assertLaneNavigationResolverUsesCanonicalLocalHost();
 assertFixtureBootstrapRequiresExplicitMutationContract();
@@ -3562,7 +3618,7 @@ withTempDir((dir) => {
     NAV_WEB_SHARD_MANIFEST: manifestPath,
   });
   assert.strictEqual(readonlyShardGrep.status, 0, 'readonly shard grep must resolve canonically');
-  assert.strictEqual(readonlyShardGrep.stdout, 'alpha');
+  assert.strictEqual(readonlyShardGrep.stdout, '@readonly(?:\\s|$).*alpha');
 });
 
 assertShardValidationFails({

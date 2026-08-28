@@ -101,4 +101,42 @@ RICH_TEXT_RUNTIME_LANE=event-web RICH_TEXT_RUNTIME_OUTPUT_DIR="$tmp/lane" bash "
 RICH_TEXT_RUNTIME_LANE=android RICH_TEXT_RUNTIME_OUTPUT_DIR="$tmp/android" bash "$root/tools/ci/run_rich_text_runtime_lane.sh" >/dev/null 2>&1; android=$?
 set -e
 [[ $symlink_lane -ne 0 && $web -ne 0 && $android -ne 0 ]]
+
+# The lane wrapper invokes its Web/Flutter leaf runners from different working
+# directories. A caller-relative evidence directory must remain anchored at
+# the caller, not at either leaf-runner directory. Stub only those leaf
+# commands: no browser, device, runtime target or real credential is involved.
+fake_bin="$tmp/fake-bin"; mkdir "$fake_bin"
+relative_caller="$tmp/relative-caller"; mkdir "$relative_caller"
+relative_output="relative-rich-text-evidence"
+cat >"$fake_bin/bash" <<'EOF'
+#!/usr/bin/bash
+set -euo pipefail
+case "${1:-}" in
+  */tools/flutter/run_web_navigation_smoke.sh)
+    printf '{"stub":true}\n' >"${RICH_TEXT_RUNTIME_OUTPUT_DIR}/actual-run.json"
+    ;;
+  */tools/ci/record_rich_text_runtime_manifest.sh)
+    ;;
+  *)
+    exec /usr/bin/bash "$@"
+    ;;
+esac
+EOF
+chmod 700 "$fake_bin/bash"
+(
+ cd "$relative_caller"
+ PATH="$fake_bin:$PATH" \
+ NAV_TENANT_URL='https://tenant.invalid' \
+ NAV_LANDLORD_URL='https://landlord.invalid' \
+ NAV_DEPLOY_LANE='local' \
+ NAV_ADMIN_EMAIL='synthetic@example.invalid' \
+ NAV_ADMIN_PASSWORD='synthetic-password' \
+ RICH_TEXT_RUNTIME_LANE=event-web \
+ RICH_TEXT_RUNTIME_OUTPUT_DIR="$relative_output" \
+ RICH_TEXT_RUNTIME_RUN_ID=relative-output-contract \
+ /usr/bin/bash "$root/tools/ci/run_rich_text_runtime_lane.sh"
+)
+[[ -f "$relative_caller/$relative_output/actual-run.json" ]]
+[[ ! -e "$root/tools/flutter/web_app_smoke_runner/$relative_output/actual-run.json" ]]
 echo 'PASS rich-text runtime manifest v2, fingerprint, secret, lifecycle, atomic-output, and lane fail-closed contract'

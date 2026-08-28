@@ -235,8 +235,15 @@
     "shards": {
       "apd-agenda": {
         "grep_extra": "NAV-APD-AGENDA",
+        "grep": "@readonly-fixture(?:\\s|$).*NAV-APD-AGENDA",
+        "allowed_lanes": [
+          "local"
+        ],
+        "required_env_values": {
+          "NAV_ACCOUNT_PROFILE_AGENDA_READONLY_FIXTURE": "1"
+        },
         "expected_titles": [
-          "@readonly NAV-APD-AGENDA Account Profile Agenda groups managed occurrences by local date"
+          "@readonly-fixture NAV-APD-AGENDA Account Profile Agenda groups managed occurrences by local date"
         ]
       }
     },
@@ -251,7 +258,6 @@
       "@readonly tenant open-app generates Android handoff redirects for pre-Guard action targets",
       "@readonly tenant Android direct public links request open-app handoff redirects",
       "@readonly FAV-GATE-RUNTIME web anonymous account and discovery favorite actions show app promotion modal",
-      "@readonly NAV-APD-AGENDA Account Profile Agenda groups managed occurrences by local date",
       "@deferred @readonly MAP-LOC-GRANT-01 first warm geolocation-granted map entry loads POIs from a resolved origin without public error state",
       "@deferred @readonly MAP-LOC-GRANT-02 location-permission CTA continuation loads canonical map data once browser geolocation is granted",
       "@deferred @readonly MAP-NAV-REENTRY-01 tenant home can reopen map after returning from a warm permission-gated entry",

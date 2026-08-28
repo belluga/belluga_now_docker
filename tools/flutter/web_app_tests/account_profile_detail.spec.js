@@ -1149,7 +1149,7 @@ test('@mutation NAV-APD-07..08 agenda is occurrence-first and cards navigate to 
   }
 });
 
-test('@readonly NAV-APD-AGENDA Account Profile Agenda groups managed occurrences by local date', async ({
+test('@readonly-fixture NAV-APD-AGENDA Account Profile Agenda groups managed occurrences by local date', async ({
   page,
 }) => {
   const fixture = loadAccountProfileAgendaReadonlyFixture();

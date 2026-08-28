@@ -196,7 +196,10 @@ SUITE="$1"
 
 case "$SUITE" in
   readonly)
-    GREP='@readonly'
+    # Fixture-owned readonly proofs use their own marker and are admitted only
+    # through a named shard. Full readonly must remain runnable without a
+    # mutation-capable fixture bootstrap, including on main.
+    GREP='@readonly(?:\s|$)'
     ;;
   mutation)
     GREP='@mutation'
@@ -339,8 +342,8 @@ if [[ -n "${NAV_WEB_SHARD:-}" ]]; then
     echo "ERROR: NAV_WEB_SHARD is only supported for the readonly or mutation suites." >&2
     exit 1
   fi
-  SHARD_GREP_EXTRA="$(node ../web_app_tests/web_navigation_shards.cjs grep "${SUITE}" "${NAV_WEB_SHARD}")"
-  GREP="${GREP}.*${SHARD_GREP_EXTRA}"
+  node ../web_app_tests/web_navigation_shards.cjs assert-runtime "${SUITE}" "${NAV_WEB_SHARD}"
+  GREP="$(node ../web_app_tests/web_navigation_shards.cjs grep "${SUITE}" "${NAV_WEB_SHARD}")"
 fi
 
 PLAYWRIGHT_CLI="./node_modules/playwright/cli.js"

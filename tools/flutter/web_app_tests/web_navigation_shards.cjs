@@ -35,6 +35,50 @@ function shardFor(suiteName, id) {
   return shard;
 }
 
+function suiteGrep(suiteName) {
+  return suiteName === 'readonly' ? '@readonly(?:\\s|$)' : `@${suiteName}`;
+}
+
+function shardGrep(suiteName, id) {
+  const shard = shardFor(suiteName, id);
+  const explicit = shard.grep?.toString().trim();
+  if (explicit) {
+    return explicit;
+  }
+  const grepExtra = shard.grep_extra?.toString().trim();
+  if (!grepExtra) {
+    throw new Error(`Missing ${suiteName} shard grep selector for "${id}".`);
+  }
+  return `${suiteGrep(suiteName)}.*${grepExtra}`;
+}
+
+function assertShardRuntimeContract(suiteName, id) {
+  const shard = shardFor(suiteName, id);
+  const lane = (process.env.NAV_DEPLOY_LANE || 'local').trim().toLowerCase();
+  const allowedLanes = Array.isArray(shard.allowed_lanes) ? shard.allowed_lanes : [];
+  if (allowedLanes.length > 0 && !allowedLanes.includes(lane)) {
+    throw new Error(
+      `${suiteName} shard "${id}" is restricted to NAV_DEPLOY_LANE=${allowedLanes.join('|')}.`,
+    );
+  }
+  for (const name of Array.isArray(shard.required_env) ? shard.required_env : []) {
+    if (!process.env[name]?.toString().trim()) {
+      throw new Error(
+        `${suiteName} shard "${id}" requires ${name}; no ambient fixture fallback is allowed.`,
+      );
+    }
+  }
+  const requiredValues = shard.required_env_values || {};
+  for (const [name, expected] of Object.entries(requiredValues)) {
+    const actual = process.env[name]?.toString().trim() || '';
+    if (actual !== expected) {
+      throw new Error(
+        `${suiteName} shard "${id}" requires ${name}=${expected}; no ambient fixture fallback is allowed.`,
+      );
+    }
+  }
+}
+
 function expectedShardedTitles(suiteName, id) {
   const suiteValue = shardedSuiteManifest(suiteName);
   if (!id || id === 'all') {
@@ -107,7 +151,15 @@ try {
     if (!['mutation', 'readonly'].includes(suite)) {
       throw new Error('Shard grep selection is only defined for mutation or readonly suites.');
     }
-    process.stdout.write(shardFor(suite, shardOrAll).grep_extra || '');
+    process.stdout.write(shardGrep(suite, shardOrAll));
+    process.exit(0);
+  }
+
+  if (command === 'assert-runtime') {
+    if (!['mutation', 'readonly'].includes(suite)) {
+      throw new Error('Shard runtime contracts are only defined for mutation or readonly suites.');
+    }
+    assertShardRuntimeContract(suite, shardOrAll);
     process.exit(0);
   }
 
@@ -147,7 +199,7 @@ try {
     process.exit(0);
   }
 
-  throw new Error(`Unknown command "${command}". Expected grep or validate.`);
+  throw new Error(`Unknown command "${command}". Expected grep, assert-runtime or validate.`);
 } catch (error) {
   console.error(error.message);
   process.exit(1);

@@ -3,6 +3,12 @@ set -euo pipefail
 umask 077
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 lane="${RICH_TEXT_RUNTIME_LANE:?}"; out="${RICH_TEXT_RUNTIME_OUTPUT_DIR:?}"; run_id="${RICH_TEXT_RUNTIME_RUN_ID:-rt-$(date +%s)-$$}"
+# The evidence directory is caller-relative by contract.  Make that contract
+# independent of the Web/Flutter runners, both of which intentionally change
+# their working directory before they emit actual-run.json.
+if [[ "$out" != /* ]]; then
+ out="$PWD/$out"
+fi
 [[ ! -L "$out" ]] || { echo 'ERROR: runtime output directory cannot be a symlink' >&2; exit 1; }
 mkdir -p -m 700 "$out"
 [[ -d "$out" && ! -L "$out" ]] || { echo 'ERROR: runtime output must be a real directory' >&2; exit 1; }
