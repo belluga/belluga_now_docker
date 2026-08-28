@@ -314,7 +314,17 @@ function spawnSmokeScriptForPolicyTest(suite, env) {
     }
     delete isolatedEnv.DEPLOY_LANE;
     delete isolatedEnv.GITHUB_REF_NAME;
+    const hasExplicitLocalEnvFile = Object.prototype.hasOwnProperty.call(
+      env,
+      'NAV_LOCAL_ENV_FILE',
+    );
     Object.assign(isolatedEnv, env);
+    if (!hasExplicitLocalEnvFile) {
+      isolatedEnv.NAV_LOCAL_ENV_FILE = path.join(
+        os.tmpdir(),
+        `belluga-nav-policy-missing-local-env-${process.pid}-${Date.now()}.env`,
+      );
+    }
     if (!isolatedEnv.NAV_WEB_OUTPUT_DIR) {
       isolatedEnv.NAV_WEB_OUTPUT_DIR = path.join(
         os.tmpdir(),
@@ -1346,6 +1356,8 @@ function assertSmokeRunnerResolvesRelativeOutputDirFromRepoRoot() {
       NAV_WEB_SHARD: 'missing',
       NAV_LANDLORD_URL: 'http://localhost',
       NAV_TENANT_URL: 'http://localhost',
+      NAV_ADMIN_EMAIL: 'policy@example.test',
+      NAV_ADMIN_PASSWORD: 'policy-secret',
       PLAYWRIGHT_IGNORE_HTTPS_ERRORS: 'true',
       NAV_WEB_OUTPUT_DIR: relativeOutputDir,
     });
