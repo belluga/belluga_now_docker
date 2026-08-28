@@ -1,4 +1,5 @@
-const { expect } = require('@playwright/test');
+const { requirePlaywrightTest } = require('./playwright_runtime');
+const { expect } = requirePlaywrightTest();
 const adminAuthTimeoutMs = Number.parseInt(
   process.env.NAV_ADMIN_AUTH_TIMEOUT_MS || '90000',
   10,

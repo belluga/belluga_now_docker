@@ -18,6 +18,9 @@ const {
   fixture: managedTaxonomyFixture,
   managedFixtureEnabled,
 } = require('./support/public_taxonomy_validation_fixture_contract');
+const {
+  loadAccountProfileAgendaReadonlyFixture,
+} = require('./support/account_profile_agenda_readonly_fixture_contract');
 
 const tenantUrl = process.env.NAV_TENANT_URL;
 const localRuntimeSeedEnabled =
@@ -1143,6 +1146,86 @@ test('@mutation NAV-APD-07..08 agenda is occurrence-first and cards navigate to 
         await api.dispose();
       }
     });
+  }
+});
+
+test('@readonly-fixture NAV-APD-AGENDA Account Profile Agenda groups managed occurrences by local date', async ({
+  page,
+}) => {
+  const fixture = loadAccountProfileAgendaReadonlyFixture();
+  const baseUrl = requireTenantUrl();
+  const api = await createApiContext(baseUrl);
+  try {
+    const token = await resolveAnonymousIdentityToken(api, baseUrl);
+    const detailPayload = await fetchPublicProfileDetail(
+      api,
+      baseUrl,
+      token,
+      fixture.profileSlug,
+    );
+    const occurrences = agendaOccurrences(detailPayload);
+    const payloadOccurrenceIds = occurrences.map((occurrence) =>
+      textValue(occurrence?.occurrence_id),
+    );
+    expect(
+      payloadOccurrenceIds,
+      'Managed Account Profile payload must contain every declared occurrence id.',
+    ).toEqual(expect.arrayContaining(fixture.occurrenceIds));
+    expect(
+      new Set(payloadOccurrenceIds).size,
+      'Managed Account Profile payload must preserve distinct occurrence ids.',
+    ).toBe(payloadOccurrenceIds.length);
+
+    await gotoPublicProfileDetailAndWaitForHydration(
+      page,
+      baseUrl,
+      fixture.profileSlug,
+    );
+    const agendaTab = page.getByRole('button', { name: /^Agenda$/i }).first();
+    if ((await agendaTab.count()) > 0) {
+      await agendaTab.click();
+    }
+
+    for (const dateLabel of fixture.dateLabels) {
+      await assertVisibleTextOrSemanticLabel(
+        page,
+        dateLabel,
+        'Managed Account Profile Agenda local date section',
+      );
+    }
+
+    const titleLocators = fixture.eventTitles.map((title) =>
+      page.getByText(labelPattern(title)).first(),
+    );
+    for (const [index, titleLocator] of titleLocators.entries()) {
+      await expect(
+        titleLocator,
+        `Managed Account Profile Agenda occurrence ${fixture.occurrenceIds[index]} must render its card title.`,
+      ).toBeVisible({ timeout: appBootTimeoutMs });
+    }
+
+    for (let index = 0; index < titleLocators.length - 1; index += 1) {
+      const currentBox = await titleLocators[index].boundingBox();
+      const nextBox = await titleLocators[index + 1].boundingBox();
+      expect(currentBox, `Card ${index} must have a measurable position.`).not.toBeNull();
+      expect(nextBox, `Card ${index + 1} must have a measurable position.`).not.toBeNull();
+      expect(currentBox.y, `Agenda card order must follow local start time at index ${index}.`)
+        .toBeLessThanOrEqual(nextBox.y);
+    }
+
+    const navigationIndex = fixture.occurrenceIds.indexOf(
+      fixture.navigationOccurrenceId,
+    );
+    await titleLocators[navigationIndex].click();
+    await expect(page).toHaveURL(
+      new RegExp(`/agenda/evento/${escapeRegExp(fixture.navigationEventSlug)}`),
+      { timeout: appBootTimeoutMs },
+    );
+    expect(new URL(page.url()).searchParams.get('occurrence')).toBe(
+      fixture.navigationOccurrenceId,
+    );
+  } finally {
+    await api.dispose();
   }
 });
 

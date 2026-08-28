@@ -453,6 +453,27 @@ O Docker **não** executa o build do Flutter automaticamente. O NGINX serve apen
    bash tools/flutter/run_web_navigation_smoke.sh mutation
    ```
    > Política canônica: `mutation` pode rodar em `local|dev|stage`, mas é sempre bloqueada em `main`.
+   > Para reexecutar isoladamente o readonly `NAV-APD-AGENDA`, a fixture é
+   > criada antes por API administrativa local e o teste continua sem mutação:
+   >
+   > ```bash
+   > set -a; source .env.local.navigation; set +a
+   > export NAV_DEPLOY_LANE=local NAV_RUNTIME_DB_MUTATION_ALLOWED=1
+   > export NAV_WEB_ALLOW_NONLOCAL_MUTATION_HOSTS=1 # somente se a URL local browser-facing não for localhost
+   > export NAV_TEST_RUN_ID="apd-agenda-$(date -u +%Y%m%dT%H%M%SZ)"
+   > export NAV_ACCOUNT_PROFILE_AGENDA_DEPLOYED_SOURCE_REVISION='<flutter source revision attested in the served bundle>'
+   > export NAV_ACCOUNT_PROFILE_AGENDA_FIXTURE_ENV_FILE="/tmp/${NAV_TEST_RUN_ID}.env"
+   > node tools/flutter/web_app_tests/ensure_account_profile_agenda_readonly_fixture.cjs
+   > source "${NAV_ACCOUNT_PROFILE_AGENDA_FIXTURE_ENV_FILE}"
+   > NAV_WEB_SHARD=apd-agenda bash tools/flutter/run_web_navigation_smoke.sh readonly
+   > NAV_ACCOUNT_PROFILE_AGENDA_FIXTURE_ACTION=cleanup node tools/flutter/web_app_tests/ensure_account_profile_agenda_readonly_fixture.cjs
+   > ```
+   > O arquivo gerado tem permissão `0600`, não altera `.env.local.navigation`
+   > e não deve ser versionado. O `ensure` exige uma revisão já atestada no
+   > bundle servido e confirma as três ocorrências públicas antes de exportar
+   > os valores consumidos pelo shard. O comando é standalone: resolve
+   > `@playwright/test` a partir de `tools/flutter/web_app_smoke_runner`, sem
+   > depender do diretório corrente ou de `NODE_PATH` manual.
    > Contrato published atual: o smoke readonly não usa mais um evento recoverable específico de catálogo para provar invite fallback no browser publicado. Em published lanes, ele cobre apenas o caminho irrecoverable-home (`/invite` quebrado continua sem tela cinza/erro para `/`). O comportamento recoverable continua coberto pelos testes determinísticos do Flutter.
    Em ambiente local, o build do Flutter deve usar a origem browser-facing real do fluxo que será validado. Se o navegador abre hosts públicos/tunelados do projeto, mantenha esses valores apenas em `.env.local.navigation` e em `flutter-app/config/defines/local.override.json`, nunca como defaults versionados do Boilerplate.
    Rotas públicas específicas de projeto agora vivem em `project/nginx/routes.conf`, enquanto o mecanismo reutilizável está documentado em `project/nginx/routes.conf.example`.
