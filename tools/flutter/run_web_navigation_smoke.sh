@@ -220,6 +220,12 @@ if [[ -n "${NAV_WEB_GREP_EXTRA:-}" ]]; then
   exit 1
 fi
 
+# Interpret caller-provided relative artifact paths from the repository root,
+# before the runner changes its working directory for Playwright execution.
+if [[ -n "${NAV_WEB_OUTPUT_DIR:-}" && "${NAV_WEB_OUTPUT_DIR}" != /* ]]; then
+  export NAV_WEB_OUTPUT_DIR="${REPO_ROOT}/${NAV_WEB_OUTPUT_DIR}"
+fi
+
 pushd "${RUNNER_DIR}" >/dev/null
 if [[ -v NAV_WEB_TEST_TYPE && "${NAV_WEB_TEST_TYPE}" != "${SUITE}" ]]; then
   echo "ERROR: NAV_WEB_TEST_TYPE=${NAV_WEB_TEST_TYPE} does not match requested suite '${SUITE}'. The runner is authoritative for suite selection." >&2
@@ -329,8 +335,8 @@ run_with_timeout "web navigation source policy guard" "${PRECHECK_TIMEOUT_SECOND
 run_with_timeout "web navigation harness policy self-test" "${PRECHECK_TIMEOUT_SECONDS}" \
   bash -lc "set -euo pipefail; node ../web_app_tests/navigation_harness_policy_test.cjs 2>&1 | tee \"${DEFAULT_OUTPUT_DIR}/policy-harness.log\""
 if [[ -n "${NAV_WEB_SHARD:-}" ]]; then
-  if [[ "${SUITE}" != "mutation" ]]; then
-    echo "ERROR: NAV_WEB_SHARD is only supported for the mutation suite." >&2
+  if [[ "${SUITE}" != "mutation" && "${SUITE}" != "readonly" ]]; then
+    echo "ERROR: NAV_WEB_SHARD is only supported for the readonly or mutation suites." >&2
     exit 1
   fi
   SHARD_GREP_EXTRA="$(node ../web_app_tests/web_navigation_shards.cjs grep "${SUITE}" "${NAV_WEB_SHARD}")"

@@ -1,3 +1,5 @@
+const crypto = require('crypto');
+
 function requiredText(name) {
   const value = process.env[name]?.toString().trim() || '';
   if (!value) {
@@ -28,6 +30,20 @@ function requiredJsonArray(name, { minimumLength = 1 } = {}) {
     throw new Error(`${name} must not contain blank values.`);
   }
   return Object.freeze(normalized);
+}
+
+function buildAccountProfileAgendaFixtureFingerprint({ baseUrl, runKey }) {
+  const normalizedBaseUrl = baseUrl?.toString().trim() || '';
+  const normalizedRunKey = runKey?.toString().trim() || '';
+  if (!normalizedBaseUrl || !normalizedRunKey) {
+    throw new Error(
+      'Account Profile Agenda fixture fingerprint requires non-empty baseUrl and runKey.',
+    );
+  }
+  return crypto
+    .createHash('sha256')
+    .update(`account-profile-agenda-readonly-fixture:${normalizedRunKey}:${normalizedBaseUrl}`)
+    .digest('hex');
 }
 
 function loadAccountProfileAgendaReadonlyFixture() {
@@ -95,5 +111,6 @@ function loadAccountProfileAgendaReadonlyFixture() {
 }
 
 module.exports = {
+  buildAccountProfileAgendaFixtureFingerprint,
   loadAccountProfileAgendaReadonlyFixture,
 };

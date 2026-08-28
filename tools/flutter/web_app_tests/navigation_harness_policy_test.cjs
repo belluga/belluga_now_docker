@@ -339,6 +339,14 @@ function assertUnknownMutationShardFailure(output, message) {
   );
 }
 
+function assertUnknownReadonlyShardFailure(output, message) {
+  assert.match(
+    output,
+    /Unknown readonly shard/,
+    message,
+  );
+}
+
 function directPlaywrightEnv(overrides = {}) {
   const env = {
     ...process.env,
@@ -512,6 +520,40 @@ function assertReadonlyValidationFails({ manifest, list, expectedMessage }) {
     assert.notStrictEqual(result.status, 0, 'readonly validation should fail closed');
     assert.match(`${result.stdout}\n${result.stderr}`, expectedMessage);
   });
+}
+
+function assertReadonlyShardValidationFails({ manifest, list, shard, expectedMessage }) {
+  withTempDir((dir) => {
+    const manifestPath = path.join(dir, 'navigation_mutation_shards.json');
+    const listPath = path.join(dir, 'selected-tests.txt');
+    fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
+    fs.writeFileSync(listPath, list);
+
+    const result = run('node', [shardsScript, 'validate', 'readonly', shard, listPath], {
+      NAV_WEB_SHARD_MANIFEST: manifestPath,
+    });
+    assert.notStrictEqual(result.status, 0, 'readonly shard validation should fail closed');
+    assert.match(`${result.stdout}\n${result.stderr}`, expectedMessage);
+  });
+}
+
+function assertSmokeRunnerResolvesReadonlyShardBeforeListing() {
+  const result = spawnSmokeScriptForPolicyTest('readonly', {
+    NAV_WEB_TEST_TYPE: 'readonly',
+    NAV_DEPLOY_LANE: 'local',
+    NAV_WEB_SHARD: 'missing',
+    NAV_LANDLORD_URL: 'http://localhost',
+    NAV_TENANT_URL: 'http://localhost',
+    PLAYWRIGHT_IGNORE_HTTPS_ERRORS: 'true',
+  });
+  const output = `${result.stdout}\n${result.stderr}`;
+  assert.notStrictEqual(result.status, 0, 'unknown readonly shard must fail before Playwright listing');
+  assertUnknownReadonlyShardFailure(output, 'readonly runner must route NAV_WEB_SHARD through the canonical manifest');
+  assert.doesNotMatch(
+    output,
+    /only supported for the mutation suite/,
+    'readonly shard selection must not be rejected as a mutation-only capability',
+  );
 }
 
 function assertStageMutationWorkflowSuppliesRuntimeCredentials() {
@@ -1276,6 +1318,58 @@ function assertSmokeRunnerIsolatesOutputsPerInvocation() {
     /DEFAULT_OUTPUT_DIR="\$\{NAV_WEB_OUTPUT_DIR:-\$\{RUNNER_DIR\}\/test-results\/\$\{NAV_TEST_RUN_ID\}\/\$\{SUITE\}\}"/,
     'runner must isolate smoke outputs by run id and suite unless NAV_WEB_OUTPUT_DIR is provided explicitly',
   );
+}
+
+function assertSmokeRunnerResolvesRelativeOutputDirFromRepoRoot() {
+  const source = fs.readFileSync(smokeScript, 'utf8');
+  assert.match(
+    source,
+    /if \[\[ -n "\$\{NAV_WEB_OUTPUT_DIR:-\}" && "\$\{NAV_WEB_OUTPUT_DIR\}" != \/\* \]\]; then\s+export NAV_WEB_OUTPUT_DIR="\$\{REPO_ROOT\}\/\$\{NAV_WEB_OUTPUT_DIR\}"/,
+    'runner must resolve relative NAV_WEB_OUTPUT_DIR values against REPO_ROOT before changing directories',
+  );
+
+  const relativeOutputDir = path.posix.join(
+    '.delphi-locks',
+    `navigation-harness-policy-relative-output-${process.pid}-${Date.now()}`,
+  );
+  const rootOutputDir = path.join(repoRoot, relativeOutputDir);
+  const runnerRelativeOutputDir = path.join(
+    repoRoot,
+    'tools',
+    'flutter',
+    'web_app_smoke_runner',
+    relativeOutputDir,
+  );
+  try {
+    const result = spawnSmokeScriptForPolicyTest('mutation', {
+      NAV_DEPLOY_LANE: 'local',
+      NAV_WEB_SHARD: 'missing',
+      NAV_LANDLORD_URL: 'http://localhost',
+      NAV_TENANT_URL: 'http://localhost',
+      PLAYWRIGHT_IGNORE_HTTPS_ERRORS: 'true',
+      NAV_WEB_OUTPUT_DIR: relativeOutputDir,
+    });
+    const output = `${result.stdout}\n${result.stderr}`;
+    assert.notStrictEqual(
+      result.status,
+      0,
+      'relative-output probe must stop on the synthetic missing shard',
+    );
+    assertUnknownMutationShardFailure(
+      output,
+      'relative-output probe must reach shard validation after resolving its output path',
+    );
+    assert.ok(
+      fs.existsSync(path.join(rootOutputDir, 'policy-guard.log')),
+      'relative NAV_WEB_OUTPUT_DIR must resolve from the repository root',
+    );
+    assert.ok(
+      !fs.existsSync(runnerRelativeOutputDir),
+      'relative NAV_WEB_OUTPUT_DIR must not resolve from the smoke-runner directory',
+    );
+  } finally {
+    fs.rmSync(rootOutputDir, { recursive: true, force: true });
+  }
 }
 
 function assertWorkflowTimeoutsCoverWrapperBudgets() {
@@ -2198,6 +2292,25 @@ function assertDirectPlaywrightMutationRejectsGrepSubset() {
   );
 }
 
+function assertDirectPlaywrightMutationAllowsCanonicalManifestShard() {
+  const result = spawnDirectPlaywrightContractProbe(
+    ['test', '--config', './playwright.config.js', '--grep', '@mutation.*NAV-DIR-BRAND-01', '--list'],
+    {
+      NAV_WEB_TEST_TYPE: 'mutation',
+      NAV_DEPLOY_LANE: 'stage',
+      NAV_TENANT_URL: SYNTHETIC_TENANT_URL,
+      NAV_ADMIN_EMAIL: 'policy@example.test',
+      NAV_ADMIN_PASSWORD: 'policy-secret',
+      NAV_WEB_ALLOW_NONLOCAL_MUTATION_HOSTS: '1',
+    },
+  );
+  assert.strictEqual(
+    result.status,
+    0,
+    `direct Playwright mutation manifest shard must remain accepted.\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
+  );
+}
+
 function assertIpv6LoopbackCountsAsLocalHostForRunner() {
   const isolatedEnvFile = path.join(
     os.tmpdir(),
@@ -2447,7 +2560,23 @@ function assertDirectPlaywrightReadonlyRejectsGrepSubset() {
   );
   assert.match(
     `${result.stdout}\n${result.stderr}`,
-    /readonly suite refuses narrowed grep selector .*canonical suite coverage must not be trimmed by ad-hoc grep filters/,
+    /readonly suite refuses narrowed grep selector .*canonical suite coverage must match an approved manifest shard or the full suite marker/,
+  );
+}
+
+function assertDirectPlaywrightReadonlyAllowsCanonicalManifestShard() {
+  const result = spawnDirectPlaywrightContractProbe(
+    ['test', '--config', './playwright.config.js', '--grep', '@readonly.*NAV-APD-AGENDA', '--list'],
+    {
+      NAV_WEB_TEST_TYPE: 'readonly',
+      NAV_DEPLOY_LANE: 'main',
+      NAV_TENANT_URL: SYNTHETIC_TENANT_URL,
+    },
+  );
+  assert.strictEqual(
+    result.status,
+    0,
+    `direct Playwright readonly manifest shard must be accepted.\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
   );
 }
 
@@ -2868,6 +2997,100 @@ function assertManagedFixtureRunScopedFingerprintHelper() {
   );
 }
 
+function assertStandaloneAgendaFixtureUsesCanonicalPlaywrightRuntime() {
+  const fixtureScript = path.join(
+    repoRoot,
+    'tools',
+    'flutter',
+    'web_app_tests',
+    'ensure_account_profile_agenda_readonly_fixture.cjs',
+  );
+  const runtimeHelper = path.join(
+    repoRoot,
+    'tools',
+    'flutter',
+    'web_app_tests',
+    'support',
+    'playwright_runtime.js',
+  );
+  const agendaFixtureContract = path.join(
+    repoRoot,
+    'tools',
+    'flutter',
+    'web_app_tests',
+    'support',
+    'account_profile_agenda_readonly_fixture_contract.js',
+  );
+  const fixtureSource = fs.readFileSync(fixtureScript, 'utf8');
+  assert.match(
+    fixtureSource,
+    /require\('\.\/support\/playwright_runtime'\)/,
+    'standalone Agenda fixture must resolve Playwright through the canonical runtime helper',
+  );
+  assert.doesNotMatch(
+    fixtureSource,
+    /require\(['"]@playwright\/test['"]\)/,
+    'standalone Agenda fixture must not depend on caller cwd/NODE_PATH for Playwright',
+  );
+  assert.match(
+    fixtureSource,
+    /buildAccountProfileAgendaFixtureFingerprint\(\{ baseUrl, runKey \}\)/,
+    'standalone Agenda fixture must use the canonical SHA-256 fingerprint helper before anonymous identity mutation',
+  );
+
+  const result = spawnSync(
+    'node',
+    [
+      '-e',
+      [
+        `const helper = require(${JSON.stringify(runtimeHelper)});`,
+        'const playwright = helper.requirePlaywrightTest();',
+        "if (typeof playwright.request !== 'object') throw new Error('missing Playwright request runtime');",
+        'process.stdout.write(helper.runnerPackage);',
+      ].join('\n'),
+    ],
+    {
+      cwd: os.tmpdir(),
+      env: { ...process.env },
+      encoding: 'utf8',
+    },
+  );
+  assert.strictEqual(
+    result.status,
+    0,
+    `standalone Agenda fixture Playwright resolution must not depend on cwd or NODE_PATH.\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
+  );
+  assert.match(
+    result.stdout,
+    /tools\/flutter\/web_app_smoke_runner\/package\.json/,
+    'standalone Agenda fixture must load the runner-owned Playwright package',
+  );
+
+  const fingerprintProbe = spawnSync(
+    'node',
+    [
+      '-e',
+      [
+        `const helper = require(${JSON.stringify(agendaFixtureContract)});`,
+        "const first = helper.buildAccountProfileAgendaFixtureFingerprint({ baseUrl: 'https://tenant.example.test', runKey: 'policy-run' });",
+        "const second = helper.buildAccountProfileAgendaFixtureFingerprint({ baseUrl: 'https://tenant.example.test', runKey: 'policy-run' });",
+        "const otherRun = helper.buildAccountProfileAgendaFixtureFingerprint({ baseUrl: 'https://tenant.example.test', runKey: 'other-run' });",
+        'process.stdout.write(JSON.stringify({ first, second, otherRun }));',
+      ].join('\n'),
+    ],
+    { cwd: os.tmpdir(), env: { ...process.env }, encoding: 'utf8' },
+  );
+  assert.strictEqual(
+    fingerprintProbe.status,
+    0,
+    `Agenda fixture SHA-256 fingerprint probe must succeed before any network mutation.\nstdout:\n${fingerprintProbe.stdout}\nstderr:\n${fingerprintProbe.stderr}`,
+  );
+  const fingerprints = JSON.parse(fingerprintProbe.stdout);
+  assert.match(fingerprints.first, /^[a-f0-9]{64}$/i, 'Agenda fixture fingerprint must be a canonical 64-hex SHA-256 digest');
+  assert.strictEqual(fingerprints.first, fingerprints.second, 'Agenda fixture fingerprint must be deterministic for the same run and tenant');
+  assert.notStrictEqual(fingerprints.first, fingerprints.otherRun, 'Agenda fixture fingerprint must be scoped by run namespace');
+}
+
 function assertReadonlyManagedFixtureTestsScopeAnonymousFingerprints() {
   const startupSource = fs.readFileSync(
     path.join(repoRoot, 'tools', 'flutter', 'web_app_tests', 'startup_public_bootstrap.readonly.spec.js'),
@@ -2975,6 +3198,17 @@ function assertCheckedInManifestMatchesCurrentSpecTitles() {
     'checked-in readonly manifest must match current @readonly spec titles exactly',
   );
 
+  for (const [shardName, shard] of Object.entries(checkedInManifest.readonly.shards || {})) {
+    const shardRegex = new RegExp(shard.grep_extra);
+    const selected = readonlyActual.filter((title) => shardRegex.test(title)).sort();
+    const expected = [...(shard.expected_titles || [])].sort();
+    assert.deepStrictEqual(
+      selected,
+      expected,
+      `readonly shard "${shardName}" grep_extra must select exactly its expected titles`,
+    );
+  }
+
   const diagnosticActual = collectTaggedTitles('@diagnostic');
   const diagnosticExpected = [...checkedInManifest.diagnostic.expected_titles].sort();
   assert.deepStrictEqual(
@@ -3016,6 +3250,7 @@ assertInviteRecoverableFallbackPublishedSmokeIsRemoved();
 assertReadonlyFavoriteSpecMessageMatchesSuite();
 assertRunnerAlwaysExecutesHarnessPolicyTest();
 assertSmokeRunnerIsolatesOutputsPerInvocation();
+assertSmokeRunnerResolvesRelativeOutputDirFromRepoRoot();
 assertWorkflowTimeoutsCoverWrapperBudgets();
 assertLocalDiagnosticMutationHelperUsesExplicitArtisanCommand();
 assertAdminSessionSecretsAreDerivedFromLogin();
@@ -3034,6 +3269,7 @@ assertDirectPlaywrightMutationRequiresExplicitLaneForNonLocalHosts();
 assertDirectPlaywrightMutationRejectsDeployLaneOnlyForNonLocalHosts();
 assertDirectPlaywrightMutationRejectsBlankExplicitLaneForNonLocalHosts();
 assertDirectPlaywrightMutationRejectsGrepSubset();
+assertDirectPlaywrightMutationAllowsCanonicalManifestShard();
 assertIpv6LoopbackCountsAsLocalHostForRunner();
 assertIpv6LoopbackCountsAsLocalHostForDirectPlaywright();
 assertDirectPlaywrightReadonlyRejectsMutationSpec();
@@ -3042,6 +3278,7 @@ assertDirectPlaywrightReadonlyRejectsTestDirRelativeSpecSelector();
 assertDirectPlaywrightReadonlyRejectsDirectorySelector();
 assertDirectPlaywrightReadonlyRejectsMutationGrep();
 assertDirectPlaywrightReadonlyRejectsGrepSubset();
+assertDirectPlaywrightReadonlyAllowsCanonicalManifestShard();
 assertDirectPlaywrightReadonlyRejectsGrepInvertSuiteTrim();
 assertLaneNavigationResolverUsesCanonicalLocalHost();
 assertFixtureBootstrapRequiresExplicitMutationContract();
@@ -3058,6 +3295,7 @@ assertStageFixturePaginationHelperIsExhaustive();
 assertStageFixturePublicEventListUsesCanonicalPageSize();
 assertCanonicalNavigationTimeoutBudget();
 assertManagedFixtureRunScopedFingerprintHelper();
+assertStandaloneAgendaFixtureUsesCanonicalPlaywrightRuntime();
 assertReadonlyManagedFixtureTestsScopeAnonymousFingerprints();
 assertTaxonomyDisplaySnapshotsUseScopedCanonicalEventListQuery();
 assertStartupReadonlyManagedFixtureSearchUsesCanonicalPagination();
@@ -3228,6 +3466,12 @@ const manifest = {
     expected_titles: ['@diagnostic alpha path'],
   },
   readonly: {
+    shards: {
+      alpha: {
+        grep_extra: 'alpha',
+        expected_titles: ['@readonly alpha path'],
+      },
+    },
     expected_titles: ['@readonly alpha path'],
   },
 };
@@ -3237,6 +3481,16 @@ const unknownShard = run('node', [shardsScript, 'grep', 'mutation', 'missing'], 
 });
 assert.notStrictEqual(unknownShard.status, 0, 'unknown shard id should fail');
 assert.match(`${unknownShard.stdout}\n${unknownShard.stderr}`, /Unknown mutation shard/);
+
+withTempDir((dir) => {
+  const manifestPath = path.join(dir, 'navigation_mutation_shards.json');
+  fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
+  const readonlyShardGrep = run('node', [shardsScript, 'grep', 'readonly', 'alpha'], {
+    NAV_WEB_SHARD_MANIFEST: manifestPath,
+  });
+  assert.strictEqual(readonlyShardGrep.status, 0, 'readonly shard grep must resolve canonically');
+  assert.strictEqual(readonlyShardGrep.stdout, 'alpha');
+});
 
 assertShardValidationFails({
   manifest,
@@ -3263,6 +3517,15 @@ assertReadonlyValidationFails({
   list: '  test › @readonly beta path\n',
   expectedMessage: /Missing expected titles/,
 });
+
+assertReadonlyShardValidationFails({
+  manifest,
+  list: '  test › @readonly beta path\n',
+  shard: 'alpha',
+  expectedMessage: /Missing expected titles/,
+});
+
+assertSmokeRunnerResolvesReadonlyShardBeforeListing();
 
 const rawGrepBypassResult = spawnSmokeScriptForPolicyTest(
   'mutation',

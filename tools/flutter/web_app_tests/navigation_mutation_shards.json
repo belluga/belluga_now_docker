@@ -232,6 +232,14 @@
     ]
   },
   "readonly": {
+    "shards": {
+      "apd-agenda": {
+        "grep_extra": "NAV-APD-AGENDA",
+        "expected_titles": [
+          "@readonly NAV-APD-AGENDA Account Profile Agenda groups managed occurrences by local date"
+        ]
+      }
+    },
     "expected_titles": [
       "@deferred @readonly NAV-APD-01 Discovery profile detail back stack does not reopen stale detail",
       "@deferred @readonly NAV-APD-02..06 and NAV-APD-10 hero, taxonomy, tabs, social removal, and optional favorite empty state are visible",

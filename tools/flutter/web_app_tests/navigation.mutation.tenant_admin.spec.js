@@ -5578,9 +5578,9 @@ test('@mutation U04-ACCOUNT-GROUP-HEAD tenant-admin account-profile group heads 
       createdGroupIdFromResponse,
       'Dedicated nested-group create must return a persisted group id.',
     ).toBeTruthy();
-    await expect(page.getByText('Parceiros', { exact: true })).toBeVisible({
-      timeout: appBootTimeoutMs,
-    });
+    await expect(page.getByRole('button', {
+      name: new RegExp(`^Nome da aba\\s*${escapeRegExp('Parceiros')}$`, 'i'),
+    })).toBeVisible({ timeout: appBootTimeoutMs });
     await expect(page.getByText('0 perfis vinculados', { exact: true })).toBeVisible({
       timeout: appBootTimeoutMs,
     });
@@ -5716,7 +5716,9 @@ test('@mutation U04-ACCOUNT-GROUP-HEAD tenant-admin account-profile group heads 
     }
     await scrollUntilVisible(
       page,
-      page.getByText('Parceiros', { exact: true }),
+      page.getByRole('button', {
+        name: new RegExp(`^Nome da aba\\s*${escapeRegExp('Parceiros')}$`, 'i'),
+      }),
       'U04 persisted group must stay visible after returning from member management.',
     );
     await expect(page.getByText('1 perfil vinculado', { exact: true })).toBeVisible({
@@ -5747,9 +5749,9 @@ test('@mutation U04-ACCOUNT-GROUP-HEAD tenant-admin account-profile group heads 
       timeout: appBootTimeoutMs,
     });
     logStep('u04-group-head', 'first destructive-confirmation cancelled');
-    await expect(page.getByText('Parceiros', { exact: true })).toBeVisible({
-      timeout: appBootTimeoutMs,
-    });
+    await expect(page.getByRole('button', {
+      name: new RegExp(`^Nome da aba\\s*${escapeRegExp('Parceiros')}$`, 'i'),
+    })).toBeVisible({ timeout: appBootTimeoutMs });
     const cancelledDeleteReadback = await fetchAdminProfile(
       api,
       baseUrl,
@@ -5817,9 +5819,9 @@ test('@mutation U04-ACCOUNT-GROUP-HEAD tenant-admin account-profile group heads 
       deleteGroupResponse.status(),
       'Confirmed delete request must succeed against the dedicated authority.',
     ).toBeLessThan(400);
-    await expect(page.getByText('Parceiros', { exact: true })).toHaveCount(0, {
-      timeout: appBootTimeoutMs,
-    });
+    await expect(page.getByRole('button', {
+      name: new RegExp(`^Nome da aba\\s*${escapeRegExp('Parceiros')}$`, 'i'),
+    })).toHaveCount(0, { timeout: appBootTimeoutMs });
     logStep('u04-group-head', 'ui no longer renders the deleted group');
     await expect
       .poll(

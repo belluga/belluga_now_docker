@@ -7,6 +7,7 @@ const {
 const {
   cleanupOnboardedAccounts,
   runCleanupPreservingPrimaryError,
+  runCleanupSteps,
 } = require('./support/account_onboarding_cleanup');
 const {
   executeLocalDockerArtisan,
@@ -240,7 +241,10 @@ async function deleteAccountProfileType(api, baseUrl, token, type) {
       timeout: 15000,
     },
   );
-  expectDeleteSucceeded(response, `Account profile type ${type}`);
+  expect(
+    [200, 202, 204, 404],
+    `Owned account profile type ${type} cleanup must delete the row or confirm it is already absent.`,
+  ).toContain(response.status());
 }
 
 async function createAccountProfile(api, baseUrl, token, profileType, name) {
@@ -263,10 +267,12 @@ async function createAccountProfile(api, baseUrl, token, profileType, name) {
   const profile = data?.account_profile || {};
   const id = profile?.id?.toString() || '';
   expect(id, `Account profile ${name} must return id.`).toBeTruthy();
+  const accountSlug = account?.slug?.toString() || '';
+  expect(accountSlug, `Account profile ${name} must return account slug.`).toBeTruthy();
   return {
     id,
     displayName: textValue(profile?.display_name, name),
-    accountSlug: account?.slug?.toString() || '',
+    accountSlug,
   };
 }
 
@@ -376,7 +382,7 @@ async function openSeededEventFromAdminList(page, baseUrl, title, placement) {
   await card.locator.scrollIntoViewIfNeeded({ timeout: appBootTimeoutMs })
     .catch(() => {});
   await card.locator.click({ timeout: appBootTimeoutMs });
-  await expect(page).toHaveURL(/\/admin\/events\/edit/, {
+  await expect(page).toHaveURL(/\/admin\/events\/[^/]+\/edit(?:\?|$)/, {
     timeout: appBootTimeoutMs,
   });
   await expect(page.getByText('Editar evento').first()).toBeVisible({
@@ -499,58 +505,82 @@ async function closeOccurrenceEditorSheet(page) {
 }
 
 async function assertAdminGroupEditor(page, expectedGroups) {
+  const sectionTitle = page.getByText('Abas de perfis relacionados', { exact: true }).first();
   await scrollUntilVisible(
     page,
-    page.getByText('Abas de perfis relacionados').first(),
+    sectionTitle,
     'Expected tenant-admin related-profile groups section to be visible.',
   );
-  await expect(page.getByText('Abas de perfis relacionados').first())
+  await expect(sectionTitle)
     .toBeVisible({ timeout: appBootTimeoutMs });
+
+  const expectedSummaryTextCounts = new Map();
   for (const group of expectedGroups) {
-    const groupSemantic = page
-      .getByLabel(
-        new RegExp(
-          `Grupo ${escapeRegExp(group.label)}; ${group.selectedCount} item\\(s\\) selecionado\\(s\\)`,
-          'i',
-        ),
-      )
-      .first();
+    const groupLabel = page.getByRole('button', {
+      name: new RegExp(`^Nome da aba\\s*${escapeRegExp(group.label)}$`, 'i'),
+    });
     await scrollUntilVisible(
       page,
-      groupSemantic,
-      `Expected tenant-admin semantic group "${group.label}" to be visible.`,
+      groupLabel.first(),
+      `Expected tenant-admin summary group label "${group.label}" to be visible.`,
     );
-    await expect(groupSemantic).toBeVisible({ timeout: appBootTimeoutMs });
+    await expect(
+      groupLabel,
+      `Expected exactly one tenant-admin summary group label "${group.label}".`,
+    ).toHaveCount(1);
+    await expect(groupLabel).toBeVisible({ timeout: appBootTimeoutMs });
+
+    const summaryText = group.memberCount === 1
+      ? '1 perfil vinculado'
+      : `${group.memberCount} perfis vinculados`;
+    expectedSummaryTextCounts.set(
+      summaryText,
+      (expectedSummaryTextCounts.get(summaryText) || 0) + 1,
+    );
+  }
+
+  for (const [summaryText, expectedCount] of expectedSummaryTextCounts) {
+    await expect(
+      page.getByText(summaryText, { exact: true }),
+      `Expected ${expectedCount} visible summary text instance(s) for "${summaryText}".`,
+    ).toHaveCount(expectedCount);
   }
 }
 
 function adminGroupSemanticLocator(page, group) {
   return page
-    .getByLabel(
-      new RegExp(
-        `Grupo ${escapeRegExp(group.label)}; ${group.selectedCount} item\\(s\\) selecionado\\(s\\)`,
-        'i',
-      ),
-    )
+    .getByRole('button', {
+      name: new RegExp(`^Nome da aba\\s*${escapeRegExp(group.label)}$`, 'i'),
+    })
     .first();
 }
 
 async function expectVisibleAdminGroup(page, group, description) {
   const locator = adminGroupSemanticLocator(page, group);
   await scrollUntilVisible(page, locator, description);
+  await expect(
+    page.getByRole('button', {
+      name: new RegExp(`^Nome da aba\\s*${escapeRegExp(group.label)}$`, 'i'),
+    }),
+    `${description} The occurrence summary must expose exactly one label for ${group.label}.`,
+  ).toHaveCount(1);
   await expect(locator).toBeVisible({ timeout: appBootTimeoutMs });
+  const summaryText = group.selectedCount === 1
+    ? '1 perfil vinculado'
+    : `${group.selectedCount} perfis vinculados`;
+  await expect(
+    page.getByText(summaryText, { exact: true }),
+    `${description} The occurrence summary must expose exactly ${summaryText}.`,
+  ).toHaveCount(1);
 }
 
 async function expectAdminGroupAbsent(page, group, description) {
   await expect
     .poll(
       async () => {
-        const locator = page.getByLabel(
-          new RegExp(
-            `Grupo ${escapeRegExp(group.label)}; ${group.selectedCount} item\\(s\\) selecionado\\(s\\)`,
-            'i',
-          ),
-        );
+        const locator = page.getByRole('button', {
+          name: new RegExp(`^Nome da aba\\s*${escapeRegExp(group.label)}$`, 'i'),
+        });
         const count = await locator.count().catch(() => 0);
         let visibleCount = 0;
         for (let index = 0; index < count; index += 1) {
@@ -612,8 +642,7 @@ async function createPoiCapableProfileType(api, baseUrl, token, suffix) {
   };
 }
 
-async function createPhysicalHost(api, baseUrl, token, suffix) {
-  const profileType = await createPoiCapableProfileType(api, baseUrl, token, suffix);
+async function createPhysicalHost(api, baseUrl, token, profileType, suffix) {
   const response = await api.post(
     buildUrl(baseUrl, '/admin/api/v1/account_onboardings'),
     {
@@ -621,7 +650,7 @@ async function createPhysicalHost(api, baseUrl, token, suffix) {
       data: {
         name: `PW EVG Host ${suffix}`,
         ownership_state: 'unmanaged',
-        profile_type: profileType.type,
+        profile_type: profileType,
         location: {
           lat: -20.671339,
           lng: -40.495395,
@@ -633,11 +662,14 @@ async function createPhysicalHost(api, baseUrl, token, suffix) {
   const payload = await response.json();
   const account = payload?.data?.account || {};
   const profile = payload?.data?.account_profile || {};
+  const id = profile?.id?.toString() || '';
+  const accountSlug = account?.slug?.toString() || '';
+  expect(id, 'Physical host seed must return account profile id.').toBeTruthy();
+  expect(accountSlug, 'Physical host seed must return account slug.').toBeTruthy();
   return {
-    id: profile?.id?.toString() || '',
+    id,
     displayName: textValue(profile?.display_name, `PW EVG Host ${suffix}`),
-    cleanupAccountSlug: account?.slug?.toString() || '',
-    cleanupProfileType: profileType.type,
+    cleanupAccountSlug: accountSlug,
   };
 }
 
@@ -665,16 +697,25 @@ async function createDiagnosticEvent(
     occurrenceParties = undefined,
     occurrences = undefined,
     daysFromNow,
+    registerEvent,
   },
 ) {
-  const resolvedOccurrences = Array.isArray(occurrences)
+  const sourceOccurrences = Array.isArray(occurrences)
     ? occurrences
     : [futureWindow(daysFromNow)];
-  if (occurrenceParties !== undefined && !Array.isArray(occurrences)) {
-    resolvedOccurrences[0].event_parties = occurrenceParties.map((profile) => ({
-      party_ref_id: profile.id,
-    }));
+  const canonicalGroupsByOccurrence = sourceOccurrences.map((occurrence) =>
+    Array.isArray(occurrence.profile_groups) ? occurrence.profile_groups : [],
+  );
+  if (Array.isArray(profileGroups) && profileGroups.length > 0) {
+    canonicalGroupsByOccurrence[0] = [
+      ...profileGroups,
+      ...canonicalGroupsByOccurrence[0],
+    ];
   }
+  const resolvedOccurrences = sourceOccurrences.map((occurrence) => {
+    const { event_parties, profile_groups, ...canonicalOccurrence } = occurrence;
+    return canonicalOccurrence;
+  });
 
   const data = {
     title,
@@ -692,19 +733,12 @@ async function createDiagnosticEvent(
       type: 'account_profile',
       id: host.id,
     },
-    event_parties: eventParties.map((profile) => ({
-      party_ref_id: profile.id,
-    })),
     occurrences: resolvedOccurrences,
     publication: {
       status: 'published',
       publish_at: new Date(Date.now() - 60 * 1000).toISOString(),
     },
   };
-  if (profileGroups !== undefined) {
-    data.profile_groups = profileGroups;
-  }
-
   const response = await api.post(buildUrl(baseUrl, '/admin/api/v1/events'), {
     headers: authHeaders(token),
     data,
@@ -716,7 +750,92 @@ async function createDiagnosticEvent(
     response.status(),
     `Diagnostic event ${title} must be created. Response: ${JSON.stringify(responseBody)}`,
   ).toBe(201);
-  return responseBody?.data;
+  const event = responseBody?.data || {};
+  const eventId = event?.event_id?.toString() || '';
+  expect(eventId, `Diagnostic event ${title} must return event_id before group seeding.`).toBeTruthy();
+  expect(typeof registerEvent, `Diagnostic event ${title} requires an owned-event registrar.`).toBe('function');
+  registerEvent(event);
+  await seedCanonicalOccurrenceProfileGroups(
+    api,
+    baseUrl,
+    token,
+    event,
+    canonicalGroupsByOccurrence,
+    `Diagnostic event ${title}`,
+  );
+  return event;
+}
+
+async function seedCanonicalOccurrenceProfileGroups(
+  api,
+  baseUrl,
+  token,
+  event,
+  groupsByOccurrence,
+  assertionLabel,
+) {
+  const eventId = event?.event_id?.toString() || '';
+  expect(eventId, `${assertionLabel} must expose event_id for group seeding.`).toBeTruthy();
+
+  for (const [occurrenceIndex, groups] of groupsByOccurrence.entries()) {
+    if (!Array.isArray(groups) || groups.length === 0) {
+      continue;
+    }
+    const occurrenceId = occurrenceIdAt(event, occurrenceIndex);
+    for (const group of groups) {
+      const createResponse = await api.post(
+        buildUrl(
+          baseUrl,
+          `/admin/api/v1/events/${eventId}/occurrences/${occurrenceId}/profile_groups`,
+        ),
+        {
+          headers: authHeaders(token),
+          data: { label: group.label },
+        },
+      );
+      const createPayload = await createResponse.json().catch(async () => ({
+        raw: await createResponse.text().catch(() => ''),
+      }));
+      expect(
+        createResponse.status(),
+        `${assertionLabel} must create canonical occurrence group ${group.label}. Response: ${JSON.stringify(createPayload)}`,
+      ).toBe(201);
+      const createdGroups = Array.isArray(createPayload?.data?.profile_groups)
+        ? createPayload.data.profile_groups.filter((candidate) => candidate?.label === group.label)
+        : [];
+      expect(
+        createdGroups,
+        `${assertionLabel} must return exactly one canonical occurrence group matching ${group.label}.`,
+      ).toHaveLength(1);
+      const [createdGroup] = createdGroups;
+      const groupId = createdGroup?.id?.toString() || '';
+      expect(groupId, `${assertionLabel} must return group id for ${group.label}.`).toBeTruthy();
+
+      const memberIds = Array.isArray(group.account_profile_ids)
+        ? group.account_profile_ids
+        : [];
+      if (memberIds.length === 0) {
+        continue;
+      }
+      const membersResponse = await api.patch(
+        buildUrl(
+          baseUrl,
+          `/admin/api/v1/events/${eventId}/occurrences/${occurrenceId}/profile_groups/${groupId}/members`,
+        ),
+        {
+          headers: authHeaders(token),
+          data: { add_ids: memberIds },
+        },
+      );
+      const membersPayload = await membersResponse.json().catch(async () => ({
+        raw: await membersResponse.text().catch(() => ''),
+      }));
+      expect(
+        membersResponse.status(),
+        `${assertionLabel} must patch canonical group members for ${group.label}. Response: ${JSON.stringify(membersPayload)}`,
+      ).toBeLessThan(400);
+    }
+  }
 }
 
 function firstOccurrenceId(event) {
@@ -746,6 +865,31 @@ async function fetchPublicEvent(api, baseUrl, event, occurrenceIndex = 0) {
   expect(response.status(), 'Public event API detail must load.').toBe(200);
   const payload = await response.json();
   return payload?.data || {};
+}
+
+function expectPublicGroupMetadata(event, expectedGroups, assertionLabel) {
+  const groups = Array.isArray(event?.profile_groups) ? event.profile_groups : [];
+  expect(
+    groups.map((group) => group?.label),
+    `${assertionLabel} must expose event-wide aggregated group metadata for the selected detail.`,
+  ).toEqual(expectedGroups.map((group) => group.label));
+
+  for (const expectedGroup of expectedGroups) {
+    const group = groups.find((candidate) => candidate?.label === expectedGroup.label);
+    expect(group, `${assertionLabel} must expose ${expectedGroup.label}.`).toBeTruthy();
+    expect(
+      group?.member_count,
+      `${assertionLabel} must expose ${expectedGroup.label} member_count without eager members.`,
+    ).toBe(expectedGroup.memberCount);
+    expect(
+      group?.profiles,
+      `${assertionLabel} must not eagerly embed ${expectedGroup.label} profiles.`,
+    ).toBeUndefined();
+    expect(
+      typeof group?.members_path === 'string' && group.members_path.trim(),
+      `${assertionLabel} must expose ${expectedGroup.label} lazy members_path.`,
+    ).toBeTruthy();
+  }
 }
 
 async function openEventDetail(page, baseUrl, event, occurrenceIndex = 0) {
@@ -878,28 +1022,28 @@ test('@diagnostic EVG-RUNTIME admin/public event groups honor saved groups, lega
     const typeAPlural = `Tipos Alpha ${suffix}`;
     const typeBPlural = `Tipos Beta ${suffix}`;
     await createAccountProfileType(api, baseUrl, token, typeA, `Tipo Alpha ${suffix}`, typeAPlural);
+    createdProfileTypes.push(typeA);
     await createAccountProfileType(api, baseUrl, token, typeB, `Tipo Beta ${suffix}`, typeBPlural);
-    createdProfileTypes.push(typeA, typeB);
+    createdProfileTypes.push(typeB);
 
-    const [alphaOne, betaOne, alphaTwo, betaTwo] = await Promise.all([
-      createAccountProfile(api, baseUrl, token, typeA, `PW EVG Alpha Um ${suffix}`),
-      createAccountProfile(api, baseUrl, token, typeB, `PW EVG Beta Um ${suffix}`),
-      createAccountProfile(api, baseUrl, token, typeA, `PW EVG Alpha Dois ${suffix}`),
-      createAccountProfile(api, baseUrl, token, typeB, `PW EVG Beta Dois ${suffix}`),
-    ]);
-    createdAccountSlugs.push(
-      alphaOne.accountSlug,
-      betaOne.accountSlug,
-      alphaTwo.accountSlug,
-      betaTwo.accountSlug,
+    const alphaOne = await createAccountProfile(api, baseUrl, token, typeA, `PW EVG Alpha Um ${suffix}`);
+    createdAccountSlugs.push(alphaOne.accountSlug);
+    const betaOne = await createAccountProfile(api, baseUrl, token, typeB, `PW EVG Beta Um ${suffix}`);
+    createdAccountSlugs.push(betaOne.accountSlug);
+    const alphaTwo = await createAccountProfile(api, baseUrl, token, typeA, `PW EVG Alpha Dois ${suffix}`);
+    createdAccountSlugs.push(alphaTwo.accountSlug);
+    const betaTwo = await createAccountProfile(api, baseUrl, token, typeB, `PW EVG Beta Dois ${suffix}`);
+    createdAccountSlugs.push(betaTwo.accountSlug);
+    const hostProfileType = await createPoiCapableProfileType(api, baseUrl, token, suffix);
+    createdProfileTypes.push(hostProfileType.type);
+    const host = await createPhysicalHost(
+      api,
+      baseUrl,
+      token,
+      hostProfileType.type,
+      suffix,
     );
-    const host = await createPhysicalHost(api, baseUrl, token, suffix);
-    if (host.cleanupAccountSlug) {
-      createdAccountSlugs.push(host.cleanupAccountSlug);
-    }
-    if (host.cleanupProfileType) {
-      createdProfileTypes.push(host.cleanupProfileType);
-    }
+    createdAccountSlugs.push(host.cleanupAccountSlug);
     const eventType = await createEventType(api, baseUrl, token, suffix);
     createdEventTypeIds.push(eventType?.id?.toString() || '');
 
@@ -923,19 +1067,28 @@ test('@diagnostic EVG-RUNTIME admin/public event groups honor saved groups, lega
         },
       ],
       daysFromNow: 11,
+      registerEvent: (event) => createdEvents.push(event),
     });
-    createdEvents.push(groupedEvent);
     logDiagnosticStep('created grouped event');
 
     const legacyEvent = await createDiagnosticEvent(api, baseUrl, token, {
       title: `PW EVG Legado Sem Grupos ${suffix}`,
       eventType,
       host,
-      eventParties: [alphaOne, betaOne],
+      profileGroups: [
+        {
+          label: typeAPlural,
+          account_profile_ids: [alphaOne.id],
+        },
+        {
+          label: typeBPlural,
+          account_profile_ids: [betaOne.id],
+        },
+      ],
       daysFromNow: 12,
+      registerEvent: (event) => createdEvents.push(event),
     });
-    createdEvents.push(legacyEvent);
-    logDiagnosticStep('created legacy fallback event');
+    logDiagnosticStep('created canonical type-group event');
 
     const inconsistentEvent = await createDiagnosticEvent(api, baseUrl, token, {
       title: `PW EVG Historico Inconsistente ${suffix}`,
@@ -951,14 +1104,9 @@ test('@diagnostic EVG-RUNTIME admin/public event groups honor saved groups, lega
         },
       ],
       daysFromNow: 13,
+      registerEvent: (event) => createdEvents.push(event),
     });
-    createdEvents.push(inconsistentEvent);
-    mutateEventProfileGroupsDirectly({
-      tenantId,
-      eventId: inconsistentEvent.event_id,
-      profileIdToAppend: betaOne.id,
-    });
-    logDiagnosticStep('created and mutated inconsistent event');
+    logDiagnosticStep('created canonical single-member event');
 
     const multiOccurrenceEvent = await createDiagnosticEvent(api, baseUrl, token, {
       title: `PW EVG Multi Ocorrencias ${suffix}`,
@@ -1011,8 +1159,8 @@ test('@diagnostic EVG-RUNTIME admin/public event groups honor saved groups, lega
           ],
         },
       ],
+      registerEvent: (event) => createdEvents.push(event),
     });
-    createdEvents.push(multiOccurrenceEvent);
     logDiagnosticStep('created multi-occurrence event');
 
     const overlapEvent = await createDiagnosticEvent(api, baseUrl, token, {
@@ -1047,30 +1195,26 @@ test('@diagnostic EVG-RUNTIME admin/public event groups honor saved groups, lega
           ],
         },
       ],
+      registerEvent: (event) => createdEvents.push(event),
     });
-    createdEvents.push(overlapEvent);
     logDiagnosticStep('created explicit overlap event');
 
     const groupedApi = await fetchPublicEvent(api, baseUrl, groupedEvent);
-    expect(groupedApi.profile_groups.map((group) => group.label)).toEqual([
-      'Bandas Customizadas',
-      'Expositores Curados',
-    ]);
-    expect(groupedApi.profile_groups.flatMap((group) => group.profiles.map((profile) => profile.id)))
-      .toEqual([alphaOne.id, betaOne.id, alphaTwo.id, betaTwo.id]);
+    expectPublicGroupMetadata(groupedApi, [
+      { label: 'Bandas Customizadas', memberCount: 2 },
+      { label: 'Expositores Curados', memberCount: 2 },
+    ], 'Grouped event public detail');
 
     const legacyApi = await fetchPublicEvent(api, baseUrl, legacyEvent);
-    expect(legacyApi.profile_groups.map((group) => group.label).sort()).toEqual([
-      typeAPlural,
-      typeBPlural,
-    ].sort());
+    expectPublicGroupMetadata(legacyApi, [
+      { label: typeAPlural, memberCount: 1 },
+      { label: typeBPlural, memberCount: 1 },
+    ], 'Canonical type-group event public detail');
 
     const inconsistentApi = await fetchPublicEvent(api, baseUrl, inconsistentEvent);
-    expect(inconsistentApi.profile_groups.map((group) => group.label)).toEqual([
-      'Historico Customizado',
-    ]);
-    expect(inconsistentApi.profile_groups[0].profiles.map((profile) => profile.id))
-      .toEqual([alphaOne.id]);
+    expectPublicGroupMetadata(inconsistentApi, [
+      { label: 'Historico Customizado', memberCount: 1 },
+    ], 'Single-member event public detail');
 
     const multiOccurrenceFirstApi = await fetchPublicEvent(
       api,
@@ -1078,14 +1222,10 @@ test('@diagnostic EVG-RUNTIME admin/public event groups honor saved groups, lega
       multiOccurrenceEvent,
       0,
     );
-    expect(multiOccurrenceFirstApi.profile_groups.map((group) => group.label))
-      .toEqual(['Palco Sexta', 'Palco Sabado']);
-    expect(
-      multiOccurrenceFirstApi.profile_groups[0].profiles.map((profile) => profile.id),
-    ).toEqual([alphaOne.id, betaOne.id]);
-    expect(
-      multiOccurrenceFirstApi.profile_groups[1].profiles.map((profile) => profile.id),
-    ).toEqual([alphaTwo.id, betaTwo.id]);
+    expectPublicGroupMetadata(multiOccurrenceFirstApi, [
+      { label: 'Palco Sexta', memberCount: 2 },
+      { label: 'Palco Sabado', memberCount: 2 },
+    ], 'First multi-occurrence public detail');
 
     const multiOccurrenceSecondApi = await fetchPublicEvent(
       api,
@@ -1093,14 +1233,10 @@ test('@diagnostic EVG-RUNTIME admin/public event groups honor saved groups, lega
       multiOccurrenceEvent,
       1,
     );
-    expect(multiOccurrenceSecondApi.profile_groups.map((group) => group.label))
-      .toEqual(['Palco Sexta', 'Palco Sabado']);
-    expect(
-      multiOccurrenceSecondApi.profile_groups[0].profiles.map((profile) => profile.id),
-    ).toEqual([alphaOne.id, betaOne.id]);
-    expect(
-      multiOccurrenceSecondApi.profile_groups[1].profiles.map((profile) => profile.id),
-    ).toEqual([alphaTwo.id, betaTwo.id]);
+    expectPublicGroupMetadata(multiOccurrenceSecondApi, [
+      { label: 'Palco Sexta', memberCount: 2 },
+      { label: 'Palco Sabado', memberCount: 2 },
+    ], 'Second multi-occurrence public detail');
 
     const overlapApi = await fetchPublicEvent(
       api,
@@ -1108,14 +1244,10 @@ test('@diagnostic EVG-RUNTIME admin/public event groups honor saved groups, lega
       overlapEvent,
       1,
     );
-    expect(overlapApi.profile_groups.map((group) => group.label))
-      .toEqual(['Bandas Customizadas', 'Outro Grupo']);
-    expect(
-      overlapApi.profile_groups[0].profiles.map((profile) => profile.id),
-    ).toEqual([alphaOne.id, betaOne.id]);
-    expect(
-      overlapApi.profile_groups[1].profiles.map((profile) => profile.id),
-    ).toEqual([alphaOne.id, betaOne.id]);
+    expectPublicGroupMetadata(overlapApi, [
+      { label: 'Bandas Customizadas', memberCount: 2 },
+      { label: 'Outro Grupo', memberCount: 2 },
+    ], 'Second overlap occurrence public detail');
     logDiagnosticStep('public API assertions passed');
 
     const groupedPlacement = await locateAdminEventListPlacement(
@@ -1157,8 +1289,8 @@ test('@diagnostic EVG-RUNTIME admin/public event groups honor saved groups, lega
       await assertAdminGroupEditor(
         adminRuntime.page,
         [
-          { label: 'Bandas Customizadas', selectedCount: 2 },
-          { label: 'Expositores Curados', selectedCount: 2 },
+          { label: 'Bandas Customizadas', memberCount: 2 },
+          { label: 'Expositores Curados', memberCount: 2 },
         ],
       );
 
@@ -1171,8 +1303,8 @@ test('@diagnostic EVG-RUNTIME admin/public event groups honor saved groups, lega
       await assertAdminGroupEditor(
         adminRuntime.page,
         [
-          { label: typeAPlural, selectedCount: 1 },
-          { label: typeBPlural, selectedCount: 1 },
+          { label: typeAPlural, memberCount: 1 },
+          { label: typeBPlural, memberCount: 1 },
         ],
       );
 
@@ -1185,7 +1317,7 @@ test('@diagnostic EVG-RUNTIME admin/public event groups honor saved groups, lega
       await assertAdminGroupEditor(
         adminRuntime.page,
         [
-          { label: 'Historico Customizado', selectedCount: 1 },
+          { label: 'Historico Customizado', memberCount: 1 },
         ],
       );
       await expect(
@@ -1305,8 +1437,8 @@ test('@diagnostic EVG-RUNTIME admin/public event groups honor saved groups, lega
         'Abertura Palco Sexta',
         'Switching occurrence must change programming items.',
       );
-      await expectVisibleText(page, 'Palco Sexta');
       await expectVisibleText(page, 'Palco Sabado');
+      await expectVisibleText(page, 'Palco Sexta');
       await assertTabMembers(page, 'Palco Sexta', [
         alphaOne.displayName,
         betaOne.displayName,
@@ -1335,8 +1467,8 @@ test('@diagnostic EVG-RUNTIME admin/public event groups honor saved groups, lega
       ]);
 
       await openEventDetail(page, baseUrl, multiOccurrenceEvent, 1);
-      await expectVisibleText(page, 'Palco Sexta');
       await expectVisibleText(page, 'Palco Sabado');
+      await expectVisibleText(page, 'Palco Sexta');
       await assertTabMembers(page, 'Palco Sexta', [
         alphaOne.displayName,
         betaOne.displayName,
@@ -1347,8 +1479,8 @@ test('@diagnostic EVG-RUNTIME admin/public event groups honor saved groups, lega
       ]);
 
       await openEventDetail(page, baseUrl, overlapEvent, 1);
-      await expectVisibleText(page, 'Bandas Customizadas');
       await expectVisibleText(page, 'Outro Grupo');
+      await expectVisibleText(page, 'Bandas Customizadas');
       await assertTabMembers(page, 'Bandas Customizadas', [
         alphaOne.displayName,
         betaOne.displayName,
@@ -1377,21 +1509,20 @@ test('@diagnostic EVG-RUNTIME admin/public event groups honor saved groups, lega
             baseUrl,
             deviceName: 'playwright-event-profile-groups-runtime-cleanup',
           });
-          for (const event of createdEvents.reverse()) {
-            await deleteEvent(cleanupApi, baseUrl, token, event);
-          }
-          await cleanupOnboardedAccounts(
-            cleanupApi,
-            baseUrl,
-            token,
-            createdAccountSlugs.reverse(),
-          );
-          for (const eventTypeId of createdEventTypeIds.reverse()) {
-            await deleteEventType(cleanupApi, baseUrl, token, eventTypeId);
-          }
-          for (const profileType of createdProfileTypes.reverse()) {
-            await deleteAccountProfileType(cleanupApi, baseUrl, token, profileType);
-          }
+          await runCleanupSteps([
+            ...[...createdEvents].reverse().map((event) => () =>
+              deleteEvent(cleanupApi, baseUrl, token, event)),
+            () => cleanupOnboardedAccounts(
+              cleanupApi,
+              baseUrl,
+              token,
+              [...createdAccountSlugs].reverse(),
+            ),
+            ...[...createdProfileTypes].reverse().map((profileType) => () =>
+              deleteAccountProfileType(cleanupApi, baseUrl, token, profileType)),
+            ...[...createdEventTypeIds].reverse().map((eventTypeId) => () =>
+              deleteEventType(cleanupApi, baseUrl, token, eventTypeId)),
+          ]);
           logDiagnosticStep('cleanup completed');
         } finally {
           await cleanupApi.dispose();

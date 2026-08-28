@@ -136,14 +136,14 @@ function expectedSuiteMarker(suiteType) {
   return `@${suiteType}`;
 }
 
-function allowedCanonicalMutationGrepValues() {
+function allowedCanonicalShardedGrepValues(suiteType) {
   const manifestPath = path.resolve(__dirname, '..', 'navigation_mutation_shards.json');
   const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
-  const shards = manifest?.mutation?.shards || {};
+  const shards = manifest?.[suiteType]?.shards || {};
   return Object.values(shards)
     .map((shard) => shard?.grep_extra?.toString().trim())
     .filter(Boolean)
-    .map((grepExtra) => `${expectedSuiteMarker('mutation')}.*${grepExtra}`);
+    .map((grepExtra) => `${expectedSuiteMarker(suiteType)}.*${grepExtra}`);
 }
 
 function extractSuiteMarkers(source) {
@@ -264,11 +264,11 @@ function assertGrepValuesCompatibleWithSuite(suiteType, grepValues) {
   }
 
   const normalized = grepValues[0].toString().trim();
-  if (suiteType === 'mutation') {
+  if (['mutation', 'readonly'].includes(suiteType)) {
     if (normalized === expectedMarker) {
       return;
     }
-    if (allowedCanonicalMutationGrepValues().includes(normalized)) {
+    if (allowedCanonicalShardedGrepValues(suiteType).includes(normalized)) {
       return;
     }
     throw new Error(
