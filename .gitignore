@@ -3,6 +3,8 @@
 .env.local.tunnel
 .env.local.navigation
 tools/flutter/.navigation_harness_policy_probe_*.sh
+/.delphi-locks/
+/.playwright-mcp/
 # exclude everything
 application/*
 .idea/*

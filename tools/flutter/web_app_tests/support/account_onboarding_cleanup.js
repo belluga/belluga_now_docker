@@ -155,10 +155,12 @@ async function cleanupOnboardedAccount(
   let lastProbeError = null;
   let confirmedStillExists = false;
   let legacyOwnershipNormalizationAttempted = false;
+  let archiveNeedsFinalization = false;
 
   for (let attempt = 1; attempt <= boundedAttempts; attempt += 1) {
     let response;
     let usedForceDelete = false;
+    let actionWasForceDelete = false;
     try {
       usedForceDelete = typeof api.post === 'function';
       response = usedForceDelete
@@ -180,6 +182,7 @@ async function cleanupOnboardedAccount(
             requestTimeoutMs: boundedRequestTimeoutMs,
           },
         );
+      actionWasForceDelete = usedForceDelete;
     } catch (error) {
       console.warn(
         `[cleanupOnboardedAccount] force-delete attempt ${attempt} for ${slug} threw ${error}.`,
@@ -205,9 +208,25 @@ async function cleanupOnboardedAccount(
         },
       );
       status = response.status();
+      actionWasForceDelete = false;
+      if (status >= 200 && status < 300) {
+        archiveNeedsFinalization = true;
+      }
     }
     if (status === 404) {
-      return;
+      if (archiveNeedsFinalization && actionWasForceDelete) {
+        const stillExists = await accountStillExists(api, baseUrl, token, slug, {
+          requestTimeoutMs: boundedRequestTimeoutMs,
+        });
+        if (!stillExists) {
+          return;
+        }
+      } else {
+        return;
+      }
+    }
+    if (actionWasForceDelete && status >= 200 && status < 300) {
+      archiveNeedsFinalization = false;
     }
     if (status === 422 && !legacyOwnershipNormalizationAttempted) {
       legacyOwnershipNormalizationAttempted = true;
@@ -239,10 +258,23 @@ async function cleanupOnboardedAccount(
             {
               requestTimeoutMs: boundedRequestTimeoutMs,
             },
-          );
+        );
         status = response.status();
+        actionWasForceDelete = typeof api.post === 'function';
         if (status === 404) {
-          return;
+          if (archiveNeedsFinalization && actionWasForceDelete) {
+            const stillExists = await accountStillExists(api, baseUrl, token, slug, {
+              requestTimeoutMs: boundedRequestTimeoutMs,
+            });
+            if (!stillExists) {
+              return;
+            }
+          } else {
+            return;
+          }
+        }
+        if (actionWasForceDelete && status >= 200 && status < 300) {
+          archiveNeedsFinalization = false;
         }
       }
     }
@@ -268,8 +300,14 @@ async function cleanupOnboardedAccount(
       continue;
     }
 
-    if (!stillExists) {
+    if (!stillExists && !archiveNeedsFinalization) {
       return;
+    }
+
+    if (archiveNeedsFinalization) {
+      console.warn(
+        `[cleanupOnboardedAccount] archived row for ${slug} still requires force-delete finalization.`,
+      );
     }
 
     confirmedStillExists = true;

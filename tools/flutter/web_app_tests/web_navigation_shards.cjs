@@ -9,14 +9,6 @@ const manifestPath = process.env.NAV_WEB_SHARD_MANIFEST
   : path.join(__dirname, 'navigation_mutation_shards.json');
 const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
 
-function mutationManifest() {
-  const mutation = manifest.mutation;
-  if (!mutation || !mutation.shards) {
-    throw new Error('Missing mutation shard manifest.');
-  }
-  return mutation;
-}
-
 function suiteManifest(suiteName) {
   const suiteManifestValue = manifest[suiteName];
   if (!suiteManifestValue) {
@@ -25,26 +17,80 @@ function suiteManifest(suiteName) {
   return suiteManifestValue;
 }
 
-function shardFor(id) {
-  const shard = mutationManifest().shards[id];
+function shardedSuiteManifest(suiteName) {
+  const suiteValue = suiteManifest(suiteName);
+  if (!suiteValue.shards) {
+    throw new Error(`Missing ${suiteName} shard manifest.`);
+  }
+  return suiteValue;
+}
+
+function shardFor(suiteName, id) {
+  const suiteValue = shardedSuiteManifest(suiteName);
+  const shard = suiteValue.shards[id];
   if (!shard) {
-    const names = Object.keys(mutationManifest().shards).sort().join(', ');
-    throw new Error(`Unknown mutation shard "${id}". Expected one of: ${names}`);
+    const names = Object.keys(suiteValue.shards).sort().join(', ');
+    throw new Error(`Unknown ${suiteName} shard "${id}". Expected one of: ${names}`);
   }
   return shard;
 }
 
-function expectedTitles(id) {
+function suiteGrep(suiteName) {
+  return suiteName === 'readonly' ? '@readonly(?:\\s|$)' : `@${suiteName}`;
+}
+
+function shardGrep(suiteName, id) {
+  const shard = shardFor(suiteName, id);
+  const explicit = shard.grep?.toString().trim();
+  if (explicit) {
+    return explicit;
+  }
+  const grepExtra = shard.grep_extra?.toString().trim();
+  if (!grepExtra) {
+    throw new Error(`Missing ${suiteName} shard grep selector for "${id}".`);
+  }
+  return `${suiteGrep(suiteName)}.*${grepExtra}`;
+}
+
+function assertShardRuntimeContract(suiteName, id) {
+  const shard = shardFor(suiteName, id);
+  const lane = (process.env.NAV_DEPLOY_LANE || 'local').trim().toLowerCase();
+  const allowedLanes = Array.isArray(shard.allowed_lanes) ? shard.allowed_lanes : [];
+  if (allowedLanes.length > 0 && !allowedLanes.includes(lane)) {
+    throw new Error(
+      `${suiteName} shard "${id}" is restricted to NAV_DEPLOY_LANE=${allowedLanes.join('|')}.`,
+    );
+  }
+  for (const name of Array.isArray(shard.required_env) ? shard.required_env : []) {
+    if (!process.env[name]?.toString().trim()) {
+      throw new Error(
+        `${suiteName} shard "${id}" requires ${name}; no ambient fixture fallback is allowed.`,
+      );
+    }
+  }
+  const requiredValues = shard.required_env_values || {};
+  for (const [name, expected] of Object.entries(requiredValues)) {
+    const actual = process.env[name]?.toString().trim() || '';
+    if (actual !== expected) {
+      throw new Error(
+        `${suiteName} shard "${id}" requires ${name}=${expected}; no ambient fixture fallback is allowed.`,
+      );
+    }
+  }
+}
+
+function expectedShardedTitles(suiteName, id) {
+  const suiteValue = shardedSuiteManifest(suiteName);
   if (!id || id === 'all') {
     return [
       ...new Set(
-        Object.values(mutationManifest().shards).flatMap(
+        Object.values(suiteValue.shards).flatMap(
           (shard) => shard.expected_titles || [],
         ),
       ),
     ].sort();
   }
-  return [...(shardFor(id).expected_titles || [])].sort();
+  return [...(shardFor(suiteName, id).expected_titles || [])].sort();
 }
 
 function expectedSuiteTitles(suiteName) {
@@ -102,10 +148,18 @@ function expandDiff(expectedCounts, actualCounts, mode) {
 
 try {
   if (command === 'grep') {
-    if (suite !== 'mutation') {
-      throw new Error('Shard grep selection is only defined for mutation suite.');
+    if (!['mutation', 'readonly'].includes(suite)) {
+      throw new Error('Shard grep selection is only defined for mutation or readonly suites.');
     }
-    process.stdout.write(shardFor(shardOrAll).grep_extra || '');
+    process.stdout.write(shardGrep(suite, shardOrAll));
+    process.exit(0);
+  }
+
+  if (command === 'assert-runtime') {
+    if (!['mutation', 'readonly'].includes(suite)) {
+      throw new Error('Shard runtime contracts are only defined for mutation or readonly suites.');
+    }
+    assertShardRuntimeContract(suite, shardOrAll);
     process.exit(0);
   }
 
@@ -114,8 +168,8 @@ try {
       throw new Error('Missing Playwright --list output path.');
     }
 
-    const expected = suite === 'mutation'
-      ? expectedTitles(shardOrAll)
+    const expected = ['mutation', 'readonly'].includes(suite)
+      ? expectedShardedTitles(suite, shardOrAll)
       : expectedSuiteTitles(suite);
     const actual = parseListedTitles(listPath);
     const expectedCounts = countTitles(expected);
@@ -135,8 +189,8 @@ try {
     }
 
     console.log(
-      suite === 'mutation'
-        ? `Validated mutation shard "${shardOrAll || 'all'}" selects ${actual.length} expected test(s).`
+      ['mutation', 'readonly'].includes(suite)
+        ? `Validated ${suite} shard "${shardOrAll || 'all'}" selects ${actual.length} expected test(s).`
         : `Validated ${suite} suite selects ${actual.length} expected test(s).`,
     );
     for (const title of actual) {
@@ -145,7 +199,7 @@ try {
     process.exit(0);
   }
 
-  throw new Error(`Unknown command "${command}". Expected grep or validate.`);
+  throw new Error(`Unknown command "${command}". Expected grep, assert-runtime or validate.`);
 } catch (error) {
   console.error(error.message);
   process.exit(1);

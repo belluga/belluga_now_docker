@@ -2345,7 +2345,7 @@ if ! command -v node >/dev/null 2>&1; then
   exit 1
 fi
 
-node --test tools/flutter/web_app_tests/navigation_harness_policy_test.cjs >/dev/null
+node --test tools/flutter/web_app_tests/navigation_harness_policy_test.cjs
 
 bash .github/scripts/prove_web_metadata_main_contract.sh >/dev/null
 bash .github/scripts/prove_flutter_release_tag_contract.sh >/dev/null

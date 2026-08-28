@@ -4,7 +4,7 @@
       "apd-rich-text": {
         "grep_extra": "account-profile rich text",
         "expected_titles": [
-          "@mutation tenant-admin account-profile rich text persists and renders on admin and public surfaces"
+          "@mutation tenant-admin account-profile rich text toolbar authors HTTPS link, persists, reads back, taps in public detail, and records tap outcome"
         ]
       },
       "apd-occurrence-first": {
@@ -34,7 +34,7 @@
       "event-rich-text": {
         "grep_extra": "event rich text",
         "expected_titles": [
-          "@mutation tenant-admin event rich text persists and renders in public Sobre"
+          "@mutation tenant-admin event rich text toolbar authors HTTPS link, persists, reads back, taps in public Sobre, and records tap outcome"
         ]
       },
       "v0208-closeout": {
@@ -232,6 +232,21 @@
     ]
   },
   "readonly": {
+    "shards": {
+      "apd-agenda": {
+        "grep_extra": "NAV-APD-AGENDA",
+        "grep": "@readonly-fixture(?:\\s|$).*NAV-APD-AGENDA",
+        "allowed_lanes": [
+          "local"
+        ],
+        "required_env_values": {
+          "NAV_ACCOUNT_PROFILE_AGENDA_READONLY_FIXTURE": "1"
+        },
+        "expected_titles": [
+          "@readonly-fixture NAV-APD-AGENDA Account Profile Agenda groups managed occurrences by local date"
+        ]
+      }
+    },
     "expected_titles": [
       "@deferred @readonly NAV-APD-01 Discovery profile detail back stack does not reopen stale detail",
       "@deferred @readonly NAV-APD-02..06 and NAV-APD-10 hero, taxonomy, tabs, social removal, and optional favorite empty state are visible",
