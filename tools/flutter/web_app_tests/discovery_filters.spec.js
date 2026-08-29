@@ -7,6 +7,7 @@ const {
 const {
   cleanupOnboardedAccounts,
   runCleanupPreservingPrimaryError,
+  runCleanupSteps,
 } = require('./support/account_onboarding_cleanup');
 const {
   installFailureCollectors,
@@ -1441,6 +1442,8 @@ async function createAccountProfileType(
     isQueryable = true,
     isPubliclyNavigable = true,
     isPubliclyDiscoverable = true,
+    isPoiEnabled = false,
+    isReferenceLocationEnabled = false,
     icon,
     color,
     iconColor = '#FFFFFF',
@@ -1463,6 +1466,8 @@ async function createAccountProfileType(
           is_publicly_navigable: isPubliclyNavigable,
           is_favoritable: isFavoritable,
           is_publicly_discoverable: isPubliclyDiscoverable,
+          is_poi_enabled: isPoiEnabled,
+          is_reference_location_enabled: isReferenceLocationEnabled,
           has_taxonomies: allowedTaxonomies.length > 0,
         },
         visual: {
@@ -1480,12 +1485,27 @@ async function createAccountProfileType(
   return response.json();
 }
 
+async function createOwnedPoiCapableProfileType(api, baseUrl, token) {
+  const temporaryType = `pw-hd10-venue-${Date.now()}`;
+  await createAccountProfileType(api, baseUrl, token, {
+    type: temporaryType,
+    label: 'PW HD10 Venue',
+    allowedTaxonomies: [],
+    isFavoritable: false,
+    isPoiEnabled: true,
+    isReferenceLocationEnabled: true,
+    icon: 'place',
+    color: '#E53935',
+  });
+  return temporaryType;
+}
+
 async function deleteAccountProfileType(api, baseUrl, token, type) {
   if (!type) {
     return;
   }
 
-  await api.delete(
+  const response = await api.delete(
     buildUrl(baseUrl, `/admin/api/v1/account_profile_types/${encodeURIComponent(type)}`),
     {
       headers: authHeaders(token),
@@ -1493,6 +1513,10 @@ async function deleteAccountProfileType(api, baseUrl, token, type) {
       timeout: apiRequestTimeoutMs,
     },
   );
+  expect(
+    [200, 202, 204, 404],
+    `Owned account profile type ${type} cleanup must delete the row or confirm it is already absent.`,
+  ).toContain(response.status());
 }
 
 function decodePng(buffer) {
@@ -2016,6 +2040,7 @@ test('@mutation Home filters honor Event Type taxonomy compatibility, hide zero-
   const collectors = installFailureCollectors(page);
   let session = null;
   let physicalHost = null;
+  let ownedPoiProfileType = null;
   let typeAId = null;
   let typeBId = null;
   let typeCId = null;
@@ -2094,11 +2119,16 @@ test('@mutation Home filters honor Event Type taxonomy compatibility, hide zero-
       `hd10-no-results-${unique}`,
     ]));
 
+    ownedPoiProfileType = await createOwnedPoiCapableProfileType(
+      api,
+      baseUrl,
+      session.token,
+    );
     physicalHost = await createNearbyAccountProfile(
       api,
       baseUrl,
       session.token,
-      'venue',
+      ownedPoiProfileType,
       `HD10 Venue ${unique}`,
     );
 
@@ -2256,21 +2286,23 @@ test('@mutation Home filters honor Event Type taxonomy compatibility, hide zero-
   } finally {
     await runCleanupPreservingPrimaryError(primaryError, async () => {
       try {
-        for (const eventId of createdEventIds.reverse()) {
-          await deleteEvent(api, baseUrl, session?.token, eventId);
-        }
-        await cleanupOnboardedAccounts(
-          api,
-          baseUrl,
-          session?.token,
-          [physicalHost?.accountSlug].filter(Boolean),
-        );
-        await deleteEventType(api, baseUrl, session?.token, typeCId);
-        await deleteEventType(api, baseUrl, session?.token, typeBId);
-        await deleteEventType(api, baseUrl, session?.token, typeAId);
-        await deleteEventType(api, baseUrl, session?.token, typeDId);
-        await deleteTaxonomy(api, baseUrl, session?.token, taxonomyBId);
-        await deleteTaxonomy(api, baseUrl, session?.token, taxonomyAId);
+        await runCleanupSteps([
+          ...[...createdEventIds].reverse().map((eventId) => () =>
+            deleteEvent(api, baseUrl, session?.token, eventId)),
+          () => cleanupOnboardedAccounts(
+            api,
+            baseUrl,
+            session?.token,
+            [physicalHost?.accountSlug].filter(Boolean),
+          ),
+          () => deleteAccountProfileType(api, baseUrl, session?.token, ownedPoiProfileType),
+          () => deleteEventType(api, baseUrl, session?.token, typeCId),
+          () => deleteEventType(api, baseUrl, session?.token, typeBId),
+          () => deleteEventType(api, baseUrl, session?.token, typeAId),
+          () => deleteEventType(api, baseUrl, session?.token, typeDId),
+          () => deleteTaxonomy(api, baseUrl, session?.token, taxonomyBId),
+          () => deleteTaxonomy(api, baseUrl, session?.token, taxonomyAId),
+        ]);
       } finally {
         await api.dispose();
       }
@@ -2474,34 +2506,18 @@ test('@mutation Profile Discovery hides non-publicly-discoverable types and keep
   } finally {
     await runCleanupPreservingPrimaryError(primaryError, async () => {
       try {
-        await cleanupOnboardedAccounts(
-          api,
-          baseUrl,
-          session?.token,
-          [
-            visibleProfile?.accountSlug,
-            hiddenProfile?.accountSlug,
-          ].filter(Boolean),
-        );
-        await deleteAccountProfileType(
-          api,
-          baseUrl,
-          session?.token,
-          hiddenType?.data?.type?.toString() || '',
-        );
-        await deleteAccountProfileType(
-          api,
-          baseUrl,
-          session?.token,
-          visibleEmptyType?.data?.type?.toString() || '',
-        );
-        await deleteAccountProfileType(
-          api,
-          baseUrl,
-          session?.token,
-          visibleType?.data?.type?.toString() || '',
-        );
-        await deleteTaxonomy(api, baseUrl, session?.token, taxonomyId);
+        await runCleanupSteps([
+          () => cleanupOnboardedAccounts(
+            api,
+            baseUrl,
+            session?.token,
+            [visibleProfile?.accountSlug, hiddenProfile?.accountSlug].filter(Boolean),
+          ),
+          () => deleteAccountProfileType(api, baseUrl, session?.token, hiddenType?.data?.type?.toString() || ''),
+          () => deleteAccountProfileType(api, baseUrl, session?.token, visibleEmptyType?.data?.type?.toString() || ''),
+          () => deleteAccountProfileType(api, baseUrl, session?.token, visibleType?.data?.type?.toString() || ''),
+          () => deleteTaxonomy(api, baseUrl, session?.token, taxonomyId),
+        ]);
       } finally {
         await api.dispose();
       }

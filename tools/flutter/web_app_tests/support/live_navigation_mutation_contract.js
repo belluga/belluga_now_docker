@@ -133,17 +133,79 @@ function resolveSuiteType() {
 }
 
 function expectedSuiteMarker(suiteType) {
-  return `@${suiteType}`;
+  // Fixture-owned readonly tests are deliberately outside the full readonly
+  // package. They are selected by their approved manifest shard instead.
+  return suiteType === 'readonly' ? '@readonly(?:\\s|$)' : `@${suiteType}`;
 }
 
-function allowedCanonicalMutationGrepValues() {
+function allowedFullSuiteGrepValues(suiteType) {
+  // Playwright combines CLI grep with the config grep. Keep the legacy
+  // @readonly CLI spelling admissible for direct config probes; the config
+  // still contributes the boundary-aware full-suite selector.
+  return suiteType === 'readonly'
+    ? [expectedSuiteMarker(suiteType), '@readonly']
+    : [expectedSuiteMarker(suiteType)];
+}
+
+function allowedCanonicalShardedGrepValues(suiteType) {
   const manifestPath = path.resolve(__dirname, '..', 'navigation_mutation_shards.json');
   const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
-  const shards = manifest?.mutation?.shards || {};
+  const shards = manifest?.[suiteType]?.shards || {};
   return Object.values(shards)
-    .map((shard) => shard?.grep_extra?.toString().trim())
-    .filter(Boolean)
-    .map((grepExtra) => `${expectedSuiteMarker('mutation')}.*${grepExtra}`);
+    .map((shard) => {
+      const explicit = shard?.grep?.toString().trim();
+      if (explicit) {
+        return explicit;
+      }
+      const grepExtra = shard?.grep_extra?.toString().trim();
+      return grepExtra ? `${expectedSuiteMarker(suiteType)}.*${grepExtra}` : '';
+    })
+    .filter(Boolean);
+}
+
+function canonicalShardForGrep(suiteType, grep) {
+  const manifestPath = path.resolve(__dirname, '..', 'navigation_mutation_shards.json');
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+  const shards = manifest?.[suiteType]?.shards || {};
+  for (const shard of Object.values(shards)) {
+    const explicit = shard?.grep?.toString().trim();
+    const fallback = shard?.grep_extra?.toString().trim();
+    const selector = explicit || (fallback ? `${expectedSuiteMarker(suiteType)}.*${fallback}` : '');
+    if (selector === grep) {
+      return shard;
+    }
+  }
+  return null;
+}
+
+function assertCanonicalShardRuntimeContract(suiteType, grep) {
+  const shard = canonicalShardForGrep(suiteType, grep);
+  if (!shard) {
+    return;
+  }
+  const allowedLanes = Array.isArray(shard.allowed_lanes) ? shard.allowed_lanes : [];
+  const lane = resolveLane();
+  if (allowedLanes.length > 0 && !allowedLanes.includes(lane)) {
+    throw new Error(
+      `Playwright web navigation ${suiteType} shard is restricted to NAV_DEPLOY_LANE=${allowedLanes.join('|')}.`,
+    );
+  }
+  for (const name of Array.isArray(shard.required_env) ? shard.required_env : []) {
+    if (!process.env[name]?.toString().trim()) {
+      throw new Error(
+        `Playwright web navigation ${suiteType} shard requires ${name}; no ambient fixture fallback is allowed.`,
+      );
+    }
+  }
+  const requiredValues = shard.required_env_values || {};
+  for (const [name, expected] of Object.entries(requiredValues)) {
+    const actual = process.env[name]?.toString().trim() || '';
+    if (actual !== expected) {
+      throw new Error(
+        `Playwright web navigation ${suiteType} shard requires ${name}=${expected}; no ambient fixture fallback is allowed.`,
+      );
+    }
+  }
 }
 
 function extractSuiteMarkers(source) {
@@ -246,7 +308,14 @@ function assertGrepValuesCompatibleWithSuite(suiteType, grepValues) {
       `Playwright web navigation ${suiteType} suite refuses multiple grep selectors because canonical suite coverage must stay deterministic. Received "${joined}".`,
     );
   }
-  if (!joined.includes(expectedMarker)) {
+  const normalized = grepValues[0].toString().trim();
+  const allowedShards = allowedCanonicalShardedGrepValues(suiteType);
+  const allowedFull = allowedFullSuiteGrepValues(suiteType);
+  if (
+    !joined.includes(expectedMarker) &&
+    !(suiteType === 'readonly' && joined.includes('@readonly')) &&
+    !allowedShards.includes(normalized)
+  ) {
     throw new Error(
       `Playwright web navigation ${suiteType} suite requires grep selectors to include ${expectedMarker}. Received "${joined}".`,
     );
@@ -263,12 +332,12 @@ function assertGrepValuesCompatibleWithSuite(suiteType, grepValues) {
     }
   }
 
-  const normalized = grepValues[0].toString().trim();
-  if (suiteType === 'mutation') {
-    if (normalized === expectedMarker) {
+  if (['mutation', 'readonly'].includes(suiteType)) {
+    if (allowedFull.includes(normalized)) {
       return;
     }
-    if (allowedCanonicalMutationGrepValues().includes(normalized)) {
+    if (allowedShards.includes(normalized)) {
+      assertCanonicalShardRuntimeContract(suiteType, normalized);
       return;
     }
     throw new Error(
@@ -276,7 +345,7 @@ function assertGrepValuesCompatibleWithSuite(suiteType, grepValues) {
     );
   }
 
-  if (normalized !== expectedMarker) {
+  if (!allowedFull.includes(normalized)) {
     throw new Error(
       `Playwright web navigation ${suiteType} suite refuses narrowed grep selector "${normalized}" because canonical suite coverage must not be trimmed by ad-hoc grep filters.`,
     );
@@ -394,6 +463,15 @@ function requirePlaywrightSuiteContract() {
 }
 
 function buildSuiteGrep(suiteType) {
+  const { grepValues } = parsePlaywrightCliContext();
+  const requested = grepValues.length === 1 ? grepValues[0].toString().trim() : '';
+  if (allowedCanonicalShardedGrepValues(suiteType).includes(requested)) {
+    // A fixture-owned shard has a deliberately disjoint marker. Let its
+    // admitted selector replace (rather than intersect with) the full-suite
+    // selector after requirePlaywrightSuiteContract has validated the lane and
+    // required environment contract.
+    return new RegExp(requested);
+  }
   return new RegExp(expectedSuiteMarker(suiteType));
 }
 

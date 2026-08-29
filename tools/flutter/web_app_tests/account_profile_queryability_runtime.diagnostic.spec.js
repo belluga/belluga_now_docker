@@ -7,6 +7,7 @@ const {
 const {
   cleanupOnboardedAccounts,
   runCleanupPreservingPrimaryError,
+  runCleanupSteps,
 } = require('./support/account_onboarding_cleanup');
 const {
   executeLocalDockerArtisan,
@@ -289,7 +290,10 @@ async function deleteAccountProfileType(api, baseUrl, token, type) {
       timeout: 15000,
     },
   );
-  expectDeleteSucceeded(response, `Account profile type ${type}`);
+  expect(
+    [200, 202, 204, 404],
+    `Owned account profile type ${type} cleanup must delete the row or confirm it is already absent.`,
+  ).toContain(response.status());
 }
 
 async function createAccountProfile(api, baseUrl, token, profileType, name) {
@@ -316,11 +320,17 @@ async function createAccountProfile(api, baseUrl, token, profileType, name) {
   const created = await response.json();
   const account = created?.data?.account || {};
   const profile = created?.data?.account_profile || {};
+  const id = profile?.id?.toString() || '';
+  const accountSlug = account?.slug?.toString() || '';
+  const profileSlug = profile?.slug?.toString() || '';
+  expect(id, `Account profile ${name} must return id.`).toBeTruthy();
+  expect(accountSlug, `Account profile ${name} must return account slug.`).toBeTruthy();
+  expect(profileSlug, `Account profile ${name} must return profile slug.`).toBeTruthy();
   return {
-    id: profile?.id?.toString() || '',
+    id,
     displayName: textValue(profile?.display_name, name),
-    accountSlug: account?.slug?.toString() || '',
-    profileSlug: profile?.slug?.toString() || '',
+    accountSlug,
+    profileSlug,
   };
 }
 
@@ -388,6 +398,7 @@ async function createDiagnosticEvent(
     profileGroups = undefined,
     occurrences = undefined,
     daysFromNow,
+    registerEvent,
   },
 ) {
   const resolvedOccurrences = Array.isArray(occurrences)
@@ -411,15 +422,11 @@ async function createDiagnosticEvent(
         type: 'account_profile',
         id: host.id,
       },
-      event_parties: eventParties.map((profile) => ({
-        party_ref_id: profile.id,
-      })),
       occurrences: resolvedOccurrences,
       publication: {
         status: 'published',
         publish_at: new Date(Date.now() - 60 * 1000).toISOString(),
       },
-      ...(profileGroups === undefined ? {} : { profile_groups: profileGroups }),
     },
   });
   const responseBody = await response.json().catch(async () => ({
@@ -429,7 +436,91 @@ async function createDiagnosticEvent(
     response.status(),
     `Diagnostic event ${title} must be created. Response: ${JSON.stringify(responseBody)}`,
   ).toBe(201);
-  return responseBody?.data || {};
+  const event = responseBody?.data || {};
+  const eventId = event?.event_id?.toString() || '';
+  expect(eventId, `Diagnostic event ${title} must return event_id before group seeding.`).toBeTruthy();
+  expect(typeof registerEvent, `Diagnostic event ${title} requires an owned-event registrar.`).toBe('function');
+  registerEvent(event);
+  await seedCanonicalOccurrenceProfileGroups(
+    api,
+    baseUrl,
+    token,
+    event,
+    profileGroups,
+    `Diagnostic event ${title}`,
+  );
+  return event;
+}
+
+async function seedCanonicalOccurrenceProfileGroups(
+  api,
+  baseUrl,
+  token,
+  event,
+  profileGroups,
+  assertionLabel,
+) {
+  if (!Array.isArray(profileGroups) || profileGroups.length === 0) {
+    return;
+  }
+
+  const eventId = event?.event_id?.toString() || '';
+  const occurrenceId = occurrenceIdAt(event, 0);
+  expect(eventId, `${assertionLabel} must expose event_id for group seeding.`).toBeTruthy();
+
+  for (const group of profileGroups) {
+    const createResponse = await api.post(
+      buildUrl(
+        baseUrl,
+        `/admin/api/v1/events/${eventId}/occurrences/${occurrenceId}/profile_groups`,
+      ),
+      {
+        headers: authHeaders(token),
+        data: { label: group.label },
+      },
+    );
+    const createPayload = await createResponse.json().catch(async () => ({
+      raw: await createResponse.text().catch(() => ''),
+    }));
+    expect(
+      createResponse.status(),
+      `${assertionLabel} must create canonical occurrence group ${group.label}. Response: ${JSON.stringify(createPayload)}`,
+    ).toBe(201);
+    const createdGroups = Array.isArray(createPayload?.data?.profile_groups)
+      ? createPayload.data.profile_groups.filter((candidate) => candidate?.label === group.label)
+      : [];
+    expect(
+      createdGroups,
+      `${assertionLabel} must return exactly one canonical occurrence group matching ${group.label}.`,
+    ).toHaveLength(1);
+    const [createdGroup] = createdGroups;
+    const groupId = createdGroup?.id?.toString() || '';
+    expect(groupId, `${assertionLabel} must return group id for ${group.label}.`).toBeTruthy();
+
+    const memberIds = Array.isArray(group.account_profile_ids)
+      ? group.account_profile_ids
+      : [];
+    if (memberIds.length === 0) {
+      continue;
+    }
+    const membersResponse = await api.patch(
+      buildUrl(
+        baseUrl,
+        `/admin/api/v1/events/${eventId}/occurrences/${occurrenceId}/profile_groups/${groupId}/members`,
+      ),
+      {
+        headers: authHeaders(token),
+        data: { add_ids: memberIds },
+      },
+    );
+    const membersPayload = await membersResponse.json().catch(async () => ({
+      raw: await membersResponse.text().catch(() => ''),
+    }));
+    expect(
+      membersResponse.status(),
+      `${assertionLabel} must patch canonical group members for ${group.label}. Response: ${JSON.stringify(membersPayload)}`,
+    ).toBeLessThan(400);
+  }
 }
 
 function occurrenceIdAt(event, index) {
@@ -454,6 +545,16 @@ async function fetchPublicEvent(api, baseUrl, event, occurrenceIndex = 0) {
   expect(response.status()).toBe(200);
   const payload = await response.json();
   return payload?.data || {};
+}
+
+async function fetchPublicGroupMembers(api, baseUrl, membersPath) {
+  const response = await api.get(buildUrl(baseUrl, membersPath), {
+    headers: await tenantPublicAuthHeaders(api, baseUrl),
+  });
+  expect(response.status(), 'Public related-profile members subresource must load.')
+    .toBe(200);
+  const payload = await response.json();
+  return Array.isArray(payload?.data?.data) ? payload.data.data : [];
 }
 
 async function locateAdminEventListPlacement(api, baseUrl, token, eventId) {
@@ -537,13 +638,21 @@ async function scrollToSeededEventCard(page, title, expectedApiPage) {
   return null;
 }
 
-async function openSeededEventFromAdminList(page, baseUrl, title, placement) {
+async function openSeededEventFromAdminList(page, baseUrl, event, placement) {
+  const eventId = event?.event_id?.toString() || '';
+  const occurrenceId = occurrenceIdAt(event, 0);
+  const title = textValue(event?.title);
+  expect(eventId, 'Seeded admin event must expose event_id for edit-route validation.').toBeTruthy();
+  expect(title, 'Seeded admin event must expose title for list-card lookup.').toBeTruthy();
   await openAppPath(page, baseUrl, '/admin/events');
   const card = await scrollToSeededEventCard(page, title, placement.page);
   expect(card, `Seeded admin event card "${title}" must be reachable.`).toBeTruthy();
   await card.locator.scrollIntoViewIfNeeded({ timeout: appBootTimeoutMs }).catch(() => {});
   await card.locator.click({ timeout: appBootTimeoutMs });
-  await expect(page).toHaveURL(/\/admin\/events\/edit/, {
+  await expect(page).toHaveURL((url) => (
+    url.pathname === `/admin/events/${eventId}/edit`
+      && url.searchParams.get('occurrence') === occurrenceId
+  ), {
     timeout: appBootTimeoutMs,
   });
   await expect(page.getByText('Editar evento').first()).toBeVisible({
@@ -633,16 +742,51 @@ function staleMutationGuard() {
   }
 }
 
-function mutateEventWithStaleProfileReference({
-  tenantId,
-  eventId,
-  staleProfileId,
-}) {
-  staleMutationGuard();
-  executeLocalDockerArtisan(
-    'events:diagnostic:append-profile-group-member',
-    [tenantId, eventId, staleProfileId, '--with-event-party'],
+async function appendCanonicalOccurrenceGroupMember(
+  api,
+  baseUrl,
+  token,
+  event,
+  groupLabel,
+  profileId,
+) {
+  const eventId = event?.event_id?.toString() || '';
+  expect(eventId, 'Canonical member patch requires event_id.').toBeTruthy();
+  const readbackResponse = await api.get(
+    buildUrl(baseUrl, `/admin/api/v1/events/${eventId}`),
+    { headers: authHeaders(token) },
   );
+  expect(readbackResponse.status(), 'Admin event readback before canonical member patch must succeed.')
+    .toBe(200);
+  const readback = await readbackResponse.json();
+  const occurrence = readback?.data?.occurrences?.[0] || {};
+  const occurrenceId = occurrence?.occurrence_id?.toString() || '';
+  const groups = Array.isArray(occurrence?.profile_groups)
+    ? occurrence.profile_groups.filter((candidate) => candidate?.label === groupLabel)
+    : [];
+  expect(
+    groups,
+    `Canonical member patch requires exactly one group matching ${groupLabel}.`,
+  ).toHaveLength(1);
+  const [group] = groups;
+  const groupId = group?.id?.toString() || '';
+  expect(occurrenceId, 'Canonical member patch requires the first occurrence id.').toBeTruthy();
+  expect(groupId, `Canonical member patch requires group ${groupLabel}.`).toBeTruthy();
+
+  const patchResponse = await api.patch(
+    buildUrl(
+      baseUrl,
+      `/admin/api/v1/events/${eventId}/occurrences/${occurrenceId}/profile_groups/${groupId}/members`,
+    ),
+    {
+      headers: authHeaders(token),
+      data: { add_ids: [profileId] },
+    },
+  );
+  expect(
+    patchResponse.status(),
+    `Canonical member patch must add the non-queryable profile to ${groupLabel}.`,
+  ).toBeLessThan(400);
 }
 
 async function openSelectorAndAssertHiddenAbsent(page, {
@@ -660,56 +804,66 @@ async function openSelectorAndAssertHiddenAbsent(page, {
   await expect(sectionTitle).toBeVisible({ timeout: appBootTimeoutMs });
   logStep('related-profile groups section visible');
 
-  logStep(`open selector for group ${groupLabel}`);
-  const groupContainer = page.getByLabel(
-    new RegExp(`Grupo ${escapeRegExp(groupLabel)};`, 'i'),
-  ).first();
-  logStep(`group locator count ${await groupContainer.count().catch(() => 0)}`);
+  logStep(`assert summary editor for group ${groupLabel}`);
+  const groupLabelControl = page.getByRole('button', {
+    name: new RegExp(`^Nome da aba\\s*${escapeRegExp(groupLabel)}$`, 'i'),
+  });
   await scrollUntilVisible(
     page,
-    groupContainer,
-    `Expected group ${groupLabel} to be visible before opening selector.`,
+    groupLabelControl.first(),
+    `Expected related-profile summary label "${groupLabel}" to be visible before opening member management.`,
   );
-  logStep(`group ${groupLabel} visible`);
-  logStep(`group text content: ${(await groupContainer.textContent().catch(() => '')) || '<empty>'}`);
+  await expect(
+    groupLabelControl,
+    `Expected exactly one related-profile summary label "${groupLabel}".`,
+  ).toHaveCount(1);
+  await expect(groupLabelControl).toBeVisible({ timeout: appBootTimeoutMs });
+
+  const summaryText = expectedSelectedCount === 1
+    ? '1 perfil vinculado'
+    : `${expectedSelectedCount} perfis vinculados`;
+  await expect(
+    page.getByText(summaryText, { exact: true }),
+    `Expected summary editor to render ${summaryText} for group ${groupLabel}.`,
+  ).toHaveCount(1);
+
+  const manageButton = page.getByRole('button', { name: 'Gerenciar perfis' });
+  await expect(
+    manageButton,
+    `Expected exactly one member-management action for summary group ${groupLabel}.`,
+  ).toHaveCount(1);
+  await expect(manageButton).toBeVisible({ timeout: appBootTimeoutMs });
   logStep(
-    `group button count: ${await groupContainer.getByRole('button').count().catch(() => 0)}`,
+    `summary group ${groupLabel} and ${summaryText} visible; opening Gerenciar perfis`,
   );
-  const selectorButtonPattern =
-    /\d+\s+perfil\(is\) selecionado\(s\)|perfil\(is\) selecionado\(s\)|Selecionar perfis/i;
-  let selectorButton = groupContainer.getByRole('button', {
-    name: selectorButtonPattern,
-  }).first();
-  if (!(await selectorButton.isVisible().catch(() => false))) {
-    logStep('group-scoped selector button not exposed as descendant; falling back to section-scoped semantic button lookup');
-    selectorButton = page.getByRole('button', {
-      name: selectorButtonPattern,
-    }).first();
-  }
-  if (!(await selectorButton.isVisible().catch(() => false))) {
-    const visibleButtonNames = await page.getByRole('button').evaluateAll((elements) =>
-      elements
-        .map((element) => element.getAttribute('aria-label') || element.textContent || '')
-        .map((value) => value.trim())
-        .filter(Boolean),
-    ).catch(() => []);
-    throw new Error(
-      `Group ${groupLabel} did not expose a semantic profile selector button. Visible buttons: ${JSON.stringify(visibleButtonNames)}`,
-    );
-  }
-  await expect(selectorButton).toBeVisible({ timeout: appBootTimeoutMs });
-  if (typeof expectedSelectedCount === 'number') {
-    await expect(
-      selectorButton,
-      `Expected ${expectedSelectedCount} visible selected profiles for group ${groupLabel}.`,
-    ).toHaveText(
-      new RegExp(`^\\s*${expectedSelectedCount}\\s+perfil\\(is\\) selecionado\\(s\\)\\s*$`, 'i'),
-      { timeout: appBootTimeoutMs },
-    );
-  }
-  await selectorButton.scrollIntoViewIfNeeded().catch(() => {});
-  logStep('selector button visible; clicking');
-  await selectorButton.click();
+  await manageButton.click();
+
+  const loadedMembersText = expectedSelectedCount === 1
+    ? '1 perfil carregado'
+    : `${expectedSelectedCount} perfis carregados`;
+  await expect(
+    page.getByText(loadedMembersText, { exact: true }),
+    `Managed group ${groupLabel} must retain ${loadedMembersText} before opening the candidate picker.`,
+  ).toBeVisible({ timeout: appBootTimeoutMs });
+  const hiddenManagedMember = page.getByRole('group', {
+    name: new RegExp(escapeRegExp(hiddenName), 'i'),
+  });
+  await expect(
+    hiddenManagedMember,
+    `Selected non-queryable profile ${hiddenName} must render exactly once in the managed group member card.`,
+  ).toHaveCount(1);
+  await expect(
+    hiddenManagedMember,
+    `Selected non-queryable profile ${hiddenName} must remain a visible managed group member.`,
+  ).toBeVisible({ timeout: appBootTimeoutMs });
+
+  const addButton = page.getByRole('button', { name: 'Adicionar', exact: true });
+  await expect(
+    addButton,
+    `Managed group ${groupLabel} must expose exactly one Add action for candidate selection.`,
+  ).toHaveCount(1);
+  await expect(addButton).toBeVisible({ timeout: appBootTimeoutMs });
+  await addButton.click();
 
   const searchField = page.getByRole('textbox', { name: 'Buscar perfil' }).last();
   await expect(searchField).toBeVisible({ timeout: appBootTimeoutMs });
@@ -722,7 +876,7 @@ async function openSelectorAndAssertHiddenAbsent(page, {
     hiddenName,
     'Buscar perfil',
   );
-  await expect(page.getByText('Nenhum perfil encontrado.')).toBeVisible({
+  await expect(page.getByText('Nenhum perfil elegível encontrado.')).toBeVisible({
     timeout: appBootTimeoutMs,
   });
   logStep('empty search result confirmed');
@@ -778,6 +932,7 @@ test('@diagnostic QRY-RUNTIME admin/public queryability and navigation contract 
       },
       color: '#2563EB',
     });
+    createdProfileTypes.push(visibleType.type);
     const participantType = await createAccountProfileType(api, baseUrl, token, {
       type: `pw_qry_participant_${suffix}`,
       label: `PW QRY Participant ${suffix}`,
@@ -788,6 +943,7 @@ test('@diagnostic QRY-RUNTIME admin/public queryability and navigation contract 
       },
       color: '#7C3AED',
     });
+    createdProfileTypes.push(participantType.type);
     const hiddenType = await createAccountProfileType(api, baseUrl, token, {
       type: `pw_qry_hidden_${suffix}`,
       label: `PW QRY Hidden ${suffix}`,
@@ -798,6 +954,7 @@ test('@diagnostic QRY-RUNTIME admin/public queryability and navigation contract 
       },
       color: '#B91C1C',
     });
+    createdProfileTypes.push(hiddenType.type);
     const parentType = await createAccountProfileType(api, baseUrl, token, {
       type: `pw_qry_parent_${suffix}`,
       label: `PW QRY Parent ${suffix}`,
@@ -809,6 +966,7 @@ test('@diagnostic QRY-RUNTIME admin/public queryability and navigation contract 
       },
       color: '#0F766E',
     });
+    createdProfileTypes.push(parentType.type);
     const hostType = await createAccountProfileType(api, baseUrl, token, {
       type: `pw_qry_host_${suffix}`,
       label: `PW QRY Host ${suffix}`,
@@ -821,13 +979,7 @@ test('@diagnostic QRY-RUNTIME admin/public queryability and navigation contract 
       },
       color: '#EA580C',
     });
-    createdProfileTypes.push(
-      visibleType.type,
-      participantType.type,
-      hiddenType.type,
-      parentType.type,
-      hostType.type,
-    );
+    createdProfileTypes.push(hostType.type);
 
     const visibleProfile = await createAccountProfile(
       api,
@@ -836,6 +988,7 @@ test('@diagnostic QRY-RUNTIME admin/public queryability and navigation contract 
       visibleType,
       `PW QRY Visible Profile ${suffix}`,
     );
+    createdAccountSlugs.push(visibleProfile.accountSlug);
     const participantProfile = await createAccountProfile(
       api,
       baseUrl,
@@ -843,6 +996,7 @@ test('@diagnostic QRY-RUNTIME admin/public queryability and navigation contract 
       participantType,
       `PW QRY Participant Profile ${suffix}`,
     );
+    createdAccountSlugs.push(participantProfile.accountSlug);
     const hiddenProfile = await createAccountProfile(
       api,
       baseUrl,
@@ -850,6 +1004,7 @@ test('@diagnostic QRY-RUNTIME admin/public queryability and navigation contract 
       hiddenType,
       `PW QRY Hidden Profile ${suffix}`,
     );
+    createdAccountSlugs.push(hiddenProfile.accountSlug);
     const parentProfile = await createAccountProfile(
       api,
       baseUrl,
@@ -857,6 +1012,7 @@ test('@diagnostic QRY-RUNTIME admin/public queryability and navigation contract 
       parentType,
       `PW QRY Parent Profile ${suffix}`,
     );
+    createdAccountSlugs.push(parentProfile.accountSlug);
     const hostProfile = await createAccountProfile(
       api,
       baseUrl,
@@ -864,13 +1020,7 @@ test('@diagnostic QRY-RUNTIME admin/public queryability and navigation contract 
       hostType,
       `PW QRY Host Profile ${suffix}`,
     );
-    createdAccountSlugs.push(
-      visibleProfile.accountSlug,
-      participantProfile.accountSlug,
-      hiddenProfile.accountSlug,
-      parentProfile.accountSlug,
-      hostProfile.accountSlug,
-    );
+    createdAccountSlugs.push(hostProfile.accountSlug);
 
     const eventType = await createEventType(api, baseUrl, token, suffix);
     createdEventTypeIds.push(eventType.id?.toString() || '');
@@ -888,43 +1038,82 @@ test('@diagnostic QRY-RUNTIME admin/public queryability and navigation contract 
         },
       ],
       daysFromNow: 11,
+      registerEvent: (event) => createdEventIds.push(event.event_id),
     });
-    createdEventIds.push(publicEvent.event_id);
 
-    mutateEventWithStaleProfileReference({
-      tenantId,
-      eventId: publicEvent.event_id,
-      staleProfileId: hiddenProfile.id,
-    });
+    await appendCanonicalOccurrenceGroupMember(
+      api,
+      baseUrl,
+      token,
+      publicEvent,
+      'Outro Grupo',
+      hiddenProfile.id,
+    );
 
     const publicPayload = await fetchPublicEvent(api, baseUrl, publicEvent);
     expect(publicPayload.profile_groups.map((group) => group.label)).toEqual([
       'Outro Grupo',
     ]);
-    const publicGroupProfiles = publicPayload.profile_groups[0].profiles || [];
+    const publicGroup = publicPayload.profile_groups[0] || {};
+    expect(
+      publicGroup.member_count,
+      'Public related-profile group metadata must retain the canonical relationship count.',
+    ).toBe(3);
+    expect(
+      publicGroup.profiles,
+      'Public event detail must keep related-profile rows lazy instead of eagerly embedding projections.',
+    ).toBeUndefined();
+    expect(
+      typeof publicGroup.members_path === 'string' && publicGroup.members_path.trim(),
+      'Public related-profile group metadata must expose its lazy members_path.',
+    ).toBeTruthy();
+    expect(
+      publicPayload.linked_account_profiles,
+      'Public event detail must not revive legacy linked-account payloads.',
+    ).toBeUndefined();
+    expect(
+      publicPayload.event_parties,
+      'Public event detail must not revive legacy event-party payloads.',
+    ).toBeUndefined();
+    expect(
+      publicPayload.artists,
+      'Public event detail must not revive legacy artist payloads.',
+    ).toBeUndefined();
+    expect(
+      publicPayload.profile_groups.some((group) => group?.label === hiddenProfile.displayName),
+      'A non-queryable profile must not become a public group head.',
+    ).toBe(false);
+    const publicGroupProfiles = await fetchPublicGroupMembers(
+      api,
+      baseUrl,
+      publicGroup.members_path,
+    );
     expect(publicGroupProfiles.map((profile) => profile.id)).toEqual([
       visibleProfile.id,
       participantProfile.id,
+      hiddenProfile.id,
     ]);
     expect(
-      publicGroupProfiles.some((profile) => profile.id === hiddenProfile.id),
-    ).toBe(false);
+      publicGroupProfiles.find((profile) => profile.id === visibleProfile.id),
+      'The lazy public members subresource must retain the visible canonical member.',
+    ).toMatchObject({
+      can_open_public_detail: true,
+      public_detail_path: `/parceiro/${visibleProfile.profileSlug}`,
+    });
     expect(
-      (publicPayload.linked_account_profiles || []).some(
-        (profile) => profile.id === hiddenProfile.id,
-      ),
-    ).toBe(false);
-
-    const visibleProjection = publicGroupProfiles.find(
-      (profile) => profile.id === visibleProfile.id,
-    );
-    const participantProjection = publicGroupProfiles.find(
-      (profile) => profile.id === participantProfile.id,
-    );
-    expect(visibleProjection?.can_open_public_detail).toBe(true);
-    expect(visibleProjection?.public_detail_path).toBe(`/parceiro/${visibleProfile.profileSlug}`);
-    expect(participantProjection?.can_open_public_detail).toBe(false);
-    expect(participantProjection?.public_detail_path ?? null).toBeNull();
+      publicGroupProfiles.find((profile) => profile.id === participantProfile.id),
+      'The lazy public members subresource must retain the non-navigable canonical participant.',
+    ).toMatchObject({
+      can_open_public_detail: false,
+      public_detail_path: null,
+    });
+    expect(
+      publicGroupProfiles.find((profile) => profile.id === hiddenProfile.id),
+      'The lazy public members subresource must retain the selected non-queryable member.',
+    ).toMatchObject({
+      can_open_public_detail: false,
+      public_detail_path: null,
+    });
 
     const relatedCandidates = await fetchRelatedProfileCandidates(
       api,
@@ -945,10 +1134,22 @@ test('@diagnostic QRY-RUNTIME admin/public queryability and navigation contract 
     );
     expect(adminReadbackResponse.status(), 'Admin event readback must succeed.').toBe(200);
     const adminReadbackPayload = await adminReadbackResponse.json();
+    const adminOccurrenceGroups = adminReadbackPayload?.data?.occurrences?.[0]?.profile_groups;
+    const adminGroup = Array.isArray(adminOccurrenceGroups)
+      ? adminOccurrenceGroups.find((group) => group?.label === 'Outro Grupo') || {}
+      : {};
     expect(
-      adminReadbackPayload?.data?.profile_groups?.[0]?.account_profile_ids,
-      'Admin readback must suppress stale hidden group members in normal edit payload.',
-    ).toEqual([visibleProfile.id, participantProfile.id]);
+      adminGroup.member_count,
+      'Admin occurrence-group readback metadata must retain all three canonical group memberships.',
+    ).toBe(3);
+    expect(
+      adminGroup.account_profile_ids,
+      'Admin occurrence-group readback must remain metadata-only and omit legacy embedded account_profile_ids.',
+    ).toBeUndefined();
+    expect(
+      typeof adminGroup.members_path === 'string' && adminGroup.members_path.trim(),
+      'Admin readback metadata must expose its lazy members_path.',
+    ).toBeTruthy();
 
     const adminPlacement = await locateAdminEventListPlacement(
       api,
@@ -962,13 +1163,13 @@ test('@diagnostic QRY-RUNTIME admin/public queryability and navigation contract 
       await openSeededEventFromAdminList(
         adminRuntime.page,
         baseUrl,
-        publicEvent.title,
+        publicEvent,
         adminPlacement,
       );
       await openSelectorAndAssertHiddenAbsent(adminRuntime.page, {
         groupLabel: 'Outro Grupo',
         hiddenName: hiddenProfile.displayName,
-        expectedSelectedCount: 2,
+        expectedSelectedCount: 3,
       });
       logStep('admin selector assertions passed');
     } finally {
@@ -987,11 +1188,42 @@ test('@diagnostic QRY-RUNTIME admin/public queryability and navigation contract 
       logStep('public browser assertions started');
       await openPublicEventDetail(publicPage, baseUrl, publicEvent);
       await clickTab(publicPage, 'Outro Grupo');
-      logStep('assert hidden profile absent from public tab');
-      await expect(
-        publicPage.getByText(new RegExp(escapeRegExp(hiddenProfile.displayName), 'i')),
-      ).toHaveCount(0);
+      logStep('assert selected non-queryable profile renders as a non-navigable public card');
       const eventUrl = publicPage.url();
+      const hiddenPattern = new RegExp(escapeRegExp(hiddenProfile.displayName), 'i');
+      const hiddenCardText = publicPage.getByText(hiddenPattern).first();
+      await expect(
+        hiddenCardText,
+        'Selected non-queryable member must remain rendered in its public group tab.',
+      ).toBeVisible({ timeout: appBootTimeoutMs });
+      await expect(
+        publicPage.getByRole('button', { name: hiddenPattern }),
+        'Selected non-queryable member must not be exposed as a button control.',
+      ).toHaveCount(0);
+      await expect(
+        publicPage.getByRole('link', { name: hiddenPattern }),
+        'Selected non-queryable member must not be exposed as a link control.',
+      ).toHaveCount(0);
+      let hiddenInteractionError = null;
+      try {
+        await hiddenCardText.click({ timeout: 3000 });
+      } catch (error) {
+        hiddenInteractionError = error;
+        expect(
+          error?.message || '',
+          'Selected non-queryable member interaction may fail actionability, but must not navigate.',
+        ).toMatch(/Timeout|intercepts pointer events|not receive pointer events/i);
+      }
+      await publicPage.waitForTimeout(500);
+      await expect(
+        publicPage,
+        'Selected non-queryable member must remain on the event detail after interaction.',
+      ).toHaveURL(eventUrl, { timeout: appBootTimeoutMs });
+      if (hiddenInteractionError) {
+        logStep('selected non-queryable member remained non-actionable without navigation');
+      } else {
+        logStep('selected non-queryable member interaction was accepted but remained on event detail');
+      }
       logStep(`event URL snapshot ${eventUrl}`);
 
       logStep('click visible public profile card');
@@ -1066,21 +1298,20 @@ test('@diagnostic QRY-RUNTIME admin/public queryability and navigation contract 
             baseUrl,
             deviceName: 'playwright-account-profile-queryability-runtime-cleanup',
           });
-          for (const eventId of createdEventIds.reverse()) {
-            await deleteEvent(cleanupApi, baseUrl, token, eventId);
-          }
-          await cleanupOnboardedAccounts(
-            cleanupApi,
-            baseUrl,
-            token,
-            createdAccountSlugs.reverse(),
-          );
-          for (const eventTypeId of createdEventTypeIds.reverse()) {
-            await deleteEventType(cleanupApi, baseUrl, token, eventTypeId);
-          }
-          for (const profileType of createdProfileTypes.reverse()) {
-            await deleteAccountProfileType(cleanupApi, baseUrl, token, profileType);
-          }
+          await runCleanupSteps([
+            ...[...createdEventIds].reverse().map((eventId) => () =>
+              deleteEvent(cleanupApi, baseUrl, token, eventId)),
+            () => cleanupOnboardedAccounts(
+              cleanupApi,
+              baseUrl,
+              token,
+              [...createdAccountSlugs].reverse(),
+            ),
+            ...[...createdProfileTypes].reverse().map((profileType) => () =>
+              deleteAccountProfileType(cleanupApi, baseUrl, token, profileType)),
+            ...[...createdEventTypeIds].reverse().map((eventTypeId) => () =>
+              deleteEventType(cleanupApi, baseUrl, token, eventTypeId)),
+          ]);
           logStep('cleanup completed');
         } finally {
           await cleanupApi.dispose();

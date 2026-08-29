@@ -2732,9 +2732,12 @@ async function addOccurrenceProfileGroup(page, { groupLabel }) {
   );
   logStep('evg-helper', `group label filled "${groupLabel}"`);
   await groupDialog.getByRole('button', { name: 'Criar grupo' }).click();
-  await expect(page.getByText(groupLabel, { exact: true })).toBeVisible({
-    timeout: appBootTimeoutMs,
-  });
+  await expect(
+    page.getByRole('button', {
+      name: new RegExp(`Nome da aba\\s*${escapeRegExp(groupLabel)}`, 'i'),
+    }),
+    `Created occurrence group ${groupLabel} must render its saved tab button.`,
+  ).toBeVisible({ timeout: appBootTimeoutMs });
 }
 
 async function enableProgrammingItemTimedMode(page) {
