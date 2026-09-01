@@ -3886,7 +3886,7 @@ test('@mutation tenant-admin granular mixed gallery CRUD persists and renders se
       },
     ).toBe(0);
     firstPhotoStatuses.length = 0;
-    await publicPage.getByRole('button', { name: 'Ver galeria' }).click();
+    await publicPage.getByRole('button', { name: 'Ver tudo' }).click();
     await expect(publicPage.getByRole('button', { name: 'Fechar galeria' }))
       .toBeVisible({ timeout: appBootTimeoutMs });
     await expect.poll(
