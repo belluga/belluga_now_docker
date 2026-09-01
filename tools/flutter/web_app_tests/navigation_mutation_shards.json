@@ -50,9 +50,9 @@
         ]
       },
       "account-gallery-groups": {
-        "grep_extra": "gallery groups persist",
+        "grep_extra": "granular mixed gallery CRUD persists",
         "expected_titles": [
-          "@deferred @mutation tenant-admin account-profile gallery groups persist and render in the public modal"
+          "@mutation tenant-admin granular mixed gallery CRUD persists and renders selected and first items in the public viewer"
         ]
       },
       "account-gallery-disabled": {

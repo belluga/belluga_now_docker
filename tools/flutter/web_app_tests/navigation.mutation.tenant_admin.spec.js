@@ -3517,9 +3517,10 @@ test('@mutation tenant-admin account-profile avatar upload persists and renders 
   }
 });
 
-test.skip('@deferred @mutation tenant-admin account-profile gallery groups persist and render in the public modal', async ({
+test('@mutation tenant-admin granular mixed gallery CRUD persists and renders selected and first items in the public viewer', async ({
   browser,
 }) => {
+  test.setTimeout(600000);
   const baseUrl = requireTenantUrl();
   const api = await createApiContext(baseUrl);
   let browserContext;
@@ -3556,7 +3557,7 @@ test.skip('@deferred @mutation tenant-admin account-profile gallery groups persi
     profileTypeKey = createdProfileType?.type?.toString() || '';
     expect(profileTypeKey, 'Gallery profile type must be created.').toBeTruthy();
 
-    const createdProfile = await createAccountProfileForType(
+    const createdProfile = await createPublicAccountProfileForType(
       api,
       baseUrl,
       session.token,
@@ -3576,8 +3577,11 @@ test.skip('@deferred @mutation tenant-admin account-profile gallery groups persi
       baseUrl,
       `/admin/accounts/${accountSlug}/profiles/${profileId}/edit`,
     );
-    const groupSubtitle = `Ambiente ${unique}`;
-    const photoDescription = `Vista para o palco ${unique}`;
+    const initialGroupSubtitle = `Ambiente ${unique}`;
+    const finalGroupSubtitle = `Ambiente principal ${unique}`;
+    const deletedGroupSubtitle = `Temporária ${unique}`;
+    const videoDescription = `Vídeo principal ${unique}`;
+    const replacementVideoDescription = `Vídeo selecionado ${unique}`;
 
     const pageBundle = await createFreshAuthenticatedTenantAdminPage(session);
     freshBrowser = pageBundle.browser;
@@ -3595,42 +3599,171 @@ test.skip('@deferred @mutation tenant-admin account-profile gallery groups persi
 
     await scrollUntilVisible(
       page,
-      page.getByText('Galerias de fotos'),
-      'Expected gallery section for a content-capable account profile.',
+      page.getByText('Galerias', { exact: true }),
+      'Expected gallery section for a gallery-enabled account profile.',
     );
-    await page.getByRole('button', { name: 'Adicionar grupo de fotos' }).click();
-    await fillFlutterTextField(page, 'Subtítulo do agrupamento', groupSubtitle);
-    await attachImageFromDevice(page, {
-      flow: 'gallery',
-      buttonName: 'Adicionar foto',
-      cropTitle: 'Ajustar foto da galeria',
-    });
-    await page.getByRole('button', { name: 'Usar' }).click();
-    await fillFlutterTextField(page, 'Descrição da foto', photoDescription);
 
-    const profileSaveResponsePromise = page.waitForResponse((candidate) => {
-      return (
-        candidate.request().method() === 'PATCH' &&
-        candidate.url().includes(`/admin/api/v1/account_profiles/${profileId}`) &&
-        candidate.status() < 400
-      );
+    const groupCreateResponsePromise = page.waitForResponse((candidate) =>
+      candidate.request().method() === 'POST' &&
+      candidate.url().endsWith(`/admin/api/v1/account_profiles/${profileId}/gallery/groups`) &&
+      candidate.status() < 400,
+    );
+    await page.getByRole('button', { name: 'Adicionar galeria' }).click();
+    await fillFlutterTextField(page, 'Nome do grupo', initialGroupSubtitle);
+    const [groupCreateResponse] = await Promise.all([
+      groupCreateResponsePromise,
+      page.getByRole('button', { name: 'Criar galeria' }).click(),
+    ]);
+    let gallerySnapshot = normalizePayload(await groupCreateResponse.json());
+    let groups = normalizeList(gallerySnapshot?.gallery_groups);
+    expect(groups).toHaveLength(1);
+    const primaryGroupId = groups[0]?.group_id?.toString() || '';
+    expect(primaryGroupId, 'Granular group create must return the canonical group id.').toBeTruthy();
+    await expect(page.getByText('Esta galeria está vazia e será ignorada no perfil público.'))
+      .toBeVisible({ timeout: appBootTimeoutMs });
+
+    await page.getByRole('button', { name: /Adicionar item/ }).click();
+    await page.getByText('YouTube', { exact: true }).last().click();
+    await fillFlutterTextField(page, 'URL do YouTube', 'https://youtu.be/dQw4w9WgXcQ');
+    const youtubeCreateResponsePromise = page.waitForResponse((candidate) =>
+      candidate.request().method() === 'POST' &&
+      candidate.url().endsWith(`/gallery/groups/${primaryGroupId}/items`) &&
+      candidate.status() < 400,
+    );
+    const [youtubeCreateResponse] = await Promise.all([
+      youtubeCreateResponsePromise,
+      page.getByRole('button', { name: 'Salvar' }).last().click(),
+    ]);
+    gallerySnapshot = normalizePayload(await youtubeCreateResponse.json());
+    groups = normalizeList(gallerySnapshot?.gallery_groups);
+    let primaryItems = normalizeList(groups[0]?.items);
+    expect(primaryItems).toHaveLength(1);
+    const firstYoutubeItemId = primaryItems[0]?.item_id?.toString() || '';
+    expect(primaryItems[0]?.type).toBe('youtube');
+    expect(primaryItems[0]?.youtube_video_id).toBe('dQw4w9WgXcQ');
+
+    await page.getByRole('button', { name: /Adicionar item/ }).click();
+    await page.getByText('Foto', { exact: true }).last().click();
+    const [fileChooser] = await Promise.all([
+      page.waitForEvent('filechooser'),
+      page.getByText('Do dispositivo').last().click(),
+    ]);
+    await fileChooser.setFiles(ensureFixtureImageFile(fixtureImagePath));
+    await expect(page.getByText('Ajustar foto da galeria')).toBeVisible({
+      timeout: appBootTimeoutMs,
     });
-    const gallerySaveResponsePromise = page.waitForResponse((candidate) => {
-      return (
-        candidate.request().method() === 'POST' &&
-        candidate.url().includes(`/admin/api/v1/account_profiles/${profileId}/gallery`) &&
-        candidate.status() < 400
+    const photoCreateResponsePromise = page.waitForResponse((candidate) =>
+      candidate.request().method() === 'POST' &&
+      candidate.url().endsWith(`/gallery/groups/${primaryGroupId}/items`) &&
+      candidate.status() < 400,
+    );
+    const [photoCreateResponse] = await Promise.all([
+      photoCreateResponsePromise,
+      page.getByRole('button', { name: 'Usar' }).click(),
+    ]);
+    gallerySnapshot = normalizePayload(await photoCreateResponse.json());
+    groups = normalizeList(gallerySnapshot?.gallery_groups);
+    primaryItems = normalizeList(groups[0]?.items);
+    expect(primaryItems).toHaveLength(2);
+    const photoItemId = primaryItems.find((item) => item?.type === 'photo')?.item_id?.toString() || '';
+    expect(photoItemId, 'Granular photo create must return the canonical item id.').toBeTruthy();
+
+    const mutateGallery = async (method, path, data) => {
+      const options = {
+        headers: authHeaders(session.token),
+        failOnStatusCode: false,
+      };
+      if (data !== undefined) {
+        options.data = data;
+      }
+      const response = await api[method](
+        buildApiUrl(
+          baseUrl,
+          `/admin/api/v1/account_profiles/${profileId}/gallery/groups${path}`,
+        ),
+        options,
       );
+      expect(
+        response.status(),
+        `Gallery ${method.toUpperCase()} ${path || '/'} must succeed.`,
+      ).toBeLessThan(400);
+      const payload = normalizePayload(await response.json());
+      await disposeApiResponse(response);
+      return payload;
+    };
+
+    gallerySnapshot = await mutateGallery('post', '', {
+      subtitle: deletedGroupSubtitle,
     });
-    await clickSaveChanges(page);
-    await profileSaveResponsePromise;
-    const gallerySaveResponse = await gallerySaveResponsePromise;
-    const gallerySavePayload = normalizePayload(await gallerySaveResponse.json());
-    const savedGroups = normalizeList(gallerySavePayload?.gallery_groups);
-    expect(savedGroups).toHaveLength(1);
-    expect(savedGroups[0]?.subtitle).toBe(groupSubtitle);
-    expect(savedGroups[0]?.items?.[0]?.description).toBe(photoDescription);
-    expect(savedGroups[0]?.items?.[0]?.modal_url).toBeTruthy();
+    groups = normalizeList(gallerySnapshot?.gallery_groups);
+    expect(groups).toHaveLength(2);
+    const deletedGroupId = groups.find(
+      (group) => group?.subtitle === deletedGroupSubtitle,
+    )?.group_id?.toString() || '';
+    expect(deletedGroupId, 'Second group create must return a stable id.').toBeTruthy();
+
+    gallerySnapshot = await mutateGallery('patch', `/${primaryGroupId}`, {
+      subtitle: finalGroupSubtitle,
+    });
+    expect(
+      normalizeList(gallerySnapshot?.gallery_groups)
+        .find((group) => group?.group_id === primaryGroupId)?.subtitle,
+    ).toBe(finalGroupSubtitle);
+
+    gallerySnapshot = await mutateGallery('patch', '/reorder', {
+      group_ids: [deletedGroupId, primaryGroupId],
+    });
+    expect(
+      normalizeList(gallerySnapshot?.gallery_groups).map((group) => group?.group_id),
+    ).toEqual([deletedGroupId, primaryGroupId]);
+
+    gallerySnapshot = await mutateGallery(
+      'patch',
+      `/${primaryGroupId}/items/${firstYoutubeItemId}`,
+      { type: 'youtube', description: videoDescription },
+    );
+    groups = normalizeList(gallerySnapshot?.gallery_groups);
+    primaryItems = normalizeList(
+      groups.find((group) => group?.group_id === primaryGroupId)?.items,
+    );
+    expect(primaryItems.find((item) => item?.item_id === firstYoutubeItemId)?.description)
+      .toBe(videoDescription);
+
+    gallerySnapshot = await mutateGallery(
+      'patch',
+      `/${primaryGroupId}/items/reorder`,
+      { item_ids: [photoItemId, firstYoutubeItemId] },
+    );
+    groups = normalizeList(gallerySnapshot?.gallery_groups);
+    primaryItems = normalizeList(
+      groups.find((group) => group?.group_id === primaryGroupId)?.items,
+    );
+    expect(primaryItems.map((item) => item?.item_id))
+      .toEqual([photoItemId, firstYoutubeItemId]);
+
+    gallerySnapshot = await mutateGallery(
+      'delete',
+      `/${primaryGroupId}/items/${firstYoutubeItemId}`,
+    );
+    groups = normalizeList(gallerySnapshot?.gallery_groups);
+    primaryItems = normalizeList(
+      groups.find((group) => group?.group_id === primaryGroupId)?.items,
+    );
+    expect(primaryItems.map((item) => item?.item_id)).toEqual([photoItemId]);
+
+    gallerySnapshot = await mutateGallery('delete', `/${deletedGroupId}`);
+    groups = normalizeList(gallerySnapshot?.gallery_groups);
+    expect(groups.map((group) => group?.group_id)).toEqual([primaryGroupId]);
+
+    gallerySnapshot = await mutateGallery('post', `/${primaryGroupId}/items`, {
+      type: 'youtube',
+      description: replacementVideoDescription,
+      youtube_url: 'https://youtu.be/M7lc1UVf-VE',
+    });
+    groups = normalizeList(gallerySnapshot?.gallery_groups);
+    primaryItems = normalizeList(groups[0]?.items);
+    expect(primaryItems.map((item) => item?.type)).toEqual(['photo', 'youtube']);
+    expect(primaryItems[1]?.youtube_video_id).toBe('M7lc1UVf-VE');
 
     const anonymousIdentity = await createAnonymousIdentity(
       api,
@@ -3651,44 +3784,45 @@ test.skip('@deferred @mutation tenant-admin account-profile gallery groups persi
           const status = publicProfileResponse.status();
           if (status !== 200) {
             await disposeApiResponse(publicProfileResponse);
-            return ['', '', false];
+            return ['', 0, '', '', ''];
           }
 
           publicProfile = normalizePayload(await publicProfileResponse.json());
           await disposeApiResponse(publicProfileResponse);
           const publicGroup = normalizeList(publicProfile?.gallery_groups)[0];
-          const publicItem = normalizeList(publicGroup?.items)[0];
-
+          const publicItems = normalizeList(publicGroup?.items);
           return [
             publicGroup?.subtitle?.toString() || '',
-            publicItem?.description?.toString() || '',
-            Boolean(publicItem?.modal_url),
+            publicItems.length,
+            publicItems[0]?.type?.toString() || '',
+            publicItems[1]?.type?.toString() || '',
+            publicItems[1]?.description?.toString() || '',
           ];
         },
         {
           timeout: appBootTimeoutMs,
           message:
-            'Public gallery projection must settle with the grouped subtitle, description, and modal URL before runtime validation.',
+            'Public mixed gallery projection must settle before runtime validation.',
         },
       )
-      .toEqual([groupSubtitle, photoDescription, true]);
+      .toEqual([
+        finalGroupSubtitle,
+        2,
+        'photo',
+        'youtube',
+        replacementVideoDescription,
+      ]);
 
     const publicGroup = normalizeList(publicProfile?.gallery_groups)[0];
-    const publicItem = normalizeList(publicGroup?.items)[0];
-    const publicModalUrlPath = publicItem?.modal_url?.toString() || '';
+    const publicPhoto = normalizeList(publicGroup?.items)[0];
+    const publicPhotoModalUrl = resolveAbsoluteUrl(
+      baseUrl,
+      publicPhoto?.modal_url?.toString() || '',
+    );
     expect(
-      publicModalUrlPath,
-      'Public gallery projection must expose a modal URL for runtime validation.',
+      publicPhoto?.modal_url?.toString() || '',
+      'The first public item must expose its photo modal URL.',
     ).toBeTruthy();
-    const publicModalUrl = resolveAbsoluteUrl(baseUrl, publicModalUrlPath);
-    const publicModalResponse = await api.get(publicModalUrl, {
-      failOnStatusCode: false,
-    });
-    expect(
-      publicModalResponse.status(),
-      'Public gallery modal URL must be directly readable once projection settles.',
-    ).toBeLessThan(400);
-    await disposeApiResponse(publicModalResponse);
 
     publicContext = await browser.newContext({
       ignoreHTTPSErrors: true,
@@ -3699,14 +3833,12 @@ test.skip('@deferred @mutation tenant-admin account-profile gallery groups persi
     });
     const publicPage = await publicContext.newPage();
     const publicCollectors = installFailureCollectors(publicPage);
-    const modalImageStatuses = [];
-
+    const firstPhotoStatuses = [];
     publicPage.on('response', (candidate) => {
-      if (urlsMatchIgnoringQuery(candidate.url(), publicModalUrl)) {
-        modalImageStatuses.push(candidate.status());
+      if (urlsMatchIgnoringQuery(candidate.url(), publicPhotoModalUrl)) {
+        firstPhotoStatuses.push(candidate.status());
       }
     });
-
     const publicResponse = await publicPage.goto(
       buildApiUrl(baseUrl, `/parceiro/${profileSlug}`),
       { waitUntil: 'domcontentloaded' },
@@ -3718,24 +3850,56 @@ test.skip('@deferred @mutation tenant-admin account-profile gallery groups persi
 
     await scrollUntilVisible(
       publicPage,
-      publicPage.getByText(groupSubtitle, { exact: true }),
-      'Expected public grouped gallery subtitle to render.',
+      publicPage.getByText(finalGroupSubtitle, { exact: true }),
+      'Expected public mixed gallery subtitle to render.',
     );
-    modalImageStatuses.length = 0;
-    await publicPage.getByRole('button', {
-      name: `Abrir foto da galeria ${groupSubtitle}: ${photoDescription}`,
-    }).click();
-    await expect
-      .poll(() => modalImageStatuses.some((status) => status === 200), {
-        timeout: appBootTimeoutMs,
-        message: 'Expected the public gallery modal image request to succeed.',
-      })
-      .toBeTruthy();
-    await expect(publicPage.getByText(photoDescription, { exact: true }))
+    await expect(publicPage.getByRole('button', { name: 'Abrir foto' }))
       .toBeVisible({ timeout: appBootTimeoutMs });
-    await publicPage.getByRole('button', { name: /Fechar galeria/i }).click();
-    await expect(publicPage.getByText(photoDescription, { exact: true }))
+    await expect(publicPage.getByRole('button', { name: 'Abrir vídeo' }))
+      .toBeVisible({ timeout: appBootTimeoutMs });
+    expect(await publicPage.locator('iframe').count(), 'Preview row must not create a player.')
+      .toBe(0);
+
+    await publicPage.getByRole('button', { name: 'Abrir vídeo' }).click();
+    await expect(publicPage.getByRole('button', { name: 'Fechar galeria' }))
+      .toBeVisible({ timeout: appBootTimeoutMs });
+    expect(await publicPage.locator('iframe').count(), 'Viewer must not autoplay YouTube.')
+      .toBe(0);
+    await clickFirstVisibleLocator(
+      publicPage.getByRole('button', { name: 'Abrir vídeo' }),
+      'Explicit play affordance must remain available in the selected YouTube viewer item.',
+    );
+    await expect.poll(
+      async () => publicPage.locator('iframe').count(),
+      {
+        timeout: appBootTimeoutMs,
+        message: 'Explicit play must instantiate the selected YouTube iframe only inside the viewer.',
+      },
+    ).toBeGreaterThan(0);
+
+    await publicPage.getByRole('button', { name: 'Fechar galeria' }).click();
+    await expect(publicPage.getByRole('button', { name: 'Fechar galeria' }))
       .toHaveCount(0, { timeout: appBootTimeoutMs });
+    await expect.poll(
+      async () => publicPage.locator('iframe').count(),
+      {
+        timeout: appBootTimeoutMs,
+        message: 'Closing the viewer must dispose the selected YouTube iframe.',
+      },
+    ).toBe(0);
+    firstPhotoStatuses.length = 0;
+    await publicPage.getByRole('button', { name: 'Ver galeria' }).click();
+    await expect(publicPage.getByRole('button', { name: 'Fechar galeria' }))
+      .toBeVisible({ timeout: appBootTimeoutMs });
+    await expect.poll(
+      () => firstPhotoStatuses.some((status) => status === 200),
+      {
+        timeout: appBootTimeoutMs,
+        message: 'The group action must open the first photo item in the viewer.',
+      },
+    ).toBeTruthy();
+    expect(await publicPage.locator('iframe').count(), 'First photo item must not create a player.')
+      .toBe(0);
 
     await assertNoBrowserFailures(collectors);
     await assertNoBrowserFailures(publicCollectors);

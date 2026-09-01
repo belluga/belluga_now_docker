@@ -3814,6 +3814,8 @@ assert.match(
     `${SYNTHETIC_TENANT_URL}/api/v1/media/account-profiles/69f90390ff69090b810321b7/gallery/0?v=1777927056`,
     `${SYNTHETIC_TENANT_URL}/api/v1/media/event-types/6a69723340782ed221064708/asset?v=1785295389`,
     `${SYNTHETIC_TENANT_URL}/api/v1/media/tenant/branding/default-image?v=1785295389`,
+    'https://i.ytimg.com/vi/M7lc1UVf-VE/hqdefault.jpg',
+    'https://i3.ytimg.com/vi_webp/M7lc1UVf-VE/hqdefault.webp',
   ];
   const legacyMediaUrls = [
     `${SYNTHETIC_LEGACY_URL}/account-profiles/69976b43d93abdd0650e64ec/avatar?v=1771531075`,
@@ -3829,6 +3831,8 @@ assert.match(
     `${SYNTHETIC_TENANT_URL}/api/v1/admin/events`,
     `${SYNTHETIC_TENANT_URL}/admin/accounts`,
     `${SYNTHETIC_TENANT_URL}/manifest.json`,
+    'https://i3.ytimg.com.evil.test/vi_webp/M7lc1UVf-VE/hqdefault.webp',
+    'https://i3.ytimg.com/vi_webp/too-short/hqdefault.webp',
   ];
 
   for (const url of [...canonicalMediaUrls, ...legacyMediaUrls]) {
