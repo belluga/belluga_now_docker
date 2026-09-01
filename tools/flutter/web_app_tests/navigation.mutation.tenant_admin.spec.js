@@ -3756,12 +3756,13 @@ test('@mutation tenant-admin granular mixed gallery CRUD persists and renders se
     gallerySnapshot = await mutateGallery('post', `/${primaryGroupId}/items`, {
       type: 'youtube',
       description: replacementVideoDescription,
-      youtube_url: 'https://youtu.be/M7lc1UVf-VE',
+      youtube_url: 'https://www.youtube.com/shorts/69ePBThnsVg',
     });
     groups = normalizeList(gallerySnapshot?.gallery_groups);
     primaryItems = normalizeList(groups[0]?.items);
     expect(primaryItems.map((item) => item?.type)).toEqual(['photo', 'youtube']);
-    expect(primaryItems[1]?.youtube_video_id).toBe('M7lc1UVf-VE');
+    expect(primaryItems[1]?.youtube_video_id).toBe('69ePBThnsVg');
+    expect(primaryItems[1]?.player_aspect_ratio).toBeLessThan(1);
 
     const anonymousIdentity = await createAnonymousIdentity(
       api,
@@ -3874,6 +3875,12 @@ test('@mutation tenant-admin granular mixed gallery CRUD persists and renders se
         message: 'Explicit play must instantiate the selected YouTube iframe only inside the viewer.',
       },
     ).toBeGreaterThan(0);
+    const playerBounds = await publicPage.locator('iframe').first().boundingBox();
+    expect(playerBounds, 'The active YouTube iframe must have measurable bounds.').not.toBeNull();
+    expect(
+      playerBounds.height,
+      'A vertical YouTube item must render a player taller than it is wide.',
+    ).toBeGreaterThan(playerBounds.width);
 
     await publicPage.getByRole('button', { name: 'Fechar galeria' }).click();
     await expect(publicPage.getByRole('button', { name: 'Fechar galeria' }))
