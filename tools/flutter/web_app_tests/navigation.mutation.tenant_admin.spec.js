@@ -3622,8 +3622,7 @@ test('@mutation tenant-admin granular mixed gallery CRUD persists and renders se
     await expect(page.getByText('Esta galeria está vazia e será ignorada no perfil público.'))
       .toBeVisible({ timeout: appBootTimeoutMs });
 
-    await page.getByRole('button', { name: /Adicionar item/ }).click();
-    await page.getByText('YouTube', { exact: true }).last().click();
+    await page.getByRole('button', { name: 'Adicionar vídeo' }).click();
     await fillFlutterTextField(page, 'URL do YouTube', 'https://youtu.be/dQw4w9WgXcQ');
     const youtubeCreateResponsePromise = page.waitForResponse((candidate) =>
       candidate.request().method() === 'POST' &&
@@ -3642,8 +3641,7 @@ test('@mutation tenant-admin granular mixed gallery CRUD persists and renders se
     expect(primaryItems[0]?.type).toBe('youtube');
     expect(primaryItems[0]?.youtube_video_id).toBe('dQw4w9WgXcQ');
 
-    await page.getByRole('button', { name: /Adicionar item/ }).click();
-    await page.getByText('Foto', { exact: true }).last().click();
+    await page.getByRole('button', { name: 'Adicionar foto' }).click();
     const [fileChooser] = await Promise.all([
       page.waitForEvent('filechooser'),
       page.getByText('Do dispositivo').last().click(),
