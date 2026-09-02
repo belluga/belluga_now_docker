@@ -3581,6 +3581,7 @@ test('@mutation tenant-admin granular mixed gallery CRUD persists and renders se
     const finalGroupSubtitle = `Ambiente principal ${unique}`;
     const deletedGroupSubtitle = `Temporária ${unique}`;
     const videoDescription = `Vídeo principal ${unique}`;
+    const replacementVideoTitle = `Um minuto na praia ${unique}`;
     const replacementVideoDescription = `Vídeo selecionado ${unique}`;
 
     const pageBundle = await createFreshAuthenticatedTenantAdminPage(session);
@@ -3665,6 +3666,20 @@ test('@mutation tenant-admin granular mixed gallery CRUD persists and renders se
     expect(primaryItems).toHaveLength(2);
     const photoItemId = primaryItems.find((item) => item?.type === 'photo')?.item_id?.toString() || '';
     expect(photoItemId, 'Granular photo create must return the canonical item id.').toBeTruthy();
+
+    const profileSaveResponsePromise = page.waitForResponse((candidate) =>
+      candidate.request().method() === 'PATCH' &&
+      candidate.url().endsWith(`/admin/api/v1/account_profiles/${profileId}`) &&
+      candidate.status() < 400,
+    );
+    await clickSaveChanges(page);
+    const profileSaveResponse = await profileSaveResponsePromise;
+    await profileSaveResponse.finished();
+    await expect(page.getByText('1 / 6 galerias · disponível')).toBeVisible({
+      timeout: appBootTimeoutMs,
+    });
+    await expect(page.getByText(/Remova pelo menos \d+ galerias?/)).toHaveCount(0);
+    await expect(page.getByText(/Remova pelo menos \d+ itens?/)).toHaveCount(0);
 
     const mutateGallery = async (method, path, data) => {
       const options = {
@@ -3755,6 +3770,7 @@ test('@mutation tenant-admin granular mixed gallery CRUD persists and renders se
 
     gallerySnapshot = await mutateGallery('post', `/${primaryGroupId}/items`, {
       type: 'youtube',
+      title: replacementVideoTitle,
       description: replacementVideoDescription,
       youtube_url: 'https://www.youtube.com/shorts/69ePBThnsVg',
     });
@@ -3783,7 +3799,7 @@ test('@mutation tenant-admin granular mixed gallery CRUD persists and renders se
           const status = publicProfileResponse.status();
           if (status !== 200) {
             await disposeApiResponse(publicProfileResponse);
-            return ['', 0, '', '', ''];
+            return ['', 0, '', '', '', ''];
           }
 
           publicProfile = normalizePayload(await publicProfileResponse.json());
@@ -3795,6 +3811,7 @@ test('@mutation tenant-admin granular mixed gallery CRUD persists and renders se
             publicItems.length,
             publicItems[0]?.type?.toString() || '',
             publicItems[1]?.type?.toString() || '',
+            publicItems[1]?.title?.toString() || '',
             publicItems[1]?.description?.toString() || '',
           ];
         },
@@ -3809,6 +3826,7 @@ test('@mutation tenant-admin granular mixed gallery CRUD persists and renders se
         2,
         'photo',
         'youtube',
+        replacementVideoTitle,
         replacementVideoDescription,
       ]);
 
@@ -3862,6 +3880,10 @@ test('@mutation tenant-admin granular mixed gallery CRUD persists and renders se
     await publicPage.getByRole('button', { name: 'Abrir vídeo' }).click();
     await expect(publicPage.getByRole('button', { name: 'Fechar galeria' }))
       .toBeVisible({ timeout: appBootTimeoutMs });
+    await expect(publicPage.getByText(replacementVideoTitle, { exact: true }))
+      .toBeVisible({ timeout: appBootTimeoutMs });
+    await expect(publicPage.getByText(replacementVideoDescription, { exact: false }))
+      .toBeVisible({ timeout: appBootTimeoutMs });
     expect(await publicPage.locator('iframe').count(), 'Viewer must not autoplay YouTube.')
       .toBe(0);
     await clickFirstVisibleLocator(
@@ -3881,6 +3903,12 @@ test('@mutation tenant-admin granular mixed gallery CRUD persists and renders se
       playerBounds.height,
       'A vertical YouTube item must render a player taller than it is wide.',
     ).toBeGreaterThan(playerBounds.width);
+    const publicViewport = publicPage.viewportSize();
+    expect(publicViewport, 'The public browser viewport must be measurable.').not.toBeNull();
+    expect(
+      playerBounds.height,
+      'A vertical YouTube player must use at least half of the available viewport height.',
+    ).toBeGreaterThan(publicViewport.height * 0.5);
 
     await publicPage.getByRole('button', { name: 'Fechar galeria' }).click();
     await expect(publicPage.getByRole('button', { name: 'Fechar galeria' }))
