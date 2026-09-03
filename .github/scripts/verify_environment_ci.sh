@@ -412,6 +412,15 @@ for nginx_template in docker/nginx/local.conf.template docker/nginx/prod.conf.te
     echo "ERROR: ${nginx_template} must not serve Flutter assets from /var/www/flutter." >&2
     exit 1
   fi
+  if grep -Fq 'add_header Cache-Control "public, immutable" always;' "${nginx_template}"; then
+    echo "ERROR: ${nginx_template} must not mark stable-path Flutter bundle assets immutable." >&2
+    exit 1
+  fi
+  no_cache_header_count="$(grep -Fc 'add_header Cache-Control "no-cache" always;' "${nginx_template}" || true)"
+  if [[ "${no_cache_header_count}" -lt 7 ]]; then
+    echo "ERROR: ${nginx_template} must require revalidation for Flutter entrypoints, /assets/, and stable-path static bundle files." >&2
+    exit 1
+  fi
 done
 
 if ! grep -Fq -- '--target runtime-deps' .github/scripts/preflight_promotion_runtime_builds.sh; then

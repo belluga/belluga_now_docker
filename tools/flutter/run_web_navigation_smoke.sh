@@ -362,13 +362,12 @@ run_with_timeout "web navigation test selection (${SUITE})" "${LIST_TIMEOUT_SECO
 
 node ../web_app_tests/web_navigation_shards.cjs validate "${SUITE}" "${NAV_WEB_SHARD:-all}" "${LIST_OUTPUT}"
 
+# Playwright clears its `--output` directory when the run starts. Keep the
+# execution transcript beside that directory so the post-run skipped-test
+# assertion cannot be deleted by Playwright's artifact cleanup.
+RUN_OUTPUT="${DEFAULT_OUTPUT_DIR}.run.log"
 run_with_timeout "web navigation smoke (${SUITE})" "${SUITE_TIMEOUT_SECONDS}" \
-  node "${PLAYWRIGHT_CLI}" test \
-  --config ./playwright.config.js \
-  --grep "${GREP}" \
-  --retries=0 \
-  --fail-on-flaky-tests \
-  "${WORKER_ARGS[@]}" \
-  --reporter=line \
-  --output "${DEFAULT_OUTPUT_DIR}"
+  bash -lc "set -euo pipefail; node \"${PLAYWRIGHT_CLI}\" test --config ./playwright.config.js --grep \"${GREP}\" --retries=0 --fail-on-flaky-tests ${WORKER_ARGS[*]:-} --reporter=line --output \"${DEFAULT_OUTPUT_DIR}\" 2>&1 | tee \"${RUN_OUTPUT}\""
+
+node ../web_app_tests/web_navigation_shards.cjs assert-executed "${SUITE}" "${NAV_WEB_SHARD:-all}" "${RUN_OUTPUT}"
 popd >/dev/null

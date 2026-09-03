@@ -91,19 +91,30 @@ server {
         try_files /__backend_owned_branding__ /index.php?$query_string;
     }
 
-    # Immutable Flutter build assets can be cached aggressively.
+    # Build-namespaced requests bypass stale browser entries while resolving to
+    # the assets owned by the currently checked-out web runtime.
+    location ^~ /assets/releases/ {
+        root /opt/flutter-web-shell;
+        rewrite ^/assets/releases/[A-Za-z0-9._-]+/assets/(.+)$ /assets/$1 break;
+        try_files $uri =404;
+        expires off;
+        add_header Cache-Control "no-cache" always;
+    }
+
+    # Flutter also exposes stable asset paths for older bundles. Keep browser
+    # storage available, but require revalidation on every use.
     location ^~ /assets/ {
         root /opt/flutter-web-shell;
         try_files $uri =404;
-        expires 1y;
-        add_header Cache-Control "public, immutable" always;
+        expires off;
+        add_header Cache-Control "no-cache" always;
     }
 
     location ~* \.(?:js|css|png|jpg|jpeg|gif|svg|webp|json|map|wasm|txt)$ {
         root /opt/flutter-web-shell;
         try_files $uri =404;
-        expires 1y;
-        add_header Cache-Control "public, immutable" always;
+        expires off;
+        add_header Cache-Control "no-cache" always;
     }
 
     location = / {

@@ -1,0 +1,16 @@
+
+Running 1 test using 1 worker
+
+[1A[2K(node:40956) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+
+
+[1A[2K(node:40956) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+
+
+[1A[2K[1/1] ../web_app_tests/tenant_admin_profile_type_gallery_capability.mutation.spec.js:717:1 › @mutation T6-EXTERNAL-LINKS profile capability gates admin CRUD, dormant restoration, and capacity-driven icon strip
+[1A[2K../web_app_tests/tenant_admin_profile_type_gallery_capability.mutation.spec.js:717:1 › @mutation T6-EXTERNAL-LINKS profile capability gates admin CRUD, dormant restoration, and capacity-driven icon strip
+[cleanupOnboardedAccount] archived row for a0-perfil-com-nome-deliberadamente-longo-para-validar-a-faixa-compacta-de-links-externos-1788410116008 still requires force-delete finalization.
+
+[1A[2K  1 passed (3.9m)

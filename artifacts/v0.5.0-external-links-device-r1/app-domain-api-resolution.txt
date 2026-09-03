@@ -1,0 +1,15 @@
+API tenant-resolution evidence (2026-09-03, UTC-03)
+
+Endpoint: GET https://belluga.site/api/v1/environment
+Headers: Accept: application/json; X-App-Domain: <APK application id>
+
+X-App-Domain: com.guarappari.app
+HTTP: 200
+Payload identity: type=tenant; name=Guarappari; main_domain=https://guarappari.belluga.site; app_domains=[com.guarappari.app]
+
+X-App-Domain: com.belluga_now
+HTTP: 422 (unknown app_domain)
+
+Device launch used the Guarappari flavor/application id com.guarappari.app. The
+belluga-test host was used only as the fixture bootstrap origin for the profile
+slug rgeergerger; tenant identity remained API-resolved by X-App-Domain.

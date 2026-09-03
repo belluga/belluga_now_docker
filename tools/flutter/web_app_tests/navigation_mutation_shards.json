@@ -73,6 +73,12 @@
           "@mutation T6-GALLERY-CAPABILITY tenant-admin account profile type gallery capability rehydrates and renders across edit list and detail"
         ]
       },
+      "account-profile-external-links": {
+        "grep_extra": "T6-EXTERNAL-LINKS",
+        "expected_titles": [
+          "@mutation T6-EXTERNAL-LINKS profile capability gates admin CRUD, dormant restoration, and capacity-driven icon strip"
+        ]
+      },
       "map-admin": {
         "grep_extra": "tenant-admin keeps public Map filter config",
         "expected_titles": [

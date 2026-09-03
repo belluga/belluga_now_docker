@@ -502,6 +502,30 @@ function assertShardValidationFails({ manifest, list, shard, expectedMessage }) 
   });
 }
 
+function assertRunExecutionRejectsSkippedTests() {
+  withTempDir((dir) => {
+    const skippedPath = path.join(dir, 'skipped-run.log');
+    fs.writeFileSync(skippedPath, 'Running 1 test\n1 skipped\n');
+    const skipped = run(
+      'node',
+      [shardsScript, 'assert-executed', 'mutation', 'alpha', skippedPath],
+    );
+    assert.notStrictEqual(skipped.status, 0, 'skipped release tests must fail closed');
+    assert.match(
+      `${skipped.stdout}\n${skipped.stderr}`,
+      /reported skipped test\(s\)/,
+    );
+
+    const passedPath = path.join(dir, 'passed-run.log');
+    fs.writeFileSync(passedPath, 'Running 1 test\n1 passed\n');
+    const passed = run(
+      'node',
+      [shardsScript, 'assert-executed', 'mutation', 'alpha', passedPath],
+    );
+    assert.strictEqual(passed.status, 0, passed.stderr);
+  });
+}
+
 function assertDiagnosticValidationFails({ manifest, list, expectedMessage }) {
   withTempDir((dir) => {
     const manifestPath = path.join(dir, 'navigation_mutation_shards.json');
@@ -3732,6 +3756,8 @@ assertReadonlyShardValidationFails({
   shard: 'alpha',
   expectedMessage: /Missing expected titles/,
 });
+
+assertRunExecutionRejectsSkippedTests();
 
 assertSuiteValidationKeepsFullSuitesDistinctFromNamedShards();
 

@@ -103,18 +103,29 @@ server {
         add_header Cache-Control "no-cache" always;
     }
 
+    # Build-namespaced requests bypass stale browser entries while resolving to
+    # the assets owned by the currently checked-out web runtime.
+    location ^~ /assets/releases/ {
+        root /opt/flutter-web-shell;
+        rewrite ^/assets/releases/[A-Za-z0-9._-]+/assets/(.+)$ /assets/$1 break;
+        try_files $uri =404;
+        expires off;
+        add_header Cache-Control "no-cache" always;
+    }
+
+    # Stable paths remain supported for older bundles, but must revalidate.
     location ^~ /assets/ {
         root /opt/flutter-web-shell;
         try_files $uri =404;
-        expires 1y;
-        add_header Cache-Control "public, immutable" always;
+        expires off;
+        add_header Cache-Control "no-cache" always;
     }
 
     location ~* \.(?:js|css|png|jpg|jpeg|gif|svg|webp|json|map|wasm|txt)$ {
         root /opt/flutter-web-shell;
         try_files $uri =404;
-        expires 1y;
-        add_header Cache-Control "public, immutable" always;
+        expires off;
+        add_header Cache-Control "no-cache" always;
     }
 
     location = / {
