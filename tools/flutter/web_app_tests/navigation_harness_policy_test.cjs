@@ -466,6 +466,52 @@ function assertGuardAllowsScopedRichTextSelection() {
   });
 }
 
+function assertRichTextPublicEvidenceIsolationContract() {
+  const source = fs.readFileSync(tenantAdminMutationSpec, 'utf8');
+  const extractBody = (title) => {
+    const start = source.indexOf(`test('${title}'`);
+    assert.notStrictEqual(start, -1, `rich-text test must remain named: ${title}`);
+    const end = source.indexOf("\ntest('", start + 1);
+    return source.slice(start, end === -1 ? source.length : end);
+  };
+  const event = extractBody(
+    '@mutation tenant-admin event rich text toolbar authors HTTPS link, persists, reads back, taps in public Sobre, and records tap outcome',
+  );
+  const profile = extractBody(
+    '@mutation tenant-admin account-profile rich text toolbar authors HTTPS link, persists, reads back, taps in public detail, and records tap outcome',
+  );
+  for (const [label, body] of [['Event', event], ['Profile', profile]]) {
+    assert.match(body, /createAnonymousIdentity\(\s*api,\s*baseUrl,\s*'[^']+'/,
+      `${label} rich-text public phase must create a fresh anonymous identity`);
+    assert.match(body, /expect\(\s*anonymousIdentity\.token === session\.token,\s*'Anonymous public identity must differ from tenant-admin session token\.',\s*\)\.toBe\(false\)/,
+      `${label} rich-text public phase must assert anonymous/admin token inequality without exposing secrets`);
+    assert.doesNotMatch(body, /expect\(anonymousIdentity\.token\)\.not\.toBe\(session\.token\)/,
+      `${label} rich-text public phase must not compare tokens through a failure-printing matcher`);
+    assert.match(body, /publicContext\s*=\s*await browser\.newContext\(\s*\{[\s\S]*?\}\);\s*expect\(publicContext\)\.not\.toBe\(browserContext\);\s*const publicPage\s*=\s*await publicContext\.newPage\(\)/,
+      `${label} rich-text public phase must construct and distinguish a fresh browser context and page`);
+    assert.match(body, /const publicResponse = await publicPage\.goto\(/,
+      `${label} rich-text public route must navigate with the fresh public page`);
+    assert.match(body, /const publicLink = await resolveUniqueFlutterTappableText\(publicPage,/,
+      `${label} rich-text public tap must resolve from the fresh public page`);
+    assert.match(body, /const popupPromise = publicContext\.waitForEvent\('page'\)/,
+      `${label} rich-text public tap must observe popups on the fresh public context`);
+  }
+  assert.match(event, /const publicApiResponse = await api\.get\([\s\S]*?authHeaders\(anonymousIdentity\.token\)/,
+    'Event public API readback must be wired to the anonymous token');
+  assert.match(profile, /const publicProfile = await fetchPublicProfile\(\s*api,\s*baseUrl,\s*anonymousIdentity\.token,/,
+    'Profile public API readback must be wired to the anonymous token');
+  assert.match(profile, /for \(const capability of \[[\s\S]*?'is_queryable'[\s\S]*?'is_favoritable'[\s\S]*?'is_publicly_discoverable'[\s\S]*?'is_publicly_navigable'[\s\S]*?\]\)[\s\S]*?createdType\?\.capabilities\?\.\[capability\][\s\S]*?\.toBe\(true\)/,
+    'Profile rich-text fixture must retain runtime capability assertion wiring');
+  assert.match(profile, /is_queryable:\s*true/,
+    'Profile rich-text fixture must enable is_queryable');
+  assert.match(profile, /is_favoritable:\s*true/,
+    'Profile rich-text fixture must enable is_favoritable');
+  assert.match(profile, /is_publicly_discoverable:\s*true/,
+    'Profile rich-text fixture must enable is_publicly_discoverable');
+  assert.match(profile, /is_publicly_navigable:\s*true/,
+    'Profile rich-text fixture must enable is_publicly_navigable');
+}
+
 function assertStrictDataGuardPassesCleanFixture() {
   withTempDir((dir) => {
     fs.writeFileSync(
@@ -3535,6 +3581,7 @@ assertCheckedInManifestMatchesCurrentSpecTitles();
 assertAccountOnboardingCleanupContractPasses();
 assertPublicTaxonomyCleanupResolutionContractPasses();
 assertGuardAllowsScopedRichTextSelection();
+assertRichTextPublicEvidenceIsolationContract();
 
 assertFailsForSource(
   'coordinate-click',

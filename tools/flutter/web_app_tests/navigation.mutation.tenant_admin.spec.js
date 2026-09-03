@@ -2968,6 +2968,7 @@ test('@mutation tenant-admin event rich text toolbar authors HTTPS link, persist
   const explicitHttpsUrl = 'https://example.com/belluga-rich-text-event';
   const expectedHtml = `<p><a href="${explicitHttpsUrl}">${authoredText}</a></p>`;
   let browserContext;
+  let publicContext;
   let session = null;
   let eventId = null;
   let eventTypeId = null;
@@ -3087,9 +3088,18 @@ test('@mutation tenant-admin event rich text toolbar authors HTTPS link, persist
       savedEvent?.slug?.toString() ||
       savedEvent?.event_id?.toString() ||
       eventId;
+    const anonymousIdentity = await createAnonymousIdentity(
+      api,
+      baseUrl,
+      'tenant-admin-event-rich-text-public',
+    );
+    expect(
+      anonymousIdentity.token === session.token,
+      'Anonymous public identity must differ from tenant-admin session token.',
+    ).toBe(false);
     const publicApiResponse = await api.get(
       buildApiUrl(baseUrl, `/api/v1/events/${encodeURIComponent(eventRouteRef)}`),
-      { headers: authHeaders(session.token) },
+      { headers: authHeaders(anonymousIdentity.token) },
     );
     expect(publicApiResponse.status(), 'Public Event API readback must succeed.').toBe(200);
     const publicEvent = normalizePayload(await publicApiResponse.json());
@@ -3097,19 +3107,22 @@ test('@mutation tenant-admin event rich text toolbar authors HTTPS link, persist
       publicEvent?.content?.toString() || '',
       'Public Event API projection must preserve the exact authored HTTPS anchor.',
     ).toBe(expectedHtml);
-    const publicResponse = await page.goto(
+    publicContext = await browser.newContext({ ignoreHTTPSErrors: true });
+    expect(publicContext).not.toBe(browserContext);
+    const publicPage = await publicContext.newPage();
+    const publicResponse = await publicPage.goto(
       buildApiUrl(baseUrl, `/agenda/evento/${encodeURIComponent(eventRouteRef)}`),
       { waitUntil: 'domcontentloaded' },
     );
     expect(publicResponse, 'Public Event route must respond.').not.toBeNull();
     expect(publicResponse.status()).toBeLessThan(400);
-    await assertAppBooted(page);
-    await enableAccessibilityIfNeeded(page);
-    await expect(page.getByRole('button', { name: 'Sobre', exact: true })).toBeVisible({
+    await assertAppBooted(publicPage);
+    await enableAccessibilityIfNeeded(publicPage);
+    await expect(publicPage.getByRole('button', { name: 'Sobre', exact: true })).toBeVisible({
       timeout: appBootTimeoutMs,
     });
-    const publicLink = await resolveUniqueFlutterTappableText(page, authoredText);
-    const popupPromise = browserContext.waitForEvent('page');
+    const publicLink = await resolveUniqueFlutterTappableText(publicPage, authoredText);
+    const popupPromise = publicContext.waitForEvent('page');
     await publicLink.click();
     const popup = await popupPromise;
     await expect.poll(() => popup.url(), { timeout: appBootTimeoutMs }).toBe(explicitHttpsUrl);
@@ -3119,7 +3132,7 @@ test('@mutation tenant-admin event rich text toolbar authors HTTPS link, persist
       schema_version: 2,
       lane: 'event-web',
       run_id: process.env.RICH_TEXT_RUNTIME_RUN_ID,
-      served_build_fingerprint: await page.evaluate(() => window.__WEB_BUILD_SHA__ || 'unknown'),
+      served_build_fingerprint: await publicPage.evaluate(() => window.__WEB_BUILD_SHA__ || 'unknown'),
       target_base_url: baseUrl,
       tenant_id: new URL(baseUrl).hostname,
       fixture_ids: [eventId, eventTypeId],
@@ -3148,6 +3161,9 @@ test('@mutation tenant-admin event rich text toolbar authors HTTPS link, persist
     if (browserContext) {
       await browserContext.close();
     }
+    if (publicContext) {
+      await publicContext.close();
+    }
     await api.dispose();
   }
   const runtimeOutputDir = (process.env.RICH_TEXT_RUNTIME_OUTPUT_DIR || '').trim();
@@ -3169,6 +3185,7 @@ test('@mutation tenant-admin account-profile rich text toolbar authors HTTPS lin
   const expectedBio = `<p><a href="${bioUrl}">${bioText}</a></p>`;
   const expectedContent = `<p><a href="${contentUrl}">${contentText}</a></p>`;
   let browserContext;
+  let publicContext;
   let session = null;
   let accountSlug = null;
   let profileTypeKey = null;
@@ -3185,7 +3202,8 @@ test('@mutation tenant-admin account-profile rich text toolbar authors HTTPS lin
         allowedTaxonomies: [],
         markerColor: '#0F766E',
         capabilities: {
-          is_favoritable: false,
+          is_queryable: true,
+          is_favoritable: true,
           is_publicly_discoverable: true,
           is_publicly_navigable: true,
           has_avatar: false,
@@ -3197,6 +3215,17 @@ test('@mutation tenant-admin account-profile rich text toolbar authors HTTPS lin
       }),
     );
     profileTypeKey = createdType?.type?.toString() || '';
+    for (const capability of [
+      'is_queryable',
+      'is_favoritable',
+      'is_publicly_discoverable',
+      'is_publicly_navigable',
+    ]) {
+      expect(
+        createdType?.capabilities?.[capability],
+        `Rich-text Profile fixture must enable ${capability}.`,
+      ).toBe(true);
+    }
     const created = await createPublicAccountProfileForType(
       api,
       baseUrl,
@@ -3283,29 +3312,41 @@ test('@mutation tenant-admin account-profile rich text toolbar authors HTTPS lin
     );
     expect(adminProfile?.bio?.toString() || '').toBe(expectedBio);
     expect(adminProfile?.content?.toString() || '').toBe(expectedContent);
+    const anonymousIdentity = await createAnonymousIdentity(
+      api,
+      baseUrl,
+      'tenant-admin-account-profile-rich-text-public',
+    );
+    expect(
+      anonymousIdentity.token === session.token,
+      'Anonymous public identity must differ from tenant-admin session token.',
+    ).toBe(false);
     const publicProfile = await fetchPublicProfile(
       api,
       baseUrl,
-      session.token,
+      anonymousIdentity.token,
       created.profileSlug,
     );
     expect(publicProfile?.bio?.toString() || '').toBe(expectedBio);
     expect(publicProfile?.content?.toString() || '').toBe(expectedContent);
 
-    const publicResponse = await page.goto(
+    publicContext = await browser.newContext({ ignoreHTTPSErrors: true });
+    expect(publicContext).not.toBe(browserContext);
+    const publicPage = await publicContext.newPage();
+    const publicResponse = await publicPage.goto(
       buildApiUrl(baseUrl, `/parceiro/${encodeURIComponent(created.profileSlug)}`),
       { waitUntil: 'domcontentloaded' },
     );
     expect(publicResponse, 'Public Account Profile route must respond.').not.toBeNull();
     expect(publicResponse.status()).toBeLessThan(400);
-    await assertAppBooted(page);
-    await enableAccessibilityIfNeeded(page);
+    await assertAppBooted(publicPage);
+    await enableAccessibilityIfNeeded(publicPage);
     for (const target of [
       { text: bioText, url: bioUrl },
       { text: contentText, url: contentUrl },
     ]) {
-      const publicLink = await resolveUniqueFlutterTappableText(page, target.text);
-      const popupPromise = browserContext.waitForEvent('page');
+      const publicLink = await resolveUniqueFlutterTappableText(publicPage, target.text);
+      const popupPromise = publicContext.waitForEvent('page');
       await publicLink.click();
       const popup = await popupPromise;
       await expect.poll(() => popup.url(), { timeout: appBootTimeoutMs }).toBe(target.url);
@@ -3316,7 +3357,7 @@ test('@mutation tenant-admin account-profile rich text toolbar authors HTTPS lin
       schema_version: 2,
       lane: 'account-profile-web',
       run_id: process.env.RICH_TEXT_RUNTIME_RUN_ID,
-      served_build_fingerprint: await page.evaluate(() => window.__WEB_BUILD_SHA__ || 'unknown'),
+      served_build_fingerprint: await publicPage.evaluate(() => window.__WEB_BUILD_SHA__ || 'unknown'),
       target_base_url: baseUrl,
       tenant_id: new URL(baseUrl).hostname,
       fixture_ids: [profileId, accountSlug, profileTypeKey],
@@ -3360,6 +3401,9 @@ test('@mutation tenant-admin account-profile rich text toolbar authors HTTPS lin
     }
     if (browserContext) {
       await browserContext.close();
+    }
+    if (publicContext) {
+      await publicContext.close();
     }
     await api.dispose();
   }
