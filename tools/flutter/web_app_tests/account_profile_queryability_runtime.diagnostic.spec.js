@@ -326,6 +326,17 @@ async function createAccountProfile(api, baseUrl, token, profileType, name) {
   expect(id, `Account profile ${name} must return id.`).toBeTruthy();
   expect(accountSlug, `Account profile ${name} must return account slug.`).toBeTruthy();
   expect(profileSlug, `Account profile ${name} must return profile slug.`).toBeTruthy();
+  const publicationResponse = await api.patch(
+    buildUrl(baseUrl, `/admin/api/v1/accounts/${accountSlug}`),
+    {
+      headers: authHeaders(token),
+      data: { publication: { status: 'published' } },
+    },
+  );
+  expect(
+    publicationResponse.status(),
+    `Account profile ${name} fixture must be published before public queryability assertions.`,
+  ).toBeLessThan(400);
   return {
     id,
     displayName: textValue(profile?.display_name, name),
@@ -857,7 +868,10 @@ async function openSelectorAndAssertHiddenAbsent(page, {
     `Selected non-queryable profile ${hiddenName} must remain a visible managed group member.`,
   ).toBeVisible({ timeout: appBootTimeoutMs });
 
-  const addButton = page.getByRole('button', { name: 'Adicionar', exact: true });
+  const addButton = page.getByRole('button', {
+    name: 'Adicionar perfis',
+    exact: true,
+  });
   await expect(
     addButton,
     `Managed group ${groupLabel} must expose exactly one Add action for candidate selection.`,
@@ -927,7 +941,7 @@ test('@diagnostic QRY-RUNTIME admin/public queryability and navigation contract 
       label: `PW QRY Visible ${suffix}`,
       capabilities: {
         is_queryable: true,
-        is_publicly_discoverable: false,
+        is_publicly_discoverable: true,
         is_publicly_navigable: true,
       },
       color: '#2563EB',
@@ -938,7 +952,7 @@ test('@diagnostic QRY-RUNTIME admin/public queryability and navigation contract 
       label: `PW QRY Participant ${suffix}`,
       capabilities: {
         is_queryable: true,
-        is_publicly_discoverable: false,
+        is_publicly_discoverable: true,
         is_publicly_navigable: false,
       },
       color: '#7C3AED',
@@ -1091,7 +1105,6 @@ test('@diagnostic QRY-RUNTIME admin/public queryability and navigation contract 
     expect(publicGroupProfiles.map((profile) => profile.id)).toEqual([
       visibleProfile.id,
       participantProfile.id,
-      hiddenProfile.id,
     ]);
     expect(
       publicGroupProfiles.find((profile) => profile.id === visibleProfile.id),
@@ -1108,12 +1121,9 @@ test('@diagnostic QRY-RUNTIME admin/public queryability and navigation contract 
       public_detail_path: null,
     });
     expect(
-      publicGroupProfiles.find((profile) => profile.id === hiddenProfile.id),
-      'The lazy public members subresource must retain the selected non-queryable member.',
-    ).toMatchObject({
-      can_open_public_detail: false,
-      public_detail_path: null,
-    });
+      publicGroupProfiles.some((profile) => profile.id === hiddenProfile.id),
+      'The lazy public members subresource must filter a selected non-queryable member through live eligibility.',
+    ).toBe(false);
 
     const relatedCandidates = await fetchRelatedProfileCandidates(
       api,
@@ -1188,42 +1198,14 @@ test('@diagnostic QRY-RUNTIME admin/public queryability and navigation contract 
       logStep('public browser assertions started');
       await openPublicEventDetail(publicPage, baseUrl, publicEvent);
       await clickTab(publicPage, 'Outro Grupo');
-      logStep('assert selected non-queryable profile renders as a non-navigable public card');
       const eventUrl = publicPage.url();
       const hiddenPattern = new RegExp(escapeRegExp(hiddenProfile.displayName), 'i');
-      const hiddenCardText = publicPage.getByText(hiddenPattern).first();
       await expect(
-        hiddenCardText,
-        'Selected non-queryable member must remain rendered in its public group tab.',
-      ).toBeVisible({ timeout: appBootTimeoutMs });
-      await expect(
-        publicPage.getByRole('button', { name: hiddenPattern }),
-        'Selected non-queryable member must not be exposed as a button control.',
+        publicPage.getByText(hiddenPattern),
+        'Selected non-queryable member must be filtered from the public group tab.',
       ).toHaveCount(0);
-      await expect(
-        publicPage.getByRole('link', { name: hiddenPattern }),
-        'Selected non-queryable member must not be exposed as a link control.',
-      ).toHaveCount(0);
-      let hiddenInteractionError = null;
-      try {
-        await hiddenCardText.click({ timeout: 3000 });
-      } catch (error) {
-        hiddenInteractionError = error;
-        expect(
-          error?.message || '',
-          'Selected non-queryable member interaction may fail actionability, but must not navigate.',
-        ).toMatch(/Timeout|intercepts pointer events|not receive pointer events/i);
-      }
-      await publicPage.waitForTimeout(500);
-      await expect(
-        publicPage,
-        'Selected non-queryable member must remain on the event detail after interaction.',
-      ).toHaveURL(eventUrl, { timeout: appBootTimeoutMs });
-      if (hiddenInteractionError) {
-        logStep('selected non-queryable member remained non-actionable without navigation');
-      } else {
-        logStep('selected non-queryable member interaction was accepted but remained on event detail');
-      }
+      await expect(publicPage).toHaveURL(eventUrl, { timeout: appBootTimeoutMs });
+      logStep('selected non-queryable member remained absent from the public tab');
       logStep(`event URL snapshot ${eventUrl}`);
 
       logStep('click visible public profile card');

@@ -18,6 +18,7 @@ const {
 } = require('./support/browser_failure_collectors');
 const {
   cleanupOnboardedAccount,
+  cleanupOnboardedAccounts,
   runCleanupPreservingPrimaryError,
   runCleanupSteps,
 } = require('./support/account_onboarding_cleanup');
@@ -2669,116 +2670,22 @@ async function deleteStaticProfileType(api, baseUrl, token, type) {
   );
 }
 
-async function expectSelectedToggleChip(page, label) {
+async function expectSelectedToggleChip(
+  page,
+  label,
+  { timeoutMs = appBootTimeoutMs } = {},
+) {
   const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const escapedAttributeValue = label.replace(/["\\]/g, '\\$&');
   const switchChip = page.getByRole('switch', {
     name: new RegExp(escaped, 'i'),
+  }).first();
+  await expect(
+    switchChip,
+    `Expected taxonomy switch chip "${label}" to reopen selected.`,
+  ).toHaveAttribute('aria-checked', 'true', {
+    timeout: timeoutMs,
   });
-  const checkboxChip = page.getByRole('checkbox', {
-    name: new RegExp(escaped, 'i'),
-  });
-  const namedButtonChip = page.getByRole('button', {
-    name: new RegExp(escaped, 'i'),
-  });
-  const ariaFallbackChip = page
-    .locator(`[aria-label*="${escapedAttributeValue}"]`)
-    .first();
-  const textFallbackChip = page.getByText(new RegExp(escaped, 'i')).first();
-
-  async function expectLocatorState(locator, message) {
-    await expect
-      .poll(
-        async () => {
-          return locator
-            .first()
-            .evaluate((element, expectedLabel) => {
-              let current = element;
-              for (let depth = 0; depth < 8 && current; depth += 1) {
-                const state =
-                  current.getAttribute('aria-pressed') ||
-                  current.getAttribute('aria-selected') ||
-                  current.getAttribute('aria-checked') ||
-                  current.getAttribute('data-selected') ||
-                  '';
-                if (state === 'true') {
-                  return state;
-                }
-                if (depth <= 2) {
-                  const normalizedText = (current.textContent || '').trim();
-                  const hasLeadingCheckGlyph =
-                    normalizedText.startsWith('check') ||
-                    normalizedText.startsWith('done');
-                  const hasLocalSelectionIcon =
-                    current.querySelector('svg') !== null ||
-                    current.querySelector('[data-icon*=\"check\" i]') !== null ||
-                    current.querySelector('[aria-label*=\"check\" i]') !== null;
-                  if (
-                    normalizedText.toLowerCase().includes(
-                      String(expectedLabel).trim().toLowerCase(),
-                    ) &&
-                    (hasLeadingCheckGlyph || hasLocalSelectionIcon)
-                  ) {
-                    return 'true';
-                  }
-                }
-                current = current.parentElement;
-              }
-              return '';
-            }, label)
-            .catch(() => '');
-        },
-        {
-          timeout: appBootTimeoutMs,
-          message,
-        },
-      )
-      .toBe('true');
-  }
-
-  if ((await switchChip.count()) > 0) {
-    await expectLocatorState(
-      switchChip,
-      `Expected taxonomy switch chip "${label}" to reopen selected.`,
-    );
-    return;
-  }
-
-  if ((await checkboxChip.count()) > 0) {
-    await expectLocatorState(
-      checkboxChip,
-      `Expected taxonomy checkbox chip "${label}" to reopen selected.`,
-    );
-    return;
-  }
-
-  if ((await namedButtonChip.count()) > 0) {
-    await expectLocatorState(
-      namedButtonChip,
-      `Expected taxonomy button chip "${label}" to reopen selected.`,
-    );
-    return;
-  }
-
-  if ((await ariaFallbackChip.count()) > 0) {
-    await expectLocatorState(
-      ariaFallbackChip,
-      `Expected taxonomy aria chip "${label}" to reopen selected.`,
-    );
-    return;
-  }
-
-  await scrollUntilVisible(
-    page,
-    textFallbackChip,
-    `Expected taxonomy chip "${label}" to appear before asserting selected state.`,
-  );
-  await expectLocatorState(
-    textFallbackChip,
-    `Expected taxonomy chip "${label}" to reopen selected.`,
-  );
 }
-
 async function createEventTypeWithTypeAsset(
   api,
   baseUrl,
@@ -4010,7 +3917,7 @@ test('@mutation tenant-admin granular mixed gallery CRUD persists and renders se
   }
 });
 
-test.skip('@mutation tenant-admin account-profile edit save keeps Display Name visible, skips persisted-empty gallery resend, and clears persisted gallery content', async () => {
+test('@mutation tenant-admin account-profile edit save keeps Display Name visible without emitting gallery mutations', async () => {
   test.setTimeout(600000);
   const baseUrl = requireTenantUrl();
   const api = await createApiContext(baseUrl);
@@ -4066,8 +3973,6 @@ test.skip('@mutation tenant-admin account-profile edit save keeps Display Name v
     );
     const initialDisplayName = createdProfile.displayName;
     const updatedDisplayName = `PW Edit Visible ${unique}`;
-    const groupSubtitle = `Limpeza ${unique}`;
-    const photoDescription = `Foto persistida ${unique}`;
 
     const pageBundle = await createFreshAuthenticatedTenantAdminPage(session);
     freshBrowser = pageBundle.browser;
@@ -4097,7 +4002,7 @@ test.skip('@mutation tenant-admin account-profile edit save keeps Display Name v
     );
     await fillFlutterTextField(page, 'Nome de exibicao', updatedDisplayName);
 
-    const galleryEndpoint = `**/admin/api/v1/account_profiles/${profileId}/gallery`;
+    const galleryEndpoint = `**/admin/api/v1/account_profiles/${profileId}/gallery**`;
     let unexpectedGalleryRequestBody = null;
     const failClosedUnexpectedGalleryRoute = async (route) => {
       unexpectedGalleryRequestBody =
@@ -4151,195 +4056,17 @@ test.skip('@mutation tenant-admin account-profile edit save keeps Display Name v
       'Persisted-empty edit saves must not emit the gallery mutation.',
     ).toBeNull();
     await page.unroute(galleryEndpoint, failClosedUnexpectedGalleryRoute);
-
-    await scrollUntilVisible(
-      page,
-      page.getByText('Galerias de fotos'),
-      'Expected gallery section for a gallery-enabled account profile.',
-    );
-    await page.getByRole('button', { name: 'Adicionar grupo de fotos' }).click();
-    await fillFlutterTextField(page, 'Subtítulo do agrupamento', groupSubtitle);
-    await attachImageFromDevice(page, {
-      flow: 'edit-gallery',
-      buttonName: 'Adicionar foto',
-      cropTitle: 'Ajustar foto da galeria',
-    });
-    await page.getByRole('button', { name: 'Usar' }).click();
-    await fillFlutterTextField(page, 'Descrição da foto', photoDescription);
-
-    const gallerySeedProfileSaveResponsePromise =
-      waitForSuccessfulAccountProfilePatchResponse(page, profileId, {
-        requestMustContain: [updatedDisplayName],
-      });
-    const gallerySeedSaveResponsePromise = page.waitForResponse((candidate) => {
-      return (
-        candidate.request().method() === 'POST' &&
-        candidate.url().includes(`/admin/api/v1/account_profiles/${profileId}/gallery`) &&
-        candidate.status() < 400
-      );
-    });
-    await Promise.all([
-      gallerySeedProfileSaveResponsePromise,
-      clickSaveChanges(page),
-    ]);
-    const gallerySeedSaveResponse = await gallerySeedSaveResponsePromise;
-    const gallerySeedSavePayload = normalizePayload(
-      await gallerySeedSaveResponse.json(),
-    );
-    const seededGroups = normalizeList(gallerySeedSavePayload?.gallery_groups);
-    expect(seededGroups).toHaveLength(1);
-    const seededGroup = seededGroups[0];
-    expect(seededGroup?.subtitle).toBe(groupSubtitle);
-    const seededItems = normalizeList(seededGroup?.items);
-    expect(seededItems).toHaveLength(1);
-    expect(seededItems[0]?.description).toBe(photoDescription);
-
-    await expect
-      .poll(
-        async () => {
-          const adminProfile = await fetchAdminProfile(
-            api,
-            baseUrl,
-            session.token,
-            profileId,
-          );
-          const groups = normalizeList(adminProfile?.gallery_groups);
-          return [
-            groups.length,
-            groups[0]?.subtitle?.toString() || '',
-            normalizeList(groups[0]?.items)[0]?.description?.toString() || '',
-          ];
-        },
-        {
-          timeout: appBootTimeoutMs,
-          message:
-            'Expected the seeded gallery content to persist before the clear-all edit phase.',
-        },
-      )
-      .toEqual([1, groupSubtitle, photoDescription]);
-
-    const reopenResponse = await page.goto(editUrl, {
-      waitUntil: 'domcontentloaded',
-    });
-    expect(reopenResponse, 'Reopened edit route should be available.').not.toBeNull();
-    expect(reopenResponse.status()).toBeLessThan(400);
-    await assertAppBooted(page);
-    await enableAccessibilityIfNeeded(page);
-
-    const reopenedDisplayNameField = page.getByLabel('Nome de exibicao').first();
-    await scrollUntilVisible(
-      page,
-      reopenedDisplayNameField,
-      'Expected Display Name field to remain visible after reopening the real edit flow.',
-    );
-    await expectFlutterFieldRenderedValue(
-      reopenedDisplayNameField,
-      updatedDisplayName,
-      'Expected the reopened edit flow to visibly render the persisted Display Name before refocus.',
-    );
-    const reopenedGroupSubtitleField = page
-      .getByLabel('Subtítulo do agrupamento')
-      .first();
-    await scrollUntilVisible(
-      page,
-      reopenedGroupSubtitleField,
-      'Expected persisted gallery subtitle field to rehydrate before clear-all save.',
-    );
-    await expectFlutterFieldRenderedAndFocusedValue(
-      reopenedGroupSubtitleField,
-      groupSubtitle,
-      'Expected persisted gallery content to rehydrate before clear-all save.',
-    );
-    await page.getByRole('button', { name: 'Remover grupo' }).first().click();
-    await expectNoVisibleFlutterTextField(
-      page,
-      'Subtítulo do agrupamento',
-      'Expected removing the only gallery group to remove the visible subtitle field before save.',
-    );
-
-    const clearAllProfileSaveResponsePromise =
-      waitForSuccessfulAccountProfilePatchResponse(page, profileId, {
-        requestMustContain: [updatedDisplayName],
-      });
-    const clearAllGallerySaveResponsePromise = page.waitForResponse((candidate) => {
-      return (
-        candidate.request().method() === 'POST' &&
-        candidate.url().includes(`/admin/api/v1/account_profiles/${profileId}/gallery`) &&
-        candidate.status() < 400
-      );
-    });
-    await Promise.all([
-      clearAllProfileSaveResponsePromise,
-      clickSaveChanges(page),
-    ]);
-    const clearAllGallerySaveResponse = await clearAllGallerySaveResponsePromise;
-    const clearAllGalleryRequestBody =
-      clearAllGallerySaveResponse.request().postData() || '';
-    expect(
-      clearAllGalleryRequestBody,
-      'Clear-all edit saves must submit gallery_groups for the bounded empty-array contract.',
-    ).toContain('gallery_groups');
-    expect(
-      clearAllGalleryRequestBody,
-      'Clear-all edit saves must submit the bounded gallery_groups=[] payload.',
-    ).toContain('[]');
-
-    const clearAllGallerySavePayload = normalizePayload(
-      await clearAllGallerySaveResponse.json(),
-    );
-    expect(
-      normalizeList(clearAllGallerySavePayload?.gallery_groups),
-      'Clear-all edit saves must settle with an empty persisted gallery.',
-    ).toEqual([]);
-
-    await expect
-      .poll(
-        async () => {
-          const adminProfile = await fetchAdminProfile(
-            api,
-            baseUrl,
-            session.token,
-            profileId,
-          );
-          return [
-            adminProfile?.display_name?.toString() || '',
-            normalizeList(adminProfile?.gallery_groups).length,
-          ];
-        },
-        {
-          timeout: appBootTimeoutMs,
-          message:
-            'Expected the bounded clear-all save to preserve Display Name while emptying the persisted gallery.',
-        },
-      )
-      .toEqual([updatedDisplayName, 0]);
-
-    const finalDisplayNameField = page.getByLabel('Nome de exibicao').first();
+    const finalDisplayNameField = page.getByLabel("Nome de exibicao").first();
     await scrollUntilVisible(
       page,
       finalDisplayNameField,
-      'Expected the edit flow to keep the Display Name field reachable after clear-all save.',
+      "Expected Display Name to remain reachable after the independent profile save.",
     );
     await expectFlutterFieldRenderedValue(
       finalDisplayNameField,
       updatedDisplayName,
-      'Expected the edit flow to visibly render the persisted Display Name after clear-all save.',
+      "Expected the independent profile save to keep the submitted Display Name visible.",
     );
-    await scrollUntilVisible(
-      page,
-      page.getByText('Galerias de fotos'),
-      'Expected the gallery section to remain available after clear-all save.',
-    );
-    await expectNoVisibleFlutterTextField(
-      page,
-      'Subtítulo do agrupamento',
-      'Expected the cleared gallery subtitle field to remain absent after clear-all save.',
-    );
-    await expect(
-      page.getByRole('button', { name: 'Adicionar grupo de fotos' }),
-    ).toBeVisible({
-      timeout: appBootTimeoutMs,
-    });
 
     await assertNoBrowserFailures(collectors);
   } catch (error) {
@@ -4369,7 +4096,7 @@ test.skip('@mutation tenant-admin account-profile edit save keeps Display Name v
   }
 });
 
-test.skip('@deferred @mutation tenant-admin gallery data stays dormant when has_gallery is disabled', async ({
+test('@mutation tenant-admin gallery data stays dormant when has_gallery is disabled', async ({
   browser,
 }) => {
   test.setTimeout(600000);
@@ -4410,7 +4137,7 @@ test.skip('@deferred @mutation tenant-admin gallery data stays dormant when has_
     profileTypeKey = createdProfileType?.type?.toString() || '';
     expect(profileTypeKey, 'Gallery capability profile type must be created.').toBeTruthy();
 
-    const createdProfile = await createAccountProfileForType(
+    const createdProfile = await createPublicAccountProfileForType(
       api,
       baseUrl,
       session.token,
@@ -4452,43 +4179,64 @@ test.skip('@deferred @mutation tenant-admin gallery data stays dormant when has_
 
     await scrollUntilVisible(
       page,
-      page.getByText('Galerias de fotos'),
+      page.getByText('Galerias', { exact: true }),
       'Expected gallery section for a gallery-enabled account profile.',
     );
-    await page.getByRole('button', { name: 'Adicionar grupo de fotos' }).click();
-    await fillFlutterTextField(page, 'Subtítulo do agrupamento', groupSubtitle);
-    await attachImageFromDevice(page, {
-      flow: 'gallery',
-      buttonName: 'Adicionar foto',
-      cropTitle: 'Ajustar foto da galeria',
-    });
-    await page.getByRole('button', { name: 'Usar' }).click();
-    await fillFlutterTextField(page, 'Descrição da foto', photoDescription);
-
-    const profileSaveResponsePromise = page.waitForResponse((candidate) => {
-      return (
-        candidate.request().method() === 'PATCH' &&
-        candidate.url().includes(`/admin/api/v1/account_profiles/${profileId}`) &&
-        candidate.status() < 400
-      );
-    });
-    const gallerySaveResponsePromise = page.waitForResponse((candidate) => {
-      return (
-        candidate.request().method() === 'POST' &&
-        candidate.url().includes(`/admin/api/v1/account_profiles/${profileId}/gallery`) &&
-        candidate.status() < 400
-      );
-    });
-    await clickSaveChanges(page);
-    await profileSaveResponsePromise;
-    const gallerySaveResponse = await gallerySaveResponsePromise;
-    const gallerySavePayload = normalizePayload(await gallerySaveResponse.json());
-    const savedGroups = normalizeList(gallerySavePayload?.gallery_groups);
+    const groupCreateResponsePromise = page.waitForResponse((candidate) =>
+      candidate.request().method() === 'POST' &&
+      candidate.url().endsWith(`/admin/api/v1/account_profiles/${profileId}/gallery/groups`) &&
+      candidate.status() < 400,
+    );
+    await page.getByRole('button', { name: 'Adicionar galeria' }).click();
+    await fillFlutterTextField(page, 'Nome do grupo', groupSubtitle);
+    const [groupCreateResponse] = await Promise.all([
+      groupCreateResponsePromise,
+      page.getByRole('button', { name: 'Criar galeria' }).click(),
+    ]);
+    let galleryPayload = normalizePayload(await groupCreateResponse.json());
+    let savedGroups = normalizeList(galleryPayload?.gallery_groups);
     expect(savedGroups).toHaveLength(1);
     const savedGroup = savedGroups[0];
     expect(savedGroup?.subtitle).toBe(groupSubtitle);
-    const savedItems = normalizeList(savedGroup?.items);
+
+    await page.getByRole('button', { name: 'Adicionar foto' }).click();
+    const [fileChooser] = await Promise.all([
+      page.waitForEvent('filechooser'),
+      page.getByText('Do dispositivo').last().click(),
+    ]);
+    await fileChooser.setFiles(ensureFixtureImageFile(fixtureImagePath));
+    await expect(page.getByText('Ajustar foto da galeria')).toBeVisible({
+      timeout: appBootTimeoutMs,
+    });
+    const photoCreateResponsePromise = page.waitForResponse((candidate) =>
+      candidate.request().method() === 'POST' &&
+      candidate.url().endsWith(`/gallery/groups/${savedGroup.group_id}/items`) &&
+      candidate.status() < 400,
+    );
+    const [photoCreateResponse] = await Promise.all([
+      photoCreateResponsePromise,
+      page.getByRole('button', { name: 'Usar' }).click(),
+    ]);
+    galleryPayload = normalizePayload(await photoCreateResponse.json());
+    savedGroups = normalizeList(galleryPayload?.gallery_groups);
+    let savedItems = normalizeList(savedGroups[0]?.items);
     expect(savedItems).toHaveLength(1);
+    const savedItemId = savedItems[0]?.item_id?.toString() || '';
+    expect(savedItemId, 'Granular photo create must return an item id.').toBeTruthy();
+
+    const describeItemResponse = await api.patch(
+      buildApiUrl(
+        baseUrl,
+        `/admin/api/v1/account_profiles/${profileId}/gallery/groups/${savedGroup.group_id}/items/${savedItemId}`,
+      ),
+      {
+        headers: authHeaders(session.token),
+        data: { description: photoDescription },
+      },
+    );
+    expect(describeItemResponse.status()).toBeLessThan(400);
+    galleryPayload = normalizePayload(await describeItemResponse.json());
+    savedItems = normalizeList(galleryPayload?.gallery_groups?.[0]?.items);
     const savedItem = savedItems[0];
     expect(savedItem?.description).toBe(photoDescription);
     const savedItemModalUrl = savedItem?.modal_url?.toString() || '';
@@ -4513,28 +4261,15 @@ test.skip('@deferred @mutation tenant-admin gallery data stays dormant when has_
       'Account profile type update must disable has_gallery.',
     ).toBe(false);
 
-    const rejectedGalleryResponse = await api.post(
-      buildApiUrl(baseUrl, `/admin/api/v1/account_profiles/${profileId}/gallery`),
+    const rejectedGalleryResponse = await api.patch(
+      buildApiUrl(
+        baseUrl,
+        `/admin/api/v1/account_profiles/${profileId}/gallery/groups/${savedGroup.group_id}`,
+      ),
       {
         headers: authHeaders(session.token),
         failOnStatusCode: false,
-        multipart: {
-          _method: 'PATCH',
-          gallery_groups: JSON.stringify([
-            {
-              group_id: savedGroup?.group_id,
-              subtitle: savedGroup?.subtitle,
-              order: savedGroup?.order,
-              items: [
-                {
-                  item_id: savedItem?.item_id,
-                  description: savedItem?.description,
-                  order: savedItem?.order,
-                },
-              ],
-            },
-          ]),
-        },
+        data: { subtitle: savedGroup.subtitle },
       },
     );
     expect(
@@ -4680,7 +4415,7 @@ test.skip('@deferred @mutation tenant-admin gallery data stays dormant when has_
               },
             );
             const galleryCount =
-              await probeBundle.page.getByText('Galerias de fotos').count();
+              await probeBundle.page.getByText('Galerias', { exact: true }).count();
             logStep(
               'gallery-dormant',
               `fresh admin probe catalogStatus=${browserCatalog.status} has_gallery=${browserCatalog.hasGallery} uiGalleryCount=${galleryCount}`,
@@ -5501,7 +5236,7 @@ test('@mutation tenant-admin persisted WhatsApp edit saves without a draft key a
   }
 });
 
-test.skip('@deferred @mutation tenant-admin account profile nested tabs obey profile type capability', async ({
+test('@mutation tenant-admin account profile edit nested tabs obey profile type capability', async ({
   browser,
 }) => {
   const baseUrl = requireTenantUrl();
@@ -5621,61 +5356,6 @@ test.skip('@deferred @mutation tenant-admin account profile nested tabs obey pro
     await expect(page.getByText('Abas de contas vinculadas')).toBeVisible();
     await expect(page.getByRole('button', { name: 'Adicionar grupo' })).toBeVisible();
 
-    const profileTypesLoaded = page.waitForResponse((candidate) => {
-      if (!candidate.url().includes('/admin/api/v1/account_profile_types')) {
-        return false;
-      }
-      return candidate.status() === 200;
-    });
-
-    response = await page.goto(
-      buildApiUrl(baseUrl, '/admin/accounts/create'),
-      { waitUntil: 'domcontentloaded' },
-    );
-    expect(response, 'Account onboarding create response should be available.').not.toBeNull();
-    expect(response.status()).toBeLessThan(400);
-    await assertAppBooted(page);
-    await enableAccessibilityIfNeeded(page);
-    const profileTypesPayload = await (await profileTypesLoaded).json();
-    const loadedTypes = Array.isArray(profileTypesPayload?.data)
-      ? profileTypesPayload.data
-      : [];
-    expect(
-      loadedTypes.some((entry) => entry?.type === disabledTypeKey),
-      `Expected disabled profile type ${disabledTypeKey} in account onboarding type payload.`,
-    ).toBe(true);
-    expect(
-      loadedTypes.some((entry) => entry?.type === enabledTypeKey),
-      `Expected enabled profile type ${enabledTypeKey} in account onboarding type payload.`,
-    ).toBe(true);
-    await expect(page.getByText('Criar Conta')).toBeVisible({
-      timeout: appBootTimeoutMs,
-    });
-
-    await selectDropdownOption(page, {
-      flow: 'nested-tabs',
-      fieldLabel: 'Tipo de perfil',
-      optionText: disabledType.label,
-      logStep,
-    });
-    await page.waitForTimeout(250);
-    await expect(page.getByText('Abas de contas vinculadas')).toHaveCount(0);
-
-    await selectDropdownOption(page, {
-      flow: 'nested-tabs',
-      fieldLabel: 'Tipo de perfil',
-      optionText: enabledType.label,
-      logStep,
-    });
-    await page.waitForTimeout(250);
-    await scrollUntilVisible(
-      page,
-      page.getByText('Abas de contas vinculadas'),
-      'Expected nested account tabs section in canonical account onboarding create flow.',
-    );
-    await expect(page.getByText('Abas de contas vinculadas')).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Adicionar grupo' })).toBeVisible();
-
     await assertNoBrowserFailures(collectors);
   } finally {
     if (session?.token) {
@@ -5694,8 +5374,8 @@ test.skip('@deferred @mutation tenant-admin account profile nested tabs obey pro
   }
 });
 
-test('@mutation U04-ACCOUNT-GROUP-HEAD tenant-admin account-profile group heads persist independently, adopt canonical ids, and delete after confirmation', async () => {
-  test.setTimeout(900000);
+test('@mutation U04-ACCOUNT-GROUP-HEAD tenant-admin account-profile group heads persist independently, adopt canonical ids, and delete after confirmation', async ({}, testInfo) => {
+  testInfo.setTimeout(900000);
   const baseUrl = requireTenantUrl();
   const api = await createApiContext(baseUrl);
   let browserContext;
@@ -5704,6 +5384,7 @@ test('@mutation U04-ACCOUNT-GROUP-HEAD tenant-admin account-profile group heads 
   let nestedTypeKey = null;
   let primaryError = null;
   const createdAccountSlugs = [];
+  const fillerProfiles = [];
 
   try {
     session = await loginTenantAdmin(api, baseUrl);
@@ -5718,6 +5399,8 @@ test('@mutation U04-ACCOUNT-GROUP-HEAD tenant-admin account-profile group heads 
           is_queryable: true,
           is_favoritable: false,
           is_poi_enabled: false,
+          is_publicly_navigable: true,
+          is_publicly_discoverable: true,
           has_avatar: false,
           has_cover: false,
           has_taxonomies: false,
@@ -5727,6 +5410,20 @@ test('@mutation U04-ACCOUNT-GROUP-HEAD tenant-admin account-profile group heads 
     )?.data;
     nestedTypeKey = nestedType?.type?.toString() || '';
     expect(nestedTypeKey, 'U04 nested profile type must be created.').toBeTruthy();
+
+    for (let index = 1; index <= 21; index += 1) {
+      const filler = await createAccountProfileForType(
+        api,
+        baseUrl,
+        session.token,
+        {
+          name: `Xa Fixture ${index.toString().padStart(3, '0')} ${unique}`,
+          profileType: nestedType,
+        },
+      );
+      createdAccountSlugs.push(filler.accountSlug);
+      fillerProfiles.push(filler);
+    }
 
     const xapuri = await createAccountProfileForType(
       api,
@@ -5752,6 +5449,14 @@ test('@mutation U04-ACCOUNT-GROUP-HEAD tenant-admin account-profile group heads 
     );
     createdAccountSlugs.push(nestedParent.accountSlug);
     expect(nestedParent.profileId, 'U04 nested parent must have an id.').toBeTruthy();
+
+    const publicProfiles = [...fillerProfiles, xapuri, nestedParent];
+    for (let start = 0; start < publicProfiles.length; start += 6) {
+      await Promise.all(
+        publicProfiles.slice(start, start + 6).map((profile) =>
+          publishAccount(api, baseUrl, session.token, profile.accountSlug)),
+      );
+    }
 
     const pageBundle = await createFreshAuthenticatedTenantAdminPage(session);
     freshBrowser = pageBundle.browser;
@@ -5793,15 +5498,18 @@ test('@mutation U04-ACCOUNT-GROUP-HEAD tenant-admin account-profile group heads 
       'U04 nested parent must expose the canonical nested-group editor.',
     );
 
-    const createGroupResponsePromise = page.waitForResponse((candidate) => {
-      return (
-        candidate.request().method() === 'POST' &&
-        candidate.url().includes(
-          `/admin/api/v1/account_profiles/${nestedParent.profileId}/nested_profile_groups`,
-        ) &&
-        candidate.status() < 400
-      );
-    });
+    const createGroupResponsePromise = page.waitForResponse(
+      (candidate) => {
+        return (
+          candidate.request().method() === 'POST' &&
+          candidate.url().includes(
+            `/admin/api/v1/account_profiles/${nestedParent.profileId}/nested_profile_groups`,
+          ) &&
+          candidate.status() < 400
+        );
+      },
+      { timeout: 30000 },
+    );
     await page.getByRole('button', { name: 'Adicionar grupo' }).click();
     await expect(page.getByText('Novo grupo')).toBeVisible({
       timeout: appBootTimeoutMs,
@@ -5860,16 +5568,20 @@ test('@mutation U04-ACCOUNT-GROUP-HEAD tenant-admin account-profile group heads 
     });
     await page.getByRole('button', { name: 'Adicionar perfis' }).click();
 
+    // Xapuri sorts after the 21 broad-prefix fixtures and therefore is not a
+    // first-page candidate. The narrower query must resolve it server-side.
     await fillFlutterTextField(page, 'Buscar perfil', xapuri.displayName);
-    const addMemberResponsePromise = page.waitForResponse((candidate) => {
-      return (
-        candidate.request().method() === 'PATCH' &&
-        candidate.url().includes(
-          `/admin/api/v1/account_profiles/${nestedParent.profileId}/nested_profile_groups/${createdGroupId}/members`,
-        ) &&
-        candidate.status() < 400
-      );
-    });
+    const addMemberResponsePromise = page.waitForResponse(
+      (candidate) => {
+        return (
+          candidate.request().method() === 'PATCH' &&
+          candidate.url().includes(
+            `/admin/api/v1/account_profiles/${nestedParent.profileId}/nested_profile_groups/${createdGroupId}/members`,
+          )
+        );
+      },
+      { timeout: 30000 },
+    );
     const xapuriCheckbox = page.getByRole('checkbox', {
       name: new RegExp(escapeRegExp(xapuri.displayName)),
     });
@@ -5877,28 +5589,23 @@ test('@mutation U04-ACCOUNT-GROUP-HEAD tenant-admin account-profile group heads 
       timeout: appBootTimeoutMs,
     });
     await logU04PickerSemanticSnapshot(page, xapuri.displayName);
-    let xapuriChecked = false;
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      await xapuriCheckbox.click();
-      await page.waitForTimeout(150);
-      xapuriChecked =
-        ((await xapuriCheckbox.getAttribute('aria-checked').catch(() => '')) || '') ===
-        'true';
-      if (xapuriChecked) {
-        break;
-      }
-    }
+    await xapuriCheckbox.click({ timeout: 30000 });
     await logU04PickerSemanticSnapshot(page, xapuri.displayName);
-    expect(
-      xapuriChecked,
+    await expect(
+      xapuriCheckbox,
       'U04 nested-group candidate checkbox must become checked through semantic row interaction.',
-    ).toBe(true);
+    ).toBeChecked({ timeout: 30000 });
     await expect(page.getByText('1 selecionado(s)', { exact: true })).toBeVisible({
       timeout: appBootTimeoutMs,
     });
     await page.getByRole('button', { name: 'Adicionar' }).last().click();
     const addMemberResponse = await addMemberResponsePromise;
-    const addMemberPayload = normalizePayload(await addMemberResponse.json());
+    const addMemberResponseBody = await addMemberResponse.json();
+    expect(
+      addMemberResponse.status(),
+      `Dedicated member add must succeed. Response: ${JSON.stringify(addMemberResponseBody)}`,
+    ).toBeLessThan(400);
+    const addMemberPayload = normalizePayload(addMemberResponseBody);
     logStep(
       'u04-group-head',
       `dedicated add-members response aggregate revision ${Number(addMemberPayload?.aggregate_revision || 0)}`,
@@ -5940,21 +5647,103 @@ test('@mutation U04-ACCOUNT-GROUP-HEAD tenant-admin account-profile group heads 
       )
       .toBe('3|1|present');
 
+    const appendFillerMembersResponse = await api.patch(
+      buildApiUrl(
+        baseUrl,
+        `/admin/api/v1/account_profiles/${nestedParent.profileId}/nested_profile_groups/${createdGroupId}/members`,
+      ),
+      {
+        headers: authHeaders(session.token),
+        data: {
+          add_ids: fillerProfiles.map((profile) => profile.profileId),
+        },
+      },
+    );
+    expect(
+      appendFillerMembersResponse.status(),
+      'U04 pagination fixture members must be appended through the canonical delta endpoint.',
+    ).toBeLessThan(400);
+
+    const anonymousIdentity = await createAnonymousIdentity(
+      api,
+      baseUrl,
+      'u04-account-nested-pagination',
+    );
+    const publicMembersUrl = new URL(
+      buildApiUrl(
+        baseUrl,
+        `/api/v1/account_profiles/${nestedParent.profileSlug}/nested_profile_groups/${createdGroupId}/members`,
+      ),
+    );
+    publicMembersUrl.searchParams.set('per_page', '20');
+    const firstPublicMembersResponse = await api.get(publicMembersUrl.toString(), {
+      headers: authHeaders(anonymousIdentity.token),
+    });
+    expect(firstPublicMembersResponse.status()).toBe(200);
+    const firstPublicMembers = await firstPublicMembersResponse.json();
+    expect(normalizeList(firstPublicMembers?.data)).toHaveLength(20);
+    expect(
+      firstPublicMembers?.next_cursor?.toString().trim() || '',
+      'U04 public nested-member first page must expose a continuation cursor.',
+    ).toBeTruthy();
+
+    const lateFiller = fillerProfiles.at(-1);
+    const searchedPublicMembersUrl = new URL(publicMembersUrl.toString());
+    searchedPublicMembersUrl.searchParams.set('search', 'fixture 021');
+    const searchedPublicMembersResponse = await api.get(
+      searchedPublicMembersUrl.toString(),
+      { headers: authHeaders(anonymousIdentity.token) },
+    );
+    expect(searchedPublicMembersResponse.status()).toBe(200);
+    const searchedPublicMembers = await searchedPublicMembersResponse.json();
+    expect(
+      normalizeList(searchedPublicMembers?.data).map((profile) => profile?.id?.toString()),
+      'U04 public nested-member search must find a later name term beyond the initial page.',
+    ).toEqual([lateFiller.profileId.toString()]);
+
+    const publicContext = await page.context().browser().newContext({
+      ignoreHTTPSErrors: true,
+      viewport: { width: 430, height: 900 },
+      isMobile: true,
+      hasTouch: true,
+    });
+    try {
+      const publicPage = await publicContext.newPage();
+      const publicResponse = await publicPage.goto(
+        buildApiUrl(baseUrl, `/parceiro/${nestedParent.profileSlug}`),
+        { waitUntil: 'domcontentloaded' },
+      );
+      expect(publicResponse?.status() || 0).toBeLessThan(400);
+      await assertAppBooted(publicPage);
+      await enableAccessibilityIfNeeded(publicPage);
+      await publicPage.getByText('Parceiros', { exact: true }).first().click();
+      const nestedSearch = publicPage.getByRole('textbox', {
+        name: 'Buscar neste grupo',
+      });
+      await expect(nestedSearch).toBeVisible({ timeout: appBootTimeoutMs });
+      await nestedSearch.fill('fixture 021');
+      await nestedSearch.press('Enter');
+      await expect(
+        publicPage.getByText(lateFiller.displayName, { exact: true }),
+      ).toBeVisible({ timeout: appBootTimeoutMs });
+    } finally {
+      await publicContext.close();
+    }
+
     const backToEditButton = page.getByRole('button', { name: /voltar/i }).first();
     if (await backToEditButton.isVisible().catch(() => false)) {
       await backToEditButton.click();
       await expect(page.getByText('Editar Perfil')).toBeVisible({
         timeout: appBootTimeoutMs,
       });
-    } else {
-      const reloadedResponse = await page.goto(nestedEditUrl, {
-        waitUntil: 'domcontentloaded',
-      });
-      expect(reloadedResponse, 'U04 nested edit route reload must respond.').not.toBeNull();
-      expect(reloadedResponse.status()).toBeLessThan(400);
-      await assertAppBooted(page);
-      await enableAccessibilityIfNeeded(page);
     }
+    const reloadedResponse = await page.goto(nestedEditUrl, {
+      waitUntil: 'domcontentloaded',
+    });
+    expect(reloadedResponse, 'U04 nested edit route reload must respond.').not.toBeNull();
+    expect(reloadedResponse.status()).toBeLessThan(400);
+    await assertAppBooted(page);
+    await enableAccessibilityIfNeeded(page);
     await scrollUntilVisible(
       page,
       page.getByRole('button', {
@@ -5962,10 +5751,125 @@ test('@mutation U04-ACCOUNT-GROUP-HEAD tenant-admin account-profile group heads 
       }),
       'U04 persisted group must stay visible after returning from member management.',
     );
-    await expect(page.getByText('1 perfil vinculado', { exact: true })).toBeVisible({
+    await expect(page.getByText('22 perfis vinculados', { exact: true })).toBeVisible({
       timeout: appBootTimeoutMs,
     });
-    logStep('u04-group-head', 'returned to edit with 1 linked profile');
+    logStep('u04-group-head', 'returned to edit with 22 linked profiles');
+
+    const reorderPeerLabel = `Reorder Peer ${unique}`;
+    const reorderPeerCreateResponse = await api.post(
+      buildApiUrl(
+        baseUrl,
+        `/admin/api/v1/account_profiles/${nestedParent.profileId}/nested_profile_groups`,
+      ),
+      {
+        headers: authHeaders(session.token),
+        data: { label: reorderPeerLabel },
+      },
+    );
+    expect(reorderPeerCreateResponse.status()).toBe(201);
+    const reorderPeerCreatePayload = normalizePayload(
+      await reorderPeerCreateResponse.json(),
+    );
+    const reorderPeer = normalizeList(
+      reorderPeerCreatePayload?.nested_profile_groups,
+    ).find((group) => group?.label === reorderPeerLabel);
+    const reorderPeerId = reorderPeer?.id?.toString().trim() || '';
+    expect(reorderPeerId, 'U04 reorder peer must return a persisted id.').toBeTruthy();
+
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await assertAppBooted(page);
+    await enableAccessibilityIfNeeded(page);
+    const partnersLabelButton = page.getByRole('button', {
+      name: new RegExp(`^Nome da aba\\s*${escapeRegExp('Parceiros')}$`, 'i'),
+    });
+    await scrollUntilVisible(
+      page,
+      partnersLabelButton,
+      'U04 account reorder fixture must render the original first group.',
+    );
+    const accountOrderResponsePromise = page.waitForResponse((candidate) => {
+      return (
+        candidate.request().method() === 'PATCH' &&
+        new URL(candidate.url()).pathname ===
+          `/admin/api/v1/account_profiles/${nestedParent.profileId}/nested_profile_groups/${createdGroupId}/order`
+      );
+    });
+    const accountMoveDownButtons = page.getByRole('button', {
+      name: 'Mover para baixo',
+      exact: true,
+    });
+    await expect(accountMoveDownButtons.first()).toBeEnabled({
+      timeout: appBootTimeoutMs,
+    });
+    await accountMoveDownButtons.first().click();
+    const accountOrderResponse = await accountOrderResponsePromise;
+    expect(accountOrderResponse.status()).toBe(200);
+    const accountOrderPayload = normalizePayload(await accountOrderResponse.json());
+    expect(
+      Object.keys(accountOrderPayload).sort(),
+      'Account reorder response must stay bounded to owner identity and order permutation.',
+    ).toEqual(['account_profile_id', 'groups']);
+    expect(
+      normalizeList(accountOrderPayload?.groups).map((group) => Object.keys(group).sort()),
+    ).toEqual([
+      ['id', 'order'],
+      ['id', 'order'],
+    ]);
+    await expect
+      .poll(
+        async () => {
+          const nestedReadback = await fetchAdminProfile(
+            api,
+            baseUrl,
+            session.token,
+            nestedParent.profileId,
+          );
+          return normalizeList(nestedReadback?.nested_profile_groups)
+            .sort((left, right) => Number(left?.order || 0) - Number(right?.order || 0))
+            .map((group) => group?.id?.toString());
+        },
+        {
+          timeout: appBootTimeoutMs,
+          message: 'U04 move-down must persist the complete Account group order.',
+        },
+      )
+      .toEqual([reorderPeerId, createdGroupId]);
+
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await assertAppBooted(page);
+    await enableAccessibilityIfNeeded(page);
+    await scrollUntilVisible(
+      page,
+      partnersLabelButton,
+      'U04 moved Account group must remain visible after reload.',
+    );
+    const accountGroupLabelsAfterReload = page.getByRole('button', {
+      name: /^Nome da aba\s/i,
+    });
+    await expect(accountGroupLabelsAfterReload.nth(0)).toHaveAccessibleName(
+      `Nome da aba ${reorderPeerLabel}`,
+    );
+    await expect(accountGroupLabelsAfterReload.nth(1)).toHaveAccessibleName(
+      'Nome da aba Parceiros',
+    );
+
+    const reorderPeerDeleteResponse = await api.delete(
+      buildApiUrl(
+        baseUrl,
+        `/admin/api/v1/account_profiles/${nestedParent.profileId}/nested_profile_groups/${reorderPeerId}`,
+      ),
+      { headers: authHeaders(session.token) },
+    );
+    expect(reorderPeerDeleteResponse.status()).toBeLessThan(400);
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await assertAppBooted(page);
+    await enableAccessibilityIfNeeded(page);
+    await scrollUntilVisible(
+      page,
+      partnersLabelButton,
+      'U04 original group must remain available after reorder-peer cleanup.',
+    );
 
     const removeGroupButton = page.getByRole('button', { name: 'Remover grupo' }).first();
     const deleteGroupDialogTitle = page.getByText('Excluir grupo', { exact: true });
@@ -6217,7 +6121,7 @@ test('@mutation U04-ACCOUNT-GROUP-HEAD tenant-admin account-profile group heads 
   }
 });
 
-test.skip('@deferred @mutation U06-CANDIDATE-PICKER server-owned nested and contact candidate search persists through the canonical picker', async () => {
+test('@mutation U06-CANDIDATE-PICKER server-owned nested and contact candidate search persists through the canonical picker', async () => {
   test.setTimeout(900000);
   const baseUrl = requireTenantUrl();
   const api = await createApiContext(baseUrl);
@@ -6228,8 +6132,10 @@ test.skip('@deferred @mutation U06-CANDIDATE-PICKER server-owned nested and cont
   let contactTypeKey = null;
   let primaryError = null;
   const createdAccountSlugs = [];
+  const flow = 'u06-candidate-picker';
 
   try {
+    logStep(flow, 'authenticate and create profile types');
     session = await loginTenantAdmin(api, baseUrl);
     const unique = Date.now();
     const nestedType = (
@@ -6272,6 +6178,22 @@ test.skip('@deferred @mutation U06-CANDIDATE-PICKER server-owned nested and cont
     contactTypeKey = contactType?.type?.toString() || '';
     expect(contactTypeKey, 'U06 contact profile type must be created.').toBeTruthy();
 
+    logStep(flow, 'seed Xapuri and the 21-row pagination boundary');
+    const xapuri = await createAccountProfileForType(
+      api,
+      baseUrl,
+      session.token,
+      {
+        name: `Zzz Xapuri U06 ${unique}`,
+        profileType: nestedType,
+      },
+    );
+    createdAccountSlugs.push(xapuri.accountSlug);
+    expect(xapuri.profileId, 'U06 Xapuri candidate must have an id.').toBeTruthy();
+
+    // The canonical candidate endpoint orders by complete normalized name.
+    // The target therefore sits beyond the broad `xa` page while a prefix of
+    // its second name term must still resolve it server-side.
     for (let index = 1; index <= 21; index += 1) {
       const filler = await createAccountProfileForType(
         api,
@@ -6284,18 +6206,6 @@ test.skip('@deferred @mutation U06-CANDIDATE-PICKER server-owned nested and cont
       );
       createdAccountSlugs.push(filler.accountSlug);
     }
-
-    const xapuri = await createAccountProfileForType(
-      api,
-      baseUrl,
-      session.token,
-      {
-        name: `Xapuri U06 ${unique}`,
-        profileType: nestedType,
-      },
-    );
-    createdAccountSlugs.push(xapuri.accountSlug);
-    expect(xapuri.profileId, 'U06 Xapuri candidate must have an id.').toBeTruthy();
 
     const nestedParent = await createAccountProfileForType(
       api,
@@ -6357,6 +6267,7 @@ test.skip('@deferred @mutation U06-CANDIDATE-PICKER server-owned nested and cont
     createdAccountSlugs.push(contactTarget.accountSlug);
     expect(contactTarget.profileId, 'U06 contact target must have an id.').toBeTruthy();
 
+    logStep(flow, 'open nested parent and create the managed group');
     const pageBundle = await createFreshAuthenticatedTenantAdminPage(session);
     freshBrowser = pageBundle.browser;
     browserContext = pageBundle.context;
@@ -6379,22 +6290,61 @@ test.skip('@deferred @mutation U06-CANDIDATE-PICKER server-owned nested and cont
       page.getByText('Abas de contas vinculadas'),
       'U06 nested parent must expose the canonical nested-group editor.',
     );
-    await page.getByRole('button', { name: 'Adicionar grupo' }).click();
-    await page.getByRole('button', { name: 'Selecionar perfis' }).click();
-    await expect(
-      page.getByText('Digite ao menos 2 caracteres para buscar.'),
-    ).toBeVisible({ timeout: appBootTimeoutMs });
-
-    const firstPageResponsePromise = page.waitForResponse((candidate) => {
-      const url = new URL(candidate.url());
+    const createGroupResponsePromise = page.waitForResponse((candidate) => {
       return (
-        candidate.request().method() === 'GET' &&
-        url.pathname === '/admin/api/v1/account_profiles/candidates' &&
-        url.searchParams.get('scope') === 'queryable' &&
-        url.searchParams.get('search') === 'xa' &&
-        candidate.status() === 200
+        candidate.request().method() === 'POST' &&
+        candidate.url().includes(
+          `/admin/api/v1/account_profiles/${nestedParent.profileId}/nested_profile_groups`,
+        ) &&
+        candidate.status() < 400
       );
     });
+    await page.getByRole('button', { name: 'Adicionar grupo' }).click({
+      timeout: 30000,
+    });
+    await expect(page.getByText('Novo grupo')).toBeVisible({
+      timeout: 30000,
+    });
+    await fillFlutterTextField(page, 'Nome do grupo', 'Participantes');
+    await page.getByRole('button', { name: 'Criar grupo' }).click({
+      timeout: 30000,
+    });
+    const createGroupResponse = await createGroupResponsePromise;
+    const createGroupPayload = normalizePayload(await createGroupResponse.json());
+    const createdGroup = normalizeList(
+      createGroupPayload?.nested_profile_groups,
+    ).find((group) => group?.label === 'Participantes');
+    const createdGroupId = createdGroup?.id?.toString().trim() || '';
+    expect(
+      createdGroupId,
+      'U06 nested-group create must return the persisted group id.',
+    ).toBeTruthy();
+    await page.getByRole('button', { name: 'Gerenciar perfis' }).click({
+      timeout: 30000,
+    });
+    const addProfilesButton = page.getByRole('button', {
+      name: 'Adicionar perfis',
+    });
+    await expect(addProfilesButton).toBeVisible({ timeout: 30000 });
+    await addProfilesButton.click({ timeout: 30000 });
+    await expect(page.getByRole('textbox', { name: 'Buscar perfil' })).toBeVisible({
+      timeout: 30000,
+    });
+
+    const firstPageResponsePromise = page.waitForResponse(
+      (candidate) => {
+        const url = new URL(candidate.url());
+        return (
+          candidate.request().method() === 'GET' &&
+          url.pathname === '/admin/api/v1/account_profiles/candidates' &&
+          url.searchParams.get('scope') === 'queryable' &&
+          url.searchParams.get('search') === 'xa' &&
+          url.searchParams.get('per_page') === '20' &&
+          candidate.status() === 200
+        );
+      },
+      { timeout: 30000 },
+    );
     await fillFlutterTextField(page, 'Buscar perfil', 'xa');
     const firstPageResponse = await firstPageResponsePromise;
     const firstPagePayload = await firstPageResponse.json();
@@ -6407,16 +6357,20 @@ test.skip('@deferred @mutation U06-CANDIDATE-PICKER server-owned nested and cont
       'Xapuri must be outside the initial 20-row xa page fixture.',
     ).toBe(false);
 
-    const xapuriSearchResponsePromise = page.waitForResponse((candidate) => {
-      const url = new URL(candidate.url());
-      return (
-        candidate.request().method() === 'GET' &&
-        url.pathname === '/admin/api/v1/account_profiles/candidates' &&
-        url.searchParams.get('scope') === 'queryable' &&
-        url.searchParams.get('search') === 'xapuri' &&
-        candidate.status() === 200
-      );
-    });
+    logStep(flow, 'search Xapuri by a later normalized name term');
+    const xapuriSearchResponsePromise = page.waitForResponse(
+      (candidate) => {
+        const url = new URL(candidate.url());
+        return (
+          candidate.request().method() === 'GET' &&
+          url.pathname === '/admin/api/v1/account_profiles/candidates' &&
+          url.searchParams.get('scope') === 'queryable' &&
+          url.searchParams.get('search') === 'xapuri' &&
+          candidate.status() === 200
+        );
+      },
+      { timeout: 30000 },
+    );
     await fillFlutterTextField(page, 'Buscar perfil', 'xapuri');
     const xapuriSearchResponse = await xapuriSearchResponsePromise;
     const xapuriPayload = await xapuriSearchResponse.json();
@@ -6424,30 +6378,42 @@ test.skip('@deferred @mutation U06-CANDIDATE-PICKER server-owned nested and cont
       normalizeList(xapuriPayload?.data).map((entry) => entry?.id?.toString()),
     ).toContain(xapuri.profileId?.toString());
 
-    await page.getByText(xapuri.displayName, { exact: true }).click();
-    await page.getByRole('button', { name: 'Confirmar' }).last().click();
-    const nestedSaveResponsePromise = page.waitForResponse((candidate) => {
+    const addMemberResponsePromise = page.waitForResponse((candidate) => {
       return (
         candidate.request().method() === 'PATCH' &&
-        candidate.url().includes(`/admin/api/v1/account_profiles/${nestedParent.profileId}`) &&
-        candidate.status() === 200
+        candidate.url().includes(
+          `/admin/api/v1/account_profiles/${nestedParent.profileId}/nested_profile_groups/${createdGroupId}/members`,
+        )
       );
     });
-    await clickSaveChanges(page);
-    await nestedSaveResponsePromise;
-    const nestedReadback = await fetchAdminProfile(
+    const xapuriCheckbox = page.getByRole('checkbox', {
+      name: new RegExp(escapeRegExp(xapuri.displayName)),
+    });
+    await expect(xapuriCheckbox).toBeVisible({ timeout: 30000 });
+    await xapuriCheckbox.click({ timeout: 30000 });
+    await page.getByRole('button', { name: 'Adicionar' }).last().click({
+      timeout: 30000,
+    });
+    const addMemberResponse = await addMemberResponsePromise;
+    expect(
+      addMemberResponse.status(),
+      'U06 member add must use the dedicated nested-group delta endpoint.',
+    ).toBeLessThan(400);
+    const nestedMembersReadback = await fetchAdminNestedGroupMembers(
       api,
       baseUrl,
       session.token,
       nestedParent.profileId,
+      createdGroupId,
     );
     expect(
-      normalizeList(nestedReadback?.nested_profile_groups)
-        .flatMap((group) => normalizeList(group?.account_profile_ids))
-        .map((id) => id?.toString()),
-      'Nested save must persist the selected Xapuri profile id.',
+      normalizeList(nestedMembersReadback?.data).map((member) =>
+        member?.id?.toString(),
+      ),
+      'U06 dedicated member add must persist the selected Xapuri profile id.',
     ).toContain(xapuri.profileId?.toString());
 
+    logStep(flow, 'open contact target and select a contact-capable source');
     const contactEditUrl = buildApiUrl(
       baseUrl,
       `/admin/accounts/${contactTarget.accountSlug}/profiles/${contactTarget.profileId}/edit`,
@@ -6455,6 +6421,7 @@ test.skip('@deferred @mutation U06-CANDIDATE-PICKER server-owned nested and cont
     const contactEditResponse = await page.goto(contactEditUrl, {
       waitUntil: 'domcontentloaded',
     });
+    logStep(flow, 'contact edit route loaded');
     expect(contactEditResponse, 'U06 contact edit route must respond.').not.toBeNull();
     expect(contactEditResponse.status()).toBeLessThan(400);
     await assertAppBooted(page);
@@ -6464,53 +6431,71 @@ test.skip('@deferred @mutation U06-CANDIDATE-PICKER server-owned nested and cont
       page.getByText('Origem do Contato'),
       'U06 contact target must expose the canonical contact-source section.',
     );
+    logStep(flow, 'contact-source section visible');
     await page.getByRole('radio', { name: /Espelhar outro perfil/i }).click();
     await page
       .getByRole('button', { name: 'Selecionar perfil de origem' })
       .click();
+    logStep(flow, 'contact candidate picker opened');
 
-    const contactSearchResponsePromise = page.waitForResponse((candidate) => {
-      const url = new URL(candidate.url());
-      return (
-        candidate.request().method() === 'GET' &&
-        url.pathname === '/admin/api/v1/account_profiles/candidates' &&
-        url.searchParams.get('scope') === 'contact_capable' &&
-        url.searchParams.get('search') === 'mi' &&
-        candidate.status() === 200
-      );
-    });
+    const contactSearchResponsePromise = page.waitForResponse(
+      (candidate) => {
+        const url = new URL(candidate.url());
+        return (
+          candidate.request().method() === 'GET' &&
+          url.pathname === '/admin/api/v1/account_profiles/candidates' &&
+          url.searchParams.get('scope') === 'contact_capable' &&
+          url.searchParams.get('search') === 'mi' &&
+          candidate.status() === 200
+        );
+      },
+      { timeout: 30000 },
+    );
     await fillFlutterTextField(page, 'Buscar perfil', 'mi');
     const contactSearchResponse = await contactSearchResponsePromise;
     const contactSearchPayload = await contactSearchResponse.json();
+    logStep(flow, 'contact-capable search response validated');
     expect(
       normalizeList(contactSearchPayload?.data).map((entry) => entry?.id?.toString()),
     ).toContain(contactSource.profileId?.toString());
 
+    const sourceDetailResponsePromise = page.waitForResponse(
+      (candidate) => {
+        return (
+          candidate.request().method() === 'GET' &&
+          candidate.url().includes(
+            `/admin/api/v1/account_profiles/${contactSource.profileId}`,
+          ) &&
+          candidate.status() === 200
+        );
+      },
+      { timeout: 30000 },
+    );
+    logStep(flow, 'select contact source and await detail hydration');
     await page.getByText(contactSource.displayName, { exact: true }).click();
-    const sourceDetailResponsePromise = page.waitForResponse((candidate) => {
-      return (
-        candidate.request().method() === 'GET' &&
-        candidate.url().includes(
-          `/admin/api/v1/account_profiles/${contactSource.profileId}`,
-        ) &&
-        candidate.status() === 200
-      );
-    });
-    await page.getByRole('button', { name: 'Confirmar' }).last().click();
     await sourceDetailResponsePromise;
+    logStep(flow, 'contact source detail hydrated');
     await expect(page.getByText(contactTitle, { exact: false }).first()).toBeVisible({
-      timeout: appBootTimeoutMs,
+      timeout: 30000,
     });
+    logStep(flow, 'contact source confirmed with effective channel preview');
 
-    const contactSaveResponsePromise = page.waitForResponse((candidate) => {
-      return (
-        candidate.request().method() === 'PATCH' &&
-        candidate.url().includes(`/admin/api/v1/account_profiles/${contactTarget.profileId}`) &&
-        candidate.status() === 200
-      );
-    });
+    const contactSaveResponsePromise = page.waitForResponse(
+      (candidate) => {
+        return (
+          candidate.request().method() === 'PATCH' &&
+          candidate.url().includes(
+            `/admin/api/v1/account_profiles/${contactTarget.profileId}`,
+          ) &&
+          candidate.status() === 200
+        );
+      },
+      { timeout: 30000 },
+    );
+    logStep(flow, 'save contact target');
     await clickSaveChanges(page);
     await contactSaveResponsePromise;
+    logStep(flow, 'contact target save response received');
     const contactReadback = await fetchAdminProfile(
       api,
       baseUrl,
@@ -6527,6 +6512,7 @@ test.skip('@deferred @mutation U06-CANDIDATE-PICKER server-owned nested and cont
       ),
     ).toContain(sourceChannelId);
 
+    logStep(flow, 'browser assertions complete');
     await assertNoBrowserFailures(collectors);
   } catch (error) {
     primaryError = error;
@@ -6534,10 +6520,14 @@ test.skip('@deferred @mutation U06-CANDIDATE-PICKER server-owned nested and cont
   } finally {
     await runCleanupPreservingPrimaryError(primaryError, async () => {
       try {
+        logStep(flow, `cleanup ${createdAccountSlugs.length} accounts and profile types`);
         await runCleanupSteps([
-          ...createdAccountSlugs
-            .reverse()
-            .map((slug) => () => cleanupOnboardedAccount(api, baseUrl, session?.token, slug)),
+          () => cleanupOnboardedAccounts(
+            api,
+            baseUrl,
+            session?.token,
+            createdAccountSlugs.reverse(),
+          ),
           nestedTypeKey
             ? () => deleteAccountProfileType(api, baseUrl, session?.token, nestedTypeKey)
             : null,
@@ -6558,7 +6548,7 @@ test.skip('@deferred @mutation U06-CANDIDATE-PICKER server-owned nested and cont
   }
 });
 
-test.skip('@deferred @mutation tenant-admin account onboarding CRUD persists detail/edit readback and delete flow', async () => {
+test('@mutation tenant-admin account onboarding CRUD persists detail/edit readback and delete flow', async () => {
   test.setTimeout(600000);
   const baseUrl = requireTenantUrl();
   const api = await createApiContext(baseUrl);
@@ -6622,7 +6612,6 @@ test.skip('@deferred @mutation tenant-admin account onboarding CRUD persists det
       logStep,
     });
     await page.waitForTimeout(250);
-    await page.getByRole('button', { name: 'Nao gerenciada' }).click();
     await fillFlutterTextField(page, 'Nome', initialName);
 
     const createRequestPromise = page.waitForResponse((candidate) => {
@@ -6645,11 +6634,8 @@ test.skip('@deferred @mutation tenant-admin account onboarding CRUD persists det
     expect(accountSlug, 'Account onboarding must return account slug.').toBeTruthy();
     expect(profileId, 'Account onboarding must return profile id.').toBeTruthy();
 
-    await expect(page.getByText(`Conta: ${accountSlug}`)).toBeVisible({
-      timeout: appBootTimeoutMs,
-    });
-
-    await page.getByRole('button', { name: 'Editar' }).first().click();
+    // Canonical onboarding success replaces the create route with the newly
+    // created Account Profile editor; there is no intermediate detail step.
     await expect(page.getByText('Editar Perfil')).toBeVisible({
       timeout: appBootTimeoutMs,
     });
@@ -6695,6 +6681,21 @@ test.skip('@deferred @mutation tenant-admin account onboarding CRUD persists det
         },
       )
       .toBe(updatedDisplayName);
+
+    // The canonical browser onboarding creates tenant-owned Accounts. Move
+    // this fixture through the supported admin API to the unmanaged state
+    // before exercising the intentionally unmanaged-only delete control.
+    const ownershipResponse = await api.patch(
+      buildApiUrl(baseUrl, `/admin/api/v1/accounts/${accountSlug}`),
+      {
+        headers: authHeaders(session.token),
+        data: { ownership_state: 'unmanaged' },
+      },
+    );
+    expect(
+      ownershipResponse.status(),
+      'Account ownership transition to unmanaged must succeed before delete proof.',
+    ).toBe(200);
 
     const detailResponse = await page.goto(
       buildApiUrl(baseUrl, `/admin/accounts/${accountSlug}`),
@@ -7907,7 +7908,7 @@ test('@mutation tenant-admin branding public default image and favicon persist a
   }
 });
 
-test.skip('@deferred @mutation tenant-admin profile-type editors preload and preserve allowed taxonomies when saving unrelated visual changes', async ({
+test('@mutation tenant-admin profile-type editors preload and preserve allowed taxonomies when saving unrelated visual changes', async ({
   browser,
 }) => {
   test.setTimeout(600000);
@@ -8058,10 +8059,12 @@ test.skip('@deferred @mutation tenant-admin profile-type editors preload and pre
       'Expected the created event type to appear in the admin event-type list before validating allowed taxonomies.',
     );
     logStep('type-taxonomies', 'open created event type from list');
-    await eventTypeButton.click();
+    await eventTypeButton.click({ timeout: 30000 });
+    logStep('type-taxonomies', 'created event type button clicked');
     await expect(page.getByText('Editar tipo de evento')).toBeVisible({
       timeout: appBootTimeoutMs,
     });
+    logStep('type-taxonomies', 'created event type editor visible');
     await expect(page.getByText('Taxonomias permitidas')).toBeVisible({
       timeout: appBootTimeoutMs,
     });
@@ -8119,17 +8122,25 @@ test.skip('@deferred @mutation tenant-admin profile-type editors preload and pre
       'Expected the created event type to reappear in the admin event-type list before verifying preserved allowed taxonomies.',
     );
     logStep('type-taxonomies', 'reopen event type from list');
-    await reopenedEventTypeButton.click();
+    await reopenedEventTypeButton.click({ timeout: 30000 });
+    logStep('type-taxonomies', 'reopened event type button clicked');
     await expect(page.getByText('Editar tipo de evento')).toBeVisible({
       timeout: appBootTimeoutMs,
     });
+    logStep('type-taxonomies', 'reopened event type editor visible');
     await scrollUntilVisible(
       page,
       page.getByText('Taxonomias permitidas').first(),
       'Expected the Taxonomias permitidas section to appear after reopening the event type.',
     );
-    await expectSelectedToggleChip(page, eventTaxonomyA.name);
-    await expectSelectedToggleChip(page, eventTaxonomyB.name);
+    logStep('type-taxonomies', 'reopened event type taxonomy section visible');
+    await expectSelectedToggleChip(page, eventTaxonomyA.name, {
+      timeoutMs: 15000,
+    });
+    logStep('type-taxonomies', 'reopened event type first taxonomy selected');
+    await expectSelectedToggleChip(page, eventTaxonomyB.name, {
+      timeoutMs: 15000,
+    });
     logStep('type-taxonomies', 'event type reopen preserved allowed taxonomies');
 
     await rotateFreshTenantAdminPage();

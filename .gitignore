@@ -25,6 +25,10 @@ gemini_memory.md
 .codex/
 foundation_documentation_tmp/
 
+# Local test/browser evidence. Durable outcomes belong in governing TODOs;
+# selected historical files already tracked remain tracked.
+/artifacts/
+
 # CLINE
 CLINE.md
 .cline

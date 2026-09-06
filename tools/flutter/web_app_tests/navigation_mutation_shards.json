@@ -58,7 +58,7 @@
       "account-gallery-disabled": {
         "grep_extra": "gallery data stays dormant",
         "expected_titles": [
-          "@deferred @mutation tenant-admin gallery data stays dormant when has_gallery is disabled"
+          "@mutation tenant-admin gallery data stays dormant when has_gallery is disabled"
         ]
       },
       "home-favorites": {
@@ -100,13 +100,13 @@
       "occurrence-fab": {
         "grep_extra": "tenant-admin event occurrence FAB persists",
         "expected_titles": [
-          "@deferred @mutation tenant-admin event occurrence FAB persists second occurrence and public detail selects it"
+          "@mutation tenant-admin event occurrence FAB persists second occurrence and public detail selects it"
         ]
       },
       "admin-accounts": {
         "grep_extra": "account onboarding CRUD persists detail/edit readback and delete flow",
         "expected_titles": [
-          "@deferred @mutation tenant-admin account onboarding CRUD persists detail/edit readback and delete flow"
+          "@mutation tenant-admin account onboarding CRUD persists detail/edit readback and delete flow"
         ]
       },
       "admin-account-stale": {
@@ -142,7 +142,7 @@
       "admin-profile-edit": {
         "grep_extra": "edit save keeps Display Name visible",
         "expected_titles": [
-          "@mutation tenant-admin account-profile edit save keeps Display Name visible, skips persisted-empty gallery resend, and clears persisted gallery content"
+          "@mutation tenant-admin account-profile edit save keeps Display Name visible without emitting gallery mutations"
         ]
       },
       "admin-contact-channels": {
@@ -160,13 +160,13 @@
       "u06-candidate-picker": {
         "grep_extra": "U06-CANDIDATE-PICKER",
         "expected_titles": [
-          "@deferred @mutation U06-CANDIDATE-PICKER server-owned nested and contact candidate search persists through the canonical picker"
+          "@mutation U06-CANDIDATE-PICKER server-owned nested and contact candidate search persists through the canonical picker"
         ]
       },
       "admin-profile-tabs": {
         "grep_extra": "nested tabs obey",
         "expected_titles": [
-          "@deferred @mutation tenant-admin account profile nested tabs obey profile type capability"
+          "@mutation tenant-admin account profile edit nested tabs obey profile type capability"
         ]
       },
       "admin-event-type-create": {
@@ -190,7 +190,7 @@
       "admin-profile-taxonomies": {
         "grep_extra": "profile-type editors preload",
         "expected_titles": [
-          "@deferred @mutation tenant-admin profile-type editors preload and preserve allowed taxonomies when saving unrelated visual changes"
+          "@mutation tenant-admin profile-type editors preload and preserve allowed taxonomies when saving unrelated visual changes"
         ]
       },
       "admin-agenda": {
@@ -202,7 +202,7 @@
       "admin-plural": {
         "grep_extra": "T6-PLURAL",
         "expected_titles": [
-          "@deferred @mutation T6-PLURAL tenant-admin account profile type edit persists plural label"
+          "@mutation T6-PLURAL tenant-admin account profile type edit persists plural label"
         ]
       },
       "otp-auth": {
@@ -234,7 +234,7 @@
   "diagnostic": {
     "expected_titles": [
       "@diagnostic QRY-RUNTIME admin/public queryability and navigation contract holds",
-      "@diagnostic EVG-RUNTIME admin/public event groups honor saved groups, legacy fallback, and invalid historical data"
+      "@diagnostic EVG-RUNTIME admin/public event groups honor canonical groups and occurrence isolation"
     ]
   },
   "readonly": {
