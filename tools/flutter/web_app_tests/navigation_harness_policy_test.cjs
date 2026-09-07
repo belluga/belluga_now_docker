@@ -372,6 +372,8 @@ function directPlaywrightEnv(overrides = {}) {
     'NAV_WEB_SHARD',
     'NAV_WEB_ALLOW_NONLOCAL_MUTATION_HOSTS',
     'NAV_RUNTIME_DB_MUTATION_ALLOWED',
+    'NAV_PUBLIC_TAXONOMY_MANAGED_FIXTURE',
+    'NAV_ACCOUNT_PROFILE_AGENDA_READONLY_FIXTURE',
     'NAV_INVITE_FALLBACK_EVENT_SLUG',
     'NAV_INVITE_FALLBACK_OCCURRENCE_ID',
     'NAV_INVITE_FALLBACK_EVENT_TITLE',
@@ -466,6 +468,52 @@ function assertGuardAllowsScopedRichTextSelection() {
   });
 }
 
+function assertRichTextPublicEvidenceIsolationContract() {
+  const source = fs.readFileSync(tenantAdminMutationSpec, 'utf8');
+  const extractBody = (title) => {
+    const start = source.indexOf(`test('${title}'`);
+    assert.notStrictEqual(start, -1, `rich-text test must remain named: ${title}`);
+    const end = source.indexOf("\ntest('", start + 1);
+    return source.slice(start, end === -1 ? source.length : end);
+  };
+  const event = extractBody(
+    '@mutation tenant-admin event rich text toolbar authors HTTPS link, persists, reads back, taps in public Sobre, and records tap outcome',
+  );
+  const profile = extractBody(
+    '@mutation tenant-admin account-profile rich text toolbar authors HTTPS link, persists, reads back, taps in public detail, and records tap outcome',
+  );
+  for (const [label, body] of [['Event', event], ['Profile', profile]]) {
+    assert.match(body, /createAnonymousIdentity\(\s*api,\s*baseUrl,\s*'[^']+'/,
+      `${label} rich-text public phase must create a fresh anonymous identity`);
+    assert.match(body, /expect\(\s*anonymousIdentity\.token === session\.token,\s*'Anonymous public identity must differ from tenant-admin session token\.',\s*\)\.toBe\(false\)/,
+      `${label} rich-text public phase must assert anonymous/admin token inequality without exposing secrets`);
+    assert.doesNotMatch(body, /expect\(anonymousIdentity\.token\)\.not\.toBe\(session\.token\)/,
+      `${label} rich-text public phase must not compare tokens through a failure-printing matcher`);
+    assert.match(body, /publicContext\s*=\s*await browser\.newContext\(\s*\{[\s\S]*?\}\);\s*expect\(publicContext\)\.not\.toBe\(browserContext\);\s*const publicPage\s*=\s*await publicContext\.newPage\(\)/,
+      `${label} rich-text public phase must construct and distinguish a fresh browser context and page`);
+    assert.match(body, /const publicResponse = await publicPage\.goto\(/,
+      `${label} rich-text public route must navigate with the fresh public page`);
+    assert.match(body, /const publicLink = await resolveUniqueFlutterTappableText\(publicPage,/,
+      `${label} rich-text public tap must resolve from the fresh public page`);
+    assert.match(body, /const popupPromise = publicContext\.waitForEvent\('page'\)/,
+      `${label} rich-text public tap must observe popups on the fresh public context`);
+  }
+  assert.match(event, /const publicApiResponse = await api\.get\([\s\S]*?authHeaders\(anonymousIdentity\.token\)/,
+    'Event public API readback must be wired to the anonymous token');
+  assert.match(profile, /const publicProfile = await fetchPublicProfile\(\s*api,\s*baseUrl,\s*anonymousIdentity\.token,/,
+    'Profile public API readback must be wired to the anonymous token');
+  assert.match(profile, /for \(const capability of \[[\s\S]*?'is_queryable'[\s\S]*?'is_favoritable'[\s\S]*?'is_publicly_discoverable'[\s\S]*?'is_publicly_navigable'[\s\S]*?\]\)[\s\S]*?createdType\?\.capabilities\?\.\[capability\][\s\S]*?\.toBe\(true\)/,
+    'Profile rich-text fixture must retain runtime capability assertion wiring');
+  assert.match(profile, /is_queryable:\s*true/,
+    'Profile rich-text fixture must enable is_queryable');
+  assert.match(profile, /is_favoritable:\s*true/,
+    'Profile rich-text fixture must enable is_favoritable');
+  assert.match(profile, /is_publicly_discoverable:\s*true/,
+    'Profile rich-text fixture must enable is_publicly_discoverable');
+  assert.match(profile, /is_publicly_navigable:\s*true/,
+    'Profile rich-text fixture must enable is_publicly_navigable');
+}
+
 function assertStrictDataGuardPassesCleanFixture() {
   withTempDir((dir) => {
     fs.writeFileSync(
@@ -499,6 +547,30 @@ function assertShardValidationFails({ manifest, list, shard, expectedMessage }) 
     });
     assert.notStrictEqual(result.status, 0, 'shard validation should fail closed');
     assert.match(`${result.stdout}\n${result.stderr}`, expectedMessage);
+  });
+}
+
+function assertRunExecutionRejectsSkippedTests() {
+  withTempDir((dir) => {
+    const skippedPath = path.join(dir, 'skipped-run.log');
+    fs.writeFileSync(skippedPath, 'Running 1 test\n1 skipped\n');
+    const skipped = run(
+      'node',
+      [shardsScript, 'assert-executed', 'mutation', 'alpha', skippedPath],
+    );
+    assert.notStrictEqual(skipped.status, 0, 'skipped release tests must fail closed');
+    assert.match(
+      `${skipped.stdout}\n${skipped.stderr}`,
+      /reported skipped test\(s\)/,
+    );
+
+    const passedPath = path.join(dir, 'passed-run.log');
+    fs.writeFileSync(passedPath, 'Running 1 test\n1 passed\n');
+    const passed = run(
+      'node',
+      [shardsScript, 'assert-executed', 'mutation', 'alpha', passedPath],
+    );
+    assert.strictEqual(passed.status, 0, passed.stderr);
   });
 }
 
@@ -2955,7 +3027,7 @@ function assertDormantGalleryProofResetsPublicCollectorsAfterConvergence() {
   const source = fs.readFileSync(tenantAdminMutationSpec, 'utf8');
   assert.match(
     source,
-    /test\.skip\('@deferred @mutation tenant-admin gallery data stays dormant when has_gallery is disabled'[\s\S]*?test\.setTimeout\(600000\);[\s\S]*?allow current admin edit session to settle after gallery suppression[\s\S]*?await page\.waitForTimeout\(2500\);\s*resetFailureCollectors\(collectors\);\s*await page\.waitForTimeout\(750\);\s*await assertNoBrowserFailures\(collectors\);[\s\S]*?wait for final public page to converge without gallery content[\s\S]*?allow final public page to settle after gallery suppression[\s\S]*?await publicPage\.waitForTimeout\(2500\);\s*resetFailureCollectors\(publicCollectors\);\s*await publicPage\.waitForTimeout\(750\);\s*await assertNoBrowserFailures\(collectors\);\s*await assertNoBrowserFailures\(publicCollectors\);/,
+    /test\('@mutation tenant-admin gallery data stays dormant when has_gallery is disabled'[\s\S]*?test\.setTimeout\(600000\);[\s\S]*?allow current admin edit session to settle after gallery suppression[\s\S]*?await page\.waitForTimeout\(2500\);\s*resetFailureCollectors\(collectors\);\s*await page\.waitForTimeout\(750\);\s*await assertNoBrowserFailures\(collectors\);[\s\S]*?wait for final public page to converge without gallery content[\s\S]*?allow final public page to settle after gallery suppression[\s\S]*?await publicPage\.waitForTimeout\(2500\);\s*resetFailureCollectors\(publicCollectors\);\s*await publicPage\.waitForTimeout\(750\);\s*await assertNoBrowserFailures\(collectors\);\s*await assertNoBrowserFailures\(publicCollectors\);/,
     'gallery dormant mutation proof must give both admin and public surfaces a post-suppression settle window, then clear collectors before the steady-state browser assertion',
   );
 }
@@ -3511,6 +3583,7 @@ assertCheckedInManifestMatchesCurrentSpecTitles();
 assertAccountOnboardingCleanupContractPasses();
 assertPublicTaxonomyCleanupResolutionContractPasses();
 assertGuardAllowsScopedRichTextSelection();
+assertRichTextPublicEvidenceIsolationContract();
 
 assertFailsForSource(
   'coordinate-click',
@@ -3733,6 +3806,8 @@ assertReadonlyShardValidationFails({
   expectedMessage: /Missing expected titles/,
 });
 
+assertRunExecutionRejectsSkippedTests();
+
 assertSuiteValidationKeepsFullSuitesDistinctFromNamedShards();
 
 assertSmokeRunnerResolvesReadonlyShardBeforeListing();
@@ -3814,6 +3889,8 @@ assert.match(
     `${SYNTHETIC_TENANT_URL}/api/v1/media/account-profiles/69f90390ff69090b810321b7/gallery/0?v=1777927056`,
     `${SYNTHETIC_TENANT_URL}/api/v1/media/event-types/6a69723340782ed221064708/asset?v=1785295389`,
     `${SYNTHETIC_TENANT_URL}/api/v1/media/tenant/branding/default-image?v=1785295389`,
+    'https://i.ytimg.com/vi/M7lc1UVf-VE/hqdefault.jpg',
+    'https://i3.ytimg.com/vi_webp/M7lc1UVf-VE/hqdefault.webp',
   ];
   const legacyMediaUrls = [
     `${SYNTHETIC_LEGACY_URL}/account-profiles/69976b43d93abdd0650e64ec/avatar?v=1771531075`,
@@ -3829,6 +3906,8 @@ assert.match(
     `${SYNTHETIC_TENANT_URL}/api/v1/admin/events`,
     `${SYNTHETIC_TENANT_URL}/admin/accounts`,
     `${SYNTHETIC_TENANT_URL}/manifest.json`,
+    'https://i3.ytimg.com.evil.test/vi_webp/M7lc1UVf-VE/hqdefault.webp',
+    'https://i3.ytimg.com/vi_webp/too-short/hqdefault.webp',
   ];
 
   for (const url of [...canonicalMediaUrls, ...legacyMediaUrls]) {
