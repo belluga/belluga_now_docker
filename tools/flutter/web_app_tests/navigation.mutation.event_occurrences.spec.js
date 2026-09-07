@@ -1011,7 +1011,7 @@ async function deleteAccountProfileType(api, baseUrl, token, profileType) {
     return;
   }
 
-  await api.delete(
+  const response = await api.delete(
     buildApiUrl(
       baseUrl,
       `/admin/api/v1/account_profile_types/${encodeURIComponent(profileType)}`,
@@ -1022,6 +1022,10 @@ async function deleteAccountProfileType(api, baseUrl, token, profileType) {
       timeout: apiRequestTimeoutMs,
     },
   );
+  expect(
+    response.status(),
+    `Owned Account Profile Type ${profileType} cleanup must succeed.`,
+  ).toBe(200);
 }
 
 async function uploadAccountProfileFixtureMedia(api, baseUrl, token, profileId) {
@@ -5401,6 +5405,7 @@ test('@mutation PRE-RF-01 event occurrence group candidate search renders one se
   let eventTypeId = null;
   let eventId = null;
   let relatedProfileType = null;
+  let physicalHostProfileType = null;
   const createdAccountSlugs = [];
 
   try {
@@ -5419,6 +5424,7 @@ test('@mutation PRE-RF-01 event occurrence group candidate search renders one se
       session.token,
       1,
     );
+    physicalHostProfileType = physicalHostSeed.createdType;
     createdAccountSlugs.push(...physicalHostSeed.createdAccountSlugs);
 
     const relatedSeed = await createDedicatedRelatedProfiles(
@@ -5584,6 +5590,12 @@ test('@mutation PRE-RF-01 event occurrence group candidate search renders one se
         baseUrl,
         session.token,
         relatedProfileType,
+      );
+      await deleteAccountProfileType(
+        api,
+        baseUrl,
+        session.token,
+        physicalHostProfileType,
       );
     }
     if (browserContext) {
