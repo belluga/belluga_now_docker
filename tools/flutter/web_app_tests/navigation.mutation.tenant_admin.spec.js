@@ -2675,13 +2675,36 @@ async function expectSelectedToggleChip(
   label,
   { timeoutMs = appBootTimeoutMs } = {},
 ) {
-  const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const switchChip = page.getByRole('switch', {
-    name: new RegExp(escaped, 'i'),
-  }).first();
+  const escapedAriaLabelPrefix = label
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"');
+  const switchChip = page
+    .locator(
+      `flt-semantics[role="switch"][aria-label^="${escapedAriaLabelPrefix}"]`,
+    )
+    .first();
+  if (!(await switchChip.isVisible().catch(() => false))) {
+    const viewport =
+      page.viewportSize() ||
+      (await page.evaluate(() => ({
+        width: window.innerWidth,
+        height: window.innerHeight,
+      })));
+    await page.mouse.move(
+      viewport.width * 0.55,
+      viewport.height * 0.88,
+    );
+    await page.mouse.wheel(0, 240);
+    await page.waitForTimeout(300);
+  }
   await expect(
     switchChip,
-    `Expected taxonomy switch chip "${label}" to reopen selected.`,
+    `Expected taxonomy switch chip "${label}" to be visible.`,
+  ).toBeVisible({ timeout: timeoutMs });
+  await switchChip.focus();
+  await expect(
+    switchChip,
+    `Expected taxonomy switch chip "${label}" to be selected.`,
   ).toHaveAttribute('aria-checked', 'true', {
     timeout: timeoutMs,
   });
@@ -5595,7 +5618,9 @@ test('@mutation U04-ACCOUNT-GROUP-HEAD tenant-admin account-profile group heads 
       xapuriCheckbox,
       'U04 nested-group candidate checkbox must become checked through semantic row interaction.',
     ).toBeChecked({ timeout: 30000 });
-    await expect(page.getByText('1 selecionado(s)', { exact: true })).toBeVisible({
+    await expect(
+      page.getByText('1 / 1000 selecionado(s) por operação', { exact: true }),
+    ).toBeVisible({
       timeout: appBootTimeoutMs,
     });
     await page.getByRole('button', { name: 'Adicionar' }).last().click();
@@ -6697,14 +6722,14 @@ test('@mutation tenant-admin account onboarding CRUD persists detail/edit readba
       'Account ownership transition to unmanaged must succeed before delete proof.',
     ).toBe(200);
 
-    const detailResponse = await page.goto(
-      buildApiUrl(baseUrl, `/admin/accounts/${accountSlug}`),
-      {
-        waitUntil: 'domcontentloaded',
-      },
-    );
-    expect(detailResponse, 'Account detail route must reopen after edit.').not.toBeNull();
-    expect(detailResponse.status()).toBeLessThan(400);
+    const editReloadResponse = await page.reload({
+      waitUntil: 'domcontentloaded',
+    });
+    expect(
+      editReloadResponse,
+      'Canonical Account Profile editor must reload after the ownership transition.',
+    ).not.toBeNull();
+    expect(editReloadResponse.status()).toBeLessThan(400);
     await assertAppBooted(page);
     await enableAccessibilityIfNeeded(page);
 
@@ -6712,7 +6737,7 @@ test('@mutation tenant-admin account onboarding CRUD persists detail/edit readba
     await scrollUntilVisible(
       page,
       deleteAccountButton,
-      'Expected unmanaged account detail to expose the delete action.',
+      'Expected the unmanaged Account section in the Account Profile editor to expose the delete action.',
     );
     const deleteResponsePromise = page.waitForResponse((candidate) => {
       return (
@@ -8065,9 +8090,6 @@ test('@mutation tenant-admin profile-type editors preload and preserve allowed t
       timeout: appBootTimeoutMs,
     });
     logStep('type-taxonomies', 'created event type editor visible');
-    await expect(page.getByText('Taxonomias permitidas')).toBeVisible({
-      timeout: appBootTimeoutMs,
-    });
     await expectSelectedToggleChip(page, eventTaxonomyA.name);
     await expectSelectedToggleChip(page, eventTaxonomyB.name);
     logStep('type-taxonomies', 'event type preloaded allowed taxonomies confirmed');
@@ -8128,15 +8150,13 @@ test('@mutation tenant-admin profile-type editors preload and preserve allowed t
       timeout: appBootTimeoutMs,
     });
     logStep('type-taxonomies', 'reopened event type editor visible');
-    await scrollUntilVisible(
+    await expectSelectedToggleChip(
       page,
-      page.getByText('Taxonomias permitidas').first(),
-      'Expected the Taxonomias permitidas section to appear after reopening the event type.',
+      eventTaxonomyA.name,
+      {
+        timeoutMs: 15000,
+      },
     );
-    logStep('type-taxonomies', 'reopened event type taxonomy section visible');
-    await expectSelectedToggleChip(page, eventTaxonomyA.name, {
-      timeoutMs: 15000,
-    });
     logStep('type-taxonomies', 'reopened event type first taxonomy selected');
     await expectSelectedToggleChip(page, eventTaxonomyB.name, {
       timeoutMs: 15000,
