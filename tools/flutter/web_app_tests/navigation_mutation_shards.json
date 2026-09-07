@@ -97,6 +97,12 @@
           "@mutation admin-authored occurrence profile groups persist full chip readback and public aggregation"
         ]
       },
+      "pre-rf-01-event-candidate": {
+        "grep_extra": "PRE-RF-01 event occurrence group candidate search",
+        "expected_titles": [
+          "@mutation PRE-RF-01 event occurrence group candidate search renders one server page without page walking"
+        ]
+      },
       "occurrence-fab": {
         "grep_extra": "tenant-admin event occurrence FAB persists",
         "expected_titles": [

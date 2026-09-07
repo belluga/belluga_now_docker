@@ -5390,6 +5390,212 @@ test('@mutation repeated public event detail GET/hydration keeps programming pay
   }
 });
 
+test('@mutation PRE-RF-01 event occurrence group candidate search renders one server page without page walking', async () => {
+  test.setTimeout(600000);
+  const baseUrl = requireTenantUrl();
+  const api = await createApiContext(baseUrl);
+  const uniqueSuffix = `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+  let session = null;
+  let browserContext;
+  let freshBrowser;
+  let eventTypeId = null;
+  let eventId = null;
+  let relatedProfileType = null;
+  const createdAccountSlugs = [];
+
+  try {
+    session = await loginTenantAdmin(api, baseUrl);
+    const eventType = await createEventType(
+      api,
+      baseUrl,
+      session.token,
+      `${uniqueSuffix}-candidate-search`,
+    );
+    eventTypeId = eventType?.id?.toString() || null;
+
+    const physicalHostSeed = await ensurePhysicalHostCandidates(
+      api,
+      baseUrl,
+      session.token,
+      1,
+    );
+    createdAccountSlugs.push(...physicalHostSeed.createdAccountSlugs);
+
+    const relatedSeed = await createDedicatedRelatedProfiles(
+      api,
+      baseUrl,
+      session.token,
+      `${uniqueSuffix}-candidate-search`,
+    );
+    relatedProfileType = relatedSeed.createdType;
+    createdAccountSlugs.push(...relatedSeed.createdAccountSlugs);
+
+    const accentCandidate = await createNearbyPhysicalHost(
+      api,
+      baseUrl,
+      session.token,
+      relatedProfileType,
+      `São Candidato ${uniqueSuffix}`,
+    );
+    createdAccountSlugs.push(accentCandidate.accountSlug);
+
+    const seededEvent = await createSingleOccurrenceEvent(
+      api,
+      baseUrl,
+      session.token,
+      {
+        eventType,
+        physicalHost: physicalHostSeed.candidates[0],
+        uniqueSuffix: `${uniqueSuffix}-candidate-search`,
+      },
+    );
+    eventId = seededEvent?.event_id?.toString() || null;
+    const occurrenceId = seededEvent?.occurrences?.[0]?.occurrence_id?.toString() || '';
+    expect(eventId, 'PRE-RF-01 seed must return an event id.').toBeTruthy();
+    expect(occurrenceId, 'PRE-RF-01 seed must return an occurrence id.').toBeTruthy();
+
+    const group = await createOccurrenceProfileGroup(
+      api,
+      baseUrl,
+      session.token,
+      {
+        eventId,
+        occurrenceId,
+        label: 'Participantes PRE-RF-01',
+        assertionLabel: 'PRE-RF-01 occurrence group seed',
+      },
+    );
+
+    const pageBundle = await createFreshAuthenticatedTenantAdminPage(session);
+    freshBrowser = pageBundle.browser;
+    browserContext = pageBundle.context;
+    const page = pageBundle.page;
+    const collectors = installFailureCollectors(page);
+    const searchPages = [];
+    // Keep the real endpoint status and candidate rows, but force continuation
+    // metadata so the removed semantic page-walk branch is exercised without
+    // creating 21 Accounts in every browser run.
+    await page.route('**/admin/api/v1/events/account_profile_candidates?**', async (route) => {
+      const url = new URL(route.request().url());
+      if (
+        url.searchParams.get('type') !== 'related_account_profile' ||
+        url.searchParams.get('search') !== 'sao' ||
+        url.searchParams.get('page') !== '1'
+      ) {
+        await route.continue();
+        return;
+      }
+
+      const serverResponse = await route.fetch();
+      const serverPayload = await serverResponse.json();
+      await route.fulfill({
+        response: serverResponse,
+        json: {
+          ...serverPayload,
+          current_page: 1,
+          last_page: 2,
+          total: Math.max(21, Number(serverPayload?.total || 0)),
+        },
+      });
+    });
+    page.on('request', (candidate) => {
+      const url = new URL(candidate.url());
+      if (
+        candidate.method() === 'GET' &&
+        url.pathname === '/admin/api/v1/events/account_profile_candidates' &&
+        url.searchParams.get('type') === 'related_account_profile' &&
+        url.searchParams.get('search') === 'sao'
+      ) {
+        searchPages.push(Number(url.searchParams.get('page') || '1'));
+      }
+    });
+
+    const groupUrl = buildApiUrl(
+      baseUrl,
+      `/admin/events/${eventId}/occurrences/${occurrenceId}/groups/${group.groupId}/pre-rf-01`,
+    );
+    const navigationResponse = await page.goto(groupUrl, {
+      waitUntil: 'domcontentloaded',
+    });
+    expect(navigationResponse, 'PRE-RF-01 group route must respond.').not.toBeNull();
+    expect(navigationResponse.status()).toBeLessThan(400);
+    await assertAppBooted(page);
+    await enableAccessibilityIfNeeded(page);
+
+    const addProfilesButton = page.getByRole('button', {
+      name: 'Adicionar perfis',
+    });
+    await expect(addProfilesButton).toBeVisible({ timeout: appBootTimeoutMs });
+    await addProfilesButton.click();
+    await expect(page.getByRole('textbox', { name: 'Buscar perfil' })).toBeVisible({
+      timeout: appBootTimeoutMs,
+    });
+
+    const searchResponsePromise = page.waitForResponse((candidate) => {
+      const url = new URL(candidate.url());
+      return (
+        candidate.request().method() === 'GET' &&
+        url.pathname === '/admin/api/v1/events/account_profile_candidates' &&
+        url.searchParams.get('type') === 'related_account_profile' &&
+        url.searchParams.get('search') === 'sao' &&
+        url.searchParams.get('page') === '1' &&
+        candidate.status() === 200
+      );
+    });
+    await fillFlutterTextField(page, 'Buscar perfil', 'sao');
+    const searchResponse = await searchResponsePromise;
+    const searchPayload = await searchResponse.json();
+    expect(searchPayload?.data?.length || 0).toBeGreaterThan(0);
+    expect(Number(searchPayload?.last_page || 0)).toBeGreaterThan(1);
+    const firstReturnedName = searchPayload?.data?.[0]?.display_name?.toString() || '';
+    expect(firstReturnedName, 'PRE-RF-01 search must return a displayable server row.')
+      .toBeTruthy();
+    await expect(
+      page.getByRole('checkbox', {
+        name: new RegExp(escapeRegExp(firstReturnedName)),
+      }).first(),
+    ).toBeVisible({ timeout: appBootTimeoutMs });
+
+    await page.waitForTimeout(1500);
+    expect(
+      searchPages,
+      'The Event picker must not request page 2 merely because accent-folded server matches do not satisfy Dart contains.',
+    ).toEqual([1]);
+    await assertNoBrowserFailures(collectors);
+  } finally {
+    if (session?.token) {
+      await deleteEvent(api, baseUrl, session.token, eventId);
+      await deleteEventType(api, baseUrl, session.token, eventTypeId);
+      for (let offset = 0; offset < createdAccountSlugs.length; offset += 2) {
+        await cleanupOnboardedAccounts(
+          api,
+          baseUrl,
+          session.token,
+          createdAccountSlugs.slice(offset, offset + 2),
+          {
+            strict: true,
+            maxAttempts: 2,
+            requestTimeoutMs: 5000,
+          },
+        );
+      }
+      await deleteAccountProfileType(
+        api,
+        baseUrl,
+        session.token,
+        relatedProfileType,
+      );
+    }
+    if (browserContext) {
+      await browserContext.close().catch(() => {});
+    }
+    if (freshBrowser) {
+      await freshBrowser.close().catch(() => {});
+    }
+    await api.dispose();
+  }
+});
+
 test('@mutation admin-authored occurrence profile groups persist full chip readback and public aggregation', async ({
   browser,
 }) => {
