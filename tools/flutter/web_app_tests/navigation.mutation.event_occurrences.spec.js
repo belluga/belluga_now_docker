@@ -2670,31 +2670,39 @@ async function addOccurrenceProfileGroup(page, { groupLabel }) {
 }
 
 async function enableProgrammingItemTimedMode(page) {
+  const timedModeSwitch = page
+    .getByRole('switch', { name: /^Item com horário/i })
+    .last();
   const startTimeField = page.getByLabel('Horário inicial').last();
-  if (await startTimeField.isVisible().catch(() => false)) {
-    return;
-  }
+  await expect(
+    timedModeSwitch,
+    'Programming item editor must expose the canonical timed-mode switch.',
+  ).toBeVisible({ timeout: appBootTimeoutMs });
 
-  const toggleCandidates = [
-    page.getByRole('switch', { name: /Item com horário/i }).last(),
-    page.getByRole('checkbox', { name: /Item com horário/i }).last(),
-    page.locator('[aria-label*="Item com horário"]').last(),
-    page.getByText('Item com horário', { exact: true }).last(),
-  ];
-
-  for (const candidate of toggleCandidates) {
-    if (!(await candidate.isVisible().catch(() => false))) {
-      continue;
-    }
-    await candidate.click();
-    await expect(startTimeField).toBeVisible({ timeout: appBootTimeoutMs });
-    return;
+  if (!(await timedModeSwitch.isChecked())) {
+    await timedModeSwitch.click();
   }
 
   await expect(
+    timedModeSwitch,
+    'Programming item timed-mode switch must remain enabled.',
+  ).toBeChecked({ timeout: appBootTimeoutMs });
+  await expect(
     startTimeField,
-    'Programming item timed fields must become visible after enabling "Item com horário".',
+    'Programming item start-time field must become visible in timed mode.',
   ).toBeVisible({ timeout: appBootTimeoutMs });
+
+  return startTimeField;
+}
+
+async function fillProgrammingStartTime(page, value) {
+  const startTimeField = await enableProgrammingItemTimedMode(page);
+  return fillFlutterTextFieldByLocator(
+    page,
+    startTimeField,
+    value,
+    'Horário inicial',
+  );
 }
 
 async function addOccurrenceProfilesViaProgramming(page, {
@@ -2711,8 +2719,7 @@ async function addOccurrenceProfilesViaProgramming(page, {
   await expect(page.getByText('Adicionar item de programação')).toBeVisible({
     timeout: appBootTimeoutMs,
   });
-  await enableProgrammingItemTimedMode(page);
-  await fillFlutterTextField(page, 'Horário inicial', time);
+  await fillProgrammingStartTime(page, time);
   await fillFlutterTextField(page, 'Título / copy do item', programmingTitle);
   logStep('evg-helper', `programming item draft ready "${programmingTitle}"`);
 
@@ -3675,8 +3682,7 @@ test.skip('@deferred NAV-ADM-LOC-01..08 admin occurrence programming and event-l
         timeout: appBootTimeoutMs,
       });
 
-      await enableProgrammingItemTimedMode(page);
-      await fillFlutterTextField(page, 'Horário inicial', '13:00');
+      await fillProgrammingStartTime(page, '13:00');
       await fillFlutterTextField(page, 'Título / copy do item', adminProgrammingTitle);
       const programmingLocationTrigger = await programmingLocationTriggerLocator(page);
       await selectLocationPickerSheetOption(page, {
@@ -4078,8 +4084,7 @@ test('@mutation tenant-admin event occurrence FAB persists second occurrence and
       await expect(page.getByText('Adicionar item de programação')).toBeVisible({
         timeout: appBootTimeoutMs,
       });
-      await enableProgrammingItemTimedMode(page);
-      await fillFlutterTextField(page, 'Horário inicial', '09:30');
+      await fillProgrammingStartTime(page, '09:30');
       await fillFlutterTextField(page, 'Título / copy do item', rootProgrammingTitle);
       await page.getByRole('button', { name: 'Salvar item' }).click();
       await expect(page.getByText('Nenhum item de programação nesta data.')).toHaveCount(
@@ -4115,8 +4120,7 @@ test('@mutation tenant-admin event occurrence FAB persists second occurrence and
         timeout: appBootTimeoutMs,
       });
 
-      await enableProgrammingItemTimedMode(page);
-      await fillFlutterTextField(page, 'Horário inicial', '13:00');
+      await fillProgrammingStartTime(page, '13:00');
       await fillFlutterTextField(page, 'Título / copy do item', adminProgrammingTitle);
       const programmingLocationTrigger = await programmingLocationTriggerLocator(page);
       await selectLocationPickerSheetOption(page, {
