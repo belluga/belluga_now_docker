@@ -1,5 +1,9 @@
 const { test, expect } = require('@playwright/test');
 const { withFreshBrowserPage } = require('./support/fresh_browser_context');
+const {
+  installFailureCollectors,
+  summarizeCriticalBrowserFailures,
+} = require('./support/browser_failure_collectors');
 
 const tenantUrl = process.env.NAV_TENANT_URL;
 const appBootTimeoutMs = 120000;
@@ -15,25 +19,9 @@ function requireTenantUrl() {
   return tenantUrl;
 }
 
-function installFailureCollectors(page, appOrigin) {
-  const runtimeErrors = [];
-  const failedRequests = [];
-  const consoleErrors = [];
+function captureReadonlyMutations(page, appOrigin) {
   const mutatingApiRequests = [];
 
-  page.on('pageerror', (error) => runtimeErrors.push(error.message));
-  page.on('requestfailed', (request) => {
-    const failureText = request.failure()?.errorText || 'unknown';
-    if (failureText === 'net::ERR_ABORTED') {
-      return;
-    }
-    failedRequests.push(`${request.method()} ${request.url()} (${failureText})`);
-  });
-  page.on('console', (message) => {
-    if (message.type() === 'error') {
-      consoleErrors.push(message.text());
-    }
-  });
   page.on('request', (request) => {
     const method = (request.method() || '').toUpperCase();
     if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') {
@@ -52,7 +40,7 @@ function installFailureCollectors(page, appOrigin) {
     mutatingApiRequests.push(`${method} ${url}`);
   });
 
-  return { runtimeErrors, failedRequests, consoleErrors, mutatingApiRequests };
+  return mutatingApiRequests;
 }
 
 async function assertAppBooted(page) {
@@ -112,7 +100,8 @@ test('@deferred @readonly MAP-NAV-REENTRY-01 tenant home can reopen map after re
   const baseUrl = requireTenantUrl();
   const appOrigin = new URL(baseUrl).origin;
   await withFreshBrowserPage(async ({ page }) => {
-    const collectors = installFailureCollectors(page, appOrigin);
+    const collectors = installFailureCollectors(page);
+    const mutatingApiRequests = captureReadonlyMutations(page, appOrigin);
     const continueWithoutLocationButton = page.getByRole('button', {
       name: /Continuar sem localização/i,
     });
@@ -146,24 +135,20 @@ test('@deferred @readonly MAP-NAV-REENTRY-01 tenant home can reopen map after re
     await continueWithoutLocationButton.click();
     await waitForTenantPath(page, ['/mapa']);
 
+    const browserFailures = summarizeCriticalBrowserFailures(collectors);
     expect(
-      collectors.runtimeErrors,
-      `Unexpected runtime errors:\n${collectors.runtimeErrors.join('\n')}`,
-    ).toEqual([]);
+      browserFailures,
+      `Unexpected browser failures:\n${JSON.stringify(browserFailures, null, 2)}`,
+    ).toEqual({
+      runtimeErrors: [],
+      failedRequests: [],
+      criticalHttpResponses: [],
+      disallowedRateLimitedResponses: [],
+      criticalConsoleErrors: [],
+    });
     expect(
-      collectors.failedRequests,
-      `Failed requests:\n${collectors.failedRequests.join('\n')}`,
-    ).toEqual([]);
-    const criticalConsoleErrors = collectors.consoleErrors.filter(
-      (entry) => !entry.includes('status of 401'),
-    );
-    expect(
-      criticalConsoleErrors,
-      `Console errors:\n${criticalConsoleErrors.join('\n')}`,
-    ).toEqual([]);
-    expect(
-      collectors.mutatingApiRequests,
-      `Readonly map reentry flow must not issue mutating API requests:\n${collectors.mutatingApiRequests.join('\n')}`,
+      mutatingApiRequests,
+      `Readonly map reentry flow must not issue mutating API requests:\n${mutatingApiRequests.join('\n')}`,
     ).toEqual([]);
   });
 });

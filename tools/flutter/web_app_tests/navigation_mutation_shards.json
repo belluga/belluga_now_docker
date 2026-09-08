@@ -257,6 +257,14 @@
         "expected_titles": [
           "@readonly-fixture NAV-APD-AGENDA Account Profile Agenda groups managed occurrences by local date"
         ]
+      },
+      "map-browser-failures": {
+        "grep_extra": "(?:MAP-LOC-GRANT|MAP-NAV-REENTRY)",
+        "expected_titles": [
+          "@deferred @readonly MAP-LOC-GRANT-01 first warm geolocation-granted map entry loads POIs from a resolved origin without public error state",
+          "@deferred @readonly MAP-LOC-GRANT-02 location-permission CTA continuation loads canonical map data once browser geolocation is granted",
+          "@deferred @readonly MAP-NAV-REENTRY-01 tenant home can reopen map after returning from a warm permission-gated entry"
+        ]
       }
     },
     "expected_titles": [
