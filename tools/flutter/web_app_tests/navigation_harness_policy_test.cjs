@@ -514,6 +514,76 @@ function assertRichTextPublicEvidenceIsolationContract() {
     'Profile rich-text fixture must enable is_publicly_navigable');
 }
 
+function assertFlutterMutationInputAndTimeoutContract() {
+  const source = fs.readFileSync(tenantAdminMutationSpec, 'utf8');
+  const extractBody = (title) => {
+    const start = source.indexOf(`test('${title}'`);
+    assert.notStrictEqual(start, -1, `mutation test must remain named: ${title}`);
+    const end = source.indexOf("\ntest('", start + 1);
+    return source.slice(start, end === -1 ? source.length : end);
+  };
+  const profileEdit = extractBody(
+    '@mutation tenant-admin account-profile edit save keeps Display Name visible without emitting gallery mutations',
+  );
+  const nestedGroup = extractBody(
+    '@mutation U04-ACCOUNT-GROUP-HEAD tenant-admin account-profile group heads persist independently, adopt canonical ids, and delete after confirmation',
+  );
+  const patchWaitStart = source.indexOf(
+    'function waitForAccountProfilePatchResponse',
+  );
+  const patchWaitEnd = source.indexOf(
+    '\nasync function countVisibleMatches',
+    patchWaitStart,
+  );
+  assert.notStrictEqual(
+    patchWaitStart,
+    -1,
+    'account-profile PATCH observation helper must remain defined',
+  );
+  assert.notStrictEqual(
+    patchWaitEnd,
+    -1,
+    'account-profile PATCH observation helper must remain bounded',
+  );
+  const patchWaitHelper = source.slice(patchWaitStart, patchWaitEnd);
+
+  assert.match(
+    source,
+    /async function fillResolvedFlutterTextField[\s\S]*?await field\.pressSequentially\(normalizedValue, \{ delay: 10 \}\)/,
+    'Flutter text entry must use focused keyboard events so the widget controller receives the edit',
+  );
+  assert.doesNotMatch(
+    source,
+    /async function fillResolvedFlutterTextField[\s\S]*?page\.keyboard\.insertText\(normalizedValue\)/,
+    'Flutter text entry must not mutate only the semantics input value',
+  );
+  assert.match(
+    patchWaitHelper,
+    /function waitForAccountProfilePatchResponse[\s\S]*?\},\s*\{ timeout: interactionTimeoutMs \},\s*\);/,
+    'account-profile PATCH observation must fail within the interaction timeout',
+  );
+  assert.doesNotMatch(
+    patchWaitHelper,
+    /candidate\.status\(\) < 400/,
+    'account-profile PATCH observation must expose an improper response status instead of timing out',
+  );
+  assert.doesNotMatch(
+    profileEdit,
+    /test\.setTimeout\((?:600000|900000)\)/,
+    'profile edit proof must not override the shared five-minute test ceiling',
+  );
+  assert.doesNotMatch(
+    nestedGroup,
+    /(?:test|testInfo)\.setTimeout\((?:600000|900000)\)/,
+    'nested-group proof must not override the shared five-minute test ceiling',
+  );
+  assert.match(
+    nestedGroup,
+    /fillResolvedFlutterTextField\([\s\S]*?nestedSearch[\s\S]*?'nested-group search field'[\s\S]*?waitForResponse\([\s\S]*?searchParams\.get\('search'\) === nestedSearchQuery[\s\S]*?timeout: interactionTimeoutMs/,
+    'nested-group search must type through the Flutter helper and observe the indexed request with a bounded timeout',
+  );
+}
+
 function assertStrictDataGuardPassesCleanFixture() {
   withTempDir((dir) => {
     fs.writeFileSync(
@@ -3584,6 +3654,7 @@ assertAccountOnboardingCleanupContractPasses();
 assertPublicTaxonomyCleanupResolutionContractPasses();
 assertGuardAllowsScopedRichTextSelection();
 assertRichTextPublicEvidenceIsolationContract();
+assertFlutterMutationInputAndTimeoutContract();
 
 assertFailsForSource(
   'coordinate-click',
