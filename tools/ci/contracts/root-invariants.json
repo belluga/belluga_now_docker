@@ -35,7 +35,7 @@
         "python3",
         "tools/contact_channels/verify_canonical_contact_source_picker_contract.py"
       ],
-      "description": "Fail closed when the contact-source picker drifts away from the canonical generic Account Profile index with server-owned eligibility filters and preview payload."
+      "description": "Fail closed when the pinned Flutter contact-source consumer and Laravel scoped Account Profile candidate provider drift apart."
     }
   ]
 }
