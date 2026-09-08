@@ -116,6 +116,16 @@ function parseListedTitles(filePath) {
     .sort();
 }
 
+function assertExecutedRun(outputPath) {
+  const output = fs.readFileSync(outputPath, 'utf8');
+  const skipped = output.match(/\b(\d+)\s+skipped\b/gi) || [];
+  if (skipped.length > 0) {
+    throw new Error(
+      `Web navigation run reported skipped test(s): ${skipped.join(', ')}. Release shards require every selected test to execute.`,
+    );
+  }
+}
+
 function countTitles(titles) {
   const counts = new Map();
   for (const title of titles) {
@@ -201,7 +211,18 @@ try {
     process.exit(0);
   }
 
-  throw new Error(`Unknown command "${command}". Expected grep, assert-runtime or validate.`);
+  if (command === 'assert-executed') {
+    if (!listPath) {
+      throw new Error('Missing Playwright run output path.');
+    }
+    assertExecutedRun(listPath);
+    console.log(`Validated ${suite} run executed without skipped test(s).`);
+    process.exit(0);
+  }
+
+  throw new Error(
+    `Unknown command "${command}". Expected grep, assert-runtime, validate or assert-executed.`,
+  );
 } catch (error) {
   console.error(error.message);
   process.exit(1);

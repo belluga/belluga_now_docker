@@ -318,19 +318,19 @@ const multiOccurrenceNavigationMatrix = [
   },
   {
     id: 'NAV-08',
-    title: 'Como Chegar renders default event location only',
+    title: 'O Local renders default event location only',
     proof:
-      'Como Chegar must preserve the default event location and avoid empty programação-location rows when no item location exists.',
+      'O Local must preserve the default event location and avoid empty programação-location rows when no item location exists.',
   },
   {
     id: 'NAV-09',
-    title: 'Como Chegar includes programação item locations',
+    title: 'O Local includes programação item locations',
     proof:
-      'Como Chegar must list default event location plus programação item Account Profile/POI locations.',
+      'O Local must list default event location plus programação item Account Profile/POI locations.',
   },
   {
     id: 'NAV-10',
-    title: 'Como Chegar de-duplicates repeated locations',
+    title: 'O Local de-duplicates repeated locations',
     proof:
       'Repeated programação items using the same Account Profile/POI must render one destination row.',
   },
@@ -396,7 +396,7 @@ const multiOccurrenceNavigationMatrix = [
   },
   {
     id: 'NAV-21',
-    title: 'Como Chegar uses primary plus complementary related locations',
+    title: 'O Local uses primary plus complementary related locations',
     proof:
       'Default location stays primary, additional distinct programação locations become complementary cards, and the complementary heading is conditional.',
   },
@@ -765,6 +765,7 @@ async function resolvePoiCapableProfileType(
           has_avatar: false,
           has_cover: false,
           has_events: true,
+          has_gallery: true,
         },
       },
       headers: authHeaders(token),
@@ -774,6 +775,58 @@ async function resolvePoiCapableProfileType(
     .toBe(201);
 
   return { profileType: type, createdType: type };
+}
+
+async function createAccountProfileYoutubeGallery(
+  api,
+  baseUrl,
+  token,
+  profileId,
+  { subtitle, videoTitle },
+) {
+  const groupResponse = await api.post(
+    buildApiUrl(
+      baseUrl,
+      `/admin/api/v1/account_profiles/${profileId}/gallery/groups`,
+    ),
+    {
+      data: { subtitle },
+      headers: authHeaders(token),
+    },
+  );
+  expect(
+    groupResponse.status(),
+    'Event venue gallery group seed must succeed.',
+  ).toBe(200);
+  const groupPayload = await groupResponse.json();
+  const groups = Array.isArray(groupPayload?.data?.gallery_groups)
+    ? groupPayload.data.gallery_groups
+    : [];
+  const groupId = groups.find((group) => group?.subtitle === subtitle)
+    ?.group_id?.toString() || '';
+  expect(
+    groupId,
+    'Event venue gallery group seed must return its canonical id.',
+  ).toBeTruthy();
+
+  const itemResponse = await api.post(
+    buildApiUrl(
+      baseUrl,
+      `/admin/api/v1/account_profiles/${profileId}/gallery/groups/${groupId}/items`,
+    ),
+    {
+      data: {
+        type: 'youtube',
+        title: videoTitle,
+        youtube_url: 'https://youtu.be/dQw4w9WgXcQ',
+      },
+      headers: authHeaders(token),
+    },
+  );
+  expect(
+    itemResponse.status(),
+    'Event venue gallery YouTube item seed must succeed.',
+  ).toBe(200);
 }
 
 async function createDedicatedRelatedProfiles(
@@ -858,6 +911,30 @@ async function createDedicatedRelatedProfiles(
   };
 }
 
+async function publishAccount(api, baseUrl, token, accountSlug) {
+  const response = await api.patch(
+    buildApiUrl(baseUrl, `/admin/api/v1/accounts/${accountSlug}`),
+    {
+      headers: authHeaders(token),
+      data: {
+        publication: {
+          status: 'published',
+        },
+      },
+    },
+  );
+  expect(response.status(), `Account ${accountSlug} publish must succeed.`).toBe(
+    200,
+  );
+  const payload = await response.json();
+  expect(
+    payload?.data?.publication?.status?.toString() ||
+      payload?.publication?.status?.toString() ||
+      '',
+    `Account ${accountSlug} must persist the canonical published status.`,
+  ).toBe('published');
+}
+
 async function ensurePhysicalHostCandidates(api, baseUrl, token, minimum = 1) {
   const createdProfileIds = [];
   const createdAccountSlugs = [];
@@ -934,7 +1011,7 @@ async function deleteAccountProfileType(api, baseUrl, token, profileType) {
     return;
   }
 
-  await api.delete(
+  const response = await api.delete(
     buildApiUrl(
       baseUrl,
       `/admin/api/v1/account_profile_types/${encodeURIComponent(profileType)}`,
@@ -945,6 +1022,10 @@ async function deleteAccountProfileType(api, baseUrl, token, profileType) {
       timeout: apiRequestTimeoutMs,
     },
   );
+  expect(
+    response.status(),
+    `Owned Account Profile Type ${profileType} cleanup must succeed.`,
+  ).toBe(200);
 }
 
 async function uploadAccountProfileFixtureMedia(api, baseUrl, token, profileId) {
@@ -1590,6 +1671,22 @@ async function fetchPublicEvent(api, baseUrl, eventRef, occurrenceId = null) {
   return payload?.data;
 }
 
+async function fetchPublicGroupMembers(api, baseUrl, membersPath) {
+  const response = await api.get(buildApiUrl(baseUrl, membersPath), {
+    headers: await tenantPublicAuthHeaders(
+      api,
+      baseUrl,
+      'Public event profile-group members readback',
+    ),
+  });
+  expect(
+    response.status(),
+    'Public event profile-group members readback must succeed.',
+  ).toBe(200);
+  const payload = await response.json();
+  return Array.isArray(payload?.data?.data) ? payload.data.data : [];
+}
+
 async function fetchAgendaMatchesForTitle(api, baseUrl, title) {
   const normalizedTitle = title?.toString().trim();
   expect(normalizedTitle, 'Agenda occurrence lookup requires a title.').toBeTruthy();
@@ -2078,197 +2175,29 @@ async function fillFlutterTextField(page, label, value) {
 }
 
 async function fillFlutterRichTextField(page, label, value) {
-  const candidates = [
-    page.getByLabel(label).last(),
-    page.getByRole('textbox', { name: label }).last(),
-    page.locator('.ql-editor[contenteditable="true"]').last(),
-    page.locator('.ql-editor').last(),
-    page.getByRole('group').last(),
-  ];
-
-  let editorBody = candidates[candidates.length - 1];
-  for (const candidate of candidates) {
-    const count = await candidate.count().catch(() => 0);
-    if (count === 0) {
-      continue;
-    }
-    for (let index = count - 1; index >= 0; index -= 1) {
-      const entry = candidate.nth(index);
-      if (await entry.isVisible().catch(() => false)) {
-        editorBody = entry;
-        break;
-      }
-    }
-    if (await editorBody.isVisible().catch(() => false)) {
-      break;
-    }
-  }
-  await editorBody.scrollIntoViewIfNeeded();
-  await expect(editorBody).toBeVisible({ timeout: appBootTimeoutMs });
-  const visualEditor = page
-    .locator('.ql-editor[contenteditable="true"]')
-    .last();
-  const editableKind = await editorBody
-    .evaluate((node) => {
-      if (node instanceof HTMLTextAreaElement) {
-        return 'textarea';
-      }
-      if (node instanceof HTMLInputElement) {
-        return 'input';
-      }
-      if (node instanceof HTMLElement && node.isContentEditable) {
-        return 'contenteditable';
-      }
-      return 'other';
-    })
-    .catch(() => 'other');
-
-  if (editableKind === 'textarea' || editableKind === 'input') {
-    await editorBody.evaluate((node, text) => {
-      if (
-        !(node instanceof HTMLTextAreaElement) &&
-        !(node instanceof HTMLInputElement)
-      ) {
-        return;
-      }
-      node.disabled = false;
-      node.readOnly = false;
-      node.focus();
-      node.value = text;
-      node.dispatchEvent(
-        new InputEvent('input', {
-          bubbles: true,
-          cancelable: true,
-          data: text,
-          inputType: 'insertReplacementText',
-        }),
-      );
-      node.dispatchEvent(new Event('change', { bubbles: true }));
-      node.dispatchEvent(new Event('blur', { bubbles: true }));
-    }, value);
-
-    await expect
-      .poll(
-        async () => {
-          try {
-            return await editorBody.inputValue();
-          } catch (_) {
-            return '';
-          }
-        },
-        {
-          timeout: 3000,
-          message: `Expected Flutter rich text field "${label}" semantic textarea to retain input.`,
-        },
-      )
-      .toBe(value);
-
-    const semanticInputReachedEditor = await expect
-      .poll(
-        async () => {
-          const editorText = await visualEditor
-            .evaluate((node) => {
-              if (!(node instanceof HTMLElement)) {
-                return '';
-              }
-              return node.innerText || node.textContent || '';
-            })
-            .catch(() => '');
-          return editorText.includes(value);
-        },
-        {
-          timeout: 3000,
-          message: `Expected Flutter rich text field "${label}" semantic textarea input to update the visible editor.`,
-        },
-      )
-      .toBe(true)
-      .then(() => true)
-      .catch(() => false);
-
-    if (semanticInputReachedEditor) {
-      return visualEditor;
-    }
-
-    editorBody = visualEditor;
-    await editorBody.scrollIntoViewIfNeeded();
-    await expect(editorBody).toBeVisible({ timeout: appBootTimeoutMs });
-  }
-
-  await editorBody.focus().catch(() => {});
-  await editorBody.click();
+  const editorBody = page.getByLabel(label).last();
+  await expect(
+    editorBody,
+    `Expected accessible rich text editor "${label}" to appear.`,
+  ).toBeVisible({ timeout: 30000 });
+  await expect(editorBody).toBeEditable({ timeout: 30000 });
+  await editorBody.scrollIntoViewIfNeeded({ timeout: 15000 });
+  await editorBody.click({ timeout: 15000 });
 
   const selectAll = process.platform === 'darwin' ? 'Meta+A' : 'Control+A';
-  await page.keyboard.press(selectAll).catch(() => {});
-  await page.keyboard.press('Backspace').catch(() => {});
+  await page.keyboard.press(selectAll);
+  await page.keyboard.press('Backspace');
   await page.keyboard.type(value, { delay: 5 });
 
-  let retainedTypedValue = false;
-  try {
-    await expect
-      .poll(
-        async () => {
-          const editorText = await editorBody
-            .evaluate((node) => {
-              if (!(node instanceof HTMLElement)) {
-                return '';
-              }
-              return node.innerText || node.textContent || '';
-            })
-            .catch(() => '');
-          return editorText.includes(value);
-        },
-        {
-          timeout: 3000,
-          message: `Expected Flutter rich text field "${label}" to retain input.`,
-        },
-      )
-      .toBe(true);
-    retainedTypedValue = true;
-  } catch (_) {
-    retainedTypedValue = false;
-  }
-
-  if (!retainedTypedValue) {
-    await editorBody.evaluate((node, text) => {
-      if (!(node instanceof HTMLElement)) {
-        return;
-      }
-      node.focus();
-      node.innerHTML = '';
-      const paragraph = document.createElement('p');
-      paragraph.textContent = text;
-      node.appendChild(paragraph);
-      node.dispatchEvent(new InputEvent('input', {
-        bubbles: true,
-        cancelable: true,
-        data: text,
-        inputType: 'insertText',
-      }));
-      node.dispatchEvent(new Event('change', { bubbles: true }));
-      node.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, key: 'Unidentified' }));
-      node.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'Unidentified' }));
-    }, value);
-
-    await expect
-      .poll(
-        async () => {
-          const editorText = await editorBody
-            .evaluate((node) => {
-              if (!(node instanceof HTMLElement)) {
-                return '';
-              }
-              return node.innerText || node.textContent || '';
-            })
-            .catch(() => '');
-          return editorText.includes(value);
-        },
-        {
-          timeout: 3000,
-          message: `Expected Flutter rich text field "${label}" to retain input after DOM fallback.`,
-        },
-      )
-      .toBe(true);
-  }
+  await expect
+    .poll(
+      async () => ((await editorBody.inputValue().catch(() => '')) || '').trim(),
+      {
+        timeout: 5000,
+        message: `Expected Flutter rich text field "${label}" to retain user input.`,
+      },
+    )
+    .toBe(value);
 
   return editorBody;
 }
@@ -3991,7 +3920,7 @@ test.skip('@deferred NAV-ADM-LOC-01..08 admin occurrence programming and event-l
   }
 });
 
-test.skip('@deferred @mutation tenant-admin event occurrence FAB persists second occurrence and public detail selects it', async ({
+test('@mutation tenant-admin event occurrence FAB persists second occurrence and public detail selects it', async ({
   browser,
 }) => {
   test.setTimeout(420000);
@@ -4000,6 +3929,8 @@ test.skip('@deferred @mutation tenant-admin event occurrence FAB persists second
   const baseUrl = requireTenantUrl();
   const api = await createApiContext(baseUrl);
   const uniqueSuffix = Date.now().toString();
+  const venueGallerySubtitle = `PW SR-D Galeria ${uniqueSuffix}`;
+  const venueGalleryVideoTitle = `PW SR-D Vídeo ${uniqueSuffix}`;
   let browserContext;
   let freshBrowser;
   let publicContext;
@@ -4046,6 +3977,22 @@ test.skip('@deferred @mutation tenant-admin event occurrence FAB persists second
     );
     createdPhysicalHostId = physicalHost.id;
     createdPhysicalHostAccountSlug = physicalHost.accountSlug;
+    await publishAccount(
+      api,
+      baseUrl,
+      session.token,
+      createdPhysicalHostAccountSlug,
+    );
+    await createAccountProfileYoutubeGallery(
+      api,
+      baseUrl,
+      session.token,
+      physicalHost.id,
+      {
+        subtitle: venueGallerySubtitle,
+        videoTitle: venueGalleryVideoTitle,
+      },
+    );
     const programmingHost = await createNearbyPhysicalHost(
       api,
       baseUrl,
@@ -4055,12 +4002,21 @@ test.skip('@deferred @mutation tenant-admin event occurrence FAB persists second
     );
     createdProgrammingHostId = programmingHost.id;
     createdProgrammingHostAccountSlug = programmingHost.accountSlug;
+    await publishAccount(
+      api,
+      baseUrl,
+      session.token,
+      createdProgrammingHostAccountSlug,
+    );
     const relatedProfileSeed = await createDedicatedRelatedProfiles(
       api,
       baseUrl,
       session.token,
       `${uniqueSuffix}-stable-media`,
     );
+    for (const accountSlug of relatedProfileSeed.createdAccountSlugs) {
+      await publishAccount(api, baseUrl, session.token, accountSlug);
+    }
     createdSeedProfileIds.push(...relatedProfileSeed.createdProfileIds);
     createdSeedAccountSlugs.push(...relatedProfileSeed.createdAccountSlugs);
     if (relatedProfileSeed.createdType) {
@@ -4541,11 +4497,21 @@ test.skip('@deferred @mutation tenant-admin event occurrence FAB persists second
       ).toBeVisible({ timeout: appBootTimeoutMs });
     });
     await navStep('NAV-08', async () => {
-      await clickImmersiveTab(publicPage, 'Como Chegar', {
+      await clickImmersiveTab(publicPage, 'O Local', {
         confirmationLocator: publicPage.getByText(/Ver no mapa/i).first(),
       });
       await expect(publicPage.getByText(physicalHost.display_name).first())
         .toBeVisible({ timeout: appBootTimeoutMs });
+      await expect(
+        publicPage.getByText(venueGallerySubtitle, { exact: true }),
+        'O Local must render the first populated venue gallery subtitle.',
+      ).toBeVisible({ timeout: appBootTimeoutMs });
+      await publicPage.getByRole('button', { name: 'Abrir vídeo' }).first().click();
+      await expect(
+        publicPage.getByText(venueGalleryVideoTitle, { exact: true }),
+        'The O Local gallery preview must open the shared viewer at its selected item.',
+      ).toBeVisible({ timeout: appBootTimeoutMs });
+      await publicPage.getByRole('button', { name: 'Fechar galeria' }).click();
       await expect(publicPage.getByText('Outros endereços relacionados')).toHaveCount(
         0,
       );
@@ -4705,6 +4671,25 @@ test.skip('@deferred @mutation tenant-admin event occurrence FAB persists second
     const duplicateLocationItem = programmingItems.find(
       (item) => item?.time === '18:00',
     );
+    const participantsGroup = (programmedDetail?.profile_groups || []).find(
+      (group) => group?.label === 'Participantes',
+    );
+    expect(
+      participantsGroup?.members_path,
+      'Programmed public detail must expose the Participantes lazy members path.',
+    ).toBeTruthy();
+    expect(
+      participantsGroup?.profiles || [],
+      'Programmed public detail must not eagerly embed Participantes members.',
+    ).toEqual([]);
+    const participantMembers = await fetchPublicGroupMembers(
+      api,
+      baseUrl,
+      participantsGroup.members_path,
+    );
+    const participantMemberIds = participantMembers.map(
+      (profile) => profile?.id?.toString() || '',
+    );
     await navStep('NAV-15', async () => {
       expect(
         selectedProgrammedOccurrence,
@@ -4715,24 +4700,20 @@ test.skip('@deferred @mutation tenant-admin event occurrence FAB persists second
         'Occurrences must not expose their own location override; the selected occurrence inherits the event location.',
       ).toBe(false);
       expect(
-        (programmedDetail?.linked_account_profiles || []).some(
-          (profile) => profile?.id?.toString() === programmed.eventParty.id,
-        ),
-        'Public detail must include event-level related profile.',
-      ).toBeTruthy();
+        participantMemberIds,
+        'Lazy public group members must include the event-level related profile.',
+      ).toContain(programmed.eventParty.id);
       expect(
-        (programmedDetail?.linked_account_profiles || []).some(
-          (profile) => profile?.id?.toString() === programmed.occurrenceParty.id,
-        ),
-        'Public detail must include occurrence-owned related profile.',
-      ).toBeTruthy();
+        participantMemberIds,
+        'Lazy public group members must include the occurrence-owned related profile.',
+      ).toContain(programmed.occurrenceParty.id);
       expect(
         itemWithLocation?.linked_account_profiles?.[0]?.id?.toString(),
         'Programação item must point at the Account Profile linked to the selected occurrence.',
       ).toBe(programmed.occurrenceParty.id);
     });
     await navStep('NAV-20', async () => {
-      expect(itemWithoutLocation?.title).toBe('Atividade sem local');
+      expect(itemWithoutLocation?.title).toBe('<p>Atividade sem local</p>');
       expect(itemWithoutLocation?.location_profile || null).toBeNull();
       expect(itemWithLocation?.title).toBeNull();
       expect(
@@ -4769,31 +4750,35 @@ test.skip('@deferred @mutation tenant-admin event occurrence FAB persists second
       secondProgrammedAgendaRow,
       'Occurrence-first agenda payload must expose the second programmed occurrence row.',
     ).toBeTruthy();
-    const firstProgrammedLinkedIds =
-      (firstProgrammedAgendaRow?.linked_account_profiles || [])
+    const firstProgrammedPreviewIds =
+      (firstProgrammedAgendaRow?.counterpart_preview || [])
         .map((profile) => profile?.id?.toString() || '')
         .filter(Boolean);
-    const secondProgrammedLinkedIds =
-      (secondProgrammedAgendaRow?.linked_account_profiles || [])
+    const secondProgrammedPreviewIds =
+      (secondProgrammedAgendaRow?.counterpart_preview || [])
         .map((profile) => profile?.id?.toString() || '')
         .filter(Boolean);
     await navStep('NAV-14', async () => {
       expect(
-        firstProgrammedLinkedIds,
-        'First programmed occurrence card payload must keep the event-level related profile.',
+        firstProgrammedPreviewIds,
+        'First programmed occurrence card preview must keep the event-level related profile.',
       ).toContain(programmed.eventParty.id);
       expect(
-        firstProgrammedLinkedIds,
-        'First programmed occurrence card payload must not leak sibling-occurrence related profiles.',
+        firstProgrammedAgendaRow?.counterpart_count,
+        'First programmed occurrence card must count only its event-level related profile.',
+      ).toBe(1);
+      expect(
+        firstProgrammedPreviewIds,
+        'First programmed occurrence card preview must not leak sibling-occurrence related profiles.',
       ).not.toContain(programmed.occurrenceParty.id);
       expect(
-        secondProgrammedLinkedIds,
-        'Second programmed occurrence card payload must keep the event-level related profile.',
+        secondProgrammedPreviewIds,
+        'Second programmed occurrence card preview must keep the event-level related profile.',
       ).toContain(programmed.eventParty.id);
       expect(
-        secondProgrammedLinkedIds,
-        'Second programmed occurrence card payload must keep its own occurrence-level related profile.',
-      ).toContain(programmed.occurrenceParty.id);
+        secondProgrammedAgendaRow?.counterpart_count,
+        'Second programmed occurrence card must count event-level plus occurrence-level related profiles.',
+      ).toBe(2);
     });
 
     const programmedEventRef = programmedEvent?.slug || programmedEventId;
@@ -4840,38 +4825,20 @@ test.skip('@deferred @mutation tenant-admin event occurrence FAB persists second
       });
     });
     await navStep('NAV-05', async () => {
+      const participantOnlyCard = publicPage.getByRole('button', {
+        name: new RegExp(
+          `^17:00\\s+${escapeRegExp(programmed.occurrenceParty.display_name)}`,
+        ),
+      }).first();
       await expect(
-        publicPage.getByText(programmed.occurrenceParty.display_name).first(),
+        participantOnlyCard,
+        'Participant-only programação card must expose a scoped semantic button.',
       ).toBeVisible({ timeout: appBootTimeoutMs });
-      const participantOnlyTime = publicPage.getByText('17:00').first();
-      const followingTime = publicPage.getByText('18:00').first();
-      const participantOnlyBox = await participantOnlyTime.boundingBox();
-      const followingBox = await followingTime.boundingBox();
+      const semanticCardText = (await participantOnlyCard.textContent()) || '';
       expect(
-        participantOnlyBox,
-        'Participant-only programação card must expose its time chip before scoped text assertions.',
-      ).toBeTruthy();
-      expect(
-        followingBox,
-        'The following programação card must expose its time chip so the scoped viewport band stays deterministic.',
-      ).toBeTruthy();
-      await expect
-        .poll(
-          () =>
-            countTextInVerticalBand(
-              publicPage,
-              programmed.occurrenceParty.display_name,
-              participantOnlyBox.y - 8,
-              followingBox.y - 8,
-            ),
-          {
-            timeout: appBootTimeoutMs,
-          },
-        )
-        .toBe(
-          1,
-          'Participant-only programação cards must not duplicate the participant name as fallback title text.',
-        );
+        semanticCardText.split(programmed.occurrenceParty.display_name).length - 1,
+        'Participant-only programação cards must not duplicate the participant name as fallback title text.',
+      ).toBe(1);
     });
     await navStep('NAV-18', async () => {
       const participantText = publicPage
@@ -4911,7 +4878,7 @@ test.skip('@deferred @mutation tenant-admin event occurrence FAB persists second
         'Local da programação',
         locationlessTitle,
         nextItemTime,
-        'Location-less programação item must not render a blank location row before Como Chegar.',
+        'Location-less programação item must not render a blank location row before O Local.',
       );
     });
     await navStep('NAV-06', async () => {
@@ -5035,7 +5002,7 @@ test.skip('@deferred @mutation tenant-admin event occurrence FAB persists second
         eventRef: programmedEventRef,
         occurrenceId: programmedSecondOccurrenceId,
         title: programmedEvent?.title?.toString() || '',
-        description: 'Programmed public detail before Como Chegar proof',
+        description: 'Programmed public detail before O Local proof',
       },
     );
     await navStep('NAV-09', async () => {
@@ -5043,28 +5010,33 @@ test.skip('@deferred @mutation tenant-admin event occurrence FAB persists second
       const relatedLocationsHeading = publicPage.getByText(
         'Outros endereços relacionados',
       ).first();
-      await clickImmersiveTab(publicPage, 'Como Chegar', {
+      const programmingLocationGroup = publicPage.getByRole('group', {
+        name: new RegExp(
+          `^${escapeRegExp(programmed.programmingHost.display_name)}$`,
+        ),
+      });
+      await clickImmersiveTab(publicPage, 'O Local', {
         confirmationLocator: mapCard,
       });
       await expect(
         mapCard,
-        'Como Chegar must be the active visible section before destination assertions.',
+        'O Local must be the active visible section before destination assertions.',
       ).toBeVisible({ timeout: appBootTimeoutMs });
       await expect(
         publicPage.getByRole('button', { name: /^Waze$/ }).first(),
-        'Como Chegar must expose the direct Waze provider action in the browser runtime.',
+        'O Local must expose the direct Waze provider action in the browser runtime.',
       ).toBeVisible({ timeout: appBootTimeoutMs });
       await expect(
         publicPage.getByRole('button', { name: /^Uber$/ }).first(),
-        'Como Chegar must expose the direct Uber provider action in the browser runtime.',
+        'O Local must expose the direct Uber provider action in the browser runtime.',
       ).toBeVisible({ timeout: appBootTimeoutMs });
       await expect(
         publicPage.getByRole('button', { name: /^Outros$/ }).first(),
-        'Como Chegar must expose the accessible three-dots Outros provider action in the browser runtime.',
+        'O Local must expose the accessible three-dots Outros provider action in the browser runtime.',
       ).toBeVisible({ timeout: appBootTimeoutMs });
       await expect(
         publicPage.getByRole('button', { name: /Traçar rota/i }),
-        'Como Chegar must not expose the removed tab-specific Traçar rota CTA in the browser runtime.',
+        'O Local must not expose the removed tab-specific Traçar rota CTA in the browser runtime.',
       ).toHaveCount(0);
       await expect(publicPage.getByText(physicalHost.display_name).first())
         .toBeVisible({ timeout: appBootTimeoutMs });
@@ -5072,67 +5044,48 @@ test.skip('@deferred @mutation tenant-admin event occurrence FAB persists second
         relatedLocationsHeading,
       ).toBeVisible({ timeout: appBootTimeoutMs });
       await expect(publicPage.getByText('Local da programação')).toHaveCount(0);
+      await expect(
+        publicPage.getByText('Atividade sem local', { exact: true }),
+        'Location-less programação items must not become O Local destinations.',
+      ).toHaveCount(0);
       await expect
-        .poll(() => countTextInViewport(publicPage, 'Atividade sem local'), {
-          timeout: appBootTimeoutMs,
-        })
-        .toBe(
-          0,
-          'Location-less programação items must not become visible Como Chegar destinations.',
-        );
-      await expect
-        .poll(() => isImmersiveTabSelected(publicPage, 'Como Chegar'), {
+        .poll(() => isImmersiveTabSelected(publicPage, 'O Local'), {
           timeout: appBootTimeoutMs,
         })
         .toBe(true);
-      await scrollDownUntilTextInViewport(
+      await scrollUntilVisible(
         publicPage,
-        programmed.programmingHost.display_name,
-        'Programação item Account Profile/POI location must be listed in Como Chegar.',
+        programmingLocationGroup.first(),
+        'Programação item Account Profile/POI location must be listed in O Local.',
       );
-      await waitForTextInViewport(
-        publicPage,
-        programmed.programmingHost.display_name,
-        'Programação item Account Profile/POI location must be visible after scrolling Como Chegar.',
-      );
+      await expect(
+        programmingLocationGroup.first(),
+        'Programação item Account Profile/POI location must be visible after scrolling O Local.',
+      ).toBeVisible({ timeout: appBootTimeoutMs });
     });
     await navStep('NAV-10', async () => {
       const relatedLocationsHeading = publicPage.getByText(
         'Outros endereços relacionados',
       ).first();
-      await expect
-        .poll(
-          async () => {
-            if (!(await isImmersiveTabSelected(publicPage, 'Como Chegar'))) {
-              await clickImmersiveTab(publicPage, 'Como Chegar', {
-                confirmationLocator: relatedLocationsHeading,
-              });
-            }
-            let visibleCount = await countTextInViewport(
-              publicPage,
-              programmed.programmingHost.display_name,
-            );
-            if (visibleCount === 0) {
-              await scrollDownUntilTextInViewport(
-                publicPage,
-                programmed.programmingHost.display_name,
-                'Repeated programação place_ref must become visible inside Como Chegar before dedupe assertions.',
-              );
-              visibleCount = await countTextInViewport(
-                publicPage,
-                programmed.programmingHost.display_name,
-              );
-            }
-            return visibleCount;
-          },
-          {
-            timeout: appBootTimeoutMs,
-          },
-        )
-        .toBe(
-          1,
-          'Repeated programação place_ref must render one visible Como Chegar destination.',
-        );
+      if (!(await isImmersiveTabSelected(publicPage, 'O Local'))) {
+        await clickImmersiveTab(publicPage, 'O Local', {
+          confirmationLocator: relatedLocationsHeading,
+        });
+      }
+      const programmingLocationGroups = publicPage.getByRole('group', {
+        name: new RegExp(
+          `^${escapeRegExp(programmed.programmingHost.display_name)}$`,
+        ),
+      });
+      await expect(
+        programmingLocationGroups,
+        'Repeated programação place_ref must render one O Local destination.',
+      ).toHaveCount(1, { timeout: appBootTimeoutMs });
+      await scrollUntilVisible(
+        publicPage,
+        programmingLocationGroups.first(),
+        'Repeated programação place_ref destination must be visible inside O Local.',
+      );
       await expect(publicPage.getByText('Local da programação')).toHaveCount(0);
     });
     await navStep('NAV-21', async () => {
@@ -5141,18 +5094,13 @@ test.skip('@deferred @mutation tenant-admin event occurrence FAB persists second
       await expect(
         publicPage.getByText('Outros endereços relacionados').first(),
       ).toBeVisible({ timeout: appBootTimeoutMs });
-      await expect
-        .poll(
-          () =>
-            countTextInViewport(
-              publicPage,
-              programmed.programmingHost.display_name,
-            ),
-          {
-            timeout: appBootTimeoutMs,
-          },
-        )
-        .toBe(1);
+      await expect(
+        publicPage.getByRole('group', {
+          name: new RegExp(
+            `^${escapeRegExp(programmed.programmingHost.display_name)}$`,
+          ),
+        }),
+      ).toHaveCount(1, { timeout: appBootTimeoutMs });
     });
 
     const futureLaterEvent = await createPastFirstFutureLaterOccurrenceEvent(
@@ -5203,8 +5151,22 @@ test.skip('@deferred @mutation tenant-admin event occurrence FAB persists second
       await deleteEvent(api, baseUrl, session.token, noProgrammingEventId);
       await deleteEvent(api, baseUrl, session.token, eventId);
       await deleteEventType(api, baseUrl, session.token, eventTypeId);
-      await cleanupOnboardedAccount(api, baseUrl, session.token, createdProgrammingHostAccountSlug);
-      await cleanupOnboardedAccount(api, baseUrl, session.token, createdPhysicalHostAccountSlug);
+      if (createdProgrammingHostAccountSlug) {
+        await cleanupOnboardedAccount(
+          api,
+          baseUrl,
+          session.token,
+          createdProgrammingHostAccountSlug,
+        );
+      }
+      if (createdPhysicalHostAccountSlug) {
+        await cleanupOnboardedAccount(
+          api,
+          baseUrl,
+          session.token,
+          createdPhysicalHostAccountSlug,
+        );
+      }
       await cleanupOnboardedAccounts(api, baseUrl, session.token, createdSeedAccountSlugs);
       await deleteAccountProfileType(api, baseUrl, session.token, createdProfileType);
       for (const profileType of createdSeedProfileTypes) {
@@ -5432,6 +5394,220 @@ test('@mutation repeated public event detail GET/hydration keeps programming pay
   }
 });
 
+test('@mutation PRE-RF-01 event occurrence group candidate search renders one server page without page walking', async () => {
+  test.setTimeout(600000);
+  const baseUrl = requireTenantUrl();
+  const api = await createApiContext(baseUrl);
+  const uniqueSuffix = `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+  let session = null;
+  let browserContext;
+  let freshBrowser;
+  let eventTypeId = null;
+  let eventId = null;
+  let relatedProfileType = null;
+  let physicalHostProfileType = null;
+  const createdAccountSlugs = [];
+
+  try {
+    session = await loginTenantAdmin(api, baseUrl);
+    const eventType = await createEventType(
+      api,
+      baseUrl,
+      session.token,
+      `${uniqueSuffix}-candidate-search`,
+    );
+    eventTypeId = eventType?.id?.toString() || null;
+
+    const physicalHostSeed = await ensurePhysicalHostCandidates(
+      api,
+      baseUrl,
+      session.token,
+      1,
+    );
+    physicalHostProfileType = physicalHostSeed.createdType;
+    createdAccountSlugs.push(...physicalHostSeed.createdAccountSlugs);
+
+    const relatedSeed = await createDedicatedRelatedProfiles(
+      api,
+      baseUrl,
+      session.token,
+      `${uniqueSuffix}-candidate-search`,
+    );
+    relatedProfileType = relatedSeed.createdType;
+    createdAccountSlugs.push(...relatedSeed.createdAccountSlugs);
+
+    const accentCandidate = await createNearbyPhysicalHost(
+      api,
+      baseUrl,
+      session.token,
+      relatedProfileType,
+      `São Candidato ${uniqueSuffix}`,
+    );
+    createdAccountSlugs.push(accentCandidate.accountSlug);
+
+    const seededEvent = await createSingleOccurrenceEvent(
+      api,
+      baseUrl,
+      session.token,
+      {
+        eventType,
+        physicalHost: physicalHostSeed.candidates[0],
+        uniqueSuffix: `${uniqueSuffix}-candidate-search`,
+      },
+    );
+    eventId = seededEvent?.event_id?.toString() || null;
+    const occurrenceId = seededEvent?.occurrences?.[0]?.occurrence_id?.toString() || '';
+    expect(eventId, 'PRE-RF-01 seed must return an event id.').toBeTruthy();
+    expect(occurrenceId, 'PRE-RF-01 seed must return an occurrence id.').toBeTruthy();
+
+    const group = await createOccurrenceProfileGroup(
+      api,
+      baseUrl,
+      session.token,
+      {
+        eventId,
+        occurrenceId,
+        label: 'Participantes PRE-RF-01',
+        assertionLabel: 'PRE-RF-01 occurrence group seed',
+      },
+    );
+
+    const pageBundle = await createFreshAuthenticatedTenantAdminPage(session);
+    freshBrowser = pageBundle.browser;
+    browserContext = pageBundle.context;
+    const page = pageBundle.page;
+    const collectors = installFailureCollectors(page);
+    const searchPages = [];
+    // Keep the real endpoint status and candidate rows, but force continuation
+    // metadata so the removed semantic page-walk branch is exercised without
+    // creating 21 Accounts in every browser run.
+    await page.route('**/admin/api/v1/events/account_profile_candidates?**', async (route) => {
+      const url = new URL(route.request().url());
+      if (
+        url.searchParams.get('type') !== 'related_account_profile' ||
+        url.searchParams.get('search') !== 'sao' ||
+        url.searchParams.get('page') !== '1'
+      ) {
+        await route.continue();
+        return;
+      }
+
+      const serverResponse = await route.fetch();
+      const serverPayload = await serverResponse.json();
+      await route.fulfill({
+        response: serverResponse,
+        json: {
+          ...serverPayload,
+          current_page: 1,
+          last_page: 2,
+          total: Math.max(21, Number(serverPayload?.total || 0)),
+        },
+      });
+    });
+    page.on('request', (candidate) => {
+      const url = new URL(candidate.url());
+      if (
+        candidate.method() === 'GET' &&
+        url.pathname === '/admin/api/v1/events/account_profile_candidates' &&
+        url.searchParams.get('type') === 'related_account_profile' &&
+        url.searchParams.get('search') === 'sao'
+      ) {
+        searchPages.push(Number(url.searchParams.get('page') || '1'));
+      }
+    });
+
+    const groupUrl = buildApiUrl(
+      baseUrl,
+      `/admin/events/${eventId}/occurrences/${occurrenceId}/groups/${group.groupId}/pre-rf-01`,
+    );
+    const navigationResponse = await page.goto(groupUrl, {
+      waitUntil: 'domcontentloaded',
+    });
+    expect(navigationResponse, 'PRE-RF-01 group route must respond.').not.toBeNull();
+    expect(navigationResponse.status()).toBeLessThan(400);
+    await assertAppBooted(page);
+    await enableAccessibilityIfNeeded(page);
+
+    const addProfilesButton = page.getByRole('button', {
+      name: 'Adicionar perfis',
+    });
+    await expect(addProfilesButton).toBeVisible({ timeout: appBootTimeoutMs });
+    await addProfilesButton.click();
+    await expect(page.getByRole('textbox', { name: 'Buscar perfil' })).toBeVisible({
+      timeout: appBootTimeoutMs,
+    });
+
+    const searchResponsePromise = page.waitForResponse((candidate) => {
+      const url = new URL(candidate.url());
+      return (
+        candidate.request().method() === 'GET' &&
+        url.pathname === '/admin/api/v1/events/account_profile_candidates' &&
+        url.searchParams.get('type') === 'related_account_profile' &&
+        url.searchParams.get('search') === 'sao' &&
+        url.searchParams.get('page') === '1' &&
+        candidate.status() === 200
+      );
+    });
+    await fillFlutterTextField(page, 'Buscar perfil', 'sao');
+    const searchResponse = await searchResponsePromise;
+    const searchPayload = await searchResponse.json();
+    expect(searchPayload?.data?.length || 0).toBeGreaterThan(0);
+    expect(Number(searchPayload?.last_page || 0)).toBeGreaterThan(1);
+    const firstReturnedName = searchPayload?.data?.[0]?.display_name?.toString() || '';
+    expect(firstReturnedName, 'PRE-RF-01 search must return a displayable server row.')
+      .toBeTruthy();
+    await expect(
+      page.getByRole('checkbox', {
+        name: new RegExp(escapeRegExp(firstReturnedName)),
+      }).first(),
+    ).toBeVisible({ timeout: appBootTimeoutMs });
+
+    await page.waitForTimeout(1500);
+    expect(
+      searchPages,
+      'The Event picker must not request page 2 merely because accent-folded server matches do not satisfy Dart contains.',
+    ).toEqual([1]);
+    await assertNoBrowserFailures(collectors);
+  } finally {
+    if (session?.token) {
+      await deleteEvent(api, baseUrl, session.token, eventId);
+      await deleteEventType(api, baseUrl, session.token, eventTypeId);
+      for (let offset = 0; offset < createdAccountSlugs.length; offset += 2) {
+        await cleanupOnboardedAccounts(
+          api,
+          baseUrl,
+          session.token,
+          createdAccountSlugs.slice(offset, offset + 2),
+          {
+            strict: true,
+            maxAttempts: 2,
+            requestTimeoutMs: 5000,
+          },
+        );
+      }
+      await deleteAccountProfileType(
+        api,
+        baseUrl,
+        session.token,
+        relatedProfileType,
+      );
+      await deleteAccountProfileType(
+        api,
+        baseUrl,
+        session.token,
+        physicalHostProfileType,
+      );
+    }
+    if (browserContext) {
+      await browserContext.close().catch(() => {});
+    }
+    if (freshBrowser) {
+      await freshBrowser.close().catch(() => {});
+    }
+    await api.dispose();
+  }
+});
+
 test('@mutation admin-authored occurrence profile groups persist full chip readback and public aggregation', async ({
   browser,
 }) => {
@@ -5477,6 +5653,9 @@ test('@mutation admin-authored occurrence profile groups persist full chip readb
       session.token,
       uniqueSuffix,
     );
+    for (const accountSlug of relatedProfileSeed.createdAccountSlugs) {
+      await publishAccount(api, baseUrl, session.token, accountSlug);
+    }
     createdSeedAccountSlugs.push(...relatedProfileSeed.createdAccountSlugs);
     if (relatedProfileSeed.createdType) {
       createdSeedProfileTypes.add(relatedProfileSeed.createdType);

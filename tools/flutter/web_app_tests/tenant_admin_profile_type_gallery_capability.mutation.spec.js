@@ -3,6 +3,13 @@ const { loginTenantAdmin } = require('./support/tenant_admin_auth');
 const {
   createAuthenticatedTenantAdminPage,
 } = require('./support/tenant_admin_seeded_session');
+const {
+  cleanupOnboardedAccount,
+} = require('./support/account_onboarding_cleanup');
+const {
+  installFailureCollectors,
+  summarizeCriticalBrowserFailures,
+} = require('./support/browser_failure_collectors');
 
 const tenantUrl = process.env.NAV_TENANT_URL;
 const appBootTimeoutMs = 90000;
@@ -34,6 +41,26 @@ function escapeRegex(value) {
 
 function pageWait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function assertNoCriticalBrowserFailures(browserFailures, context) {
+  const summary = summarizeCriticalBrowserFailures(browserFailures);
+  expect(summary.runtimeErrors, `${context} must not produce page runtime errors.`)
+    .toEqual([]);
+  expect(summary.failedRequests, `${context} must not produce failed requests.`)
+    .toEqual([]);
+  expect(
+    summary.criticalHttpResponses,
+    `${context} must not produce critical HTTP responses.`,
+  ).toEqual([]);
+  expect(
+    summary.disallowedRateLimitedResponses,
+    `${context} must not produce disallowed rate-limited responses.`,
+  ).toEqual([]);
+  expect(
+    summary.criticalConsoleErrors,
+    `${context} must not produce critical console errors.`,
+  ).toEqual([]);
 }
 
 async function createApiContext(baseUrl) {
@@ -269,6 +296,180 @@ async function expectToggleChecked(toggle, message) {
       },
     )
     .toBe('true');
+}
+
+async function toggleCheckedValue(toggle) {
+  const ariaChecked = await toggle.getAttribute('aria-checked').catch(() => null);
+  if (ariaChecked != null) {
+    return ariaChecked === 'true';
+  }
+
+  return toggle.isChecked().catch(() => false);
+}
+
+async function setExternalLinksCapability({
+  page,
+  api,
+  baseUrl,
+  token,
+  type,
+  enabled,
+}) {
+  const editUrl = buildUrl(
+    baseUrl,
+    `/admin/profile-types/${encodeURIComponent(type)}/edit`,
+  );
+  const response = await page.goto(editUrl, { waitUntil: 'domcontentloaded' });
+  expect(response, 'Profile type capability edit response should be available.')
+    .not.toBeNull();
+  expect(response.status()).toBeLessThan(400);
+  await assertAppBooted(page);
+  await enableAccessibilityIfNeeded(page);
+  await expect(await resolveVisibleFlutterTextField(page, 'Tipo (slug)')).toBeVisible({
+    timeout: appBootTimeoutMs,
+  });
+
+  const toggle = await resolveToggle(page, 'Links externos habilitados');
+  await toggle.scrollIntoViewIfNeeded();
+  if ((await toggleCheckedValue(toggle)) !== enabled) {
+    await toggle.click();
+  }
+
+  const patchResponsePromise = page.waitForResponse((candidate) =>
+    candidate.request().method() === 'PATCH' &&
+    candidate.url().includes(
+      `/admin/api/v1/account_profile_types/${encodeURIComponent(type)}`,
+    ),
+  );
+  await clickSaveChanges(page);
+  const patchResponse = await patchResponsePromise;
+  expect(
+    patchResponse.status(),
+    `Profile type has_external_links=${enabled} mutation must succeed.`,
+  ).toBeLessThan(400);
+
+  return waitForPersistedAccountProfileType(
+    api,
+    baseUrl,
+    token,
+    type,
+    (data) => data?.capabilities?.has_external_links === enabled,
+    `Account profile type ${type} did not persist has_external_links=${enabled}.`,
+  );
+}
+
+async function createPublishedAccountProfile(api, baseUrl, token, type, name) {
+  const onboardingResponse = await api.post(
+    buildUrl(baseUrl, '/admin/api/v1/account_onboardings'),
+    {
+      headers: authHeaders(token),
+      data: {
+        name,
+        ownership_state: 'unmanaged',
+        profile_type: type,
+      },
+    },
+  );
+  expect(onboardingResponse.status(), 'External-links account onboarding must succeed.')
+    .toBe(201);
+  const onboarding = await onboardingResponse.json();
+  const account = onboarding?.data?.account || {};
+  const profile = onboarding?.data?.account_profile || {};
+  const accountSlug = account?.slug?.toString() || '';
+  const profileId = profile?.id?.toString() || '';
+  const profileSlug = profile?.slug?.toString() || accountSlug;
+  expect(accountSlug, 'Onboarding response must expose an account slug.').toBeTruthy();
+  expect(profileId, 'Onboarding response must expose a profile id.').toBeTruthy();
+
+  const publishResponse = await api.patch(
+    buildUrl(baseUrl, `/admin/api/v1/accounts/${encodeURIComponent(accountSlug)}`),
+    {
+      headers: authHeaders(token),
+      data: { publication: { status: 'published' } },
+    },
+  );
+  expect(publishResponse.status(), 'External-links fixture must publish.').toBe(200);
+  return { accountSlug, profileId, profileSlug };
+}
+
+async function fetchAdminProfile(api, baseUrl, token, profileId) {
+  const response = await api.get(
+    buildUrl(
+      baseUrl,
+      `/admin/api/v1/account_profiles/${encodeURIComponent(profileId)}`,
+    ),
+    { headers: authHeaders(token), failOnStatusCode: false },
+  );
+  expect(response.status(), 'Admin profile readback must succeed.').toBe(200);
+  const payload = await response.json();
+  return payload?.data || {};
+}
+
+async function createExternalLink(api, baseUrl, token, profileId, data) {
+  const response = await api.post(
+    buildUrl(
+      baseUrl,
+      `/admin/api/v1/account_profiles/${encodeURIComponent(profileId)}/external_links`,
+    ),
+    {
+      headers: { ...authHeaders(token), 'X-Request-ID': `pw-links-${Date.now()}-${data.type}` },
+      data,
+      failOnStatusCode: false,
+    },
+  );
+  return response;
+}
+
+async function deleteExternalLink(api, baseUrl, token, profileId, linkId) {
+  return api.delete(
+    buildUrl(
+      baseUrl,
+      `/admin/api/v1/account_profiles/${encodeURIComponent(profileId)}` +
+        `/external_links/${encodeURIComponent(linkId)}`,
+    ),
+    {
+      headers: { ...authHeaders(token), 'X-Request-ID': `pw-links-delete-${linkId}` },
+      failOnStatusCode: false,
+    },
+  );
+}
+
+async function gotoAdminProfileEdit(page, baseUrl, accountSlug, profileId) {
+  const response = await page.goto(
+    buildUrl(
+      baseUrl,
+      `/admin/accounts/${encodeURIComponent(accountSlug)}` +
+        `/profiles/${encodeURIComponent(profileId)}/edit`,
+    ),
+    { waitUntil: 'domcontentloaded' },
+  );
+  expect(response, 'Admin account-profile edit response should be available.')
+    .not.toBeNull();
+  expect(response.status()).toBeLessThan(400);
+  await assertAppBooted(page);
+  await enableAccessibilityIfNeeded(page);
+  await expect(page.getByText('Editar Perfil')).toBeVisible({
+    timeout: appBootTimeoutMs,
+  });
+}
+
+async function gotoPublicProfile(page, baseUrl, profileSlug) {
+  const hydrationPromise = page.waitForResponse((candidate) => {
+    const url = new URL(candidate.url());
+    return candidate.request().method() === 'GET' &&
+      url.pathname === `/api/v1/account_profiles/${profileSlug}`;
+  });
+  const response = await page.goto(
+    buildUrl(baseUrl, `/parceiro/${encodeURIComponent(profileSlug)}`),
+    { waitUntil: 'domcontentloaded' },
+  );
+  expect(response, 'Public profile response should be available.').not.toBeNull();
+  expect(response.status()).toBeLessThan(400);
+  await assertAppBooted(page);
+  await enableAccessibilityIfNeeded(page);
+  const hydrationResponse = await hydrationPromise;
+  expect(hydrationResponse.status()).toBeLessThan(400);
+  return (await hydrationResponse.json())?.data || {};
 }
 
 async function scrollUntilVisible(page, locator, description) {
@@ -510,5 +711,470 @@ test('@mutation T6-GALLERY-CAPABILITY tenant-admin account profile type gallery 
     }
     await deleteAccountProfileType(api, baseUrl, session.token, type);
     await api.dispose();
+  }
+});
+
+test('@mutation T6-EXTERNAL-LINKS profile capability gates admin CRUD, dormant restoration, and capacity-driven icon strip', async ({
+  browser,
+}, testInfo) => {
+  const baseUrl = requireTenantUrl();
+  const api = await createApiContext(baseUrl);
+  const session = await loginTenantAdmin({
+    api,
+    baseUrl,
+    deviceName: 'playwright-profile-external-links-capability',
+  });
+  const unique = Date.now().toString();
+  const type = `a0-external-links-${unique}`;
+  const typeLabel = `A0 Links Externos ${unique}`;
+  const longProfileName = `A0 Perfil com nome deliberadamente longo para validar a faixa compacta de links externos ${unique}`;
+  const initialInstagramUrl = `https://www.instagram.com/belluga.now.${unique}/`;
+  const updatedInstagramUrl = `https://instagram.com/belluga.updated.${unique}`;
+  let browserContext;
+  let accountSlug;
+  let profileId;
+
+  try {
+    await createAccountProfileType(
+      api,
+      baseUrl,
+      session.token,
+      type,
+      typeLabel,
+      `${typeLabel} plural`,
+    );
+
+    const defaultType = await waitForPersistedAccountProfileType(
+      api,
+      baseUrl,
+      session.token,
+      type,
+      (data) => data?.capabilities?.has_external_links === false,
+      `New profile type ${type} did not default has_external_links to false.`,
+    );
+    expect(defaultType.capabilities.has_external_links).toBe(false);
+
+    const pageBundle = await createAuthenticatedTenantAdminPage(browser, session);
+    browserContext = pageBundle.context;
+    const page = pageBundle.page;
+    await page.route('https://*.ingest.sentry.io/**', (route) =>
+      route.fulfill({ status: 204, body: '' }),
+    );
+    const browserFailures = installFailureCollectors(page);
+    const namespacedAssetRequests = [];
+    page.on('request', (candidate) => {
+      const pathName = new URL(candidate.url()).pathname;
+      if (pathName.includes('/assets/releases/')) {
+        namespacedAssetRequests.push(pathName);
+      }
+    });
+
+    await setExternalLinksCapability({
+      page,
+      api,
+      baseUrl,
+      token: session.token,
+      type,
+      enabled: true,
+    });
+
+    const servedBuildSha = await page.evaluate(
+      () => window.__WEB_BUILD_SHA__ || '',
+    );
+    expect(servedBuildSha, 'Runtime must expose its build fingerprint.').toBeTruthy();
+    const expectedAssetPrefix =
+      `/assets/releases/${encodeURIComponent(servedBuildSha)}/assets/`;
+    expect(
+      namespacedAssetRequests.some(
+        (pathName) => pathName === `${expectedAssetPrefix}FontManifest.json`,
+      ),
+      'Flutter must load its font manifest through the build-namespaced asset base.',
+    ).toBe(true);
+
+    const fontManifestResponse = await api.get(
+      buildUrl(baseUrl, `${expectedAssetPrefix}FontManifest.json`),
+    );
+    expect(fontManifestResponse.status()).toBe(200);
+    expect(fontManifestResponse.headers()['cache-control']).toContain('no-cache');
+    expect(fontManifestResponse.headers()['cache-control']).not.toContain('immutable');
+    const fontManifest = await fontManifestResponse.json();
+    const simpleIconsFontPath = fontManifest.find(
+      (entry) => entry?.family === 'packages/simple_icons/SimpleIcons',
+    )?.fonts?.[0]?.asset;
+    expect(
+      simpleIconsFontPath,
+      'Namespaced FontManifest must expose the SimpleIcons font asset.',
+    ).toBeTruthy();
+    const simpleIconsFontResponse = await api.get(
+      buildUrl(baseUrl, `${expectedAssetPrefix}${simpleIconsFontPath}`),
+    );
+    expect(simpleIconsFontResponse.status()).toBe(200);
+    expect((await simpleIconsFontResponse.body()).length).toBeGreaterThan(10000);
+    expect(simpleIconsFontResponse.headers()['cache-control']).not.toContain(
+      'immutable',
+    );
+
+    const fixture = await createPublishedAccountProfile(
+      api,
+      baseUrl,
+      session.token,
+      type,
+      longProfileName,
+    );
+    ({ accountSlug, profileId } = fixture);
+    let capacityProfile = await fetchAdminProfile(
+      api,
+      baseUrl,
+      session.token,
+      profileId,
+    );
+    const externalLinksLimit = Number(capacityProfile.external_links_limit);
+    expect(
+      Number.isSafeInteger(externalLinksLimit) && externalLinksLimit >= 0,
+      'Admin profile detail must expose a non-negative plan-resolved external_links_limit.',
+    ).toBe(true);
+
+    const emptyPublicProfile = await gotoPublicProfile(
+      page,
+      baseUrl,
+      fixture.profileSlug,
+    );
+    await expect(
+      page.getByRole('button', { name: /^Abrir / }),
+      'A capable profile with no configured links must render no external-link controls.',
+    ).toHaveCount(0);
+    expect(emptyPublicProfile.display_name).toBe(longProfileName);
+    await testInfo.attach('external-links-public-zero-long-name', {
+      body: await page.screenshot(),
+      contentType: 'image/png',
+    });
+
+    if (externalLinksLimit === 0) {
+      assertNoCriticalBrowserFailures(browserFailures, 'T6');
+      return;
+    }
+
+    await gotoAdminProfileEdit(page, baseUrl, accountSlug, profileId);
+    await expect(page.getByText('Links externos', { exact: true })).toBeVisible({
+      timeout: appBootTimeoutMs,
+    });
+    const addLinkButton = page.getByRole('button', { name: /Adicionar link/ });
+    await scrollUntilVisible(
+      page,
+      addLinkButton,
+      'The external-links section must expose its tappable add row.',
+    );
+    await addLinkButton.click();
+    await expect(page.getByText('Adicionar link', { exact: true })).toBeVisible({
+      timeout: appBootTimeoutMs,
+    });
+    await fillFlutterTextField(page, 'URL HTTPS', initialInstagramUrl);
+    const createResponsePromise = page.waitForResponse((candidate) =>
+      candidate.request().method() === 'POST' &&
+      candidate.url().includes(`/account_profiles/${profileId}/external_links`),
+    );
+    await page.getByRole('button', { name: 'Salvar link', exact: true }).click();
+    const createResponse = await createResponsePromise;
+    expect(createResponse.status(), 'Admin form must create the Instagram link.').toBe(201);
+    const createdProfile = (await createResponse.json())?.data || {};
+    capacityProfile = createdProfile;
+    const instagramLink = createdProfile.external_links?.find(
+      (link) => link.type === 'instagram',
+    );
+    expect(instagramLink?.id, 'Created Instagram link must expose stable identity.')
+      .toBeTruthy();
+
+    await gotoPublicProfile(page, baseUrl, fixture.profileSlug);
+    const instagramButton = page.getByRole('button', { name: 'Abrir Instagram' });
+    await expect(instagramButton).toHaveCount(1);
+    const instagramScreenshotPath = testInfo.outputPath(
+      'external-links-public-instagram-icon.png',
+    );
+    await page.screenshot({ path: instagramScreenshotPath });
+    await testInfo.attach('external-links-public-instagram-icon', {
+      path: instagramScreenshotPath,
+      contentType: 'image/png',
+    });
+    const popupPromise = browserContext.waitForEvent('page');
+    await instagramButton.click();
+    const popup = await popupPromise;
+    await expect.poll(() => popup.url(), { timeout: appBootTimeoutMs })
+      .toBe(initialInstagramUrl);
+    await popup.close();
+
+    const editLinkUrl = buildUrl(
+      baseUrl,
+      `/admin/accounts/${encodeURIComponent(accountSlug)}` +
+        `/profiles/${encodeURIComponent(profileId)}` +
+        `/links/${encodeURIComponent(instagramLink.id)}/edit`,
+    );
+    let response = await page.goto(editLinkUrl, { waitUntil: 'domcontentloaded' });
+    expect(response).not.toBeNull();
+    expect(response.status()).toBeLessThan(400);
+    await assertAppBooted(page);
+    await enableAccessibilityIfNeeded(page);
+    await expect(page.getByText('Instagram', { exact: true }).first()).toBeVisible({
+      timeout: appBootTimeoutMs,
+    });
+    await fillFlutterTextField(page, 'URL HTTPS', updatedInstagramUrl);
+    const updateResponsePromise = page.waitForResponse((candidate) =>
+      candidate.request().method() === 'PATCH' &&
+      candidate.url().includes(`/external_links/${instagramLink.id}`),
+    );
+    await page.getByRole('button', { name: 'Salvar link', exact: true }).click();
+    const updateResponse = await updateResponsePromise;
+    expect(updateResponse.status(), 'Admin form must update the Instagram link.').toBe(200);
+
+    const beforeDisable = await fetchAdminProfile(
+      api,
+      baseUrl,
+      session.token,
+      profileId,
+    );
+    const dormantSnapshot = JSON.stringify(beforeDisable.external_links);
+    expect(beforeDisable.external_links?.[0]?.url).toBe(updatedInstagramUrl);
+
+    await setExternalLinksCapability({
+      page,
+      api,
+      baseUrl,
+      token: session.token,
+      type,
+      enabled: false,
+    });
+    await gotoAdminProfileEdit(page, baseUrl, accountSlug, profileId);
+    await expect(page.getByText('Links externos', { exact: true })).toHaveCount(0);
+
+    response = await page.goto(editLinkUrl, { waitUntil: 'domcontentloaded' });
+    expect(response).not.toBeNull();
+    expect(response.status()).toBeLessThan(400);
+    await assertAppBooted(page);
+    await enableAccessibilityIfNeeded(page);
+    await expect.poll(() => new URL(page.url()).pathname, {
+      timeout: appBootTimeoutMs,
+      message: 'Disabled direct entry must return to the parent Profile editor.',
+    }).toBe(
+      `/admin/accounts/${encodeURIComponent(accountSlug)}` +
+        `/profiles/${encodeURIComponent(profileId)}/edit`,
+    );
+    await expect(page.getByText('Links externos', { exact: true })).toHaveCount(0);
+
+    const rejectedMutation = await createExternalLink(
+      api,
+      baseUrl,
+      session.token,
+      profileId,
+      { type: 'facebook', url: 'https://facebook.com/belluga.now' },
+    );
+    expect(rejectedMutation.status()).toBe(422);
+    expect((await rejectedMutation.json())?.code).toBe(
+      'account_profile_external_links_capability_disabled',
+    );
+    const disabledReadback = await fetchAdminProfile(
+      api,
+      baseUrl,
+      session.token,
+      profileId,
+    );
+    expect(disabledReadback).not.toHaveProperty('external_links');
+
+    await gotoPublicProfile(page, baseUrl, fixture.profileSlug);
+    await expect(page.getByRole('button', { name: /^Abrir / })).toHaveCount(0);
+
+    await setExternalLinksCapability({
+      page,
+      api,
+      baseUrl,
+      token: session.token,
+      type,
+      enabled: true,
+    });
+    const restored = await fetchAdminProfile(
+      api,
+      baseUrl,
+      session.token,
+      profileId,
+    );
+    expect(JSON.stringify(restored.external_links)).toBe(dormantSnapshot);
+
+    await gotoAdminProfileEdit(page, baseUrl, accountSlug, profileId);
+    await expect(page.getByText('Links externos', { exact: true })).toBeVisible({
+      timeout: appBootTimeoutMs,
+    });
+    const restoredUrl = page.getByRole('button', {
+      name: new RegExp(escapeRegex(updatedInstagramUrl)),
+    });
+    await scrollUntilVisible(
+      page,
+      restoredUrl,
+      'Re-enabled external links must expose the dormant URL unchanged.',
+    );
+
+    if (externalLinksLimit >= 2) {
+      const youtubeResponse = await createExternalLink(
+        api,
+        baseUrl,
+        session.token,
+        profileId,
+        { type: 'youtube', url: 'https://youtu.be/dQw4w9WgXcQ' },
+      );
+      expect(youtubeResponse.status()).toBe(201);
+      capacityProfile = (await youtubeResponse.json())?.data || {};
+      await gotoPublicProfile(page, baseUrl, fixture.profileSlug);
+      await expect(page.getByRole('button', { name: /^Abrir / })).toHaveCount(2);
+    }
+
+    if (externalLinksLimit >= 3) {
+      const websiteResponse = await createExternalLink(
+        api,
+        baseUrl,
+        session.token,
+        profileId,
+        {
+          type: 'website',
+          url: 'https://belluga.example/profile',
+          label: 'Site oficial',
+        },
+      );
+      expect(websiteResponse.status()).toBe(201);
+      capacityProfile = (await websiteResponse.json())?.data || {};
+    }
+    expect(capacityProfile.external_links.map((link) => link.type)).toEqual(
+      externalLinksLimit >= 3
+        ? ['instagram', 'youtube', 'website']
+        : externalLinksLimit >= 2
+          ? ['instagram', 'youtube']
+          : ['instagram'],
+    );
+    expect(capacityProfile.external_links.length).toBeLessThanOrEqual(
+      externalLinksLimit,
+    );
+    const capacityFillCandidates = [
+      { type: 'facebook', url: 'https://facebook.com/belluga.now' },
+      { type: 'tiktok', url: 'https://www.tiktok.com/@belluga' },
+      { type: 'spotify', url: 'https://open.spotify.com/artist/belluga' },
+    ];
+    for (const candidate of capacityFillCandidates) {
+      if (capacityProfile.external_links.length >= externalLinksLimit) {
+        break;
+      }
+      const fillResponse = await createExternalLink(
+        api,
+        baseUrl,
+        session.token,
+        profileId,
+        candidate,
+      );
+      expect(fillResponse.status()).toBe(201);
+      capacityProfile = (await fillResponse.json())?.data || {};
+    }
+    expect(capacityProfile.external_links.length).toBeLessThanOrEqual(
+      externalLinksLimit,
+    );
+
+    const overflowCandidate = capacityFillCandidates.find(
+      (candidate) =>
+        !capacityProfile.external_links.some((link) => link.type === candidate.type),
+    );
+    if (overflowCandidate) {
+      const overflowResponse = await createExternalLink(
+        api,
+        baseUrl,
+        session.token,
+        profileId,
+        overflowCandidate,
+      );
+      expect(overflowResponse.status()).toBe(422);
+      expect((await overflowResponse.json())?.errors).toHaveProperty(
+        'external_links_limit',
+      );
+    }
+
+    await gotoPublicProfile(page, baseUrl, fixture.profileSlug);
+    await expect(page.getByRole('button', { name: /^Abrir / })).toHaveCount(
+      capacityProfile.external_links.length,
+    );
+    await expect(page.getByRole('button', { name: 'Abrir Instagram' })).toBeVisible();
+    if (capacityProfile.external_links.some((link) => link.type === 'youtube')) {
+      await expect(page.getByRole('button', { name: 'Abrir YouTube' })).toBeVisible();
+    }
+    if (capacityProfile.external_links.some((link) => link.type === 'website')) {
+      await expect(page.getByRole('button', { name: 'Abrir Site oficial' })).toBeVisible();
+    }
+    const threeLinkScreenshotPath = testInfo.outputPath(
+      'external-links-public-three-long-name.png',
+    );
+    await page.screenshot({ path: threeLinkScreenshotPath });
+    await testInfo.attach('external-links-public-three-long-name', {
+      path: threeLinkScreenshotPath,
+      contentType: 'image/png',
+    });
+
+    response = await page.goto(editLinkUrl, { waitUntil: 'domcontentloaded' });
+    expect(response).not.toBeNull();
+    expect(response.status()).toBeLessThan(400);
+    await assertAppBooted(page);
+    await enableAccessibilityIfNeeded(page);
+    const deleteResponsePromise = page.waitForResponse((candidate) =>
+      candidate.request().method() === 'DELETE' &&
+      candidate.url().includes(`/external_links/${instagramLink.id}`),
+    );
+    const removeLinkButton = page.getByRole('button', {
+      name: 'Remover link',
+      exact: true,
+    });
+    await scrollUntilVisible(
+      page,
+      removeLinkButton,
+      'The external-link edit route must expose its destructive footer.',
+    );
+    await removeLinkButton.click();
+    await page.getByRole('button', { name: 'Remover', exact: true }).last().click();
+    expect((await deleteResponsePromise).status()).toBe(200);
+
+    const afterUiDelete = await fetchAdminProfile(
+      api,
+      baseUrl,
+      session.token,
+      profileId,
+    );
+    for (const link of afterUiDelete.external_links) {
+      expect(
+        (await deleteExternalLink(
+          api,
+          baseUrl,
+          session.token,
+          profileId,
+          link.id,
+        )).status(),
+      ).toBe(200);
+    }
+    await gotoPublicProfile(page, baseUrl, fixture.profileSlug);
+    await expect(page.getByRole('button', { name: /^Abrir / })).toHaveCount(0);
+
+    assertNoCriticalBrowserFailures(browserFailures, 'T6');
+  } finally {
+    if (browserContext) {
+      await browserContext.close().catch(() => {});
+    }
+    try {
+      if (accountSlug) {
+        await cleanupOnboardedAccount(
+          api,
+          baseUrl,
+          session.token,
+          accountSlug,
+          {
+            strict: false,
+            maxAttempts: 5,
+            baseDelayMs: 250,
+            requestTimeoutMs: 10000,
+          },
+        );
+      }
+    } finally {
+      await deleteAccountProfileType(api, baseUrl, session.token, type);
+      await api.dispose();
+    }
   }
 });

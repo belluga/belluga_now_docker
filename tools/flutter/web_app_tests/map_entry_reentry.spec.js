@@ -108,7 +108,7 @@ async function waitForTenantPath(page, allowedPrefixes) {
   );
 }
 
-test.skip('@deferred @readonly MAP-NAV-REENTRY-01 tenant home can reopen map after returning from a warm permission-gated entry', async () => {
+test('@deferred @readonly MAP-NAV-REENTRY-01 tenant home can reopen map after returning from a warm permission-gated entry', async () => {
   const baseUrl = requireTenantUrl();
   const appOrigin = new URL(baseUrl).origin;
   await withFreshBrowserPage(async ({ page }) => {
