@@ -1,5 +1,9 @@
 const { test, expect } = require('@playwright/test');
 const { withFreshBrowserPage } = require('./support/fresh_browser_context');
+const {
+  installFailureCollectors,
+  summarizeCriticalBrowserFailures,
+} = require('./support/browser_failure_collectors');
 
 const tenantUrl = process.env.NAV_TENANT_URL;
 const appBootTimeoutMs = 120000;
@@ -82,9 +86,6 @@ function attachMapRequestCapture(page) {
   const filterResponses = [];
   const poiRequests = [];
   const poiResponses = [];
-  const failedRequests = [];
-  const consoleErrors = [];
-  const pageErrors = [];
   const responseTimeline = [];
   const eventTimeline = [];
   let timelineSequence = 0;
@@ -203,24 +204,6 @@ function attachMapRequestCapture(page) {
     );
   });
 
-  page.on('requestfailed', (request) => {
-    const failureText = request.failure()?.errorText || 'unknown';
-    if (failureText === 'net::ERR_ABORTED') {
-      return;
-    }
-    failedRequests.push(`${request.method()} ${request.url()} (${failureText})`);
-  });
-
-  page.on('console', (message) => {
-    if (message.type() === 'error') {
-      consoleErrors.push(message.text());
-    }
-  });
-
-  page.on('pageerror', (error) => {
-    pageErrors.push(error.message);
-  });
-
   return {
     snapshot: async () => ({
       anonymousIdentityResponses: await Promise.all(anonymousIdentityResponses),
@@ -229,9 +212,6 @@ function attachMapRequestCapture(page) {
       filterResponses: await Promise.all(filterResponses),
       poiRequests: [...poiRequests],
       poiResponses: await Promise.all(poiResponses),
-      failedRequests: [...failedRequests],
-      consoleErrors: [...consoleErrors],
-      pageErrors: [...pageErrors],
       responseTimeline: [...responseTimeline],
       eventTimeline: [...eventTimeline],
     }),
@@ -279,19 +259,6 @@ function assertCanonicalBootstrapOrder(snapshot, contextLabel) {
 }
 
 function assertCanonicalMapSnapshot(snapshot, contextLabel) {
-  expect(
-    snapshot.failedRequests,
-    `Unexpected failed requests during ${contextLabel}:\n${snapshot.failedRequests.join('\n')}`,
-  ).toEqual([]);
-  expect(
-    snapshot.pageErrors,
-    `Unexpected page errors during ${contextLabel}:\n${snapshot.pageErrors.join('\n')}`,
-  ).toEqual([]);
-  expect(
-    snapshot.consoleErrors,
-    `Unexpected console errors during ${contextLabel}:\n${snapshot.consoleErrors.join('\n')}`,
-  ).toEqual([]);
-
   assertCanonicalBootstrapOrder(snapshot, contextLabel);
 
   const successfulFilterResponse = snapshot.filterResponses.find(
@@ -329,6 +296,20 @@ function assertCanonicalMapSnapshot(snapshot, contextLabel) {
   expect(Number(originLng), 'First POI request origin_lng must be numeric.').not.toBeNaN();
 }
 
+function assertNoCriticalBrowserFailures(collectors, contextLabel) {
+  const browserFailures = summarizeCriticalBrowserFailures(collectors);
+  expect(
+    browserFailures,
+    `Unexpected browser failures during ${contextLabel}:\n${JSON.stringify(browserFailures, null, 2)}`,
+  ).toEqual({
+    runtimeErrors: [],
+    failedRequests: [],
+    criticalHttpResponses: [],
+    disallowedRateLimitedResponses: [],
+    criticalConsoleErrors: [],
+  });
+}
+
 async function waitForCanonicalMapResponses(mapCapture, contextLabel) {
   await expect
     .poll(
@@ -355,6 +336,7 @@ test('@deferred @readonly MAP-LOC-GRANT-01 first warm geolocation-granted map en
   const origin = new URL(baseUrl).origin;
   await withFreshBrowserPage(async ({ context, page }) => {
     await context.grantPermissions(['geolocation'], { origin });
+    const browserFailureCollectors = installFailureCollectors(page);
     const mapCapture = attachMapRequestCapture(page);
 
     await context.setGeolocation({
@@ -385,6 +367,10 @@ test('@deferred @readonly MAP-LOC-GRANT-01 first warm geolocation-granted map en
     ).toHaveCount(0);
 
     const snapshot = await mapCapture.snapshot();
+    assertNoCriticalBrowserFailures(
+      browserFailureCollectors,
+      'warm geolocation-granted map entry',
+    );
     assertCanonicalMapSnapshot(
       snapshot,
       'warm geolocation-granted map entry',
@@ -396,6 +382,7 @@ test('@deferred @readonly MAP-LOC-GRANT-02 location-permission CTA continuation 
   const baseUrl = requireTenantUrl();
   const origin = new URL(baseUrl).origin;
   await withFreshBrowserPage(async ({ context, page }) => {
+    const browserFailureCollectors = installFailureCollectors(page);
     const mapCapture = attachMapRequestCapture(page);
 
     const response = await page.goto(baseUrl, { waitUntil: 'domcontentloaded' });
@@ -440,6 +427,10 @@ test('@deferred @readonly MAP-LOC-GRANT-02 location-permission CTA continuation 
     ).toHaveCount(0);
 
     const snapshot = await mapCapture.snapshot();
+    assertNoCriticalBrowserFailures(
+      browserFailureCollectors,
+      'permission-gated map grant first entry',
+    );
     assertCanonicalMapSnapshot(
       snapshot,
       'permission-gated map grant first entry',

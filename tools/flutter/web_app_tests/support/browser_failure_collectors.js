@@ -41,6 +41,8 @@ const ADOPTED_SPEC_FILES = [
   'navigation.spec.js',
   'navigation.mutation.tenant_admin.spec.js',
   'navigation.mutation.event_occurrences.spec.js',
+  'map_entry_reentry.spec.js',
+  'map_permission_grant_runtime.readonly.spec.js',
 ];
 
 const IMAGE_OR_FONT_EXTENSION_PATTERN =
