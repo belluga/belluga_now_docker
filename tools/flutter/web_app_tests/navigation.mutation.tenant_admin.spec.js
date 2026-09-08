@@ -35,6 +35,7 @@ const fixtureFaviconPath = path.resolve(
 const fallbackFixtureImageBase64 =
   'iVBORw0KGgoAAAANSUhEUgAAAQAAAAEACAYAAABccqhmAAADIElEQVR4nO3UIQEAIBDAwI9AZWKRDmIgduL81GadfYGm+R0A/GMAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEGYAEPYAluQiSDn9lCoAAAAASUVORK5CYII=';
 const appBootTimeoutMs = 90000;
+const interactionTimeoutMs = 30000;
 const favoriteChipAvatarFrameSize = 72;
 const favoriteChipHaloProbeCenterY = favoriteChipAvatarFrameSize / 2;
 const favoriteChipHaloProbeInnerRadius = favoriteChipAvatarFrameSize / 2 - 3;
@@ -905,10 +906,19 @@ async function fillResolvedFlutterTextField(page, field, value, description) {
       } catch (_) {
         await field.click({ timeout: 1500 });
       }
+      await expect
+        .poll(
+          async () => field.evaluate((element) => document.activeElement === element),
+          {
+            timeout: 3000,
+            message: `Expected ${description} to receive focus before typing.`,
+          },
+        )
+        .toBe(true);
       await page.keyboard.press(selectAll);
       await page.keyboard.press('Backspace');
       if (normalizedValue) {
-        await page.keyboard.insertText(normalizedValue);
+        await field.pressSequentially(normalizedValue, { delay: 10 });
       }
     } catch (error) {
       if (attempt === 3) {
@@ -1298,19 +1308,21 @@ async function waitForNoVisibleProgressIndicators(page, message) {
     .toBe(0);
 }
 
-function waitForSuccessfulAccountProfilePatchResponse(
+function waitForAccountProfilePatchResponse(
   page,
   profileId,
   { requestMustContain = [] } = {},
 ) {
-  return page.waitForResponse((candidate) => {
-    return (
-      candidate.request().method() === 'PATCH' &&
-      candidate.url().includes(`/admin/api/v1/account_profiles/${profileId}`) &&
-      candidate.status() < 400 &&
-      requestPostDataContainsAll(candidate.request(), requestMustContain)
-    );
-  });
+  return page.waitForResponse(
+    (candidate) => {
+      return (
+        candidate.request().method() === 'PATCH' &&
+        candidate.url().includes(`/admin/api/v1/account_profiles/${profileId}`) &&
+        requestPostDataContainsAll(candidate.request(), requestMustContain)
+      );
+    },
+    { timeout: interactionTimeoutMs },
+  );
 }
 
 async function countVisibleMatches(locator) {
@@ -3213,20 +3225,27 @@ test('@mutation tenant-admin account-profile rich text toolbar authors HTTPS lin
       await expect(dialog).toBeVisible({ timeout: appBootTimeoutMs });
       await expect(dialog.getByLabel('Texto', { exact: true })).toHaveValue(editor.text);
       const linkInput = dialog.getByLabel('Link');
-      await linkInput.click();
-      await linkInput.pressSequentially(editor.url, { delay: 10 });
-      await expect(linkInput).toHaveValue(editor.url);
+      await fillResolvedFlutterTextField(
+        page,
+        linkInput,
+        editor.url,
+        `${editor.label} link field`,
+      );
       await expect(dialog.getByRole('button', { name: 'Ok' })).toBeEnabled();
       await dialog.getByRole('button', { name: 'Ok' }).click();
       await expect(dialog).toBeHidden({ timeout: appBootTimeoutMs });
     }
 
-    const saveResponsePromise = waitForSuccessfulAccountProfilePatchResponse(
+    const saveResponsePromise = waitForAccountProfilePatchResponse(
       page,
       profileId,
     );
     await clickSaveChanges(page);
     const saveResponse = await saveResponsePromise;
+    expect(
+      saveResponse.status(),
+      'Rich-text account-profile save must succeed.',
+    ).toBe(200);
     const saveRequestPayload = saveResponse.request().postDataJSON();
     expect(saveRequestPayload?.bio?.toString() || '').toBe(expectedBio);
     expect(saveRequestPayload?.content?.toString() || '').toBe(expectedContent);
@@ -3941,7 +3960,6 @@ test('@mutation tenant-admin granular mixed gallery CRUD persists and renders se
 });
 
 test('@mutation tenant-admin account-profile edit save keeps Display Name visible without emitting gallery mutations', async () => {
-  test.setTimeout(600000);
   const baseUrl = requireTenantUrl();
   const api = await createApiContext(baseUrl);
   let browserContext;
@@ -4035,13 +4053,17 @@ test('@mutation tenant-admin account-profile edit save keeps Display Name visibl
     await page.route(galleryEndpoint, failClosedUnexpectedGalleryRoute);
 
     const persistedEmptyProfileSaveResponsePromise =
-      waitForSuccessfulAccountProfilePatchResponse(page, profileId, {
+      waitForAccountProfilePatchResponse(page, profileId, {
         requestMustContain: [updatedDisplayName],
       });
     const [persistedEmptyProfileSaveResponse] = await Promise.all([
       persistedEmptyProfileSaveResponsePromise,
       clickSaveChanges(page),
     ]);
+    expect(
+      persistedEmptyProfileSaveResponse.status(),
+      'The edit save request must succeed.',
+    ).toBe(200);
     const persistedEmptyProfileSavePayload = normalizePayload(
       await persistedEmptyProfileSaveResponse.json(),
     );
@@ -5397,8 +5419,7 @@ test('@mutation tenant-admin account profile edit nested tabs obey profile type 
   }
 });
 
-test('@mutation U04-ACCOUNT-GROUP-HEAD tenant-admin account-profile group heads persist independently, adopt canonical ids, and delete after confirmation', async ({}, testInfo) => {
-  testInfo.setTimeout(900000);
+test('@mutation U04-ACCOUNT-GROUP-HEAD tenant-admin account-profile group heads persist independently, adopt canonical ids, and delete after confirmation', async () => {
   const baseUrl = requireTenantUrl();
   const api = await createApiContext(baseUrl);
   let browserContext;
@@ -5746,11 +5767,37 @@ test('@mutation U04-ACCOUNT-GROUP-HEAD tenant-admin account-profile group heads 
         name: 'Buscar neste grupo',
       });
       await expect(nestedSearch).toBeVisible({ timeout: appBootTimeoutMs });
-      await nestedSearch.fill('fixture 021');
-      await nestedSearch.press('Enter');
+      const nestedSearchQuery = 'fixture 021';
+      const nestedSearchField = await fillResolvedFlutterTextField(
+        publicPage,
+        nestedSearch,
+        nestedSearchQuery,
+        'nested-group search field',
+      );
+      const searchedMembersResponsePromise = publicPage.waitForResponse(
+        (candidate) => {
+          const candidateUrl = new URL(candidate.url());
+          return (
+            candidate.request().method() === 'GET' &&
+            candidateUrl.pathname.endsWith(
+              `/account_profiles/${nestedParent.profileSlug}/nested_profile_groups/${createdGroupId}/members`,
+            ) &&
+            candidateUrl.searchParams.get('search') === nestedSearchQuery
+          );
+        },
+        { timeout: interactionTimeoutMs },
+      );
+      const [searchedMembersResponse] = await Promise.all([
+        searchedMembersResponsePromise,
+        nestedSearchField.press('Enter'),
+      ]);
+      expect(
+        searchedMembersResponse.status(),
+        'Nested-group browser search request must succeed.',
+      ).toBe(200);
       await expect(
         publicPage.getByText(lateFiller.displayName, { exact: true }),
-      ).toBeVisible({ timeout: appBootTimeoutMs });
+      ).toBeVisible({ timeout: interactionTimeoutMs });
     } finally {
       await publicContext.close();
     }
