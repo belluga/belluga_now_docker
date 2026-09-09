@@ -9,10 +9,6 @@ const {
   runCleanupPreservingPrimaryError,
   runCleanupSteps,
 } = require('./support/account_onboarding_cleanup');
-const {
-  executeLocalDockerArtisan,
-} = require('./support/local_docker_artisan');
-
 const tenantUrl = process.env.NAV_TENANT_URL;
 const appBootTimeoutMs = 90000;
 let anonymousIdentityToken = null;
@@ -205,7 +201,7 @@ async function createAccountProfileType(api, baseUrl, token, type, label, plural
           is_queryable: true,
           is_publicly_navigable: false,
           is_favoritable: false,
-          is_publicly_discoverable: false,
+          is_publicly_discoverable: true,
           is_poi_enabled: false,
           is_reference_location_enabled: false,
           has_avatar: true,
@@ -269,6 +265,17 @@ async function createAccountProfile(api, baseUrl, token, profileType, name) {
   expect(id, `Account profile ${name} must return id.`).toBeTruthy();
   const accountSlug = account?.slug?.toString() || '';
   expect(accountSlug, `Account profile ${name} must return account slug.`).toBeTruthy();
+  const publicationResponse = await api.patch(
+    buildUrl(baseUrl, `/admin/api/v1/accounts/${accountSlug}`),
+    {
+      headers: authHeaders(token),
+      data: { publication: { status: 'published' } },
+    },
+  );
+  expect(
+    publicationResponse.status(),
+    `Account profile ${name} fixture must be published before public group assertions.`,
+  ).toBeLessThan(400);
   return {
     id,
     displayName: textValue(profile?.display_name, name),
@@ -971,20 +978,7 @@ async function deleteEvent(api, baseUrl, token, event) {
   expectDeleteSucceeded(response, `Event ${eventId}`);
 }
 
-function mutateEventProfileGroupsDirectly({ tenantId, eventId, profileIdToAppend }) {
-  if (process.env.NAV_RUNTIME_DB_MUTATION_ALLOWED !== '1') {
-    throw new Error(
-      'NAV_RUNTIME_DB_MUTATION_ALLOWED=1 is required for the historical-inconsistency diagnostic.',
-    );
-  }
-
-  executeLocalDockerArtisan(
-    'events:diagnostic:append-profile-group-member',
-    [tenantId, eventId, profileIdToAppend],
-  );
-}
-
-test('@diagnostic EVG-RUNTIME admin/public event groups honor saved groups, legacy fallback, and invalid historical data', async () => {
+test('@diagnostic EVG-RUNTIME admin/public event groups honor canonical groups and occurrence isolation', async () => {
   expect(
     process.env.NAV_RUNTIME_DB_MUTATION_ALLOWED,
     'EVG-RUNTIME requires NAV_RUNTIME_DB_MUTATION_ALLOWED=1.',
@@ -1071,7 +1065,7 @@ test('@diagnostic EVG-RUNTIME admin/public event groups honor saved groups, lega
     });
     logDiagnosticStep('created grouped event');
 
-    const legacyEvent = await createDiagnosticEvent(api, baseUrl, token, {
+    const canonicalTypeGroupEvent = await createDiagnosticEvent(api, baseUrl, token, {
       title: `PW EVG Legado Sem Grupos ${suffix}`,
       eventType,
       host,
@@ -1090,7 +1084,7 @@ test('@diagnostic EVG-RUNTIME admin/public event groups honor saved groups, lega
     });
     logDiagnosticStep('created canonical type-group event');
 
-    const inconsistentEvent = await createDiagnosticEvent(api, baseUrl, token, {
+    const canonicalSingleMemberEvent = await createDiagnosticEvent(api, baseUrl, token, {
       title: `PW EVG Historico Inconsistente ${suffix}`,
       eventType,
       host,
@@ -1205,14 +1199,14 @@ test('@diagnostic EVG-RUNTIME admin/public event groups honor saved groups, lega
       { label: 'Expositores Curados', memberCount: 2 },
     ], 'Grouped event public detail');
 
-    const legacyApi = await fetchPublicEvent(api, baseUrl, legacyEvent);
-    expectPublicGroupMetadata(legacyApi, [
+    const canonicalTypeGroupApi = await fetchPublicEvent(api, baseUrl, canonicalTypeGroupEvent);
+    expectPublicGroupMetadata(canonicalTypeGroupApi, [
       { label: typeAPlural, memberCount: 1 },
       { label: typeBPlural, memberCount: 1 },
     ], 'Canonical type-group event public detail');
 
-    const inconsistentApi = await fetchPublicEvent(api, baseUrl, inconsistentEvent);
-    expectPublicGroupMetadata(inconsistentApi, [
+    const canonicalSingleMemberApi = await fetchPublicEvent(api, baseUrl, canonicalSingleMemberEvent);
+    expectPublicGroupMetadata(canonicalSingleMemberApi, [
       { label: 'Historico Customizado', memberCount: 1 },
     ], 'Single-member event public detail');
 
@@ -1256,17 +1250,17 @@ test('@diagnostic EVG-RUNTIME admin/public event groups honor saved groups, lega
       token,
       groupedEvent.event_id,
     );
-    const legacyPlacement = await locateAdminEventListPlacement(
+    const canonicalTypeGroupPlacement = await locateAdminEventListPlacement(
       api,
       baseUrl,
       token,
-      legacyEvent.event_id,
+      canonicalTypeGroupEvent.event_id,
     );
-    const inconsistentPlacement = await locateAdminEventListPlacement(
+    const canonicalSingleMemberPlacement = await locateAdminEventListPlacement(
       api,
       baseUrl,
       token,
-      inconsistentEvent.event_id,
+      canonicalSingleMemberEvent.event_id,
     );
     const multiOccurrencePlacement = await locateAdminEventListPlacement(
       api,
@@ -1294,11 +1288,102 @@ test('@diagnostic EVG-RUNTIME admin/public event groups honor saved groups, lega
         ],
       );
 
+      const groupedEventReadbackResponse = await api.get(
+        buildUrl(baseUrl, `/admin/api/v1/events/${groupedEvent.event_id}`),
+        { headers: authHeaders(token) },
+      );
+      expect(groupedEventReadbackResponse.status()).toBe(200);
+      const groupedEventReadbackPayload = await groupedEventReadbackResponse.json();
+      const groupedOccurrence = groupedEventReadbackPayload?.data?.occurrences?.[0] || {};
+      const groupedOccurrenceId = groupedOccurrence?.occurrence_id?.toString() || '';
+      const groupedOccurrenceGroups = Array.isArray(groupedOccurrence?.profile_groups)
+        ? [...groupedOccurrence.profile_groups].sort(
+          (left, right) => Number(left?.order || 0) - Number(right?.order || 0),
+        )
+        : [];
+      expect(groupedOccurrenceId, 'Grouped event must expose occurrence identity for reorder.')
+        .toBeTruthy();
+      expect(groupedOccurrenceGroups).toHaveLength(2);
+      const firstGroupedEventGroupId = groupedOccurrenceGroups[0]?.id?.toString() || '';
+      const secondGroupedEventGroupId = groupedOccurrenceGroups[1]?.id?.toString() || '';
+      expect(firstGroupedEventGroupId).toBeTruthy();
+      expect(secondGroupedEventGroupId).toBeTruthy();
+
+      const eventOrderResponsePromise = adminRuntime.page.waitForResponse((candidate) => {
+        return (
+          candidate.request().method() === 'PATCH' &&
+          new URL(candidate.url()).pathname ===
+            `/admin/api/v1/events/${groupedEvent.event_id}/occurrences/${groupedOccurrenceId}/profile_groups/${firstGroupedEventGroupId}/order`
+        );
+      });
+      const eventMoveDownButtons = adminRuntime.page.getByRole('button', {
+        name: 'Mover para baixo',
+        exact: true,
+      });
+      await expect(eventMoveDownButtons.first()).toBeEnabled({
+        timeout: appBootTimeoutMs,
+      });
+      await eventMoveDownButtons.first().click();
+      const eventOrderResponse = await eventOrderResponsePromise;
+      expect(eventOrderResponse.status()).toBe(200);
+      const eventOrderEnvelope = await eventOrderResponse.json();
+      const eventOrderPayload = eventOrderEnvelope?.data || {};
+      expect(
+        Object.keys(eventOrderPayload).sort(),
+        'Event reorder response must stay bounded to identities and order permutation.',
+      ).toEqual(['event_id', 'groups', 'occurrence_id']);
+      expect(
+        (eventOrderPayload?.groups || []).map((group) => Object.keys(group).sort()),
+      ).toEqual([
+        ['id', 'order'],
+        ['id', 'order'],
+      ]);
+      await expect
+        .poll(
+          async () => {
+            const response = await api.get(
+              buildUrl(baseUrl, `/admin/api/v1/events/${groupedEvent.event_id}`),
+              { headers: authHeaders(token) },
+            );
+            const payload = await response.json();
+            return (payload?.data?.occurrences?.[0]?.profile_groups || [])
+              .sort(
+                (left, right) => Number(left?.order || 0) - Number(right?.order || 0),
+              )
+              .map((group) => group?.id?.toString());
+          },
+          {
+            timeout: appBootTimeoutMs,
+            message: 'Event move-down must persist the complete occurrence group order.',
+          },
+        )
+        .toEqual([secondGroupedEventGroupId, firstGroupedEventGroupId]);
+
+      await adminRuntime.page.reload({ waitUntil: 'domcontentloaded' });
+      await assertAppBooted(adminRuntime.page);
+      await enableAccessibilityIfNeeded(adminRuntime.page);
+      await assertAdminGroupEditor(
+        adminRuntime.page,
+        [
+          { label: 'Expositores Curados', memberCount: 2 },
+          { label: 'Bandas Customizadas', memberCount: 2 },
+        ],
+      );
+      const eventGroupLabelsAfterReload = adminRuntime.page.getByRole('button', {
+        name: /^Nome da aba\s/i,
+      });
+      await expect(eventGroupLabelsAfterReload.nth(0)).toHaveAccessibleName(
+        'Nome da aba Expositores Curados',
+      );
+      await expect(eventGroupLabelsAfterReload.nth(1)).toHaveAccessibleName(
+        'Nome da aba Bandas Customizadas',
+      );
+
       await openSeededEventFromAdminList(
         adminRuntime.page,
         baseUrl,
-        legacyEvent.title,
-        legacyPlacement,
+        canonicalTypeGroupEvent.title,
+        canonicalTypeGroupPlacement,
       );
       await assertAdminGroupEditor(
         adminRuntime.page,
@@ -1311,8 +1396,8 @@ test('@diagnostic EVG-RUNTIME admin/public event groups honor saved groups, lega
       await openSeededEventFromAdminList(
         adminRuntime.page,
         baseUrl,
-        inconsistentEvent.title,
-        inconsistentPlacement,
+        canonicalSingleMemberEvent.title,
+        canonicalSingleMemberPlacement,
       );
       await assertAdminGroupEditor(
         adminRuntime.page,
@@ -1389,8 +1474,8 @@ test('@diagnostic EVG-RUNTIME admin/public event groups honor saved groups, lega
       await openEventDetail(page, baseUrl, groupedEvent);
       await expectVisibleText(page, 'Bandas Customizadas');
       await expectVisibleText(page, 'Expositores Curados');
-      await expectTextAbsent(page, typeAPlural, 'New explicit event must not show type A fallback tab.');
-      await expectTextAbsent(page, typeBPlural, 'New explicit event must not show type B fallback tab.');
+      await expectTextAbsent(page, typeAPlural, 'Custom-group event must not show an unrelated type A tab.');
+      await expectTextAbsent(page, typeBPlural, 'Custom-group event must not show an unrelated type B tab.');
       await assertTabMembers(page, 'Bandas Customizadas', [
         alphaOne.displayName,
         betaOne.displayName,
@@ -1400,22 +1485,22 @@ test('@diagnostic EVG-RUNTIME admin/public event groups honor saved groups, lega
         betaTwo.displayName,
       ]);
 
-      await openEventDetail(page, baseUrl, legacyEvent);
+      await openEventDetail(page, baseUrl, canonicalTypeGroupEvent);
       await expectVisibleText(page, typeAPlural);
       await expectVisibleText(page, typeBPlural);
-      await expectTextAbsent(page, 'Bandas Customizadas', 'Legacy event must not invent custom group tabs.');
-      await expectTextAbsent(page, 'Expositores Curados', 'Legacy event must not invent custom group tabs.');
+      await expectTextAbsent(page, 'Bandas Customizadas', 'Canonical type-group event must not invent custom group tabs.');
+      await expectTextAbsent(page, 'Expositores Curados', 'Canonical type-group event must not invent custom group tabs.');
       await assertTabMembers(page, typeAPlural, [alphaOne.displayName]);
       await assertTabMembers(page, typeBPlural, [betaOne.displayName]);
 
-      await openEventDetail(page, baseUrl, inconsistentEvent);
+      await openEventDetail(page, baseUrl, canonicalSingleMemberEvent);
       await expectVisibleText(page, 'Historico Customizado');
-      await expectTextAbsent(page, typeBPlural, 'Invalid historical member must not leak into fallback tab.');
+      await expectTextAbsent(page, typeBPlural, 'Unrelated member type must not leak into the canonical group tabs.');
       await assertTabMembers(page, 'Historico Customizado', [alphaOne.displayName]);
       await expectTextAbsent(
         page,
         betaOne.displayName,
-        'Profile present only in invalid profile_groups must not render publicly without event_parties.',
+        'Profile absent from the canonical group must not render publicly.',
       );
 
       await openEventDetail(page, baseUrl, multiOccurrenceEvent, 0);

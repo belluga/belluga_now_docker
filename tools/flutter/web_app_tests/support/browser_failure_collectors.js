@@ -41,6 +41,8 @@ const ADOPTED_SPEC_FILES = [
   'navigation.spec.js',
   'navigation.mutation.tenant_admin.spec.js',
   'navigation.mutation.event_occurrences.spec.js',
+  'map_entry_reentry.spec.js',
+  'map_permission_grant_runtime.readonly.spec.js',
 ];
 
 const IMAGE_OR_FONT_EXTENSION_PATTERN =
@@ -89,6 +91,19 @@ function isLegacyMediaPath(pathname, url) {
   return LEGACY_MEDIA_PATH_PATTERNS.some((pattern) => pattern.test(pathname));
 }
 
+function isYoutubeThumbnailAssetUrl(url) {
+  try {
+    const parsed = new URL(url);
+    if (!/^(?:i|i[1-9])\.ytimg\.com$/i.test(parsed.hostname)) {
+      return false;
+    }
+    return /^\/vi(?:_webp)?\/[A-Za-z0-9_-]{11}\/(?:default|mqdefault|hqdefault|sddefault|maxresdefault)\.(?:jpg|webp)$/i
+      .test(parsed.pathname);
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Classifies whether a URL belongs to a media/image asset (canonical media
  * routes or enumerated legacy media path shapes). This is the primary
@@ -96,6 +111,10 @@ function isLegacyMediaPath(pathname, url) {
  */
 function isMediaAssetUrl(url) {
   const pathname = extractUrlPath(url);
+
+  if (isYoutubeThumbnailAssetUrl(url)) {
+    return true;
+  }
 
   // Canonical media routes, e.g. /api/v1/media/account-profiles/<id>/avatar?v=...
   if (/^\/api\/v1\/media\//i.test(pathname)) {

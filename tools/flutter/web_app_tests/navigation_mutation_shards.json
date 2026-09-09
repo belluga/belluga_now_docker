@@ -50,15 +50,15 @@
         ]
       },
       "account-gallery-groups": {
-        "grep_extra": "gallery groups persist",
+        "grep_extra": "granular mixed gallery CRUD persists",
         "expected_titles": [
-          "@deferred @mutation tenant-admin account-profile gallery groups persist and render in the public modal"
+          "@mutation tenant-admin granular mixed gallery CRUD persists and renders selected and first items in the public viewer"
         ]
       },
       "account-gallery-disabled": {
         "grep_extra": "gallery data stays dormant",
         "expected_titles": [
-          "@deferred @mutation tenant-admin gallery data stays dormant when has_gallery is disabled"
+          "@mutation tenant-admin gallery data stays dormant when has_gallery is disabled"
         ]
       },
       "home-favorites": {
@@ -71,6 +71,12 @@
         "grep_extra": "T6-GALLERY-CAPABILITY",
         "expected_titles": [
           "@mutation T6-GALLERY-CAPABILITY tenant-admin account profile type gallery capability rehydrates and renders across edit list and detail"
+        ]
+      },
+      "account-profile-external-links": {
+        "grep_extra": "T6-EXTERNAL-LINKS",
+        "expected_titles": [
+          "@mutation T6-EXTERNAL-LINKS profile capability gates admin CRUD, dormant restoration, and capacity-driven icon strip"
         ]
       },
       "map-admin": {
@@ -91,16 +97,22 @@
           "@mutation admin-authored occurrence profile groups persist full chip readback and public aggregation"
         ]
       },
+      "pre-rf-01-event-candidate": {
+        "grep_extra": "PRE-RF-01 event occurrence group candidate search",
+        "expected_titles": [
+          "@mutation PRE-RF-01 event occurrence group candidate search renders one server page without page walking"
+        ]
+      },
       "occurrence-fab": {
         "grep_extra": "tenant-admin event occurrence FAB persists",
         "expected_titles": [
-          "@deferred @mutation tenant-admin event occurrence FAB persists second occurrence and public detail selects it"
+          "@mutation tenant-admin event occurrence FAB persists second occurrence and public detail selects it"
         ]
       },
       "admin-accounts": {
         "grep_extra": "account onboarding CRUD persists detail/edit readback and delete flow",
         "expected_titles": [
-          "@deferred @mutation tenant-admin account onboarding CRUD persists detail/edit readback and delete flow"
+          "@mutation tenant-admin account onboarding CRUD persists detail/edit readback and delete flow"
         ]
       },
       "admin-account-stale": {
@@ -136,7 +148,7 @@
       "admin-profile-edit": {
         "grep_extra": "edit save keeps Display Name visible",
         "expected_titles": [
-          "@mutation tenant-admin account-profile edit save keeps Display Name visible, skips persisted-empty gallery resend, and clears persisted gallery content"
+          "@mutation tenant-admin account-profile edit save keeps Display Name visible without emitting gallery mutations"
         ]
       },
       "admin-contact-channels": {
@@ -154,13 +166,13 @@
       "u06-candidate-picker": {
         "grep_extra": "U06-CANDIDATE-PICKER",
         "expected_titles": [
-          "@deferred @mutation U06-CANDIDATE-PICKER server-owned nested and contact candidate search persists through the canonical picker"
+          "@mutation U06-CANDIDATE-PICKER server-owned nested and contact candidate search persists through the canonical picker"
         ]
       },
       "admin-profile-tabs": {
         "grep_extra": "nested tabs obey",
         "expected_titles": [
-          "@deferred @mutation tenant-admin account profile nested tabs obey profile type capability"
+          "@mutation tenant-admin account profile edit nested tabs obey profile type capability"
         ]
       },
       "admin-event-type-create": {
@@ -184,7 +196,7 @@
       "admin-profile-taxonomies": {
         "grep_extra": "profile-type editors preload",
         "expected_titles": [
-          "@deferred @mutation tenant-admin profile-type editors preload and preserve allowed taxonomies when saving unrelated visual changes"
+          "@mutation tenant-admin profile-type editors preload and preserve allowed taxonomies when saving unrelated visual changes"
         ]
       },
       "admin-agenda": {
@@ -196,7 +208,7 @@
       "admin-plural": {
         "grep_extra": "T6-PLURAL",
         "expected_titles": [
-          "@deferred @mutation T6-PLURAL tenant-admin account profile type edit persists plural label"
+          "@mutation T6-PLURAL tenant-admin account profile type edit persists plural label"
         ]
       },
       "otp-auth": {
@@ -228,7 +240,7 @@
   "diagnostic": {
     "expected_titles": [
       "@diagnostic QRY-RUNTIME admin/public queryability and navigation contract holds",
-      "@diagnostic EVG-RUNTIME admin/public event groups honor saved groups, legacy fallback, and invalid historical data"
+      "@diagnostic EVG-RUNTIME admin/public event groups honor canonical groups and occurrence isolation"
     ]
   },
   "readonly": {
@@ -244,6 +256,14 @@
         },
         "expected_titles": [
           "@readonly-fixture NAV-APD-AGENDA Account Profile Agenda groups managed occurrences by local date"
+        ]
+      },
+      "map-browser-failures": {
+        "grep_extra": "(?:MAP-LOC-GRANT|MAP-NAV-REENTRY)",
+        "expected_titles": [
+          "@deferred @readonly MAP-LOC-GRANT-01 first warm geolocation-granted map entry loads POIs from a resolved origin without public error state",
+          "@deferred @readonly MAP-LOC-GRANT-02 location-permission CTA continuation loads canonical map data once browser geolocation is granted",
+          "@deferred @readonly MAP-NAV-REENTRY-01 tenant home can reopen map after returning from a warm permission-gated entry"
         ]
       }
     },
