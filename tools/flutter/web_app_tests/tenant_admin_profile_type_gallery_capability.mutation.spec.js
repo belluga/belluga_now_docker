@@ -13,6 +13,7 @@ const {
 
 const tenantUrl = process.env.NAV_TENANT_URL;
 const appBootTimeoutMs = 90000;
+const externalNavigationIntentTimeoutMs = 5000;
 
 test.describe.configure({ timeout: 420000 });
 
@@ -895,11 +896,19 @@ test('@mutation T6-EXTERNAL-LINKS profile capability gates admin CRUD, dormant r
       path: instagramScreenshotPath,
       contentType: 'image/png',
     });
-    const popupPromise = browserContext.waitForEvent('page');
-    await instagramButton.click();
-    const popup = await popupPromise;
-    await expect.poll(() => popup.url(), { timeout: appBootTimeoutMs })
-      .toBe(initialInstagramUrl);
+    const [popup, externalRequest] = await Promise.all([
+      browserContext.waitForEvent('page', {
+        timeout: externalNavigationIntentTimeoutMs,
+      }),
+      browserContext.waitForEvent('request', {
+        predicate: (candidate) =>
+          candidate.isNavigationRequest() &&
+          candidate.url() === initialInstagramUrl,
+        timeout: externalNavigationIntentTimeoutMs,
+      }),
+      instagramButton.click(),
+    ]);
+    expect(externalRequest.url()).toBe(initialInstagramUrl);
     await popup.close();
 
     const editLinkUrl = buildUrl(

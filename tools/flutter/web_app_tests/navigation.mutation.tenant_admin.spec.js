@@ -3217,8 +3217,12 @@ test('@mutation tenant-admin account-profile rich text toolbar authors HTTPS lin
       await expect(linkButton).toHaveCount(1);
       await linkButton.scrollIntoViewIfNeeded();
       await expect(linkButton).toBeVisible();
-      await editor.locator.click();
-      await editor.locator.pressSequentially(editor.text, { delay: 10 });
+      await fillResolvedFlutterTextField(
+        page,
+        editor.locator,
+        editor.text,
+        `${editor.label} rich-text editor`,
+      );
       await selectRichTextEditorContents(page, editor.locator);
       await linkButton.click();
       const dialog = page.getByRole('alertdialog');
@@ -5189,7 +5193,7 @@ test('@mutation tenant-admin persisted WhatsApp edit saves without a draft key a
       titleField,
       'Expected the persisted WhatsApp title editor in the account-profile edit flow.',
     );
-    await expectFlutterFieldRenderedValue(
+    await expectFlutterFieldRenderedAndFocusedValue(
       titleField,
       initialTitle,
       'Expected the persisted WhatsApp title before editing.',
