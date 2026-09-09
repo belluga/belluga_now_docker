@@ -20,6 +20,7 @@ const {
 } = require('./support/browser_failure_collectors');
 const {
   accountProfileBrowserHeroOracle,
+  accountProfileSemanticHeroPattern,
   classifyAccountProfileProofObservation,
   exactAccountProfileNamePattern,
   evaluateAccountProfileHydrationWait,
@@ -32,6 +33,7 @@ const tenantUrl = process.env.NAV_TENANT_URL;
 const localRuntimeSeedEnabled =
   (process.env.NAV_DEPLOY_LANE || '').toString().trim().toLowerCase() === 'local';
 const appBootTimeoutMs = 60000;
+const heroAssertionTimeoutMs = 15000;
 
 test.describe.configure({ timeout: 300000 });
 
@@ -111,8 +113,9 @@ async function assertAccountProfileHeroVisible(
   expect(displayLabel, `${contextLabel} requires a non-empty label.`).toBeTruthy();
   const exactLabelPattern = exactAccountProfileNamePattern(displayLabel);
   const visibleText = page.getByText(exactLabelPattern).first();
-  const escapedLabel = displayLabel.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-  const semanticLabel = page.locator(`[aria-label="${escapedLabel}"]`).first();
+  const semanticLabel = page.getByRole('banner', {
+    name: accountProfileSemanticHeroPattern(displayLabel),
+  }).first();
   const terminalError = page.getByText(
     /Não foi possível abrir o perfil|Falha ao preparar o perfil/i,
   ).first();
@@ -155,7 +158,7 @@ async function assertAccountProfileHeroVisible(
       },
       {
         message: `${contextLabel} must render "${displayLabel}" without a terminal failure.`,
-        timeout: appBootTimeoutMs,
+        timeout: heroAssertionTimeoutMs,
       },
     )
     .toBe(true);
