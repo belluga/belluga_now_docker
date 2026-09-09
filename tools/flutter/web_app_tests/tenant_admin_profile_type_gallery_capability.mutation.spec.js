@@ -13,6 +13,7 @@ const {
 
 const tenantUrl = process.env.NAV_TENANT_URL;
 const appBootTimeoutMs = 90000;
+const externalNavigationIntentTimeoutMs = 5000;
 
 test.describe.configure({ timeout: 420000 });
 
@@ -136,12 +137,22 @@ async function fillFlutterTextField(page, label, value) {
   await field.scrollIntoViewIfNeeded();
   await expect(field).toBeVisible({ timeout: appBootTimeoutMs });
 
-  await field.click();
   const selectAll = process.platform === 'darwin' ? 'Meta+A' : 'Control+A';
-  await page.keyboard.press(selectAll);
-  await page.keyboard.press('Backspace');
-  await page.keyboard.type(value, { delay: 5 });
-  return field;
+  let lastValue = '';
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    await field.click();
+    await field.press(selectAll);
+    await field.press('Backspace');
+    await field.pressSequentially(value, { delay: 10 });
+    lastValue = await field.inputValue();
+    if (lastValue === value) {
+      return field;
+    }
+  }
+
+  throw new Error(
+    `${label} did not retain ${JSON.stringify(value)}; last value was ${JSON.stringify(lastValue)}.`,
+  );
 }
 
 async function clickSaveChanges(page) {
@@ -895,11 +906,19 @@ test('@mutation T6-EXTERNAL-LINKS profile capability gates admin CRUD, dormant r
       path: instagramScreenshotPath,
       contentType: 'image/png',
     });
-    const popupPromise = browserContext.waitForEvent('page');
-    await instagramButton.click();
-    const popup = await popupPromise;
-    await expect.poll(() => popup.url(), { timeout: appBootTimeoutMs })
-      .toBe(initialInstagramUrl);
+    const [popup, externalRequest] = await Promise.all([
+      browserContext.waitForEvent('page', {
+        timeout: externalNavigationIntentTimeoutMs,
+      }),
+      browserContext.waitForEvent('request', {
+        predicate: (candidate) =>
+          candidate.isNavigationRequest() &&
+          candidate.url() === initialInstagramUrl,
+        timeout: externalNavigationIntentTimeoutMs,
+      }),
+      instagramButton.click(),
+    ]);
+    expect(externalRequest.url()).toBe(initialInstagramUrl);
     await popup.close();
 
     const editLinkUrl = buildUrl(

@@ -3586,6 +3586,138 @@ function assertCheckedInManifestMatchesCurrentSpecTitles() {
   }
 }
 
+function assertReadonlyHeroOracleDataflow(testBody, variableName, contextLabel) {
+  const escapedVariable = variableName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  assert.match(
+    testBody,
+    /const browserProfile = await gotoPublicProfileDetailAndWaitForHydration\(/,
+    `${contextLabel} must obtain browserProfile from the awaited browser hydration`,
+  );
+  assert.match(
+    testBody,
+    new RegExp(
+      `const ${escapedVariable} = accountProfileBrowserHeroOracle\\(\\s*profile\\.slug,\\s*browserProfile,?\\s*\\)`,
+    ),
+    `${contextLabel} must assign its browser-observed hero oracle`,
+  );
+  const assertedNames = [...testBody.matchAll(
+    /await assertAccountProfileHeroVisible\(\s*page,\s*([A-Za-z_$][\w$]*)\s*,/g,
+  )].map((match) => match[1]);
+  assert.deepStrictEqual(
+    assertedNames,
+    [variableName, variableName],
+    `${contextLabel} must use the browser-observed hero oracle for both hero assertions`,
+  );
+}
+
+function assertProductionReadonlyUsesOnlyEnvironmentInvariantProofs() {
+  const contractResult = run('node', [
+    path.join(
+      __dirname,
+      'account_profile_readonly_proof_contract_test.cjs',
+    ),
+  ]);
+  assert.strictEqual(
+    contractResult.status,
+    0,
+    `Account Profile readonly proof contract must pass.\n${contractResult.stderr}`,
+  );
+
+  const manifest = JSON.parse(
+    fs.readFileSync(path.join(__dirname, 'navigation_mutation_shards.json'), 'utf8'),
+  );
+  const readonlyTitles = manifest.readonly.expected_titles || [];
+  const mapTitles = readonlyTitles.filter((title) =>
+    /MAP-(?:LOC-GRANT|NAV-REENTRY)/.test(title),
+  );
+  assert.deepStrictEqual(
+    mapTitles,
+    [],
+    'persistent map performance journeys must not block the v0.5.0 production readonly lane',
+  );
+  assert.strictEqual(
+    Object.prototype.hasOwnProperty.call(
+      manifest.readonly.shards || {},
+      'map-browser-failures',
+    ),
+    false,
+    'the deferred map performance packet must not remain an admitted readonly shard',
+  );
+
+  const accountProfileSource = fs.readFileSync(
+    path.join(__dirname, 'account_profile_detail.spec.js'),
+    'utf8',
+  );
+  assert.match(
+    accountProfileSource,
+    /page\.getByRole\('banner',\s*\{\s*name: accountProfileSemanticHeroPattern\(displayLabel\),?\s*\}\)\.first\(\)/,
+    'Account Profile hero proof must use the complete canonical name at the start of Flutter banner semantics',
+  );
+  assert.match(
+    accountProfileSource,
+    /const heroAssertionTimeoutMs = 15000;/,
+    'post-hydration hero proof must fail within the focused 15 second bound',
+  );
+  const invariantProof = accountProfileSource.match(
+    /test\('@deferred @readonly NAV-APD-PROD-01[^']*'[\s\S]*?\n}\);\n\ntest\(/,
+  )?.[0];
+  assert.ok(invariantProof, 'production Account Profile invariant proof must exist');
+  assert.doesNotMatch(
+    invariantProof,
+    /buildFavoritableProfileTypes|selectMinimalEmptyStateCandidate|buildMinimalEmptyStateExpectation|taxonomySnapshot|const tabs =/,
+    'production Account Profile proof must not infer mutable taxonomy, tab, or empty-state fixtures',
+  );
+  assertReadonlyHeroOracleDataflow(
+    invariantProof,
+    'browserProfileName',
+    'production Account Profile proof',
+  );
+
+  const mobileProof = accountProfileSource.match(
+    /test\('@deferred @readonly NAV-APD-12[^']*'[\s\S]*?\n}\);\n\ntest\(/,
+  )?.[0];
+  assert.ok(mobileProof, 'production mobile Account Profile proof must exist');
+  assert.doesNotMatch(
+    mobileProof,
+    /taxonomySnapshot/,
+    'production mobile Account Profile proof must not require mutable taxonomy content',
+  );
+  assertReadonlyHeroOracleDataflow(
+    mobileProof,
+    'profileName',
+    'production mobile Account Profile proof',
+  );
+  assert.throws(
+    () => assertReadonlyHeroOracleDataflow(
+      `
+        const browserProfile = await gotoPublicProfileDetailAndWaitForHydration(page, baseUrl, profile.slug);
+        const browserProfileName = accountProfileBrowserHeroOracle(profile.slug, browserProfile);
+        await assertAccountProfileHeroVisible(page, profileName, 'initial', collectors);
+        await assertAccountProfileHeroVisible(page, profileName, 'sticky', collectors);
+      `,
+      'browserProfileName',
+      'dead-oracle mutation fixture',
+    ),
+    /must use the browser-observed hero oracle/,
+    'a dead oracle call must not satisfy readonly hero wiring policy',
+  );
+  assert.throws(
+    () => assertReadonlyHeroOracleDataflow(
+      `
+        const browserProfile = profile;
+        await gotoPublicProfileDetailAndWaitForHydration(page, baseUrl, profile.slug);
+        const browserProfileName = accountProfileBrowserHeroOracle(profile.slug, browserProfile);
+        await assertAccountProfileHeroVisible(page, browserProfileName, 'initial', collectors);
+        await assertAccountProfileHeroVisible(page, browserProfileName, 'sticky', collectors);
+      `,
+      'browserProfileName',
+      'stale-browser-input mutation fixture',
+    ),
+    /must obtain browserProfile from the awaited browser hydration/,
+    'a setup snapshot renamed to browserProfile must not satisfy readonly hero wiring policy',
+  );
+}
+
 assertGuardPassesCleanFixture();
 assertStrictDataGuardPassesCleanFixture();
 assertStageMutationWorkflowSuppliesRuntimeCredentials();
@@ -3649,6 +3781,7 @@ assertStandaloneAgendaFixtureUsesCanonicalPlaywrightRuntime();
 assertReadonlyManagedFixtureTestsScopeAnonymousFingerprints();
 assertTaxonomyDisplaySnapshotsUseScopedCanonicalEventListQuery();
 assertStartupReadonlyManagedFixtureSearchUsesCanonicalPagination();
+assertProductionReadonlyUsesOnlyEnvironmentInvariantProofs();
 assertCheckedInManifestMatchesCurrentSpecTitles();
 assertAccountOnboardingCleanupContractPasses();
 assertPublicTaxonomyCleanupResolutionContractPasses();
@@ -3920,6 +4053,7 @@ assert.match(
 // exists and every adopted spec delegates to it.
 {
   const adoptedSpecFiles = [
+    'account_profile_detail.spec.js',
     'discovery_filters.spec.js',
     'navigation.spec.js',
     'navigation.mutation.tenant_admin.spec.js',

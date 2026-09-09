@@ -9,23 +9,31 @@ const {
 } = require('./support/account_onboarding_cleanup');
 const {
   agendaOccurrences,
-  buildFavoritableProfileTypes,
-  buildMinimalEmptyStateExpectation,
   locationPayload,
-  selectMinimalEmptyStateCandidate,
 } = require('./support/account_profile_detail_empty_state_contract');
-const {
-  fixture: managedTaxonomyFixture,
-  managedFixtureEnabled,
-} = require('./support/public_taxonomy_validation_fixture_contract');
 const {
   loadAccountProfileAgendaReadonlyFixture,
 } = require('./support/account_profile_agenda_readonly_fixture_contract');
+const {
+  installFailureCollectors,
+  summarizeCriticalBrowserFailures,
+} = require('./support/browser_failure_collectors');
+const {
+  accountProfileBrowserHeroOracle,
+  accountProfileSemanticHeroPattern,
+  classifyAccountProfileProofObservation,
+  exactAccountProfileNamePattern,
+  evaluateAccountProfileHydrationWait,
+  readAccountProfileDetailResponse,
+  rectangleIntersectsViewport,
+  resolveAccountProfileProofSubject,
+} = require('./support/account_profile_readonly_proof_contract');
 
 const tenantUrl = process.env.NAV_TENANT_URL;
 const localRuntimeSeedEnabled =
   (process.env.NAV_DEPLOY_LANE || '').toString().trim().toLowerCase() === 'local';
-const appBootTimeoutMs = 90000;
+const appBootTimeoutMs = 60000;
+const heroAssertionTimeoutMs = 15000;
 
 test.describe.configure({ timeout: 300000 });
 
@@ -77,6 +85,85 @@ async function assertVisibleTextOrSemanticLabel(page, label, contextLabel) {
     .toBe(true);
 }
 
+function criticalBrowserFailures(collectors) {
+  return summarizeCriticalBrowserFailures(collectors);
+}
+
+function assertNoCriticalBrowserFailures(collectors, contextLabel) {
+  expect(
+    criticalBrowserFailures(collectors),
+    `Unexpected browser failures during ${contextLabel}.`,
+  ).toEqual({
+    runtimeErrors: [],
+    failedRequests: [],
+    criticalHttpResponses: [],
+    disallowedRateLimitedResponses: [],
+    criticalConsoleErrors: [],
+  });
+}
+
+async function assertAccountProfileHeroVisible(
+  page,
+  label,
+  contextLabel,
+  collectors,
+  { requireInViewport = false, maxYRatio = 1 } = {},
+) {
+  const displayLabel = textValue(label);
+  expect(displayLabel, `${contextLabel} requires a non-empty label.`).toBeTruthy();
+  const exactLabelPattern = exactAccountProfileNamePattern(displayLabel);
+  const visibleText = page.getByText(exactLabelPattern).first();
+  const semanticLabel = page.getByRole('banner', {
+    name: accountProfileSemanticHeroPattern(displayLabel),
+  }).first();
+  const terminalError = page.getByText(
+    /Não foi possível abrir o perfil|Falha ao preparar o perfil/i,
+  ).first();
+
+  await expect
+    .poll(
+      async () => {
+        const terminalErrorText =
+          (await terminalError.count()) > 0 && (await terminalError.isVisible())
+            ? (await terminalError.textContent()) || 'account profile terminal error'
+            : '';
+        const viewport = requireInViewport
+          ? await page.evaluate(() => ({
+            width: window.innerWidth,
+            height: window.innerHeight,
+          }))
+          : null;
+        const locatorQualifies = async (locator) => {
+          if ((await locator.count()) === 0 || !(await locator.isVisible())) {
+            return false;
+          }
+          return !requireInViewport
+            || rectangleIntersectsViewport(
+              await locator.boundingBox(),
+              viewport,
+              { maxYRatio },
+            );
+        };
+        const heroVisible = await locatorQualifies(visibleText)
+          || await locatorQualifies(semanticLabel);
+        const observation = classifyAccountProfileProofObservation({
+          heroVisible,
+          terminalErrorText,
+          criticalBrowserFailures: criticalBrowserFailures(collectors),
+        });
+        if (observation.state === 'failure') {
+          throw new Error(`${contextLabel} failed: ${observation.reason}.`);
+        }
+        return observation.state === 'success';
+      },
+      {
+        message: `${contextLabel} must render "${displayLabel}" without a terminal failure.`,
+        timeout: heroAssertionTimeoutMs,
+      },
+    )
+    .toBe(true);
+}
+
 function normalizePayload(payload) {
   if (payload?.data && typeof payload.data === 'object') {
     return payload.data;
@@ -106,35 +193,6 @@ function textValue(...values) {
     }
   }
   return '';
-}
-
-function humanizedSlugLabel(rawSlug) {
-  const normalized = textValue(rawSlug)
-    .replace(/[_-]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-  if (!normalized) {
-    return '';
-  }
-  return normalized
-    .split(' ')
-    .filter(Boolean)
-    .map((part) => `${part[0].toUpperCase()}${part.slice(1).toLowerCase()}`)
-    .join(' ');
-}
-
-function canonicalPublicVisibleName(row, { routeSlug = '', allowSentinel = false } = {}) {
-  const displayName = textValue(row?.display_name);
-  if (displayName.length >= 3) {
-    return displayName;
-  }
-
-  const slugLabel = humanizedSlugLabel(row?.slug || routeSlug);
-  if (slugLabel) {
-    return slugLabel;
-  }
-
-  return allowSentinel ? 'Perfil indisponível' : '';
 }
 
 function hasFiniteCoordinate(value) {
@@ -616,8 +674,10 @@ async function gotoPublicProfileDetailAndWaitForHydration(
   page,
   baseUrl,
   slug,
-  { readPayload = true } = {},
+  { readPayload = true, collectors = null } = {},
 ) {
+  let hydratedResponse = null;
+  let hydrationWaitError = null;
   const responsePromise = page.waitForResponse(
     (candidate) => {
       if (candidate.request().method().toUpperCase() !== 'GET') {
@@ -628,6 +688,13 @@ async function gotoPublicProfileDetailAndWaitForHydration(
     },
     { timeout: appBootTimeoutMs },
   );
+  void responsePromise
+    .then((response) => {
+      hydratedResponse = response;
+    })
+    .catch((error) => {
+      hydrationWaitError = error;
+    });
 
   const response = await page.goto(buildUrl(baseUrl, `/parceiro/${slug}`), {
     waitUntil: 'domcontentloaded',
@@ -637,74 +704,51 @@ async function gotoPublicProfileDetailAndWaitForHydration(
   expect(response.status(), 'Public account profile document must load.')
     .toBeLessThan(400);
 
+  if (collectors) {
+    await expect
+      .poll(
+        () => evaluateAccountProfileHydrationWait({
+          response: hydratedResponse,
+          waitError: hydrationWaitError,
+          criticalBrowserFailures: criticalBrowserFailures(collectors),
+        }),
+        {
+          message: `Profile detail browser request must complete for ${slug}.`,
+          timeout: appBootTimeoutMs,
+        },
+      )
+      .toBe(true);
+  } else {
+    hydratedResponse = await responsePromise;
+  }
+
   await assertAppBooted(page);
   await enableAccessibilityIfNeeded(page);
+  expect(
+    new URL(page.url()).pathname,
+    'Browser must remain on the canonical Account Profile detail route.',
+  ).toBe(`/parceiro/${slug}`);
 
-  const hydratedResponse = await responsePromise;
-  expect(hydratedResponse.status(), 'Profile detail API must load.')
-    .toBeLessThan(400);
   if (!readPayload) {
+    expect(hydratedResponse.status(), 'Profile detail API must load.')
+      .toBeLessThan(400);
     return null;
   }
-  let payload;
-  try {
-    payload = await hydratedResponse.json();
-  } catch (error) {
-    throw new Error(
-      `Profile detail hydration returned a non-JSON payload for ${slug}: ${error instanceof Error ? error.message : String(error)}`,
-    );
+  const normalized = await readAccountProfileDetailResponse(hydratedResponse, slug);
+  if (collectors) {
+    assertNoCriticalBrowserFailures(collectors, `Account Profile detail ${slug}`);
   }
-
-  return normalizePayload(payload);
-}
-
-function taxonomySnapshot(row) {
-  const terms = Array.isArray(row?.taxonomy_terms) ? row.taxonomy_terms : [];
-  return terms
-    .map((term) => ({
-      display: textValue(term?.name, term?.label),
-      value: textValue(term?.value),
-    }))
-    .find((term) => term.display && term.value && term.display !== term.value);
-}
-
-function selectDeterministicTaxonomyProfileRow(rows) {
-  return rows
-    .filter((row) => canonicalPublicVisibleName(row))
-    .filter((row) => taxonomySnapshot(row))
-    .reduce((selected, row) => {
-      if (!selected) {
-        return row;
-      }
-
-      const selectedName = canonicalPublicVisibleName(selected);
-      const rowName = canonicalPublicVisibleName(row);
-      if (rowName.length !== selectedName.length) {
-        return rowName.length > selectedName.length ? row : selected;
-      }
-
-      const selectedSlug = textValue(selected?.slug);
-      const rowSlug = textValue(row?.slug);
-      return rowSlug.localeCompare(selectedSlug) < 0 ? row : selected;
-    }, null);
+  return normalized;
 }
 
 async function resolveReadonlyProofProfile({ rows, hydrate, contextLabel }) {
-  if (managedFixtureEnabled) {
-    const profile = await hydrate(managedTaxonomyFixture.profileSlug);
-    expect(
-      profile,
-      `${contextLabel} requires the managed taxonomy proof profile when NAV_PUBLIC_TAXONOMY_MANAGED_FIXTURE=1.`,
-    ).toBeTruthy();
-    return profile;
+  try {
+    return await resolveAccountProfileProofSubject(rows, hydrate);
+  } catch (error) {
+    throw new Error(
+      `${contextLabel} could not resolve an identity-bound public Account Profile: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
-
-  const selectedRow = selectDeterministicTaxonomyProfileRow(rows);
-  expect(
-    selectedRow,
-    `${contextLabel} requires at least one taxonomy-bearing public Account Profile when the managed fixture is disabled.`,
-  ).toBeTruthy();
-  return hydrate(selectedRow);
 }
 
 async function loadRuntimeProfiles(api, baseUrl) {
@@ -921,88 +965,55 @@ test('@deferred @readonly NAV-APD-01 Discovery profile detail back stack does no
   expect(page.url()).not.toBe(openedDetailUrl);
 });
 
-test('@deferred @readonly NAV-APD-02..06 and NAV-APD-10 hero, taxonomy, tabs, social removal, and optional favorite empty state are visible', async ({
+test('@deferred @readonly NAV-APD-PROD-01 any public profile renders its canonical hero', async ({
   page,
 }) => {
   const baseUrl = requireTenantUrl();
-  const { rows, hydrate, token } = await loadRuntimeProfiles(page.request, baseUrl);
-  const environment = await fetchPublicEnvironment(page.request, baseUrl, token);
-  const favoritableProfileTypes = buildFavoritableProfileTypes(
-    environment?.profile_types,
-  );
+  const collectors = installFailureCollectors(page);
+  const { rows, hydrate } = await loadRuntimeProfiles(page.request, baseUrl);
   const profile = await resolveReadonlyProofProfile({
     rows,
     hydrate,
     contextLabel: 'NAV-APD-02..06',
   });
 
-  await openTenantPath(page, baseUrl, `/parceiro/${profile.slug}`);
-  await assertVisibleTextOrSemanticLabel(
+  const browserProfile = await gotoPublicProfileDetailAndWaitForHydration(
     page,
-    canonicalPublicVisibleName(profile, {
-      routeSlug: profile.slug,
-      allowSentinel: true,
-    }),
+    baseUrl,
+    profile.slug,
+    {
+      collectors,
+    },
+  );
+  const browserProfileName = accountProfileBrowserHeroOracle(
+    profile.slug,
+    browserProfile,
+  );
+  await assertAccountProfileHeroVisible(
+    page,
+    browserProfileName,
     'Account Profile detail hero',
+    collectors,
+    { requireInViewport: true },
   );
 
   await page.mouse.wheel(0, 900);
-  await assertVisibleTextOrSemanticLabel(
+  await assertAccountProfileHeroVisible(
     page,
-    canonicalPublicVisibleName(profile, {
-      routeSlug: profile.slug,
-      allowSentinel: true,
-    }),
+    browserProfileName,
     'Account Profile detail sticky/readable hero after scroll',
+    collectors,
+    { requireInViewport: true, maxYRatio: 0.3 },
   );
-  await expect(page.getByText(/seguidores|curtidas|87/i)).toHaveCount(0);
-
-  const snapshot = taxonomySnapshot(profile);
-  if (snapshot) {
-    await assertVisibleTextOrSemanticLabel(
-      page,
-      snapshot.display,
-      'Account Profile taxonomy display label',
-    );
-    await expect(page.getByText(new RegExp(`^${escapeRegExp(snapshot.value)}$`, 'i')))
-      .toHaveCount(0);
-  }
-
-  const tabs = ['Sobre', 'Agenda', 'Como Chegar'];
-  for (const tab of tabs) {
-    const locator = page.getByRole('button', {
-      name: new RegExp(`^${tab}$`, 'i'),
-    });
-    if ((await locator.count()) > 0) {
-      await locator.first().click();
-      await expect(locator.first()).toBeVisible();
-    }
-  }
-
-  const minimalCandidate = await selectMinimalEmptyStateCandidate(
-    rows,
-    hydrate,
-    favoritableProfileTypes,
-  );
-
-  if (minimalCandidate) {
-    await openTenantPath(page, baseUrl, `/parceiro/${minimalCandidate.profile.slug}`);
-    const expectation = buildMinimalEmptyStateExpectation(minimalCandidate);
-    await assertVisibleTextOrSemanticLabel(
-      page,
-      expectation.visibleLabel,
-      expectation.assertionLabel,
-    );
-    if (expectation.hiddenLabel) {
-      await expect(page.getByText(expectation.hiddenLabel)).toHaveCount(0);
-    }
-  }
+  expect(new URL(page.url()).pathname).toBe(`/parceiro/${profile.slug}`);
+  assertNoCriticalBrowserFailures(collectors, 'Account Profile production invariant proof');
 });
 
-test('@deferred @readonly NAV-APD-12 mobile breakpoint keeps title and taxonomy chips readable', async ({
+test('@deferred @readonly NAV-APD-12 mobile breakpoint keeps the canonical title readable', async ({
   page,
 }) => {
   const baseUrl = requireTenantUrl();
+  const collectors = installFailureCollectors(page);
   await page.setViewportSize({ width: 390, height: 844 });
   const { rows, hydrate } = await loadRuntimeProfiles(page.request, baseUrl);
   const profile = await resolveReadonlyProofProfile({
@@ -1011,33 +1022,39 @@ test('@deferred @readonly NAV-APD-12 mobile breakpoint keeps title and taxonomy 
     contextLabel: 'NAV-APD-12',
   });
 
-  const profileName = canonicalPublicVisibleName(profile, {
-    routeSlug: profile.slug,
-    allowSentinel: true,
-  });
   // NAV-APD-12 verifies mobile readability, not cold-route bootstrap.
   // Direct profile-route boot is already exercised by the other readonly detail tests.
   await openTenantPath(page, baseUrl, '/');
-  await openTenantPath(page, baseUrl, `/parceiro/${profile.slug}`);
-  await assertVisibleTextOrSemanticLabel(page, profileName, 'Mobile Account Profile hero');
-
-  const snapshot = taxonomySnapshot(profile);
-  if (snapshot) {
-    await assertVisibleTextOrSemanticLabel(
-      page,
-      snapshot.display,
-      'Mobile Account Profile taxonomy display label',
-    );
-    await expect(page.getByText(new RegExp(`^${escapeRegExp(snapshot.value)}$`, 'i')))
-      .toHaveCount(0);
-  }
+  const browserProfile = await gotoPublicProfileDetailAndWaitForHydration(
+    page,
+    baseUrl,
+    profile.slug,
+    {
+      collectors,
+    },
+  );
+  const profileName = accountProfileBrowserHeroOracle(
+    profile.slug,
+    browserProfile,
+  );
+  await assertAccountProfileHeroVisible(
+    page,
+    profileName,
+    'Mobile Account Profile hero',
+    collectors,
+    { requireInViewport: true },
+  );
 
   await page.mouse.wheel(0, 900);
-  await assertVisibleTextOrSemanticLabel(
+  await assertAccountProfileHeroVisible(
     page,
     profileName,
     'Mobile Account Profile hero after scroll',
+    collectors,
+    { requireInViewport: true, maxYRatio: 0.3 },
   );
+  expect(new URL(page.url()).pathname).toBe(`/parceiro/${profile.slug}`);
+  assertNoCriticalBrowserFailures(collectors, 'mobile Account Profile production proof');
 });
 
 test('@mutation NAV-APD-07..08 agenda is occurrence-first and cards navigate to event detail', async ({
