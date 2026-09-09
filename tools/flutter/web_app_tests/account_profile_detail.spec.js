@@ -404,7 +404,6 @@ async function resolvePoiCapableProfileType(
           is_poi_enabled: true,
           is_reference_location_enabled: true,
           has_bio: false,
-          has_content: false,
           has_taxonomies: false,
           has_avatar: false,
           has_cover: false,

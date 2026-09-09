@@ -176,7 +176,6 @@ async function createAccountProfileType(
           has_avatar: true,
           has_cover: false,
           has_bio: false,
-          has_content: false,
           has_taxonomies: false,
           has_events: false,
           is_poi_enabled: false,
