@@ -6,7 +6,7 @@ const {
 } = require('./support/browser_failure_collectors');
 
 const tenantUrl = process.env.NAV_TENANT_URL;
-const appBootTimeoutMs = 120000;
+const appBootTimeoutMs = 60000;
 
 test.describe.configure({ timeout: 240000 });
 
@@ -96,7 +96,7 @@ async function waitForTenantPath(page, allowedPrefixes) {
   );
 }
 
-test('@deferred @readonly MAP-NAV-REENTRY-01 tenant home can reopen map after returning from a warm permission-gated entry', async () => {
+test('@deferred MAP-NAV-REENTRY-01 tenant home can reopen map after returning from a warm permission-gated entry', async () => {
   const baseUrl = requireTenantUrl();
   const appOrigin = new URL(baseUrl).origin;
   await withFreshBrowserPage(async ({ page }) => {

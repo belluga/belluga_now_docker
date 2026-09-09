@@ -6,7 +6,7 @@ const {
 } = require('./support/browser_failure_collectors');
 
 const tenantUrl = process.env.NAV_TENANT_URL;
-const appBootTimeoutMs = 120000;
+const appBootTimeoutMs = 60000;
 
 test.describe.configure({ timeout: 300000 });
 
@@ -331,7 +331,7 @@ async function waitForCanonicalMapResponses(mapCapture, contextLabel) {
     .toBe(true);
 }
 
-test('@deferred @readonly MAP-LOC-GRANT-01 first warm geolocation-granted map entry loads POIs from a resolved origin without public error state', async () => {
+test('@deferred MAP-LOC-GRANT-01 first warm geolocation-granted map entry loads POIs from a resolved origin without public error state', async () => {
   const baseUrl = requireTenantUrl();
   const origin = new URL(baseUrl).origin;
   await withFreshBrowserPage(async ({ context, page }) => {
@@ -378,7 +378,7 @@ test('@deferred @readonly MAP-LOC-GRANT-01 first warm geolocation-granted map en
   });
 });
 
-test('@deferred @readonly MAP-LOC-GRANT-02 location-permission CTA continuation loads canonical map data once browser geolocation is granted', async () => {
+test('@deferred MAP-LOC-GRANT-02 location-permission CTA continuation loads canonical map data once browser geolocation is granted', async () => {
   const baseUrl = requireTenantUrl();
   const origin = new URL(baseUrl).origin;
   await withFreshBrowserPage(async ({ context, page }) => {

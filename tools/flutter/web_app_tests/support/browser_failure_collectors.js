@@ -37,6 +37,7 @@
 const TAXONOMY_VERSION = 'media-url-shape-v1';
 
 const ADOPTED_SPEC_FILES = [
+  'account_profile_detail.spec.js',
   'discovery_filters.spec.js',
   'navigation.spec.js',
   'navigation.mutation.tenant_admin.spec.js',
