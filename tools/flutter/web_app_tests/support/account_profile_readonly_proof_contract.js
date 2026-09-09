@@ -14,9 +14,20 @@ function stringValue(value) {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+function escapedPatternValue(value) {
+  return stringValue(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 function exactAccountProfileNamePattern(name) {
-  const escaped = stringValue(name).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return new RegExp(`^${escaped}$`);
+  return new RegExp(`^${escapedPatternValue(name)}$`);
+}
+
+function accountProfileSemanticHeroPattern(name) {
+  const escaped = escapedPatternValue(name);
+  if (!escaped) {
+    throw new Error('Account Profile semantic hero requires a non-empty name.');
+  }
+  return new RegExp(`^${escaped}(?:\\s|$)`);
 }
 
 function canonicalPublicVisibleName(
@@ -186,6 +197,7 @@ function classifyAccountProfileProofObservation({
 
 module.exports = {
   accountProfileBrowserHeroOracle,
+  accountProfileSemanticHeroPattern,
   canonicalPublicVisibleName,
   classifyAccountProfileProofObservation,
   exactAccountProfileNamePattern,

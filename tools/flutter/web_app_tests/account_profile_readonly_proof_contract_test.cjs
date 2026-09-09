@@ -5,6 +5,7 @@
 const assert = require('assert');
 const {
   accountProfileBrowserHeroOracle,
+  accountProfileSemanticHeroPattern,
   canonicalPublicVisibleName,
   classifyAccountProfileProofObservation,
   exactAccountProfileNamePattern,
@@ -52,6 +53,36 @@ assert.strictEqual(
   exactAccountProfileNamePattern('AGLA').test('Agla'),
   false,
   'canonical hero matching must preserve display-name case',
+);
+const longSemanticHeroName = 'AMG - Associação dos Motociclistas de Guarapari';
+const longSemanticHeroPattern = accountProfileSemanticHeroPattern(
+  longSemanticHeroName,
+);
+assert.strictEqual(longSemanticHeroPattern.test(longSemanticHeroName), true);
+assert.strictEqual(
+  longSemanticHeroPattern.test(`${longSemanticHeroName} 976 m de você`),
+  true,
+  'Flutter banner semantics may append distance after the complete canonical name',
+);
+assert.strictEqual(
+  longSemanticHeroPattern.test('AMG - Associação dos Motociclistas ...'),
+  false,
+  'visually truncated text must not replace the complete semantic name proof',
+);
+assert.strictEqual(
+  longSemanticHeroPattern.test(`Perfil ${longSemanticHeroName}`),
+  false,
+  'the canonical name must start the banner accessible name',
+);
+assert.strictEqual(
+  longSemanticHeroPattern.test(`${longSemanticHeroName}enses`),
+  false,
+  'the complete canonical name must end before appended semantic content',
+);
+assert.strictEqual(
+  longSemanticHeroPattern.test('Amg - Associação dos Motociclistas de Guarapari'),
+  false,
+  'semantic hero matching must remain case-sensitive',
 );
 assert.strictEqual(
   rectangleIntersectsViewport(

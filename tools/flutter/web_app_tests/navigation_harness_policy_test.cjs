@@ -3648,6 +3648,16 @@ function assertProductionReadonlyUsesOnlyEnvironmentInvariantProofs() {
     path.join(__dirname, 'account_profile_detail.spec.js'),
     'utf8',
   );
+  assert.match(
+    accountProfileSource,
+    /page\.getByRole\('banner',\s*\{\s*name: accountProfileSemanticHeroPattern\(displayLabel\),?\s*\}\)\.first\(\)/,
+    'Account Profile hero proof must use the complete canonical name at the start of Flutter banner semantics',
+  );
+  assert.match(
+    accountProfileSource,
+    /const heroAssertionTimeoutMs = 15000;/,
+    'post-hydration hero proof must fail within the focused 15 second bound',
+  );
   const invariantProof = accountProfileSource.match(
     /test\('@deferred @readonly NAV-APD-PROD-01[^']*'[\s\S]*?\n}\);\n\ntest\(/,
   )?.[0];
