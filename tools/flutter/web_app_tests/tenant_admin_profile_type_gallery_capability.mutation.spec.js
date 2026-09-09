@@ -137,12 +137,22 @@ async function fillFlutterTextField(page, label, value) {
   await field.scrollIntoViewIfNeeded();
   await expect(field).toBeVisible({ timeout: appBootTimeoutMs });
 
-  await field.click();
   const selectAll = process.platform === 'darwin' ? 'Meta+A' : 'Control+A';
-  await page.keyboard.press(selectAll);
-  await page.keyboard.press('Backspace');
-  await page.keyboard.type(value, { delay: 5 });
-  return field;
+  let lastValue = '';
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    await field.click();
+    await field.press(selectAll);
+    await field.press('Backspace');
+    await field.pressSequentially(value, { delay: 10 });
+    lastValue = await field.inputValue();
+    if (lastValue === value) {
+      return field;
+    }
+  }
+
+  throw new Error(
+    `${label} did not retain ${JSON.stringify(value)}; last value was ${JSON.stringify(lastValue)}.`,
+  );
 }
 
 async function clickSaveChanges(page) {

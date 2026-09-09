@@ -9,6 +9,7 @@ const {
 } = require('./support/tenant_admin_auth');
 const { selectDropdownOption } = require('./support/semantic_dropdown');
 const {
+  fillRichTextEditorText,
   selectRichTextEditorContents,
 } = require('./support/rich_text_editor');
 const {
@@ -3217,12 +3218,7 @@ test('@mutation tenant-admin account-profile rich text toolbar authors HTTPS lin
       await expect(linkButton).toHaveCount(1);
       await linkButton.scrollIntoViewIfNeeded();
       await expect(linkButton).toBeVisible();
-      await fillResolvedFlutterTextField(
-        page,
-        editor.locator,
-        editor.text,
-        `${editor.label} rich-text editor`,
-      );
+      await fillRichTextEditorText(editor.locator, editor.text);
       await selectRichTextEditorContents(page, editor.locator);
       await linkButton.click();
       const dialog = page.getByRole('alertdialog');
