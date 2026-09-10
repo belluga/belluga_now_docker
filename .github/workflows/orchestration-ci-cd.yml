@@ -454,7 +454,11 @@ jobs:
           NAV_LANDLORD_URL: ${{ steps.stage_nav_targets.outputs.landlord_url }}
           NAV_TENANT_URL: ${{ steps.stage_nav_targets.outputs.tenant_url }}
           PLAYWRIGHT_IGNORE_HTTPS_ERRORS: ${{ steps.stage_origin_host_overrides.outputs.playwright_ignore_https_errors }}
-        run: bash tools/flutter/run_web_navigation_smoke.sh readonly
+        run: |
+          bash tools/flutter/run_web_navigation_smoke.sh readonly
+          NAV_WEB_SHARD=taxonomy-display \
+            NAV_WEB_OUTPUT_DIR="tools/flutter/web_app_smoke_runner/test-results/${NAV_TEST_RUN_ID}/taxonomy-display" \
+            bash tools/flutter/run_web_navigation_smoke.sh readonly
 
       - name: Run stage mutation navigation smoke
         id: stage_navigation_mutation_smoke
@@ -816,7 +820,11 @@ jobs:
           NAV_LANDLORD_URL: ${{ steps.stage_nav_targets.outputs.landlord_url }}
           NAV_TENANT_URL: ${{ steps.stage_nav_targets.outputs.tenant_url }}
           PLAYWRIGHT_IGNORE_HTTPS_ERRORS: ${{ steps.stage_rollback_origin_host_overrides.outputs.playwright_ignore_https_errors }}
-        run: bash "${{ steps.stage_rollback_proof_plan.outputs.restored_navigation_workspace }}/tools/flutter/run_web_navigation_smoke.sh" readonly
+        run: |
+          bash "${{ steps.stage_rollback_proof_plan.outputs.restored_navigation_workspace }}/tools/flutter/run_web_navigation_smoke.sh" readonly
+          NAV_WEB_SHARD=taxonomy-display \
+            NAV_WEB_OUTPUT_DIR="tools/flutter/web_app_smoke_runner/test-results/${NAV_TEST_RUN_ID}/taxonomy-display" \
+            bash "${{ steps.stage_rollback_proof_plan.outputs.restored_navigation_workspace }}/tools/flutter/run_web_navigation_smoke.sh" readonly
 
       - name: Run restored stage mutation navigation smoke
         id: stage_rollback_navigation_mutation_smoke
