@@ -265,6 +265,19 @@
           "@deferred @readonly MAP-LOC-GRANT-02 location-permission CTA continuation loads canonical map data once browser geolocation is granted",
           "@deferred @readonly MAP-NAV-REENTRY-01 tenant home can reopen map after returning from a warm permission-gated entry"
         ]
+      },
+      "account-profile-event-local": {
+        "grep_extra": "EVENT-LOCAL-NAV",
+        "grep": "@readonly-fixture EVENT-LOCAL-NAV tenant Event Local profile navigation preserves history",
+        "allowed_lanes": [
+          "local"
+        ],
+        "required_env_values": {
+          "NAV_PUBLIC_TAXONOMY_MANAGED_FIXTURE": "1"
+        },
+        "expected_titles": [
+          "@readonly-fixture EVENT-LOCAL-NAV tenant Event Local profile navigation preserves history"
+        ]
       }
     },
     "expected_titles": [
