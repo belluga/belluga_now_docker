@@ -3458,6 +3458,62 @@ function assertReadonlyManagedFixtureTestsScopeAnonymousFingerprints() {
   );
 }
 
+function assertManagedTaxonomyReadonlyUsesFixtureShard() {
+  const taxonomyTitle =
+    '@readonly-fixture TAXONOMY-DISPLAY taxonomy display snapshots render labels instead of slugs on public runtime routes';
+  const taxonomySource = fs.readFileSync(
+    path.join(repoRoot, 'tools', 'flutter', 'web_app_tests', 'taxonomy_display_snapshots.spec.js'),
+    'utf8',
+  );
+  const manifest = JSON.parse(
+    fs.readFileSync(path.join(__dirname, 'navigation_mutation_shards.json'), 'utf8'),
+  );
+  const shard = manifest.readonly?.shards?.['taxonomy-display'];
+
+  assert.match(
+    taxonomySource,
+    /test\('@readonly-fixture TAXONOMY-DISPLAY taxonomy display snapshots render labels instead of slugs on public runtime routes'/,
+    'managed taxonomy browser proof must be fixture-owned instead of entering production readonly selection',
+  );
+  assert.ok(shard, 'managed taxonomy browser proof must have one named readonly fixture shard');
+  assert.deepStrictEqual(shard.allowed_lanes, ['local', 'dev', 'stage']);
+  assert.deepStrictEqual(shard.required_env_values, {
+    NAV_PUBLIC_TAXONOMY_MANAGED_FIXTURE: '1',
+  });
+  assert.deepStrictEqual(shard.expected_titles, [taxonomyTitle]);
+  assert.strictEqual(
+    manifest.readonly.expected_titles.includes(taxonomyTitle),
+    false,
+    'fixture-owned taxonomy proof must not enter the production-safe readonly manifest',
+  );
+
+  const workflowSource = fs.readFileSync(orchestrationWorkflow, 'utf8');
+  for (const stepName of [
+    'Run stage real navigation smoke',
+    'Run restored stage readonly navigation smoke',
+  ]) {
+    const step = workflowSource.match(
+      new RegExp(`- name: ${stepName}[\\s\\S]*?(?=\\n      - name: )`),
+    )?.[0];
+    assert.ok(step, `${stepName} step must exist`);
+    assert.match(
+      step,
+      /NAV_WEB_SHARD=taxonomy-display[\s\S]*?run_web_navigation_smoke\.sh"? readonly/,
+      `${stepName} must execute the fixture-owned taxonomy shard after the production-safe readonly suite`,
+    );
+  }
+
+  const productionStep = workflowSource.match(
+    /- name: Run production real navigation smoke[\s\S]*?(?=\n      - name: )/,
+  )?.[0];
+  assert.ok(productionStep, 'production readonly navigation smoke step must exist');
+  assert.doesNotMatch(
+    productionStep,
+    /taxonomy-display|NAV_PUBLIC_TAXONOMY_MANAGED_FIXTURE/,
+    'production readonly smoke must not select or bootstrap the managed taxonomy fixture shard',
+  );
+}
+
 function assertTaxonomyDisplaySnapshotsUseScopedCanonicalEventListQuery() {
   const taxonomySource = fs.readFileSync(
     path.join(repoRoot, 'tools', 'flutter', 'web_app_tests', 'taxonomy_display_snapshots.spec.js'),
@@ -3779,6 +3835,7 @@ assertCanonicalNavigationTimeoutBudget();
 assertManagedFixtureRunScopedFingerprintHelper();
 assertStandaloneAgendaFixtureUsesCanonicalPlaywrightRuntime();
 assertReadonlyManagedFixtureTestsScopeAnonymousFingerprints();
+assertManagedTaxonomyReadonlyUsesFixtureShard();
 assertTaxonomyDisplaySnapshotsUseScopedCanonicalEventListQuery();
 assertStartupReadonlyManagedFixtureSearchUsesCanonicalPagination();
 assertProductionReadonlyUsesOnlyEnvironmentInvariantProofs();

@@ -542,7 +542,7 @@ async function assertRawTaxonomyValueNotRendered(page, rawValue, contextLabel) {
   ).toHaveCount(0);
 }
 
-test('@readonly taxonomy display snapshots render labels instead of slugs on public runtime routes', async () => {
+test('@readonly-fixture TAXONOMY-DISPLAY taxonomy display snapshots render labels instead of slugs on public runtime routes', async () => {
   await withFreshBrowserPage(async ({ page }) => {
     const baseUrl = requireTenantUrl();
     const collectors = installFailureCollectors(page);

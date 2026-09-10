@@ -264,6 +264,21 @@
           "@deferred @readonly NAV-APD-PROD-01 any public profile renders its canonical hero",
           "@deferred @readonly NAV-APD-12 mobile breakpoint keeps the canonical title readable"
         ]
+      },
+      "taxonomy-display": {
+        "grep_extra": "TAXONOMY-DISPLAY",
+        "grep": "@readonly-fixture(?:\\s|$).*TAXONOMY-DISPLAY",
+        "allowed_lanes": [
+          "local",
+          "dev",
+          "stage"
+        ],
+        "required_env_values": {
+          "NAV_PUBLIC_TAXONOMY_MANAGED_FIXTURE": "1"
+        },
+        "expected_titles": [
+          "@readonly-fixture TAXONOMY-DISPLAY taxonomy display snapshots render labels instead of slugs on public runtime routes"
+        ]
       }
     },
     "expected_titles": [
@@ -284,8 +299,7 @@
       "@readonly STARTUP-PUBLIC-BOOTSTRAP-03 anonymous event-detail direct entry keeps the public surface and completes anonymous bootstrap",
       "@readonly invite not-found without recoverable fallback lands safely on home",
       "@readonly tenant domain bootstraps as tenant and navigates to tenant routes",
-      "@readonly OTP-WEB-BOUNDARY-01 tenant-public web auth remains app promotion boundary",
-      "@readonly taxonomy display snapshots render labels instead of slugs on public runtime routes"
+      "@readonly OTP-WEB-BOUNDARY-01 tenant-public web auth remains app promotion boundary"
     ]
   }
 }
