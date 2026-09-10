@@ -279,6 +279,19 @@
         "expected_titles": [
           "@readonly-fixture TAXONOMY-DISPLAY taxonomy display snapshots render labels instead of slugs on public runtime routes"
         ]
+      },
+      "account-profile-event-local": {
+        "grep_extra": "EVENT-LOCAL-NAV",
+        "grep": "@readonly-fixture EVENT-LOCAL-NAV tenant Event Local profile navigation preserves history",
+        "allowed_lanes": [
+          "local"
+        ],
+        "required_env_values": {
+          "NAV_PUBLIC_TAXONOMY_MANAGED_FIXTURE": "1"
+        },
+        "expected_titles": [
+          "@readonly-fixture EVENT-LOCAL-NAV tenant Event Local profile navigation preserves history"
+        ]
       }
     },
     "expected_titles": [

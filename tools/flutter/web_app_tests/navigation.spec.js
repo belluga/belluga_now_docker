@@ -542,6 +542,57 @@ test('@readonly tenant domain bootstraps as tenant and navigates to tenant route
   ).toEqual([]);
 });
 
+test('@readonly-fixture EVENT-LOCAL-NAV tenant Event Local profile navigation preserves history', async ({ page }) => {
+  const { tenantUrl } = requireNavigationUrls();
+  const collectors = installFailureCollectors(page);
+  expect(
+    managedFixtureEnabled,
+    'EVENT-LOCAL-NAV requires the canonical managed public fixture.',
+  ).toBe(true);
+
+  const eventPath = `/agenda/evento/${encodeURIComponent(fixture.eventSlug)}`;
+  const response = await page.goto(new URL(eventPath, tenantUrl).toString(), {
+    waitUntil: 'domcontentloaded',
+  });
+  expect(response, 'Managed Event response should be available.').not.toBeNull();
+  expect(response.status(), 'Managed Event response should be successful.').toBeLessThan(400);
+  await assertAppBooted(page);
+  await enableAccessibilityIfNeeded(page);
+
+  const localTab = page.getByRole('button', { name: /^O Local$/i }).first();
+  await expect(localTab, 'Managed Event must expose O Local.').toBeVisible();
+  await localTab.click();
+  const profileLink = page.getByRole('button', {
+    name: /^Abrir perfil de /i,
+  }).first();
+  const visibleProfileLink = await scrollPageUntilLocatorVisible(page, profileLink, {
+    timeout: 5000,
+  });
+  expect(visibleProfileLink, 'Managed Event Local must expose its profile action.').not.toBeNull();
+
+  const eventUrl = page.url();
+  await visibleProfileLink.click();
+  await expect(page).toHaveURL(
+    new RegExp(`/parceiro/${escapeRegExp(fixture.profileSlug)}(?:[?#]|$)`),
+    { timeout: appBootTimeoutMs },
+  );
+  await page.goBack({ waitUntil: 'domcontentloaded' });
+  await assertAppBooted(page);
+  expect(page.url(), 'Browser Back must restore the originating Event detail.').toBe(eventUrl);
+  await expect(
+    page.getByText('O Local', { exact: true }).last(),
+    'Browser Back must restore the selected O Local content.',
+  ).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: /^Abrir perfil de /i }).first(),
+    'Browser Back must restore the O Local profile hero.',
+  ).toBeVisible();
+
+  const summary = summarizeCriticalBrowserFailures(collectors);
+  expect(summary.runtimeErrors, `Unexpected runtime errors:\n${summary.runtimeErrors.join('\n')}`).toEqual([]);
+  expect(summary.criticalConsoleErrors, `Critical console errors:\n${summary.criticalConsoleErrors.join('\n')}`).toEqual([]);
+});
+
 test('@mutation tenant agenda UI state matches tenant agenda API payload', async ({ browser, request }) => {
   const { tenantUrl } = requireNavigationUrls();
   const tenantOrigin = new URL(tenantUrl).origin;
