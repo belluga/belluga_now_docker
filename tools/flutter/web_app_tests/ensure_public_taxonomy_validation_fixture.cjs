@@ -1100,6 +1100,39 @@ async function fetchPublicEventDetail(api, baseUrl, routeRef) {
   return payload?.data || payload;
 }
 
+async function fetchOptionalPublicEventDetail(api, baseUrl, routeRef) {
+  const anonymousToken = await resolveAnonymousIdentityToken(api, baseUrl);
+  const response = await api.get(
+    buildUrl(baseUrl, `/api/v1/events/${routeRef}`),
+    {
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${anonymousToken}`,
+      },
+      failOnStatusCode: false,
+    },
+  );
+
+  if (response.status() === 404) {
+    return null;
+  }
+
+  const payload = await fetchJson(
+    response,
+    `Optional public event detail ${routeRef}`,
+  );
+  return payload?.data || payload;
+}
+
+function readEventId(candidate) {
+  return (
+    candidate?.event_id?.toString().trim()
+    || candidate?.id?.toString().trim()
+    || candidate?._id?.toString().trim()
+    || ''
+  );
+}
+
 async function resolveAnonymousIdentityToken(api, baseUrl) {
   if (!anonymousIdentityTokenPromise) {
     anonymousIdentityTokenPromise = (async () => {
@@ -1155,7 +1188,13 @@ async function resetOwnedFixtureArtifacts(api, baseUrl, token) {
   await removeManagedPublicMapFilter(api, baseUrl, token);
   await removeManagedPublicDefaultOrigin(api, baseUrl, token);
 
+  const canonicalEventDetail = await fetchOptionalPublicEventDetail(
+    api,
+    baseUrl,
+    fixture.eventSlug,
+  );
   const ownedEventIdentifiers = [
+    readEventId(canonicalEventDetail),
     fixture.eventSlug,
     persistedState?.event?.eventId,
     persistedState?.event?.eventSlug,

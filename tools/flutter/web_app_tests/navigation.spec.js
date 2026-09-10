@@ -542,7 +542,7 @@ test('@readonly tenant domain bootstraps as tenant and navigates to tenant route
   ).toEqual([]);
 });
 
-test('@readonly-fixture EVENT-LOCAL-NAV tenant Event Local profile navigation preserves history', async ({ page }) => {
+test('@readonly-fixture EVENT-LOCAL-NAV tenant Event Local profile navigation preserves history', async ({ page, request }) => {
   const { tenantUrl } = requireNavigationUrls();
   const collectors = installFailureCollectors(page);
   expect(
@@ -550,7 +550,16 @@ test('@readonly-fixture EVENT-LOCAL-NAV tenant Event Local profile navigation pr
     'EVENT-LOCAL-NAV requires the canonical managed public fixture.',
   ).toBe(true);
 
-  const eventPath = `/agenda/evento/${encodeURIComponent(fixture.eventSlug)}`;
+  const { candidate: managedEvent } = await findManagedFixtureInPublicAgenda(
+    request,
+    tenantUrl,
+  );
+  const managedEventSlug = managedEvent?.slug?.toString().trim() || '';
+  expect(
+    managedEventSlug,
+    'Managed Event must expose its persisted public slug.',
+  ).toBeTruthy();
+  const eventPath = `/agenda/evento/${encodeURIComponent(managedEventSlug)}`;
   const response = await page.goto(new URL(eventPath, tenantUrl).toString(), {
     waitUntil: 'domcontentloaded',
   });
