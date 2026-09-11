@@ -887,28 +887,32 @@ migration_output_has_fail_marker() {
 }
 
 run_migrations() {
-  resolve_tenant_migration_path_args() {
-    local tenant_paths_raw tenant_paths
+  resolve_migration_path_args() {
+    local config_key="\$1" paths_raw paths
 
-    tenant_paths_raw="\$(
+    if ! paths_raw="\$(
       "\${DOCKER_COMPOSE[@]}" exec -T app php -r \
-        'require "vendor/autoload.php"; \$app=require "bootstrap/app.php"; \$app->make(\Illuminate\Contracts\Console\Kernel::class)->bootstrap(); \$paths=(array) config("multitenancy.tenant_migration_paths", ["database/migrations/tenants"]); \$paths=array_values(array_filter(array_map(static fn(\$path) => trim((string) \$path), \$paths), static fn(\$path) => \$path !== "")); foreach (\$paths as \$path) { echo "--path={\$path}\n"; }' \
-        2>/dev/null | tr -d '\r' || true
-    )"
-
-    tenant_paths="\$(printf '%s\n' "\${tenant_paths_raw}" | awk 'NF {print \$0}' | paste -sd' ' -)"
-    if [[ -z "\${tenant_paths}" ]]; then
-      tenant_paths="--path=database/migrations/tenants"
-      echo "WARN: unable to resolve multitenancy tenant migration paths; using fallback '\${tenant_paths}'."
+        'require "vendor/autoload.php"; \$app=require "bootstrap/app.php"; \$app->make(\Illuminate\Contracts\Console\Kernel::class)->bootstrap(); \$key=\$argv[1]; \$paths=(array) config("multitenancy.".\$key); if (\$paths === []) { fwrite(STDERR, "missing migration path inventory\n"); exit(1); } \$args=[]; foreach (\$paths as \$path) { \$path=trim((string) \$path); if (\$path === "") { fwrite(STDERR, "empty migration path\n"); exit(1); } \$args[]="--path={\$path}"; } echo implode("\n", \$args), "\n";' "\${config_key}" \
+        2>/dev/null | tr -d '\r'
+    )"; then
+      echo "ERROR: unable to resolve multitenancy \${config_key}; refusing a partial migration." >&2
+      return 1
     fi
 
-    printf '%s' "\${tenant_paths}"
+    paths="\$(printf '%s\n' "\${paths_raw}" | awk 'NF {print \$0}' | paste -sd' ' -)"
+    if [[ -z "\${paths}" ]]; then
+      echo "ERROR: unable to resolve multitenancy \${config_key}; refusing a partial migration." >&2
+      return 1
+    fi
+
+    printf '%s' "\${paths}"
   }
 
-  local landlord_output landlord_status
+  local landlord_output landlord_status landlord_migration_paths
+  landlord_migration_paths="\$(resolve_migration_path_args landlord_migration_paths)" || return 1
   echo "INFO: running landlord migrations..."
   set +e
-  landlord_output="\$("\${DOCKER_COMPOSE[@]}" exec -T app php artisan migrate --database=landlord --path=database/migrations/landlord --force 2>&1)"
+  landlord_output="\$("\${DOCKER_COMPOSE[@]}" exec -T app php artisan migrate --database=landlord \${landlord_migration_paths} --force 2>&1)"
   landlord_status=\$?
   set -e
   printf '%s\n' "\${landlord_output}"
@@ -933,7 +937,7 @@ run_migrations() {
   fi
 
   local tenant_migration_paths
-  tenant_migration_paths="\$(resolve_tenant_migration_path_args)"
+  tenant_migration_paths="\$(resolve_migration_path_args tenant_migration_paths)" || return 1
 
   local tenant_output tenant_status
   echo "INFO: running tenant migrations for \${tenant_count} tenants..."
