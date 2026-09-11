@@ -602,6 +602,68 @@ test('@readonly-fixture EVENT-LOCAL-NAV tenant Event Local profile navigation pr
   expect(summary.criticalConsoleErrors, `Critical console errors:\n${summary.criticalConsoleErrors.join('\n')}`).toEqual([]);
 });
 
+test('@readonly-fixture EVENT-PROGRAMMING-PROFILE-NAV tenant Event Programação profile navigation preserves history', async ({ page, request }) => {
+  const { tenantUrl } = requireNavigationUrls();
+  const collectors = installFailureCollectors(page);
+  expect(
+    managedFixtureEnabled,
+    'EVENT-PROGRAMMING-PROFILE-NAV requires the canonical managed public fixture.',
+  ).toBe(true);
+
+  const { candidate: managedEvent } = await findManagedFixtureInPublicAgenda(
+    request,
+    tenantUrl,
+  );
+  const managedEventSlug = managedEvent?.slug?.toString().trim() || '';
+  expect(
+    managedEventSlug,
+    'Managed Event must expose its persisted public slug.',
+  ).toBeTruthy();
+  const eventPath = `/agenda/evento/${encodeURIComponent(managedEventSlug)}`;
+  const response = await page.goto(new URL(eventPath, tenantUrl).toString(), {
+    waitUntil: 'domcontentloaded',
+  });
+  expect(response, 'Managed Event response should be available.').not.toBeNull();
+  expect(response.status(), 'Managed Event response should be successful.').toBeLessThan(400);
+  await assertAppBooted(page);
+  await enableAccessibilityIfNeeded(page);
+
+  const programmingTab = page.getByRole('button', { name: /^Programação$/i }).first();
+  await expect(programmingTab, 'Managed Event must expose Programação.').toBeVisible();
+  await programmingTab.click();
+  const profileLink = page.getByRole('button', {
+    name: `Abrir perfil de ${fixture.relatedProfileName}`,
+  });
+  const visibleProfileLink = await scrollPageUntilLocatorVisible(page, profileLink, {
+    timeout: 5000,
+  });
+  expect(visibleProfileLink, 'Managed Event Programação must expose its profile action.').not.toBeNull();
+
+  const eventUrl = page.url();
+  await visibleProfileLink.click();
+  await expect(page).toHaveURL(
+    new RegExp(`/parceiro/${escapeRegExp(fixture.relatedProfileSlug)}(?:[?#]|$)`),
+    { timeout: appBootTimeoutMs },
+  );
+  await page.goBack({ waitUntil: 'domcontentloaded' });
+  await assertAppBooted(page);
+  expect(page.url(), 'Browser Back must restore the originating Event detail.').toBe(eventUrl);
+  await expect(
+    page.getByText('Programação', { exact: true }).last(),
+    'Browser Back must restore the selected Programação content.',
+  ).toBeVisible();
+  await expect(
+    page.getByRole('button', {
+      name: `Abrir perfil de ${fixture.relatedProfileName}`,
+    }),
+    'Browser Back must restore the Programação profile chip.',
+  ).toBeVisible();
+
+  const summary = summarizeCriticalBrowserFailures(collectors);
+  expect(summary.runtimeErrors, `Unexpected runtime errors:\n${summary.runtimeErrors.join('\n')}`).toEqual([]);
+  expect(summary.criticalConsoleErrors, `Critical console errors:\n${summary.criticalConsoleErrors.join('\n')}`).toEqual([]);
+});
+
 test('@mutation tenant agenda UI state matches tenant agenda API payload', async ({ browser, request }) => {
   const { tenantUrl } = requireNavigationUrls();
   const tenantOrigin = new URL(tenantUrl).origin;
