@@ -32,7 +32,24 @@ printf '%s\n' "$*" >> "$MOCK_LOG"
 last="${!#}"
 
 if [[ "$*" == *'Tenant::query()->count'* ]]; then
-  printf '1\n'
+  case "$MOCK_MODE" in
+    tenant-count-exit)
+      printf 'tenant count query failed\n' >&2
+      exit 23
+      ;;
+    tenant-count-empty)
+      exit 0
+      ;;
+    tenant-count-nonnumeric)
+      printf 'warning: unavailable\n'
+      ;;
+    tenant-count-zero)
+      printf '0\n'
+      ;;
+    *)
+      printf '1\n'
+      ;;
+  esac
 elif [[ "$last" == 'landlord_migration_paths' ]]; then
   if [[ "$MOCK_MODE" == 'partial-landlord-paths' ]]; then
     printf '%s\n' '--path=database/migrations/landlord'
@@ -103,6 +120,15 @@ fi
 run_case landlord-exit 1 'ERROR: landlord migrations failed.'
 if grep -Fq 'php artisan tenants:artisan' "$MOCK_LOG"; then
   echo 'tenant migration ran after landlord failure' >&2
+  exit 1
+fi
+
+run_case tenant-count-exit 1 'ERROR: unable to resolve tenant count'
+run_case tenant-count-empty 1 'ERROR: invalid tenant count'
+run_case tenant-count-nonnumeric 1 'ERROR: invalid tenant count'
+run_case tenant-count-zero 0 'INFO: no tenants found; skipping tenant migrations.'
+if grep -Fq 'php artisan tenants:artisan' "$MOCK_LOG"; then
+  echo 'tenant migration ran with an explicit zero tenant count' >&2
   exit 1
 fi
 
