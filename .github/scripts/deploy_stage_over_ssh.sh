@@ -923,15 +923,23 @@ run_migrations() {
 
   # Tenant migrations should not block first deploys before initialization.
   # We detect tenant count via landlord connection and only then run tenants:artisan.
-  local tenant_count
-  tenant_count="\$(
+  local tenant_count_raw tenant_count
+  if ! tenant_count_raw="\$(
     "\${DOCKER_COMPOSE[@]}" exec -T app php -r \
       'require "vendor/autoload.php"; \$app=require "bootstrap/app.php"; \$app->make(\Illuminate\Contracts\Console\Kernel::class)->bootstrap(); echo (string) \App\Models\Landlord\Tenant::query()->count();' \
-      2>/dev/null | tr -d '\r' | tail -n 1 || true
-  )"
-  tenant_count="\$(printf '%s' "\${tenant_count}" | tr -dc '0-9')"
+      2>/dev/null | tr -d '\r'
+  )"; then
+    echo "ERROR: unable to resolve tenant count; refusing to skip tenant migrations." >&2
+    return 1
+  fi
+  tenant_count="\$(printf '%s' "\${tenant_count_raw}" | awk '{\$1=\$1; print}')"
 
-  if [[ -z "\${tenant_count}" || "\${tenant_count}" == "0" ]]; then
+  if [[ ! "\${tenant_count}" =~ ^[0-9]+$ ]]; then
+    echo "ERROR: invalid tenant count; refusing to skip tenant migrations." >&2
+    return 1
+  fi
+
+  if [[ "\${tenant_count}" == "0" ]]; then
     echo "INFO: no tenants found; skipping tenant migrations."
     return 0
   fi
