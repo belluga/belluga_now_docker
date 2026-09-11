@@ -914,6 +914,33 @@ async function createPublicEvent(
       groupPatchResponse,
       `Patch public event fixture members for ${fixture.eventTitle}`,
     );
+    const occurrence = payload?.data?.occurrences?.[0] || null;
+    const programmingResponse = await api.patch(
+      buildUrl(baseUrl, `/admin/api/v1/events/${eventId}`),
+      {
+        headers: authHeaders(token),
+        data: {
+          occurrences: [
+            {
+              occurrence_id: occurrenceId,
+              date_time_start: occurrence?.date_time_start,
+              date_time_end: occurrence?.date_time_end,
+              programming_items: [
+                {
+                  time: '18:00',
+                  title: 'Perfil relacionado',
+                  account_profile_ids: [relatedProfileId],
+                },
+              ],
+            },
+          ],
+        },
+      },
+    );
+    await fetchJson(
+      programmingResponse,
+      `Add public event fixture programming item for ${fixture.eventTitle}`,
+    );
   }
 
   return {
@@ -1414,6 +1441,15 @@ async function verifyEventFixture(
   ).toBeTruthy();
 
   const detail = await fetchPublicEventDetail(api, baseUrl, candidateSlug);
+  const programmingProfile = (detail?.programming_items?.[0]?.linked_account_profiles || [])
+    .find((profile) => profile?.id?.toString() === relatedProfileId);
+  expect(
+    programmingProfile,
+    `Public event fixture ${fixture.eventTitle} must expose its canonical related profile in programming.`,
+  ).toMatchObject({
+    can_open_public_detail: true,
+    public_detail_path: `/parceiro/${fixture.relatedProfileSlug}`,
+  });
   const detailSnapshot = findDisplaySnapshot(detail?.taxonomy_terms);
   expect(
     detailSnapshot,

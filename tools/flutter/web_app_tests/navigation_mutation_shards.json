@@ -267,8 +267,8 @@
         ]
       },
       "account-profile-event-local": {
-        "grep_extra": "EVENT-LOCAL-NAV",
-        "grep": "@readonly-fixture EVENT-LOCAL-NAV tenant Event Local profile navigation preserves history",
+        "grep_extra": "(?:EVENT-LOCAL-NAV|EVENT-PROGRAMMING-PROFILE-NAV)",
+        "grep": "@readonly-fixture EVENT-(?:LOCAL-NAV tenant Event Local|PROGRAMMING-PROFILE-NAV tenant Event Programação) profile navigation preserves history",
         "allowed_lanes": [
           "local"
         ],
@@ -276,7 +276,8 @@
           "NAV_PUBLIC_TAXONOMY_MANAGED_FIXTURE": "1"
         },
         "expected_titles": [
-          "@readonly-fixture EVENT-LOCAL-NAV tenant Event Local profile navigation preserves history"
+          "@readonly-fixture EVENT-LOCAL-NAV tenant Event Local profile navigation preserves history",
+          "@readonly-fixture EVENT-PROGRAMMING-PROFILE-NAV tenant Event Programação profile navigation preserves history"
         ]
       }
     },
