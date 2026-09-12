@@ -4543,6 +4543,9 @@ test('@mutation home favorites preserve backend order and expose event status ha
   const api = await createApiContext(baseUrl);
   let publicContext;
   let fallbackPublicContext;
+  let adminBrowser;
+  let adminContext;
+  let adminPage;
   let session = null;
   let anonymousIdentity = null;
   let fallbackOnlyIdentity = null;
@@ -4716,12 +4719,65 @@ test('@mutation home favorites preserve backend order and expose event status ha
       .toEqual(expectedIds);
     logStep('favorites', 'favorites API reached canonical order');
 
+    const settingsPath = '/admin/api/v1/settings/values/home_favorites_pinned_profile';
+    const initialPinResponse = await api.get(buildApiUrl(baseUrl, settingsPath), {
+      headers: authHeaders(session.token),
+    });
+    expect(initialPinResponse.status(), 'Pin settings read must succeed.').toBe(200);
+    const initialPin = normalizePayload(await initialPinResponse.json());
+    expect(
+      initialPin?.value?.account_profile_id ?? null,
+      'Focused runtime starts from the branding fallback and restores it on cleanup.',
+    ).toBeNull();
+
+    const adminBundle = await createFreshAuthenticatedTenantAdminPage(session);
+    adminBrowser = adminBundle.browser;
+    adminContext = adminBundle.context;
+    adminPage = adminBundle.page;
+    const adminCollectors = installFailureCollectors(adminPage);
+    const pinEditorResponse = await adminPage.goto(
+      buildApiUrl(baseUrl, '/admin/settings/home-favorites-pinned-profile'),
+      { waitUntil: 'domcontentloaded' },
+    );
+    expect(pinEditorResponse, 'Pin editor route must respond.').not.toBeNull();
+    expect(pinEditorResponse.status()).toBeLessThan(400);
+    await assertAppBooted(adminPage);
+    await enableAccessibilityIfNeeded(adminPage);
+    await expect(adminPage.getByRole('button', { name: 'Selecionar' })).toBeVisible({
+      timeout: appBootTimeoutMs,
+    });
+    await adminPage.getByRole('button', { name: 'Selecionar' }).click();
+    const candidateResponsePromise = adminPage.waitForResponse((candidate) => {
+      const url = new URL(candidate.url());
+      return candidate.request().method() === 'GET'
+        && url.pathname === '/admin/api/v1/account_profiles/candidates'
+        && url.searchParams.get('scope') === 'home_favorites_pinned_profile'
+        && url.searchParams.get('search')?.includes('lima fav live')
+        && candidate.status() === 200;
+    });
+    await fillFlutterTextField(adminPage, 'Buscar perfil', liveProfile.displayName);
+    await candidateResponsePromise;
+    await adminPage.getByText(liveProfile.displayName, { exact: true }).last().click();
+    const savePinResponsePromise = adminPage.waitForResponse((candidate) =>
+      candidate.request().method() === 'PATCH'
+        && new URL(candidate.url()).pathname === settingsPath
+        && candidate.status() === 200,
+    );
+    await adminPage.getByRole('button', { name: 'Salvar' }).click();
+    await savePinResponsePromise;
+    await assertNoBrowserFailures(adminCollectors);
+    logStep('favorites', 'tenant-admin selected and saved the pinned profile');
+
     const favoritesPayload = await fetchFavoritesForIdentity(
       api,
       baseUrl,
       anonymousIdentity.token,
     );
     const favoriteItems = normalizeList(favoritesPayload?.items);
+    expect(favoritesPayload?.pinned?.target_id?.toString()).toBe(
+      liveProfile.profileId?.toString(),
+    );
+    expect(favoriteItems.map((item) => item?.target_id?.toString())).toEqual(expectedIds);
     const liveFavoritePayload = favoriteItems.find(
       (item) => item?.target_id?.toString() === liveProfile.profileId?.toString(),
     );
@@ -4829,6 +4885,7 @@ test('@mutation home favorites preserve backend order and expose event status ha
     await ensureChipAccessible(upcomingLaterChip, 'upcoming-later favorite');
     await ensureChipAccessible(fallbackChip, 'fallback favorite');
     await expect(liveChip).toBeVisible({ timeout: appBootTimeoutMs });
+    await expect(liveChip).toHaveCount(1);
     await expect(upcomingSoonChip).toBeVisible({ timeout: appBootTimeoutMs });
     await expect(upcomingLaterChip).toBeVisible({ timeout: appBootTimeoutMs });
     await expect(fallbackChip).toHaveCount(1);
@@ -4933,6 +4990,22 @@ test('@mutation home favorites preserve backend order and expose event status ha
       .toBe(liveTargetPath);
     logStep('favorites', 'live favorite navigated to event detail');
 
+    await adminPage.getByRole('button', { name: 'Remover' }).click();
+    const clearPinResponsePromise = adminPage.waitForResponse((candidate) =>
+      candidate.request().method() === 'PATCH'
+        && new URL(candidate.url()).pathname === settingsPath
+        && candidate.status() === 200,
+    );
+    await adminPage.getByRole('button', { name: 'Salvar' }).click();
+    await clearPinResponsePromise;
+    const clearedFavoritesPayload = await fetchFavoritesForIdentity(
+      api,
+      baseUrl,
+      anonymousIdentity.token,
+    );
+    expect(clearedFavoritesPayload?.pinned ?? null).toBeNull();
+    logStep('favorites', 'tenant-admin cleared the pinned profile');
+
     fallbackOnlyIdentity = await createAnonymousIdentity(
       api,
       baseUrl,
@@ -5021,6 +5094,13 @@ test('@mutation home favorites preserve backend order and expose event status ha
     await runCleanupPreservingPrimaryError(primaryError, async () => {
       logStep('favorites', 'cleanup start');
       try {
+        if (session?.token) {
+          await api.patch(buildApiUrl(baseUrl, '/admin/api/v1/settings/values/home_favorites_pinned_profile'), {
+            headers: authHeaders(session.token),
+            data: { account_profile_id: null },
+            failOnStatusCode: false,
+          });
+        }
         await runCleanupSteps([
           ...createdFavoriteProfileIds.filter(Boolean).map((profileId) =>
             anonymousIdentity?.token
@@ -5047,6 +5127,12 @@ test('@mutation home favorites preserve backend order and expose event status ha
         ]);
         logStep('favorites', 'cleanup steps completed');
       } finally {
+        if (adminContext) {
+          await adminContext.close().catch(() => {});
+        }
+        if (adminBrowser) {
+          await adminBrowser.close().catch(() => {});
+        }
         if (fallbackPublicContext) {
           await fallbackPublicContext.close().catch(() => {});
         }
