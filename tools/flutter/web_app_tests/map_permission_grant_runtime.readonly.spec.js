@@ -86,6 +86,10 @@ function attachMapRequestCapture(page) {
   const filterResponses = [];
   const poiRequests = [];
   const poiResponses = [];
+  const nearRequests = [];
+  const nearResponses = [];
+  const lookupRequests = [];
+  const lookupResponses = [];
   const responseTimeline = [];
   const eventTimeline = [];
   let timelineSequence = 0;
@@ -100,6 +104,12 @@ function attachMapRequestCapture(page) {
     }
     if (pathname === '/api/v1/map/pois') {
       return 'map_pois';
+    }
+    if (pathname === '/api/v1/map/near') {
+      return 'map_near';
+    }
+    if (pathname === '/api/v1/map/pois/lookup') {
+      return 'map_lookup';
     }
     return null;
   };
@@ -128,6 +138,12 @@ function attachMapRequestCapture(page) {
     }
     if (kind === 'map_pois') {
       poiRequests.push(request.url());
+    }
+    if (kind === 'map_near') {
+      nearRequests.push(request.url());
+    }
+    if (kind === 'map_lookup') {
+      lookupRequests.push(request.url());
     }
   });
 
@@ -163,10 +179,13 @@ function attachMapRequestCapture(page) {
       return;
     }
 
-    const targetResponses =
-      kind === 'map_filters'
-        ? filterResponses
-        : poiResponses;
+    const targetResponses = kind === 'map_filters'
+      ? filterResponses
+      : kind === 'map_pois'
+        ? poiResponses
+        : kind === 'map_near'
+          ? nearResponses
+          : lookupResponses;
     targetResponses.push(
       (async () => {
         let bodyText = '';
@@ -186,6 +205,9 @@ function attachMapRequestCapture(page) {
             } else if (Array.isArray(normalized?.items)) {
               itemCount = normalized.items.length;
             }
+          }
+          if (kind === 'map_near') {
+            itemCount = Array.isArray(parsed?.items) ? parsed.items.length : null;
           }
         } catch (error) {
           parseError = String(error);
@@ -212,10 +234,21 @@ function attachMapRequestCapture(page) {
       filterResponses: await Promise.all(filterResponses),
       poiRequests: [...poiRequests],
       poiResponses: await Promise.all(poiResponses),
+      nearRequests: [...nearRequests],
+      nearResponses: await Promise.all(nearResponses),
+      lookupRequests: [...lookupRequests],
+      lookupResponses: await Promise.all(lookupResponses),
       responseTimeline: [...responseTimeline],
       eventTimeline: [...eventTimeline],
     }),
   };
+}
+
+function isProtectedMapKind(kind) {
+  return kind === 'map_filters'
+    || kind === 'map_pois'
+    || kind === 'map_near'
+    || kind === 'map_lookup';
 }
 
 function assertCanonicalBootstrapOrder(snapshot, contextLabel) {
@@ -225,10 +258,10 @@ function assertCanonicalBootstrapOrder(snapshot, contextLabel) {
       && (entry.status === 200 || entry.status === 201),
   );
   const firstProtectedMapRequest = snapshot.requestTimeline.find(
-    (entry) => entry.kind === 'map_filters' || entry.kind === 'map_pois',
+    (entry) => isProtectedMapKind(entry.kind),
   );
   const firstProtectedMapResponse = snapshot.responseTimeline.find(
-    (entry) => entry.kind === 'map_filters' || entry.kind === 'map_pois',
+    (entry) => isProtectedMapKind(entry.kind),
   );
 
   expect(
@@ -246,7 +279,7 @@ function assertCanonicalBootstrapOrder(snapshot, contextLabel) {
   expect(
     snapshot.requestTimeline.filter(
       (entry) =>
-        (entry.kind === 'map_filters' || entry.kind === 'map_pois')
+        isProtectedMapKind(entry.kind)
         && entry.seq < successfulAnonymousBootstrap.seq,
     ),
     `${contextLabel} must not issue protected map requests before anonymous bootstrap succeeds. Event timeline:\n${JSON.stringify(snapshot.eventTimeline, null, 2)}`,
@@ -261,17 +294,10 @@ function assertCanonicalBootstrapOrder(snapshot, contextLabel) {
 function assertCanonicalMapSnapshot(snapshot, contextLabel) {
   assertCanonicalBootstrapOrder(snapshot, contextLabel);
 
-  const successfulFilterResponse = snapshot.filterResponses.find(
-    (entry) => entry.status >= 200 && entry.status < 300,
-  );
   expect(
-    successfulFilterResponse,
-    `${contextLabel} must produce a successful map filters response. Responses:\n${JSON.stringify(snapshot.filterResponses, null, 2)}`,
-  ).toBeTruthy();
-  expect(
-    successfulFilterResponse.parseError,
-    `${contextLabel} must keep the first successful map filters response JSON-decodable. Response:\n${JSON.stringify(successfulFilterResponse, null, 2)}`,
-  ).toBeNull();
+    snapshot.filterRequests,
+    `${contextLabel} must consume the environment catalog without /map/filters.`,
+  ).toEqual([]);
 
   const successfulPoiResponse = snapshot.poiResponses.find(
     (entry) => entry.status >= 200 && entry.status < 300,
@@ -290,10 +316,18 @@ function assertCanonicalMapSnapshot(snapshot, contextLabel) {
   const firstPoiRequestUrl = new URL(firstPoiRequest);
   const originLat = firstPoiRequestUrl.searchParams.get('origin_lat');
   const originLng = firstPoiRequestUrl.searchParams.get('origin_lng');
+  const maxDistanceMeters = firstPoiRequestUrl.searchParams.get('max_distance_meters');
+  for (const key of ['ne_lat', 'ne_lng', 'sw_lat', 'sw_lng']) {
+    const value = firstPoiRequestUrl.searchParams.get(key);
+    expect(value, `First POI request must include ${key}. URL: ${firstPoiRequest}`).toBeTruthy();
+    expect(Number(value), `First POI request ${key} must be numeric.`).not.toBeNaN();
+  }
   expect(originLat, `First POI request must include origin_lat. URL: ${firstPoiRequest}`).toBeTruthy();
   expect(originLng, `First POI request must include origin_lng. URL: ${firstPoiRequest}`).toBeTruthy();
+  expect(maxDistanceMeters, `First POI request must include max_distance_meters. URL: ${firstPoiRequest}`).toBeTruthy();
   expect(Number(originLat), 'First POI request origin_lat must be numeric.').not.toBeNaN();
   expect(Number(originLng), 'First POI request origin_lng must be numeric.').not.toBeNaN();
+  expect(Number(maxDistanceMeters), 'First POI request radius must be positive.').toBeGreaterThan(0);
 }
 
 function assertNoCriticalBrowserFailures(collectors, contextLabel) {
@@ -315,17 +349,14 @@ async function waitForCanonicalMapResponses(mapCapture, contextLabel) {
     .poll(
       async () => {
         const snapshot = await mapCapture.snapshot();
-        const hasSuccessfulFilters = snapshot.filterResponses.some(
-          (entry) => entry.status >= 200 && entry.status < 300,
-        );
         const hasSuccessfulPois = snapshot.poiResponses.some(
           (entry) => entry.status >= 200 && entry.status < 300,
         );
-        return hasSuccessfulFilters && hasSuccessfulPois;
+        return hasSuccessfulPois;
       },
       {
         timeout: appBootTimeoutMs,
-        message: `${contextLabel} must observe successful map filters and POI responses before snapshotting.`,
+        message: `${contextLabel} must observe a successful viewport POI response before snapshotting.`,
       },
     )
     .toBe(true);
