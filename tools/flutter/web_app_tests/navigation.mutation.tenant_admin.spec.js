@@ -2211,11 +2211,11 @@ async function createAccountProfileForType(
   api,
   baseUrl,
   token,
-  { name, profileType },
+  { name, profileType, ownershipState = 'unmanaged' },
 ) {
   const payload = {
     name,
-    ownership_state: 'unmanaged',
+    ownership_state: ownershipState,
     profile_type: profileType.type,
   };
 
@@ -4609,6 +4609,7 @@ test('@mutation home favorites preserve backend order and expose event status ha
       {
         name: `Lima Fav Live ${unique}`,
         profileType: createdProfileType,
+        ownershipState: 'tenant_owned',
       },
     );
     const upcomingSoonProfile = await createPublicAccountProfileForType(
