@@ -2255,13 +2255,13 @@ async function createPublicAccountProfileForType(
   api,
   baseUrl,
   token,
-  { name, profileType },
+  { name, profileType, ownershipState = 'unmanaged' },
 ) {
   const created = await createAccountProfileForType(
     api,
     baseUrl,
     token,
-    { name, profileType },
+    { name, profileType, ownershipState },
   );
   await publishAccount(api, baseUrl, token, created.accountSlug);
   return created;
