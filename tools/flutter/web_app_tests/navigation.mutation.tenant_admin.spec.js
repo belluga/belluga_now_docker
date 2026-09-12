@@ -4753,7 +4753,7 @@ test('@mutation home favorites preserve backend order and expose event status ha
       return candidate.request().method() === 'GET'
         && url.pathname === '/admin/api/v1/account_profiles/candidates'
         && url.searchParams.get('scope') === 'home_favorites_pinned_profile'
-        && url.searchParams.get('search')?.includes('lima fav live')
+        && url.searchParams.get('search')?.toLowerCase().includes('lima fav live')
         && candidate.status() === 200;
     });
     await fillFlutterTextField(adminPage, 'Buscar perfil', liveProfile.displayName);
