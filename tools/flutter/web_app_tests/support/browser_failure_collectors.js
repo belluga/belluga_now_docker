@@ -53,6 +53,16 @@ const CONSOLE_ERR_FAILED_TEXT = 'Failed to load resource: net::ERR_FAILED';
 const CONSOLE_NOT_FOUND_PREFIX =
   'Failed to load resource: the server responded with a status of 404';
 const DEFAULT_ALLOWED_RESPONSE_STATUSES = [];
+const DEFAULT_ALLOWED_RATE_LIMITED_RESPONSE_SUBSTRINGS = [
+  '.ingest.sentry.io/',
+];
+
+function mergeAllowedRateLimitedResponseSubstrings(extraAllowedSubstrings = []) {
+  return [
+    ...DEFAULT_ALLOWED_RATE_LIMITED_RESPONSE_SUBSTRINGS,
+    ...(extraAllowedSubstrings || []),
+  ].filter((value) => typeof value === 'string' && value.trim().length > 0);
+}
 
 function extractUrlPath(url) {
   if (typeof url !== 'string' || url.length === 0) {
@@ -286,6 +296,9 @@ function summarizeCriticalConsoleErrors(
   const ignoredFailedRequests = collectors.ignoredFailedRequests || [];
   const mediaErrorResponses = collectors.mediaErrorResponses || [];
   const rateLimitedResponses = collectors.rateLimitedResponses || [];
+  const allowedRateLimitSubstrings = mergeAllowedRateLimitedResponseSubstrings(
+    allowedRateLimitedResponseSubstrings,
+  );
 
   return consoleErrors.filter((text, index) => {
     const locationUrl = consoleErrorUrls[index] || '';
@@ -306,7 +319,7 @@ function summarizeCriticalConsoleErrors(
       const matchesAllowlistedRateLimit = rateLimitedResponses.some(
         (entry) =>
           entry.includes(locationUrl) &&
-          allowedRateLimitedResponseSubstrings.some(
+          allowedRateLimitSubstrings.some(
             (allowed) => entry.includes(allowed) || locationUrl.includes(allowed),
           ),
       );
@@ -369,8 +382,8 @@ function summarizeDisallowedRateLimitedResponses(
   collectors,
   { allowedRateLimitedResponseSubstrings = [] } = {},
 ) {
-  const allowedSubstrings = (allowedRateLimitedResponseSubstrings || []).filter(
-    (value) => typeof value === 'string' && value.trim().length > 0,
+  const allowedSubstrings = mergeAllowedRateLimitedResponseSubstrings(
+    allowedRateLimitedResponseSubstrings,
   );
   const rateLimitedResponses = collectors.rateLimitedResponses || [];
   return rateLimitedResponses.filter(

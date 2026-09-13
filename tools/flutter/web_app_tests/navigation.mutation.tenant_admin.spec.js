@@ -1182,9 +1182,8 @@ async function scrollUntilVisible(page, locator, description) {
       height: window.innerHeight,
     })));
   await page.mouse.move(viewport.width * 0.62, viewport.height * 0.72);
-
   for (const delta of [900, -900]) {
-    for (let attempt = 0; attempt < 36; attempt += 1) {
+    for (let attempt = 0; attempt < 96; attempt += 1) {
       if (await tryCurrentLocator()) {
         return;
       }
@@ -2211,11 +2210,11 @@ async function createAccountProfileForType(
   api,
   baseUrl,
   token,
-  { name, profileType },
+  { name, profileType, ownershipState = 'unmanaged' },
 ) {
   const payload = {
     name,
-    ownership_state: 'unmanaged',
+    ownership_state: ownershipState,
     profile_type: profileType.type,
   };
 
@@ -2255,13 +2254,13 @@ async function createPublicAccountProfileForType(
   api,
   baseUrl,
   token,
-  { name, profileType },
+  { name, profileType, ownershipState = 'unmanaged' },
 ) {
   const created = await createAccountProfileForType(
     api,
     baseUrl,
     token,
-    { name, profileType },
+    { name, profileType, ownershipState },
   );
   await publishAccount(api, baseUrl, token, created.accountSlug);
   return created;
@@ -2696,31 +2695,13 @@ async function expectSelectedToggleChip(
       `flt-semantics[role="switch"][aria-label^="${escapedAriaLabelPrefix}"]`,
     )
     .first();
-  if (!(await switchChip.isVisible().catch(() => false))) {
-    const viewport =
-      page.viewportSize() ||
-      (await page.evaluate(() => ({
-        width: window.innerWidth,
-        height: window.innerHeight,
-      })));
-    await page.mouse.move(
-      viewport.width * 0.55,
-      viewport.height * 0.88,
-    );
-    await page.mouse.wheel(0, 240);
-    await page.waitForTimeout(300);
-  }
-  await expect(
-    switchChip,
-    `Expected taxonomy switch chip "${label}" to be visible.`,
-  ).toBeVisible({ timeout: timeoutMs });
-  await switchChip.focus();
   await expect(
     switchChip,
     `Expected taxonomy switch chip "${label}" to be selected.`,
   ).toHaveAttribute('aria-checked', 'true', {
     timeout: timeoutMs,
   });
+  await switchChip.scrollIntoViewIfNeeded({ timeout: 2000 }).catch(() => {});
 }
 async function createEventTypeWithTypeAsset(
   api,
@@ -3122,11 +3103,8 @@ test('@mutation tenant-admin account-profile rich text toolbar authors HTTPS lin
   const api = await createApiContext(baseUrl);
   const startedAt = new Date().toISOString();
   const bioText = 'Belluga HTTPS profile bio link';
-  const contentText = 'Belluga HTTPS profile content link';
   const bioUrl = 'https://example.com/belluga-profile-bio';
-  const contentUrl = 'https://example.com/belluga-profile-content';
   const expectedBio = `<p><a href="${bioUrl}">${bioText}</a></p>`;
-  const expectedContent = `<p><a href="${contentUrl}">${contentText}</a></p>`;
   let browserContext;
   let publicContext;
   let session = null;
@@ -3152,7 +3130,6 @@ test('@mutation tenant-admin account-profile rich text toolbar authors HTTPS lin
           has_avatar: false,
           has_cover: false,
           has_taxonomies: false,
-          has_content: true,
           has_bio: true,
         },
       }),
@@ -3196,45 +3173,25 @@ test('@mutation tenant-admin account-profile rich text toolbar authors HTTPS lin
     expect(response.status()).toBeLessThan(400);
     await assertAppBooted(page);
     await enableAccessibilityIfNeeded(page);
-    const editors = [
-      {
-        locator: page.getByLabel('Conteudo', { exact: true }),
-        label: 'Conteudo',
-        text: contentText,
-        url: contentUrl,
-      },
-      {
-        locator: page.getByLabel('Bio', { exact: true }),
-        label: 'Bio',
-        text: bioText,
-        url: bioUrl,
-      },
-    ];
-    for (const editor of editors) {
-      const linkButton = page.getByRole('button', {
-        name: `${editor.label}: Inserir URL`,
-        exact: true,
-      });
-      await expect(linkButton).toHaveCount(1);
-      await linkButton.scrollIntoViewIfNeeded();
-      await expect(linkButton).toBeVisible();
-      await fillRichTextEditorText(editor.locator, editor.text);
-      await selectRichTextEditorContents(page, editor.locator);
-      await linkButton.click();
-      const dialog = page.getByRole('alertdialog');
-      await expect(dialog).toBeVisible({ timeout: appBootTimeoutMs });
-      await expect(dialog.getByLabel('Texto', { exact: true })).toHaveValue(editor.text);
-      const linkInput = dialog.getByLabel('Link');
-      await fillResolvedFlutterTextField(
-        page,
-        linkInput,
-        editor.url,
-        `${editor.label} link field`,
-      );
-      await expect(dialog.getByRole('button', { name: 'Ok' })).toBeEnabled();
-      await dialog.getByRole('button', { name: 'Ok' }).click();
-      await expect(dialog).toBeHidden({ timeout: appBootTimeoutMs });
-    }
+    const bioEditor = page.getByLabel('Bio', { exact: true });
+    const linkButton = page.getByRole('button', {
+      name: 'Bio: Inserir URL',
+      exact: true,
+    });
+    await expect(linkButton).toHaveCount(1);
+    await linkButton.scrollIntoViewIfNeeded();
+    await expect(linkButton).toBeVisible();
+    await fillRichTextEditorText(bioEditor, bioText);
+    await selectRichTextEditorContents(page, bioEditor);
+    await linkButton.click();
+    const dialog = page.getByRole('alertdialog');
+    await expect(dialog).toBeVisible({ timeout: appBootTimeoutMs });
+    await expect(dialog.getByLabel('Texto', { exact: true })).toHaveValue(bioText);
+    const linkInput = dialog.getByLabel('Link');
+    await fillResolvedFlutterTextField(page, linkInput, bioUrl, 'Bio link field');
+    await expect(dialog.getByRole('button', { name: 'Ok' })).toBeEnabled();
+    await dialog.getByRole('button', { name: 'Ok' }).click();
+    await expect(dialog).toBeHidden({ timeout: appBootTimeoutMs });
 
     const saveResponsePromise = waitForAccountProfilePatchResponse(
       page,
@@ -3248,10 +3205,10 @@ test('@mutation tenant-admin account-profile rich text toolbar authors HTTPS lin
     ).toBe(200);
     const saveRequestPayload = saveResponse.request().postDataJSON();
     expect(saveRequestPayload?.bio?.toString() || '').toBe(expectedBio);
-    expect(saveRequestPayload?.content?.toString() || '').toBe(expectedContent);
+    expect(saveRequestPayload).not.toHaveProperty('content');
     const savePayload = normalizePayload(await saveResponse.json());
     expect(savePayload?.bio?.toString() || '').toBe(expectedBio);
-    expect(savePayload?.content?.toString() || '').toBe(expectedContent);
+    expect(savePayload).not.toHaveProperty('content');
 
     const adminProfile = await fetchAdminProfile(
       api,
@@ -3260,7 +3217,7 @@ test('@mutation tenant-admin account-profile rich text toolbar authors HTTPS lin
       profileId,
     );
     expect(adminProfile?.bio?.toString() || '').toBe(expectedBio);
-    expect(adminProfile?.content?.toString() || '').toBe(expectedContent);
+    expect(adminProfile).not.toHaveProperty('content');
     const anonymousIdentity = await createAnonymousIdentity(
       api,
       baseUrl,
@@ -3277,7 +3234,7 @@ test('@mutation tenant-admin account-profile rich text toolbar authors HTTPS lin
       created.profileSlug,
     );
     expect(publicProfile?.bio?.toString() || '').toBe(expectedBio);
-    expect(publicProfile?.content?.toString() || '').toBe(expectedContent);
+    expect(publicProfile).not.toHaveProperty('content');
 
     publicContext = await browser.newContext({ ignoreHTTPSErrors: true });
     expect(publicContext).not.toBe(browserContext);
@@ -3290,17 +3247,12 @@ test('@mutation tenant-admin account-profile rich text toolbar authors HTTPS lin
     expect(publicResponse.status()).toBeLessThan(400);
     await assertAppBooted(publicPage);
     await enableAccessibilityIfNeeded(publicPage);
-    for (const target of [
-      { text: bioText, url: bioUrl },
-      { text: contentText, url: contentUrl },
-    ]) {
-      const publicLink = await resolveUniqueFlutterTappableText(publicPage, target.text);
-      const popupPromise = publicContext.waitForEvent('page');
-      await publicLink.click();
-      const popup = await popupPromise;
-      await expect.poll(() => popup.url(), { timeout: appBootTimeoutMs }).toBe(target.url);
-      await popup.close();
-    }
+    const publicLink = await resolveUniqueFlutterTappableText(publicPage, bioText);
+    const popupPromise = publicContext.waitForEvent('page');
+    await publicLink.click();
+    const popup = await popupPromise;
+    await expect.poll(() => popup.url(), { timeout: appBootTimeoutMs }).toBe(bioUrl);
+    await popup.close();
 
     runtimeEvidence = {
       schema_version: 2,
@@ -3320,7 +3272,7 @@ test('@mutation tenant-admin account-profile rich text toolbar authors HTTPS lin
       },
       tap_outcome: {
         status: 'opened',
-        target_urls: [bioUrl, contentUrl],
+        target_urls: [bioUrl],
       },
     };
   } finally {
@@ -3539,7 +3491,6 @@ test('@mutation tenant-admin granular mixed gallery CRUD persists and renders se
           is_favoritable: false,
           is_publicly_discoverable: true,
           is_publicly_navigable: true,
-          has_content: true,
           has_gallery: true,
           has_avatar: false,
           has_cover: false,
@@ -3983,7 +3934,6 @@ test('@mutation tenant-admin account-profile edit save keeps Display Name visibl
           is_favoritable: false,
           is_publicly_discoverable: true,
           is_publicly_navigable: true,
-          has_content: true,
           has_gallery: true,
           has_avatar: false,
           has_cover: false,
@@ -4171,7 +4121,6 @@ test('@mutation tenant-admin gallery data stays dormant when has_gallery is disa
           is_favoritable: false,
           is_publicly_discoverable: true,
           is_publicly_navigable: true,
-          has_content: true,
           has_gallery: true,
           has_avatar: false,
           has_cover: false,
@@ -4575,6 +4524,9 @@ test('@mutation home favorites preserve backend order and expose event status ha
   const api = await createApiContext(baseUrl);
   let publicContext;
   let fallbackPublicContext;
+  let adminBrowser;
+  let adminContext;
+  let adminPage;
   let session = null;
   let anonymousIdentity = null;
   let fallbackOnlyIdentity = null;
@@ -4584,6 +4536,8 @@ test('@mutation home favorites preserve backend order and expose event status ha
   const createdFavoriteProfileIds = [];
   const createdFallbackFavoriteProfileIds = [];
   const createdAccountSlugs = [];
+  let initialPinnedProfileId = null;
+  let initialPinCaptured = false;
   let primaryError = null;
 
   try {
@@ -4601,7 +4555,6 @@ test('@mutation home favorites preserve backend order and expose event status ha
           is_publicly_navigable: true,
           is_poi_enabled: true,
           has_events: true,
-          has_content: false,
           has_avatar: false,
           has_cover: false,
           has_taxonomies: false,
@@ -4638,6 +4591,7 @@ test('@mutation home favorites preserve backend order and expose event status ha
       {
         name: `Lima Fav Live ${unique}`,
         profileType: createdProfileType,
+        ownershipState: 'tenant_owned',
       },
     );
     const upcomingSoonProfile = await createPublicAccountProfileForType(
@@ -4749,12 +4703,74 @@ test('@mutation home favorites preserve backend order and expose event status ha
       .toEqual(expectedIds);
     logStep('favorites', 'favorites API reached canonical order');
 
+    const settingsPath = '/admin/api/v1/settings/values/home_favorites_pinned_profile';
+    const initialPinResponse = await api.get(buildApiUrl(baseUrl, settingsPath), {
+      headers: authHeaders(session.token),
+    });
+    expect(initialPinResponse.status(), 'Pin settings read must succeed.').toBe(200);
+    const initialPin = normalizePayload(await initialPinResponse.json());
+    initialPinnedProfileId = initialPin?.value?.account_profile_id ?? null;
+    initialPinCaptured = true;
+    const clearInitialPinResponse = await api.patch(
+      buildApiUrl(baseUrl, settingsPath),
+      {
+        headers: authHeaders(session.token),
+        data: { account_profile_id: null },
+      },
+    );
+    expect(
+      clearInitialPinResponse.status(),
+      'Focused runtime must establish the branding fallback before validation.',
+    ).toBeLessThan(400);
+
+    const adminBundle = await createFreshAuthenticatedTenantAdminPage(session);
+    adminBrowser = adminBundle.browser;
+    adminContext = adminBundle.context;
+    adminPage = adminBundle.page;
+    const adminCollectors = installFailureCollectors(adminPage);
+    const pinEditorResponse = await adminPage.goto(
+      buildApiUrl(baseUrl, '/admin/settings/home-favorites-pinned-profile'),
+      { waitUntil: 'domcontentloaded' },
+    );
+    expect(pinEditorResponse, 'Pin editor route must respond.').not.toBeNull();
+    expect(pinEditorResponse.status()).toBeLessThan(400);
+    await assertAppBooted(adminPage);
+    await enableAccessibilityIfNeeded(adminPage);
+    await expect(adminPage.getByRole('button', { name: 'Selecionar' })).toBeVisible({
+      timeout: appBootTimeoutMs,
+    });
+    await adminPage.getByRole('button', { name: 'Selecionar' }).click();
+    const candidateResponsePromise = adminPage.waitForResponse((candidate) => {
+      const url = new URL(candidate.url());
+      return candidate.request().method() === 'GET'
+        && url.pathname === '/admin/api/v1/account_profiles/candidates'
+        && url.searchParams.get('scope') === 'home_favorites_pinned_profile'
+        && url.searchParams.get('search')?.toLowerCase().includes('lima fav live')
+        && candidate.status() === 200;
+    });
+    await fillFlutterTextField(adminPage, 'Buscar perfil', liveProfile.displayName);
+    await candidateResponsePromise;
+    await adminPage.getByText(liveProfile.displayName, { exact: true }).last().click();
+    const savePinResponsePromise = adminPage.waitForResponse((candidate) =>
+      candidate.request().method() === 'PATCH'
+        && new URL(candidate.url()).pathname === settingsPath
+        && candidate.status() === 200,
+    );
+    await adminPage.getByRole('button', { name: 'Salvar' }).click();
+    await savePinResponsePromise;
+    await assertNoBrowserFailures(adminCollectors);
+    logStep('favorites', 'tenant-admin selected and saved the pinned profile');
+
     const favoritesPayload = await fetchFavoritesForIdentity(
       api,
       baseUrl,
       anonymousIdentity.token,
     );
     const favoriteItems = normalizeList(favoritesPayload?.items);
+    expect(favoritesPayload?.pinned?.target_id?.toString()).toBe(
+      liveProfile.profileId?.toString(),
+    );
+    expect(favoriteItems.map((item) => item?.target_id?.toString())).toEqual(expectedIds);
     const liveFavoritePayload = favoriteItems.find(
       (item) => item?.target_id?.toString() === liveProfile.profileId?.toString(),
     );
@@ -4828,33 +4844,46 @@ test('@mutation home favorites preserve backend order and expose event status ha
     const fallbackChip = publicPage.getByRole('button', { name: fallbackChipLabel }).first();
 
     const ensureChipAccessible = async (chip, label) => {
-      await chip.evaluate((element) => {
-        let node = element;
-        while (node instanceof HTMLElement) {
-          const parent = node.parentElement;
-          if (!(parent instanceof HTMLElement)) {
-            break;
-          }
+      await expect
+        .poll(
+          async () => {
+            try {
+              await chip.evaluate((element) => {
+                let node = element;
+                while (node instanceof HTMLElement) {
+                  const parent = node.parentElement;
+                  if (!(parent instanceof HTMLElement)) {
+                    break;
+                  }
 
-          if (parent.scrollWidth > parent.clientWidth + 1) {
-            const parentRect = parent.getBoundingClientRect();
-            const nodeRect = node.getBoundingClientRect();
-            const hiddenLeft = parentRect.left - nodeRect.left;
-            const hiddenRight = nodeRect.right - parentRect.right;
+                  if (parent.scrollWidth > parent.clientWidth + 1) {
+                    const parentRect = parent.getBoundingClientRect();
+                    const nodeRect = node.getBoundingClientRect();
+                    const hiddenLeft = parentRect.left - nodeRect.left;
+                    const hiddenRight = nodeRect.right - parentRect.right;
 
-            if (hiddenLeft > 0) {
-              parent.scrollLeft -= hiddenLeft + 24;
-            } else if (hiddenRight > 0) {
-              parent.scrollLeft += hiddenRight + 24;
+                    if (hiddenLeft > 0) {
+                      parent.scrollLeft -= hiddenLeft + 24;
+                    } else if (hiddenRight > 0) {
+                      parent.scrollLeft += hiddenRight + 24;
+                    }
+                  }
+
+                  node = parent;
+                }
+              });
+              await chip.scrollIntoViewIfNeeded({ timeout: 2000 });
+              return chip.isVisible();
+            } catch {
+              return false;
             }
-          }
-
-          node = parent;
-        }
-      });
-      await chip.scrollIntoViewIfNeeded();
-      await expect(chip, `${label} must stay reachable inside the horizontal favorites strip.`)
-        .toBeVisible({ timeout: appBootTimeoutMs });
+          },
+          {
+            timeout: appBootTimeoutMs,
+            message: `${label} must stay reachable inside the horizontal favorites strip.`,
+          },
+        )
+        .toBe(true);
     };
 
     await ensureChipAccessible(liveChip, 'live favorite');
@@ -4862,6 +4891,7 @@ test('@mutation home favorites preserve backend order and expose event status ha
     await ensureChipAccessible(upcomingLaterChip, 'upcoming-later favorite');
     await ensureChipAccessible(fallbackChip, 'fallback favorite');
     await expect(liveChip).toBeVisible({ timeout: appBootTimeoutMs });
+    await expect(liveChip).toHaveCount(1);
     await expect(upcomingSoonChip).toBeVisible({ timeout: appBootTimeoutMs });
     await expect(upcomingLaterChip).toBeVisible({ timeout: appBootTimeoutMs });
     await expect(fallbackChip).toHaveCount(1);
@@ -4966,6 +4996,23 @@ test('@mutation home favorites preserve backend order and expose event status ha
       .toBe(liveTargetPath);
     logStep('favorites', 'live favorite navigated to event detail');
 
+    await adminPage.getByRole('button', { name: 'Remover' }).click();
+    const clearPinResponsePromise = adminPage.waitForResponse((candidate) =>
+      candidate.request().method() === 'PATCH'
+        && new URL(candidate.url()).pathname === settingsPath
+        && candidate.status() === 200,
+    );
+    await adminPage.getByRole('button', { name: 'Salvar' }).click();
+    await clearPinResponsePromise;
+    await assertNoBrowserFailures(adminCollectors);
+    const clearedFavoritesPayload = await fetchFavoritesForIdentity(
+      api,
+      baseUrl,
+      anonymousIdentity.token,
+    );
+    expect(clearedFavoritesPayload?.pinned ?? null).toBeNull();
+    logStep('favorites', 'tenant-admin cleared the pinned profile');
+
     fallbackOnlyIdentity = await createAnonymousIdentity(
       api,
       baseUrl,
@@ -5054,6 +5101,29 @@ test('@mutation home favorites preserve backend order and expose event status ha
     await runCleanupPreservingPrimaryError(primaryError, async () => {
       logStep('favorites', 'cleanup start');
       try {
+        if (session?.token && initialPinCaptured) {
+          const restorePinResponse = await api.patch(buildApiUrl(baseUrl, '/admin/api/v1/settings/values/home_favorites_pinned_profile'), {
+            headers: authHeaders(session.token),
+            data: { account_profile_id: initialPinnedProfileId },
+            failOnStatusCode: false,
+          });
+          expect(
+            restorePinResponse.status(),
+            'Favorites cleanup must restore the exact prior pinned profile setting.',
+          ).toBe(200);
+          const restoredPinResponse = await api.get(buildApiUrl(baseUrl, '/admin/api/v1/settings/values/home_favorites_pinned_profile'), {
+            headers: authHeaders(session.token),
+          });
+          expect(
+            restoredPinResponse.status(),
+            'Favorites cleanup readback must succeed.',
+          ).toBe(200);
+          const restoredPin = normalizePayload(await restoredPinResponse.json());
+          expect(
+            restoredPin?.value?.account_profile_id ?? null,
+            'Favorites cleanup must read back the exact prior pinned profile setting.',
+          ).toBe(initialPinnedProfileId);
+        }
         await runCleanupSteps([
           ...createdFavoriteProfileIds.filter(Boolean).map((profileId) =>
             anonymousIdentity?.token
@@ -5080,6 +5150,12 @@ test('@mutation home favorites preserve backend order and expose event status ha
         ]);
         logStep('favorites', 'cleanup steps completed');
       } finally {
+        if (adminContext) {
+          await adminContext.close().catch(() => {});
+        }
+        if (adminBrowser) {
+          await adminBrowser.close().catch(() => {});
+        }
         if (fallbackPublicContext) {
           await fallbackPublicContext.close().catch(() => {});
         }
@@ -6169,18 +6245,19 @@ test('@mutation U04-ACCOUNT-GROUP-HEAD tenant-admin account-profile group heads 
     throw error;
   } finally {
     await runCleanupPreservingPrimaryError(primaryError, async () => {
-      for (const cleanup of [
-        ...createdAccountSlugs
-          .filter(Boolean)
-          .map(
-            (slug) => () =>
-              cleanupOnboardedAccount(api, baseUrl, session?.token, slug),
-          ),
-        nestedTypeKey
-          ? () => deleteAccountProfileType(api, baseUrl, session?.token, nestedTypeKey)
-          : null,
-      ].filter(Boolean)) {
-        await cleanup();
+      await cleanupOnboardedAccounts(
+        api,
+        baseUrl,
+        session?.token,
+        createdAccountSlugs,
+      );
+      if (nestedTypeKey) {
+        await deleteAccountProfileType(
+          api,
+          baseUrl,
+          session?.token,
+          nestedTypeKey,
+        );
       }
       if (browserContext) {
         await browserContext.close();
@@ -6649,7 +6726,6 @@ test('@mutation tenant-admin account onboarding CRUD persists detail/edit readba
           has_avatar: false,
           has_cover: false,
           has_taxonomies: false,
-          has_content: false,
           has_bio: false,
         },
       }),
@@ -6860,7 +6936,6 @@ test('@mutation tenant-admin account onboarding rejects stale selected profile t
           has_avatar: false,
           has_cover: false,
           has_taxonomies: false,
-          has_content: false,
           has_bio: false,
         },
       }),

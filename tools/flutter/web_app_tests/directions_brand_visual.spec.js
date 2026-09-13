@@ -369,7 +369,6 @@ async function createDirectionsProfileType(api, baseUrl, token) {
           is_reference_location_enabled: true,
           has_taxonomies: false,
           has_bio: false,
-          has_content: false,
           has_avatar: false,
           has_cover: false,
           has_events: true,
