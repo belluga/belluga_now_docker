@@ -98,6 +98,24 @@ function installReadonlyCollectors(page) {
   return { ...collectors, mutatingApiRequests };
 }
 
+function assertOnlyAnonymousIdentityBootstrapMutation(collectors, flowLabel) {
+  const unexpectedMutations = collectors.mutatingApiRequests.filter((sample) => {
+    const separator = sample.indexOf(' ');
+    if (separator < 0 || sample.slice(0, separator) !== 'POST') {
+      return true;
+    }
+    try {
+      return new URL(sample.slice(separator + 1)).pathname !== '/api/v1/anonymous/identities';
+    } catch (_) {
+      return true;
+    }
+  });
+  expect(
+    unexpectedMutations,
+    `${flowLabel} must not issue mutations beyond anonymous identity bootstrap:\n${unexpectedMutations.join('\n')}`,
+  ).toEqual([]);
+}
+
 function assertNoBrowserFailures(collectors) {
   const summary = summarizeCriticalBrowserFailures(collectors);
   expect(summary.runtimeErrors, `Unexpected runtime errors:\n${summary.runtimeErrors.join('\n')}`).toEqual([]);
@@ -562,7 +580,7 @@ test('@readonly tenant domain bootstraps as tenant and navigates to tenant route
 
 test('@readonly-fixture EVENT-LOCAL-NAV tenant Event Local profile navigation preserves history', async ({ page, request }) => {
   const { tenantUrl } = requireNavigationUrls();
-  const collectors = installFailureCollectors(page);
+  const collectors = installReadonlyCollectors(page);
   expect(
     managedFixtureEnabled,
     'EVENT-LOCAL-NAV requires the canonical managed public fixture.',
@@ -616,11 +634,12 @@ test('@readonly-fixture EVENT-LOCAL-NAV tenant Event Local profile navigation pr
   ).toBeVisible();
 
   assertNoBrowserFailures(collectors);
+  assertOnlyAnonymousIdentityBootstrapMutation(collectors, 'Readonly Event Local navigation');
 });
 
 test('@readonly-fixture EVENT-PROGRAMMING-PROFILE-NAV tenant Event Programação profile navigation preserves history', async ({ page, request }) => {
   const { tenantUrl } = requireNavigationUrls();
-  const collectors = installFailureCollectors(page);
+  const collectors = installReadonlyCollectors(page);
   expect(
     managedFixtureEnabled,
     'EVENT-PROGRAMMING-PROFILE-NAV requires the canonical managed public fixture.',
@@ -676,6 +695,10 @@ test('@readonly-fixture EVENT-PROGRAMMING-PROFILE-NAV tenant Event Programação
   ).toBeVisible();
 
   assertNoBrowserFailures(collectors);
+  assertOnlyAnonymousIdentityBootstrapMutation(
+    collectors,
+    'Readonly Event Programação navigation',
+  );
 });
 
 test('@mutation tenant agenda UI state matches tenant agenda API payload', async ({ browser, request }) => {
