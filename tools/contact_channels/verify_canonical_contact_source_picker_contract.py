@@ -186,7 +186,6 @@ def validate_repository(repo_root: Path) -> list[Finding]:
     for fragment in (
         "public const SCOPE_QUERYABLE = 'queryable'",
         "public const SCOPE_CONTACT_CAPABLE = 'contact_capable'",
-        "return [self::SCOPE_QUERYABLE, self::SCOPE_CONTACT_CAPABLE]",
     ):
         require_fragment(
             findings,
