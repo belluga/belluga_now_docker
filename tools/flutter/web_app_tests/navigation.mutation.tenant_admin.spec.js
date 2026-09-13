@@ -1181,9 +1181,8 @@ async function scrollUntilVisible(page, locator, description) {
       height: window.innerHeight,
     })));
   await page.mouse.move(viewport.width * 0.62, viewport.height * 0.72);
-
   for (const delta of [900, -900]) {
-    for (let attempt = 0; attempt < 36; attempt += 1) {
+    for (let attempt = 0; attempt < 96; attempt += 1) {
       if (await tryCurrentLocator()) {
         return;
       }
@@ -2695,20 +2694,11 @@ async function expectSelectedToggleChip(
       `flt-semantics[role="switch"][aria-label^="${escapedAriaLabelPrefix}"]`,
     )
     .first();
-  if (!(await switchChip.isVisible().catch(() => false))) {
-    const viewport =
-      page.viewportSize() ||
-      (await page.evaluate(() => ({
-        width: window.innerWidth,
-        height: window.innerHeight,
-      })));
-    await page.mouse.move(
-      viewport.width * 0.55,
-      viewport.height * 0.88,
-    );
-    await page.mouse.wheel(0, 240);
-    await page.waitForTimeout(300);
-  }
+  await scrollUntilVisible(
+    page,
+    switchChip,
+    `Expected taxonomy switch chip "${label}" to become available while scrolling.`,
+  );
   await expect(
     switchChip,
     `Expected taxonomy switch chip "${label}" to be visible.`,

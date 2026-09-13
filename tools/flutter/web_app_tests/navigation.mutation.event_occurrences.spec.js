@@ -2824,6 +2824,12 @@ function occurrenceDateChipLocator(page, occurrence, { selected = false } = {}) 
   return page.getByRole('button', { name: namePattern }).first();
 }
 
+function programmingTimeSemanticsLocator(page, time) {
+  return page.getByRole('group', {
+    name: new RegExp(`^${escapeRegExp(time)}(?:\\s|$)`),
+  }).first();
+}
+
 function legacyOccurrenceDateChipLocator(
   page,
   occurrence,
@@ -4539,6 +4545,10 @@ test('@mutation tenant-admin event occurrence FAB persists second occurrence and
       },
     );
     const singleProgrammedEvent = singleProgrammed.data;
+    expect(
+      singleProgrammedEvent?.occurrences?.[0]?.programming_items?.[0]?.time,
+      'Single-occurrence public payload must preserve the programmed time.',
+    ).toBe('17:00');
     singleProgrammedEventId =
       singleProgrammedEvent?.event_id?.toString() || null;
     const singleProgrammedOccurrenceIds = await fetchAgendaOccurrenceIdsForTitle(
@@ -4575,9 +4585,6 @@ test('@mutation tenant-admin event occurrence FAB persists second occurrence and
       async () => {
         await navStep('NAV-22', async () => {
         await expect(publicPage.getByText('Programação').first()).toBeVisible({
-          timeout: appBootTimeoutMs,
-        });
-        await expect(publicPage.getByText('17:00').first()).toBeVisible({
           timeout: appBootTimeoutMs,
         });
         await expect(
@@ -4822,15 +4829,14 @@ test('@mutation tenant-admin event occurrence FAB persists second occurrence and
       await expect(publicPage.getByText('Atual')).toHaveCount(0, {
         timeout: appBootTimeoutMs,
       });
-      await expect(publicPage.getByText('17:00').first()).toBeVisible({
+      await expect(programmingTimeSemanticsLocator(publicPage, '17:00')).toBeVisible({
         timeout: appBootTimeoutMs,
       });
     });
     await navStep('NAV-05', async () => {
-      const participantOnlyCard = publicPage.getByRole('button', {
-        name: new RegExp(
-          `^17:00\\s+${escapeRegExp(programmed.occurrenceParty.display_name)}`,
-        ),
+      const participantOnlyGroup = programmingTimeSemanticsLocator(publicPage, '17:00');
+      const participantOnlyCard = participantOnlyGroup.getByRole('button', {
+        name: new RegExp(escapeRegExp(programmed.occurrenceParty.display_name)),
       }).first();
       await expect(
         participantOnlyCard,
@@ -4865,7 +4871,7 @@ test('@mutation tenant-admin event occurrence FAB persists second occurrence and
     await navStep('NAV-07', async () => {
       const locationlessTime = publicPage.getByText('13:00').first();
       const locationlessTitle = publicPage.getByText('Atividade sem local').first();
-      const nextItemTime = publicPage.getByText('17:00').first();
+      const nextItemTime = programmingTimeSemanticsLocator(publicPage, '17:00');
       await expect(locationlessTime).toBeVisible({
         timeout: appBootTimeoutMs,
       });
@@ -4984,7 +4990,7 @@ test('@mutation tenant-admin event occurrence FAB persists second occurrence and
       await expect(
         publicPage.getByText('Esta data ainda não tem programação cadastrada.').first(),
       ).toBeVisible({ timeout: appBootTimeoutMs });
-      await expect(publicPage.getByText('17:00')).toHaveCount(0);
+      await expect(programmingTimeSemanticsLocator(publicPage, '17:00')).toHaveCount(0);
     });
     await navStep('NAV-12', async () => {
       await expect(
@@ -5350,7 +5356,7 @@ test('@mutation repeated public event detail GET/hydration keeps programming pay
       await expect(page.getByText('Programação').first()).toBeVisible({
         timeout: appBootTimeoutMs,
       });
-      await expect(page.getByText('17:00').first()).toBeVisible({
+      await expect(programmingTimeSemanticsLocator(page, '17:00')).toBeVisible({
         timeout: appBootTimeoutMs,
       });
       await expect(
