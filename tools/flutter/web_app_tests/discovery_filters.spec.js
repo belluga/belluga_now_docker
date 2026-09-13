@@ -592,17 +592,18 @@ async function waitForPublicAccountProfileListHit(
 }
 
 async function fetchMapFilters(page, baseUrl) {
-  const payload = await fetchJson(
+  const environment = await fetchJson(
     page,
     baseUrl,
-    '/api/v1/map/filters?ne_lat=-19&ne_lng=-39&sw_lat=-21&sw_lng=-41',
-    'Map filter catalog',
+    '/api/v1/environment',
+    'Tenant environment map filter projection',
   );
-  expect(Array.isArray(payload?.categories), 'Map filters must expose categories[]')
+  const categories = normalizeList(environment?.settings?.map_ui?.filters);
+  expect(categories, 'Tenant environment must expose settings.map_ui.filters[]')
     .toBeTruthy();
-  expect(payload.categories.length, 'Map filters must not be empty')
+  expect(categories.length, 'Map filters must not be empty')
     .toBeGreaterThan(0);
-  return payload.categories;
+  return categories;
 }
 
 function chooseFilter(filters, predicate = () => true) {
