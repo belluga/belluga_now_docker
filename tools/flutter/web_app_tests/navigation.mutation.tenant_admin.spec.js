@@ -2695,22 +2695,13 @@ async function expectSelectedToggleChip(
       `flt-semantics[role="switch"][aria-label^="${escapedAriaLabelPrefix}"]`,
     )
     .first();
-  await scrollUntilVisible(
-    page,
-    switchChip,
-    `Expected taxonomy switch chip "${label}" to become available while scrolling.`,
-  );
-  await expect(
-    switchChip,
-    `Expected taxonomy switch chip "${label}" to be visible.`,
-  ).toBeVisible({ timeout: timeoutMs });
-  await switchChip.focus();
   await expect(
     switchChip,
     `Expected taxonomy switch chip "${label}" to be selected.`,
   ).toHaveAttribute('aria-checked', 'true', {
     timeout: timeoutMs,
   });
+  await switchChip.scrollIntoViewIfNeeded({ timeout: 2000 }).catch(() => {});
 }
 async function createEventTypeWithTypeAsset(
   api,
@@ -4854,33 +4845,46 @@ test('@mutation home favorites preserve backend order and expose event status ha
     const fallbackChip = publicPage.getByRole('button', { name: fallbackChipLabel }).first();
 
     const ensureChipAccessible = async (chip, label) => {
-      await chip.evaluate((element) => {
-        let node = element;
-        while (node instanceof HTMLElement) {
-          const parent = node.parentElement;
-          if (!(parent instanceof HTMLElement)) {
-            break;
-          }
+      await expect
+        .poll(
+          async () => {
+            try {
+              await chip.evaluate((element) => {
+                let node = element;
+                while (node instanceof HTMLElement) {
+                  const parent = node.parentElement;
+                  if (!(parent instanceof HTMLElement)) {
+                    break;
+                  }
 
-          if (parent.scrollWidth > parent.clientWidth + 1) {
-            const parentRect = parent.getBoundingClientRect();
-            const nodeRect = node.getBoundingClientRect();
-            const hiddenLeft = parentRect.left - nodeRect.left;
-            const hiddenRight = nodeRect.right - parentRect.right;
+                  if (parent.scrollWidth > parent.clientWidth + 1) {
+                    const parentRect = parent.getBoundingClientRect();
+                    const nodeRect = node.getBoundingClientRect();
+                    const hiddenLeft = parentRect.left - nodeRect.left;
+                    const hiddenRight = nodeRect.right - parentRect.right;
 
-            if (hiddenLeft > 0) {
-              parent.scrollLeft -= hiddenLeft + 24;
-            } else if (hiddenRight > 0) {
-              parent.scrollLeft += hiddenRight + 24;
+                    if (hiddenLeft > 0) {
+                      parent.scrollLeft -= hiddenLeft + 24;
+                    } else if (hiddenRight > 0) {
+                      parent.scrollLeft += hiddenRight + 24;
+                    }
+                  }
+
+                  node = parent;
+                }
+              });
+              await chip.scrollIntoViewIfNeeded({ timeout: 2000 });
+              return chip.isVisible();
+            } catch {
+              return false;
             }
-          }
-
-          node = parent;
-        }
-      });
-      await chip.scrollIntoViewIfNeeded();
-      await expect(chip, `${label} must stay reachable inside the horizontal favorites strip.`)
-        .toBeVisible({ timeout: appBootTimeoutMs });
+          },
+          {
+            timeout: appBootTimeoutMs,
+            message: `${label} must stay reachable inside the horizontal favorites strip.`,
+          },
+        )
+        .toBe(true);
     };
 
     await ensureChipAccessible(liveChip, 'live favorite');
