@@ -3181,8 +3181,7 @@ test('@mutation tenant-admin account-profile rich text toolbar authors HTTPS lin
     await expect(linkButton).toHaveCount(1);
     await linkButton.scrollIntoViewIfNeeded();
     await expect(linkButton).toBeVisible();
-    await bioEditor.click();
-    await bioEditor.pressSequentially(bioText, { delay: 10 });
+    await fillRichTextEditorText(bioEditor, bioText);
     await selectRichTextEditorContents(page, bioEditor);
     await linkButton.click();
     const dialog = page.getByRole('alertdialog');
@@ -6246,18 +6245,19 @@ test('@mutation U04-ACCOUNT-GROUP-HEAD tenant-admin account-profile group heads 
     throw error;
   } finally {
     await runCleanupPreservingPrimaryError(primaryError, async () => {
-      for (const cleanup of [
-        ...createdAccountSlugs
-          .filter(Boolean)
-          .map(
-            (slug) => () =>
-              cleanupOnboardedAccount(api, baseUrl, session?.token, slug),
-          ),
-        nestedTypeKey
-          ? () => deleteAccountProfileType(api, baseUrl, session?.token, nestedTypeKey)
-          : null,
-      ].filter(Boolean)) {
-        await cleanup();
+      await cleanupOnboardedAccounts(
+        api,
+        baseUrl,
+        session?.token,
+        createdAccountSlugs,
+      );
+      if (nestedTypeKey) {
+        await deleteAccountProfileType(
+          api,
+          baseUrl,
+          session?.token,
+          nestedTypeKey,
+        );
       }
       if (browserContext) {
         await browserContext.close();
