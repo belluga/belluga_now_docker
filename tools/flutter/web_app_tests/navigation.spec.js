@@ -98,6 +98,42 @@ function installReadonlyCollectors(page) {
   return { ...collectors, mutatingApiRequests };
 }
 
+function assertOnlyAnonymousIdentityBootstrapMutation(collectors, flowLabel) {
+  const unexpectedMutations = collectors.mutatingApiRequests.filter((sample) => {
+    const separator = sample.indexOf(' ');
+    if (separator < 0 || sample.slice(0, separator) !== 'POST') {
+      return true;
+    }
+    try {
+      return new URL(sample.slice(separator + 1)).pathname !== '/api/v1/anonymous/identities';
+    } catch (_) {
+      return true;
+    }
+  });
+  expect(
+    unexpectedMutations,
+    `${flowLabel} must not issue mutations beyond anonymous identity bootstrap:\n${unexpectedMutations.join('\n')}`,
+  ).toEqual([]);
+}
+
+function assertNoBrowserFailures(collectors) {
+  const summary = summarizeCriticalBrowserFailures(collectors);
+  expect(summary.runtimeErrors, `Unexpected runtime errors:\n${summary.runtimeErrors.join('\n')}`).toEqual([]);
+  expect(summary.failedRequests, `Failed requests:\n${summary.failedRequests.join('\n')}`).toEqual([]);
+  expect(
+    summary.criticalHttpResponses,
+    `Critical HTTP responses:\n${summary.criticalHttpResponses.join('\n')}`,
+  ).toEqual([]);
+  expect(
+    summary.disallowedRateLimitedResponses,
+    `Disallowed 429 responses:\n${summary.disallowedRateLimitedResponses.join('\n')}`,
+  ).toEqual([]);
+  expect(
+    summary.criticalConsoleErrors,
+    `Critical console errors:\n${summary.criticalConsoleErrors.join('\n')}`,
+  ).toEqual([]);
+}
+
 function browserFailureEntryUrl(entry) {
   const match = String(entry).match(/^\S+\s+(\S+)/);
   return match?.[1] || null;
@@ -540,6 +576,129 @@ test('@readonly tenant domain bootstraps as tenant and navigates to tenant route
     summary.criticalConsoleErrors,
     `Critical console errors:\n${summary.criticalConsoleErrors.join('\n')}`,
   ).toEqual([]);
+});
+
+test('@readonly-fixture EVENT-LOCAL-NAV tenant Event Local profile navigation preserves history', async ({ page, request }) => {
+  const { tenantUrl } = requireNavigationUrls();
+  const collectors = installReadonlyCollectors(page);
+  expect(
+    managedFixtureEnabled,
+    'EVENT-LOCAL-NAV requires the canonical managed public fixture.',
+  ).toBe(true);
+
+  const { candidate: managedEvent } = await findManagedFixtureInPublicAgenda(
+    request,
+    tenantUrl,
+  );
+  const managedEventSlug = managedEvent?.slug?.toString().trim() || '';
+  expect(
+    managedEventSlug,
+    'Managed Event must expose its persisted public slug.',
+  ).toBeTruthy();
+  const eventPath = `/agenda/evento/${encodeURIComponent(managedEventSlug)}`;
+  const response = await page.goto(new URL(eventPath, tenantUrl).toString(), {
+    waitUntil: 'domcontentloaded',
+  });
+  expect(response, 'Managed Event response should be available.').not.toBeNull();
+  expect(response.status(), 'Managed Event response should be successful.').toBeLessThan(400);
+  await assertAppBooted(page);
+  await enableAccessibilityIfNeeded(page);
+
+  const localTab = page.getByRole('button', { name: /^O Local$/i }).first();
+  await expect(localTab, 'Managed Event must expose O Local.').toBeVisible();
+  await localTab.click();
+  const profileLink = page.getByRole('button', {
+    name: /^Abrir perfil de /i,
+  }).first();
+  const visibleProfileLink = await scrollPageUntilLocatorVisible(page, profileLink, {
+    timeout: 5000,
+  });
+  expect(visibleProfileLink, 'Managed Event Local must expose its profile action.').not.toBeNull();
+
+  const eventUrl = page.url();
+  await visibleProfileLink.click();
+  await expect(page).toHaveURL(
+    new RegExp(`/parceiro/${escapeRegExp(fixture.profileSlug)}(?:[?#]|$)`),
+    { timeout: appBootTimeoutMs },
+  );
+  await page.goBack({ waitUntil: 'domcontentloaded' });
+  await assertAppBooted(page);
+  expect(page.url(), 'Browser Back must restore the originating Event detail.').toBe(eventUrl);
+  await expect(
+    page.getByText('O Local', { exact: true }).last(),
+    'Browser Back must restore the selected O Local content.',
+  ).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: /^Abrir perfil de /i }).first(),
+    'Browser Back must restore the O Local profile hero.',
+  ).toBeVisible();
+
+  assertNoBrowserFailures(collectors);
+  assertOnlyAnonymousIdentityBootstrapMutation(collectors, 'Readonly Event Local navigation');
+});
+
+test('@readonly-fixture EVENT-PROGRAMMING-PROFILE-NAV tenant Event Programação profile navigation preserves history', async ({ page, request }) => {
+  const { tenantUrl } = requireNavigationUrls();
+  const collectors = installReadonlyCollectors(page);
+  expect(
+    managedFixtureEnabled,
+    'EVENT-PROGRAMMING-PROFILE-NAV requires the canonical managed public fixture.',
+  ).toBe(true);
+
+  const { candidate: managedEvent } = await findManagedFixtureInPublicAgenda(
+    request,
+    tenantUrl,
+  );
+  const managedEventSlug = managedEvent?.slug?.toString().trim() || '';
+  expect(
+    managedEventSlug,
+    'Managed Event must expose its persisted public slug.',
+  ).toBeTruthy();
+  const eventPath = `/agenda/evento/${encodeURIComponent(managedEventSlug)}`;
+  const response = await page.goto(new URL(eventPath, tenantUrl).toString(), {
+    waitUntil: 'domcontentloaded',
+  });
+  expect(response, 'Managed Event response should be available.').not.toBeNull();
+  expect(response.status(), 'Managed Event response should be successful.').toBeLessThan(400);
+  await assertAppBooted(page);
+  await enableAccessibilityIfNeeded(page);
+
+  const programmingTab = page.getByRole('button', { name: /^Programação$/i }).first();
+  await expect(programmingTab, 'Managed Event must expose Programação.').toBeVisible();
+  await programmingTab.click();
+  const profileLink = page.getByRole('button', {
+    name: `Abrir perfil de ${fixture.relatedProfileName}`,
+  });
+  const visibleProfileLink = await scrollPageUntilLocatorVisible(page, profileLink, {
+    timeout: 5000,
+  });
+  expect(visibleProfileLink, 'Managed Event Programação must expose its profile action.').not.toBeNull();
+
+  const eventUrl = page.url();
+  await visibleProfileLink.click();
+  await expect(page).toHaveURL(
+    new RegExp(`/parceiro/${escapeRegExp(fixture.relatedProfileSlug)}(?:[?#]|$)`),
+    { timeout: appBootTimeoutMs },
+  );
+  await page.goBack({ waitUntil: 'domcontentloaded' });
+  await assertAppBooted(page);
+  expect(page.url(), 'Browser Back must restore the originating Event detail.').toBe(eventUrl);
+  await expect(
+    page.getByText('Programação', { exact: true }).last(),
+    'Browser Back must restore the selected Programação content.',
+  ).toBeVisible();
+  await expect(
+    page.getByRole('button', {
+      name: `Abrir perfil de ${fixture.relatedProfileName}`,
+    }),
+    'Browser Back must restore the Programação profile chip.',
+  ).toBeVisible();
+
+  assertNoBrowserFailures(collectors);
+  assertOnlyAnonymousIdentityBootstrapMutation(
+    collectors,
+    'Readonly Event Programação navigation',
+  );
 });
 
 test('@mutation tenant agenda UI state matches tenant agenda API payload', async ({ browser, request }) => {

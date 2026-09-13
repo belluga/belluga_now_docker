@@ -624,7 +624,6 @@ async function createAccountProfileType(api, baseUrl, token) {
           is_reference_location_enabled: true,
           has_taxonomies: true,
           has_bio: false,
-          has_content: false,
           has_avatar: false,
           has_cover: false,
           has_events: false,
@@ -915,6 +914,33 @@ async function createPublicEvent(
       groupPatchResponse,
       `Patch public event fixture members for ${fixture.eventTitle}`,
     );
+    const occurrence = payload?.data?.occurrences?.[0] || null;
+    const programmingResponse = await api.patch(
+      buildUrl(baseUrl, `/admin/api/v1/events/${eventId}`),
+      {
+        headers: authHeaders(token),
+        data: {
+          occurrences: [
+            {
+              occurrence_id: occurrenceId,
+              date_time_start: occurrence?.date_time_start,
+              date_time_end: occurrence?.date_time_end,
+              programming_items: [
+                {
+                  time: '18:00',
+                  title: 'Perfil relacionado',
+                  account_profile_ids: [relatedProfileId],
+                },
+              ],
+            },
+          ],
+        },
+      },
+    );
+    await fetchJson(
+      programmingResponse,
+      `Add public event fixture programming item for ${fixture.eventTitle}`,
+    );
   }
 
   return {
@@ -1101,6 +1127,39 @@ async function fetchPublicEventDetail(api, baseUrl, routeRef) {
   return payload?.data || payload;
 }
 
+async function fetchOptionalPublicEventDetail(api, baseUrl, routeRef) {
+  const anonymousToken = await resolveAnonymousIdentityToken(api, baseUrl);
+  const response = await api.get(
+    buildUrl(baseUrl, `/api/v1/events/${routeRef}`),
+    {
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${anonymousToken}`,
+      },
+      failOnStatusCode: false,
+    },
+  );
+
+  if (response.status() === 404) {
+    return null;
+  }
+
+  const payload = await fetchJson(
+    response,
+    `Optional public event detail ${routeRef}`,
+  );
+  return payload?.data || payload;
+}
+
+function readEventId(candidate) {
+  return (
+    candidate?.event_id?.toString().trim()
+    || candidate?.id?.toString().trim()
+    || candidate?._id?.toString().trim()
+    || ''
+  );
+}
+
 async function resolveAnonymousIdentityToken(api, baseUrl) {
   if (!anonymousIdentityTokenPromise) {
     anonymousIdentityTokenPromise = (async () => {
@@ -1156,7 +1215,13 @@ async function resetOwnedFixtureArtifacts(api, baseUrl, token) {
   await removeManagedPublicMapFilter(api, baseUrl, token);
   await removeManagedPublicDefaultOrigin(api, baseUrl, token);
 
+  const canonicalEventDetail = await fetchOptionalPublicEventDetail(
+    api,
+    baseUrl,
+    fixture.eventSlug,
+  );
   const ownedEventIdentifiers = [
+    readEventId(canonicalEventDetail),
     fixture.eventSlug,
     persistedState?.event?.eventId,
     persistedState?.event?.eventSlug,
@@ -1376,6 +1441,15 @@ async function verifyEventFixture(
   ).toBeTruthy();
 
   const detail = await fetchPublicEventDetail(api, baseUrl, candidateSlug);
+  const programmingProfile = (detail?.programming_items?.[0]?.linked_account_profiles || [])
+    .find((profile) => profile?.id?.toString() === relatedProfileId);
+  expect(
+    programmingProfile,
+    `Public event fixture ${fixture.eventTitle} must expose its canonical related profile in programming.`,
+  ).toMatchObject({
+    can_open_public_detail: true,
+    public_detail_path: `/parceiro/${fixture.relatedProfileSlug}`,
+  });
   const detailSnapshot = findDisplaySnapshot(detail?.taxonomy_terms);
   expect(
     detailSnapshot,
