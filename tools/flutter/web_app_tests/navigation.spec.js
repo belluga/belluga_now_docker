@@ -98,6 +98,24 @@ function installReadonlyCollectors(page) {
   return { ...collectors, mutatingApiRequests };
 }
 
+function assertNoBrowserFailures(collectors) {
+  const summary = summarizeCriticalBrowserFailures(collectors);
+  expect(summary.runtimeErrors, `Unexpected runtime errors:\n${summary.runtimeErrors.join('\n')}`).toEqual([]);
+  expect(summary.failedRequests, `Failed requests:\n${summary.failedRequests.join('\n')}`).toEqual([]);
+  expect(
+    summary.criticalHttpResponses,
+    `Critical HTTP responses:\n${summary.criticalHttpResponses.join('\n')}`,
+  ).toEqual([]);
+  expect(
+    summary.disallowedRateLimitedResponses,
+    `Disallowed 429 responses:\n${summary.disallowedRateLimitedResponses.join('\n')}`,
+  ).toEqual([]);
+  expect(
+    summary.criticalConsoleErrors,
+    `Critical console errors:\n${summary.criticalConsoleErrors.join('\n')}`,
+  ).toEqual([]);
+}
+
 function browserFailureEntryUrl(entry) {
   const match = String(entry).match(/^\S+\s+(\S+)/);
   return match?.[1] || null;
@@ -597,9 +615,7 @@ test('@readonly-fixture EVENT-LOCAL-NAV tenant Event Local profile navigation pr
     'Browser Back must restore the O Local profile hero.',
   ).toBeVisible();
 
-  const summary = summarizeCriticalBrowserFailures(collectors);
-  expect(summary.runtimeErrors, `Unexpected runtime errors:\n${summary.runtimeErrors.join('\n')}`).toEqual([]);
-  expect(summary.criticalConsoleErrors, `Critical console errors:\n${summary.criticalConsoleErrors.join('\n')}`).toEqual([]);
+  assertNoBrowserFailures(collectors);
 });
 
 test('@readonly-fixture EVENT-PROGRAMMING-PROFILE-NAV tenant Event Programação profile navigation preserves history', async ({ page, request }) => {
@@ -659,9 +675,7 @@ test('@readonly-fixture EVENT-PROGRAMMING-PROFILE-NAV tenant Event Programação
     'Browser Back must restore the Programação profile chip.',
   ).toBeVisible();
 
-  const summary = summarizeCriticalBrowserFailures(collectors);
-  expect(summary.runtimeErrors, `Unexpected runtime errors:\n${summary.runtimeErrors.join('\n')}`).toEqual([]);
-  expect(summary.criticalConsoleErrors, `Critical console errors:\n${summary.criticalConsoleErrors.join('\n')}`).toEqual([]);
+  assertNoBrowserFailures(collectors);
 });
 
 test('@mutation tenant agenda UI state matches tenant agenda API payload', async ({ browser, request }) => {

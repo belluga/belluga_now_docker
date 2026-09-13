@@ -4555,6 +4555,8 @@ test('@mutation home favorites preserve backend order and expose event status ha
   const createdFavoriteProfileIds = [];
   const createdFallbackFavoriteProfileIds = [];
   const createdAccountSlugs = [];
+  let initialPinnedProfileId = null;
+  let initialPinCaptured = false;
   let primaryError = null;
 
   try {
@@ -4726,10 +4728,19 @@ test('@mutation home favorites preserve backend order and expose event status ha
     });
     expect(initialPinResponse.status(), 'Pin settings read must succeed.').toBe(200);
     const initialPin = normalizePayload(await initialPinResponse.json());
+    initialPinnedProfileId = initialPin?.value?.account_profile_id ?? null;
+    initialPinCaptured = true;
+    const clearInitialPinResponse = await api.patch(
+      buildApiUrl(baseUrl, settingsPath),
+      {
+        headers: authHeaders(session.token),
+        data: { account_profile_id: null },
+      },
+    );
     expect(
-      initialPin?.value?.account_profile_id ?? null,
-      'Focused runtime starts from the branding fallback and restores it on cleanup.',
-    ).toBeNull();
+      clearInitialPinResponse.status(),
+      'Focused runtime must establish the branding fallback before validation.',
+    ).toBeLessThan(400);
 
     const adminBundle = await createFreshAuthenticatedTenantAdminPage(session);
     adminBrowser = adminBundle.browser;
@@ -5095,12 +5106,16 @@ test('@mutation home favorites preserve backend order and expose event status ha
     await runCleanupPreservingPrimaryError(primaryError, async () => {
       logStep('favorites', 'cleanup start');
       try {
-        if (session?.token) {
-          await api.patch(buildApiUrl(baseUrl, '/admin/api/v1/settings/values/home_favorites_pinned_profile'), {
+        if (session?.token && initialPinCaptured) {
+          const restorePinResponse = await api.patch(buildApiUrl(baseUrl, '/admin/api/v1/settings/values/home_favorites_pinned_profile'), {
             headers: authHeaders(session.token),
-            data: { account_profile_id: null },
+            data: { account_profile_id: initialPinnedProfileId },
             failOnStatusCode: false,
           });
+          expect(
+            restorePinResponse.status(),
+            'Favorites cleanup must restore the exact prior pinned profile setting.',
+          ).toBeLessThan(400);
         }
         await runCleanupSteps([
           ...createdFavoriteProfileIds.filter(Boolean).map((profileId) =>
