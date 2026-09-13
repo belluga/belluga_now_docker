@@ -5010,6 +5010,7 @@ test('@mutation home favorites preserve backend order and expose event status ha
     );
     await adminPage.getByRole('button', { name: 'Salvar' }).click();
     await clearPinResponsePromise;
+    await assertNoBrowserFailures(adminCollectors);
     const clearedFavoritesPayload = await fetchFavoritesForIdentity(
       api,
       baseUrl,
@@ -5115,7 +5116,19 @@ test('@mutation home favorites preserve backend order and expose event status ha
           expect(
             restorePinResponse.status(),
             'Favorites cleanup must restore the exact prior pinned profile setting.',
-          ).toBeLessThan(400);
+          ).toBe(200);
+          const restoredPinResponse = await api.get(buildApiUrl(baseUrl, '/admin/api/v1/settings/values/home_favorites_pinned_profile'), {
+            headers: authHeaders(session.token),
+          });
+          expect(
+            restoredPinResponse.status(),
+            'Favorites cleanup readback must succeed.',
+          ).toBe(200);
+          const restoredPin = normalizePayload(await restoredPinResponse.json());
+          expect(
+            restoredPin?.value?.account_profile_id ?? null,
+            'Favorites cleanup must read back the exact prior pinned profile setting.',
+          ).toBe(initialPinnedProfileId);
         }
         await runCleanupSteps([
           ...createdFavoriteProfileIds.filter(Boolean).map((profileId) =>
