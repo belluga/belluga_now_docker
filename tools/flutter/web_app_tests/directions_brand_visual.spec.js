@@ -28,6 +28,9 @@ const labeledTileBrandAnalysis = {
   minHorizontalSpanRatio: 0.18,
   minVerticalSpanRatio: 0.28,
 };
+const desktopUberBrandAnalysis = {
+  minHorizontalSpanRatio: 0.45,
+};
 
 test.describe.configure({ timeout: 420000 });
 
@@ -1053,6 +1056,7 @@ test('@mutation NAV-DIR-BRAND-01 Waze and Uber brand controls render on shared d
       accountDesktopUberButton,
       'uber_logotype.svg',
       'Account Profile desktop Uber control',
+      desktopUberBrandAnalysis,
     );
     await screenshot(page, 'account-desktop-directions.png');
 
