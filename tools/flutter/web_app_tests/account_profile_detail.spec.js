@@ -462,7 +462,6 @@ async function resolvePoiCapableProfileType(
           is_poi_enabled: true,
           is_reference_location_enabled: true,
           has_bio: false,
-          has_content: false,
           has_taxonomies: false,
           has_avatar: false,
           has_cover: false,
@@ -941,10 +940,11 @@ test('@deferred @readonly NAV-APD-01 Discovery profile detail back stack does no
 
   await openTenantPath(page, baseUrl, '/');
   const procurarChip = page.getByRole('button', { name: /^Procurar$/i }).first();
-  await expect(procurarChip, 'Home favorites strip must expose the Procurar chip.')
-    .toBeVisible({ timeout: appBootTimeoutMs });
-  await procurarChip.scrollIntoViewIfNeeded();
-  await procurarChip.click();
+  await clickLocatorCenter(
+    page,
+    procurarChip,
+    'Home favorites strip must expose the Procurar chip.',
+  );
   await expect(page).toHaveURL(/\/descobrir/, { timeout: appBootTimeoutMs });
 
   expect(

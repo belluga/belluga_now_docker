@@ -4415,6 +4415,23 @@ assert.match(
     'allowed 429 media noise must stay non-critical through the shared summary',
   );
 
+  const sentryRateLimit = buildCollectors({
+    rateLimitedResponses: [
+      'POST https://o4504503783784448.ingest.sentry.io/api/4506716088500224/envelope/',
+    ],
+  });
+  assert.deepStrictEqual(
+    summarizeCriticalBrowserFailures(sentryRateLimit),
+    {
+      runtimeErrors: [],
+      failedRequests: [],
+      criticalHttpResponses: [],
+      disallowedRateLimitedResponses: [],
+      criticalConsoleErrors: [],
+    },
+    'third-party Sentry ingestion throttling must not decide the Belluga browser contract',
+  );
+
   const locationlessAllowedRateLimit = buildCollectors({
     rateLimitedResponses: [`GET ${SYNTHETIC_TENANT_URL}/api/v1/media/account-profiles/123/avatar`],
     consoleErrors: [
