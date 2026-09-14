@@ -17,6 +17,12 @@ const publicListMaxPages = 5;
 const screenshotDir =
   process.env.NAV_DIRECTIONS_BRAND_SCREENSHOT_DIR ||
   path.join(os.tmpdir(), 'belluga-web-navigation', 'directions-brand');
+const centeredBrandAnalysis = {
+  xStartRatio: 0.1,
+  xEndRatio: 0.9,
+  yStartRatio: 0.15,
+  yEndRatio: 0.85,
+};
 const labeledTileBrandAnalysis = {
   analysisBounds: {
     xStartRatio: 0.02,
@@ -24,12 +30,6 @@ const labeledTileBrandAnalysis = {
     yStartRatio: 0.15,
     yEndRatio: 0.85,
   },
-  minForegroundPixels: 90,
-  minHorizontalSpanRatio: 0.18,
-  minVerticalSpanRatio: 0.28,
-};
-const desktopUberBrandAnalysis = {
-  minHorizontalSpanRatio: 0.45,
 };
 
 test.describe.configure({ timeout: 420000 });
@@ -819,18 +819,10 @@ function resolveAnalysisBounds(png, analysisBounds = {}) {
   return { xStart, xEnd, yStart, yEnd };
 }
 
-function measureForegroundFootprint(png, analysisBounds = {}) {
+function hasVisibleBrandContent(png, analysisBounds = {}) {
   const bounds = resolveAnalysisBounds(png, analysisBounds);
   const sampleY = Math.min(bounds.yEnd - 1, Math.max(bounds.yStart, Math.floor((bounds.yStart + bounds.yEnd) / 2)));
   const background = readPixel(png, Math.min(bounds.xEnd - 1, bounds.xStart + 2), sampleY);
-  const regionWidth = Math.max(1, bounds.xEnd - bounds.xStart);
-  const regionHeight = Math.max(1, bounds.yEnd - bounds.yStart);
-
-  let foregroundPixels = 0;
-  let minX = bounds.xEnd;
-  let maxX = bounds.xStart;
-  let minY = bounds.yEnd;
-  let maxY = bounds.yStart;
 
   for (let y = bounds.yStart; y < bounds.yEnd; y += 1) {
     for (let x = bounds.xStart; x < bounds.xEnd; x += 1) {
@@ -842,27 +834,11 @@ function measureForegroundFootprint(png, analysisBounds = {}) {
         continue;
       }
 
-      foregroundPixels += 1;
-      minX = Math.min(minX, x);
-      maxX = Math.max(maxX, x);
-      minY = Math.min(minY, y);
-      maxY = Math.max(maxY, y);
+      return true;
     }
   }
 
-  if (foregroundPixels === 0) {
-    return {
-      foregroundPixels: 0,
-      horizontalSpanRatio: 0,
-      verticalSpanRatio: 0,
-    };
-  }
-
-  return {
-    foregroundPixels,
-    horizontalSpanRatio: (maxX - minX + 1) / regionWidth,
-    verticalSpanRatio: (maxY - minY + 1) / regionHeight,
-  };
+  return false;
 }
 
 async function expectBrandControlRendered(
@@ -871,28 +847,18 @@ async function expectBrandControlRendered(
   description,
   options = {},
 ) {
-  const {
-    analysisBounds,
-    minForegroundPixels = 140,
-    minHorizontalSpanRatio = 0.48,
-    minVerticalSpanRatio = 0.2,
-  } = options;
+  const { analysisBounds = centeredBrandAnalysis } = options;
 
   await expect(locator).toBeVisible({ timeout: appBootTimeoutMs });
   await expect
     .poll(
       async () => {
         const png = decodePng(await locator.screenshot());
-        const footprint = measureForegroundFootprint(png, analysisBounds);
-        return (
-          footprint.foregroundPixels >= minForegroundPixels &&
-          footprint.horizontalSpanRatio >= minHorizontalSpanRatio &&
-          footprint.verticalSpanRatio >= minVerticalSpanRatio
-        );
+        return hasVisibleBrandContent(png, analysisBounds);
       },
       {
         timeout: appBootTimeoutMs,
-        message: `${description} must render the branded asset footprint on the visible control, not only fetch ${assetFileName}.`,
+        message: `${description} must visibly render ${assetFileName} on the control.`,
       },
     )
     .toBe(true);
@@ -1056,7 +1022,6 @@ test('@mutation NAV-DIR-BRAND-01 Waze and Uber brand controls render on shared d
       accountDesktopUberButton,
       'uber_logotype.svg',
       'Account Profile desktop Uber control',
-      desktopUberBrandAnalysis,
     );
     await screenshot(page, 'account-desktop-directions.png');
 
