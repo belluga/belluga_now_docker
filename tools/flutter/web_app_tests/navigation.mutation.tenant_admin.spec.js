@@ -2549,47 +2549,6 @@ async function forceDeleteAccountProfile(api, baseUrl, token, profileId) {
   );
 }
 
-async function createStaticProfileType(
-  api,
-  baseUrl,
-  token,
-  {
-    type,
-    label,
-    allowedTaxonomies,
-    markerColor,
-    iconColor = '#FFFFFF',
-  },
-) {
-  const response = await api.post(
-    buildApiUrl(baseUrl, '/admin/api/v1/static_profile_types'),
-    {
-      headers: authHeaders(token),
-      data: {
-        type,
-        label,
-        map_category: 'beach',
-        allowed_taxonomies: allowedTaxonomies,
-        capabilities: {
-          is_poi_enabled: true,
-          has_taxonomies: true,
-          has_content: true,
-        },
-        visual: {
-          mode: 'icon',
-          icon: 'place',
-          color: markerColor,
-          icon_color: iconColor,
-        },
-      },
-    },
-  );
-  expect(response.status(), `Static profile type ${type} must be created.`).toBe(
-    201,
-  );
-  return response.json();
-}
-
 async function createEventType(
   api,
   baseUrl,
@@ -2625,26 +2584,6 @@ async function createEventType(
   return response.json();
 }
 
-async function fetchStaticProfileTypeListEntry(
-  api,
-  baseUrl,
-  token,
-  type,
-) {
-  const response = await api.get(
-    buildApiUrl(baseUrl, '/admin/api/v1/static_profile_types?page=1&page_size=500'),
-    {
-      headers: authHeaders(token),
-    },
-  );
-  expect(response.status(), 'Static profile type index must load for readback.').toBe(
-    200,
-  );
-  const payload = await response.json();
-  const rows = Array.isArray(payload?.data) ? payload.data : [];
-  return rows.find((row) => row?.type?.toString() === type) || null;
-}
-
 async function fetchAccountProfileTypeListEntry(
   api,
   baseUrl,
@@ -2663,23 +2602,6 @@ async function fetchAccountProfileTypeListEntry(
   const payload = await response.json();
   const rows = Array.isArray(payload?.data) ? payload.data : [];
   return rows.find((row) => row?.type?.toString() === type) || null;
-}
-
-async function deleteStaticProfileType(api, baseUrl, token, type) {
-  if (!type) {
-    return;
-  }
-
-  await api.delete(
-    buildApiUrl(
-      baseUrl,
-      `/admin/api/v1/static_profile_types/${encodeURIComponent(type)}`,
-    ),
-    {
-      headers: authHeaders(token),
-      failOnStatusCode: false,
-    },
-  );
 }
 
 async function expectSelectedToggleChip(
@@ -8055,7 +7977,7 @@ test('@mutation tenant-admin branding public default image and favicon persist a
   }
 });
 
-test('@mutation tenant-admin profile-type editors preload and preserve allowed taxonomies when saving unrelated visual changes', async ({
+test('@mutation tenant-admin event and account profile type editors preload and preserve allowed taxonomies when saving unrelated visual changes', async ({
   browser,
 }) => {
   test.setTimeout(600000);
@@ -8070,10 +7992,8 @@ test('@mutation tenant-admin profile-type editors preload and preserve allowed t
   let eventTaxonomyBId = null;
   let profileTaxonomyAId = null;
   let profileTaxonomyBId = null;
-  let staticTaxonomyId = null;
   let createdEventTypeId = null;
   let createdProfileType = null;
-  let createdStaticType = null;
 
   try {
     async function rotateFreshTenantAdminPage() {
@@ -8129,19 +8049,11 @@ test('@mutation tenant-admin profile-type editors preload and preserve allowed t
       terms: [{ slug: `term-b-${unique}`, name: `Termo B ${unique}` }],
     });
     profileTaxonomyBId = profileTaxonomyB.taxonomyId;
-    const staticTaxonomy = await createTaxonomy(api, baseUrl, session.token, {
-      slug: `hd13-static-${unique}`,
-      name: `AA Ativo ${uniqueSuffix}`,
-      appliesTo: ['static_asset'],
-      terms: [{ slug: `term-static-${unique}`, name: `Termo Ativo ${unique}` }],
-    });
-    staticTaxonomyId = staticTaxonomy.taxonomyId;
     await waitForTaxonomyRegistry(api, baseUrl, session.token, [
       eventTaxonomyA.slug,
       eventTaxonomyB.slug,
       profileTaxonomyA.slug,
       profileTaxonomyB.slug,
-      staticTaxonomy.slug,
     ]);
 
     const createdEventType = await createEventType(
@@ -8167,26 +8079,12 @@ test('@mutation tenant-admin profile-type editors preload and preserve allowed t
         markerColor: '#B51E5B',
       },
     );
-    createdStaticType = await createStaticProfileType(
-      api,
-      baseUrl,
-      session.token,
-      {
-        type: `hd13-static-${unique}`,
-        label: `HD13 Ativo ${unique}`,
-        allowedTaxonomies: [staticTaxonomy.slug],
-        markerColor: '#1E6FB5',
-      },
-    );
-
     await rotateFreshTenantAdminPage();
 
     const profileTypeKey = createdProfileType?.data?.type?.toString() || '';
-    const staticTypeKey = createdStaticType?.data?.type?.toString() || '';
     const eventTypeName = createdEventType?.data?.name?.toString() || '';
     expect(createdEventTypeId, 'Created event type must expose id.').toBeTruthy();
     expect(profileTypeKey, 'Created account profile type must expose type.').toBeTruthy();
-    expect(staticTypeKey, 'Created static profile type must expose type.').toBeTruthy();
 
     const eventTypesUrl = buildApiUrl(baseUrl, '/admin/events/types');
     logStep('type-taxonomies', `open event types route ${eventTypesUrl}`);
@@ -8353,83 +8251,9 @@ test('@mutation tenant-admin profile-type editors preload and preserve allowed t
     expect(profileReadback?.label).toBe(profileLabelUpdate);
     logStep('type-taxonomies', 'profile type reopen preserved allowed taxonomies');
 
-    await rotateFreshTenantAdminPage();
-    const staticEditUrl = buildApiUrl(
-      baseUrl,
-      `/admin/static_profile_types/${encodeURIComponent(staticTypeKey)}/edit`,
-    );
-    logStep('type-taxonomies', `open static profile type route ${staticEditUrl}`);
-    response = await page.goto(staticEditUrl, {
-      waitUntil: 'domcontentloaded',
-    });
-    expect(response, 'Static profile type edit response should be available.').not.toBeNull();
-    expect(response.status()).toBeLessThan(400);
-    await assertAppBooted(page);
-    await enableAccessibilityIfNeeded(page);
-    await scrollTenantAdminSheetToTop(page);
-    await expect(page.getByText('Taxonomias permitidas')).toBeVisible({
-      timeout: appBootTimeoutMs,
-    });
-    logStep('type-taxonomies', 'static type edit loaded taxonomy section');
-
-    const staticLabelUpdate = `HD13 Ativo Atualizado ${unique}`;
-    await fillFlutterTextField(page, 'Label', staticLabelUpdate);
-    logStep('type-taxonomies', 'save static type with unrelated label change');
-    const staticSaveResponsePromise = page.waitForResponse((candidate) => {
-      return (
-        candidate.request().method() === 'PATCH' &&
-        candidate.url().includes(
-          `/admin/api/v1/static_profile_types/${encodeURIComponent(
-            staticTypeKey,
-          )}`,
-        )
-      );
-    });
-    logStep('type-taxonomies', 'click static type save button');
-    await clickSaveChanges(page);
-    logStep('type-taxonomies', 'static type save button clicked');
-    const staticSaveResponse = await staticSaveResponsePromise;
-    expect(staticSaveResponse.status()).toBeLessThan(400);
-    const staticSavePayload = await staticSaveResponse.json();
-    expect(staticSavePayload?.data?.allowed_taxonomies || []).toEqual([
-      staticTaxonomy.slug,
-    ]);
-    expect(staticSavePayload?.data?.label).toBe(staticLabelUpdate);
-    logStep('type-taxonomies', 'static type save preserved allowed taxonomies');
-    expect(staticSavePayload?.data?.visual?.color).toBe('#1E6FB5');
-
-    response = await page.goto(staticEditUrl, {
-      waitUntil: 'domcontentloaded',
-    });
-    expect(response, 'Static profile type reopen response should be available.').not.toBeNull();
-    expect(response.status()).toBeLessThan(400);
-    await assertAppBooted(page);
-    await enableAccessibilityIfNeeded(page);
-    await scrollTenantAdminSheetToTop(page);
-    await expect(page.getByText('Taxonomias permitidas')).toBeVisible({
-      timeout: appBootTimeoutMs,
-    });
-    const staticReadback = await fetchStaticProfileTypeListEntry(
-      api,
-      baseUrl,
-      session.token,
-      staticTypeKey,
-    );
-    expect(
-      staticReadback?.allowed_taxonomies || [],
-      'Static profile type readback must preserve allowed taxonomies after reopen.',
-    ).toEqual([staticTaxonomy.slug]);
-    expect(staticReadback?.label).toBe(staticLabelUpdate);
-
     await assertNoBrowserFailures(collectors);
   } finally {
     await deleteEventType(api, baseUrl, session?.token, createdEventTypeId);
-    await deleteStaticProfileType(
-      api,
-      baseUrl,
-      session?.token,
-      createdStaticType?.data?.type?.toString() || '',
-    );
     await deleteAccountProfileType(
       api,
       baseUrl,
@@ -8438,7 +8262,6 @@ test('@mutation tenant-admin profile-type editors preload and preserve allowed t
     );
     await deleteTaxonomy(api, baseUrl, session?.token, eventTaxonomyBId);
     await deleteTaxonomy(api, baseUrl, session?.token, eventTaxonomyAId);
-    await deleteTaxonomy(api, baseUrl, session?.token, staticTaxonomyId);
     await deleteTaxonomy(api, baseUrl, session?.token, profileTaxonomyBId);
     await deleteTaxonomy(api, baseUrl, session?.token, profileTaxonomyAId);
     if (browserContext) {

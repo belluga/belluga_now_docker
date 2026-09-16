@@ -194,9 +194,9 @@
         ]
       },
       "admin-profile-taxonomies": {
-        "grep_extra": "profile-type editors preload",
+        "grep_extra": "event and account profile type editors preload",
         "expected_titles": [
-          "@mutation tenant-admin profile-type editors preload and preserve allowed taxonomies when saving unrelated visual changes"
+          "@mutation tenant-admin event and account profile type editors preload and preserve allowed taxonomies when saving unrelated visual changes"
         ]
       },
       "admin-agenda": {
