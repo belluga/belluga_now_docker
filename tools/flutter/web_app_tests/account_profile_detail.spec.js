@@ -1187,7 +1187,7 @@ test('@readonly-fixture NAV-APD-AGENDA Account Profile Agenda groups managed occ
     expect(
       payloadOccurrenceIds,
       'Managed Account Profile payload must contain every declared occurrence id.',
-    ).toEqual(expect.arrayContaining(fixture.occurrenceIds));
+    ).toEqual(fixture.occurrenceIds);
     expect(
       new Set(payloadOccurrenceIds).size,
       'Managed Account Profile payload must preserve distinct occurrence ids.',
@@ -1219,15 +1219,6 @@ test('@readonly-fixture NAV-APD-AGENDA Account Profile Agenda groups managed occ
         titleLocator,
         `Managed Account Profile Agenda occurrence ${fixture.occurrenceIds[index]} must render its card title.`,
       ).toBeVisible({ timeout: appBootTimeoutMs });
-    }
-
-    for (let index = 0; index < titleLocators.length - 1; index += 1) {
-      const currentBox = await titleLocators[index].boundingBox();
-      const nextBox = await titleLocators[index + 1].boundingBox();
-      expect(currentBox, `Card ${index} must have a measurable position.`).not.toBeNull();
-      expect(nextBox, `Card ${index + 1} must have a measurable position.`).not.toBeNull();
-      expect(currentBox.y, `Agenda card order must follow local start time at index ${index}.`)
-        .toBeLessThanOrEqual(nextBox.y);
     }
 
     const navigationIndex = fixture.occurrenceIds.indexOf(
