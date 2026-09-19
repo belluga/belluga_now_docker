@@ -723,10 +723,10 @@ async function listAccountProfileCandidates(api, baseUrl, token, type) {
 }
 
 function matchesPoiCapableProfileType(row, { requireEvents = false } = {}) {
-  return row?.capabilities?.is_queryable === true
-    && row?.capabilities?.is_poi_enabled === true
-    && row?.capabilities?.is_reference_location_enabled === true
-    && (!requireEvents || row?.capabilities?.has_events === true);
+  return row?.capabilities?.is_queryable?.effective?.value === true
+    && row?.capabilities?.is_physical_host_enabled?.effective?.value === true
+    && row?.capabilities?.is_reference_location_enabled?.effective?.value === true
+    && (!requireEvents || row?.capabilities?.has_events?.effective?.value === true);
 }
 
 async function resolvePoiCapableProfileType(
@@ -754,17 +754,22 @@ async function resolvePoiCapableProfileType(
           icon_color: '#FFFFFF',
         },
         capabilities: {
-          is_queryable: true,
-          is_publicly_navigable: true,
-          is_favoritable: true,
-          is_poi_enabled: true,
-          is_reference_location_enabled: true,
-          has_bio: false,
-          has_taxonomies: false,
-          has_avatar: false,
-          has_cover: false,
-          has_events: true,
-          has_gallery: true,
+          is_queryable: { value: true, parameters: {} },
+          is_publicly_navigable: { value: true, parameters: {} },
+          is_favoritable: { value: true, parameters: {} },
+          location_policy: { value: 'required', parameters: {} },
+          is_map_poi_enabled: { value: true, parameters: {} },
+          is_physical_host_enabled: { value: true, parameters: {} },
+          is_reference_location_enabled: { value: true, parameters: {} },
+          has_bio: { value: false, parameters: {} },
+          has_taxonomies: { value: false, parameters: {} },
+          has_avatar: { value: false, parameters: {} },
+          has_cover: { value: false, parameters: {} },
+          has_events: { value: true, parameters: {} },
+          has_gallery: {
+            value: true,
+            parameters: { max_groups: 6, max_items_per_group: 12 },
+          },
         },
       },
       headers: authHeaders(token),
@@ -853,18 +858,20 @@ async function createDedicatedRelatedProfiles(
           icon_color: '#FFFFFF',
         },
         capabilities: {
-          is_queryable: true,
-          is_publicly_navigable: true,
-          is_publicly_discoverable: true,
-          is_favoritable: true,
-          is_poi_enabled: true,
-          is_reference_location_enabled: true,
-          has_bio: false,
-          has_taxonomies: false,
-          has_avatar: true,
-          has_cover: true,
-          has_events: true,
-          has_nested_profile_groups: false,
+          is_queryable: { value: true, parameters: {} },
+          is_publicly_navigable: { value: true, parameters: {} },
+          is_publicly_discoverable: { value: true, parameters: {} },
+          is_favoritable: { value: true, parameters: {} },
+          location_policy: { value: 'required', parameters: {} },
+          is_map_poi_enabled: { value: true, parameters: {} },
+          is_physical_host_enabled: { value: true, parameters: {} },
+          is_reference_location_enabled: { value: true, parameters: {} },
+          has_bio: { value: false, parameters: {} },
+          has_taxonomies: { value: false, parameters: {} },
+          has_avatar: { value: true, parameters: {} },
+          has_cover: { value: true, parameters: {} },
+          has_events: { value: true, parameters: {} },
+          has_nested_profile_groups: { value: false, parameters: {} },
         },
       },
       headers: authHeaders(token),

@@ -504,13 +504,13 @@ function assertRichTextPublicEvidenceIsolationContract() {
     'Profile public API readback must be wired to the anonymous token');
   assert.match(profile, /for \(const capability of \[[\s\S]*?'is_queryable'[\s\S]*?'is_favoritable'[\s\S]*?'is_publicly_discoverable'[\s\S]*?'is_publicly_navigable'[\s\S]*?\]\)[\s\S]*?createdType\?\.capabilities\?\.\[capability\][\s\S]*?\.toBe\(true\)/,
     'Profile rich-text fixture must retain runtime capability assertion wiring');
-  assert.match(profile, /is_queryable:\s*true/,
+  assert.match(profile, /is_queryable:\s*\{\s*value:\s*true,\s*parameters:\s*\{\}\s*\}/,
     'Profile rich-text fixture must enable is_queryable');
-  assert.match(profile, /is_favoritable:\s*true/,
+  assert.match(profile, /is_favoritable:\s*\{\s*value:\s*true,\s*parameters:\s*\{\}\s*\}/,
     'Profile rich-text fixture must enable is_favoritable');
-  assert.match(profile, /is_publicly_discoverable:\s*true/,
+  assert.match(profile, /is_publicly_discoverable:\s*\{\s*value:\s*true,\s*parameters:\s*\{\}\s*\}/,
     'Profile rich-text fixture must enable is_publicly_discoverable');
-  assert.match(profile, /is_publicly_navigable:\s*true/,
+  assert.match(profile, /is_publicly_navigable:\s*\{\s*value:\s*true,\s*parameters:\s*\{\}\s*\}/,
     'Profile rich-text fixture must enable is_publicly_navigable');
 }
 

@@ -2101,14 +2101,14 @@ async function resolveImageCapableProfileType(
   const selected =
     rows.find(
       (row) =>
-        (!requireAvatar || row?.capabilities?.has_avatar === true) &&
-        (!requireCover || row?.capabilities?.has_cover === true) &&
-        row?.capabilities?.is_poi_enabled !== true,
+        (!requireAvatar || row?.capabilities?.has_avatar?.effective?.value === true) &&
+        (!requireCover || row?.capabilities?.has_cover?.effective?.value === true) &&
+        row?.capabilities?.location_policy?.effective?.value === 'disabled',
     ) ||
     rows.find(
       (row) =>
-        (!requireAvatar || row?.capabilities?.has_avatar === true) &&
-        (!requireCover || row?.capabilities?.has_cover === true),
+        (!requireAvatar || row?.capabilities?.has_avatar?.effective?.value === true) &&
+        (!requireCover || row?.capabilities?.has_cover?.effective?.value === true),
     );
 
   return selected || null;
@@ -2143,10 +2143,10 @@ async function ensureImageCapableProfileType(
     allowedTaxonomies: [],
     markerColor: '#0E7A6A',
     capabilities: {
-      is_favoritable: true,
-      has_taxonomies: false,
-      has_avatar: requireAvatar,
-      has_cover: requireCover,
+      is_favoritable: { value: true, parameters: {} },
+      has_taxonomies: { value: false, parameters: {} },
+      has_avatar: { value: requireAvatar },
+      has_cover: { value: requireCover },
     },
   });
   const createdType = createdPayload?.data || {};
@@ -2180,7 +2180,9 @@ async function createImageTestProfile(
     profile_type: profileType.type,
   };
 
-  if (profileType?.capabilities?.is_poi_enabled === true) {
+  if (
+    profileType?.capabilities?.location_policy?.effective?.value === 'required'
+  ) {
     payload.location = {
       lat: -20.671339,
       lng: -40.495395,
@@ -2218,7 +2220,9 @@ async function createAccountProfileForType(
     profile_type: profileType.type,
   };
 
-  if (profileType?.capabilities?.is_poi_enabled === true) {
+  if (
+    profileType?.capabilities?.location_policy?.effective?.value === 'required'
+  ) {
     payload.location = {
       lat: -20.671339,
       lng: -40.495395,
@@ -2463,10 +2467,13 @@ async function createAccountProfileType(
   },
 ) {
   const resolvedCapabilities = {
-    is_favoritable: true,
-    has_taxonomies: (allowedTaxonomies || []).length > 0,
-    has_avatar: true,
-    has_cover: false,
+    is_favoritable: { value: true, parameters: {} },
+    has_taxonomies: {
+      value: (allowedTaxonomies || []).length > 0,
+      parameters: {},
+    },
+    has_avatar: { value: true, parameters: {} },
+    has_cover: { value: false, parameters: {} },
     ...capabilities,
   };
   const response = await api.post(
@@ -3045,14 +3052,14 @@ test('@mutation tenant-admin account-profile rich text toolbar authors HTTPS lin
         allowedTaxonomies: [],
         markerColor: '#0F766E',
         capabilities: {
-          is_queryable: true,
-          is_favoritable: true,
-          is_publicly_discoverable: true,
-          is_publicly_navigable: true,
-          has_avatar: false,
-          has_cover: false,
-          has_taxonomies: false,
-          has_bio: true,
+          is_queryable: { value: true, parameters: {} },
+          is_favoritable: { value: true, parameters: {} },
+          is_publicly_discoverable: { value: true, parameters: {} },
+          is_publicly_navigable: { value: true, parameters: {} },
+          has_avatar: { value: false, parameters: {} },
+          has_cover: { value: false, parameters: {} },
+          has_taxonomies: { value: false, parameters: {} },
+          has_bio: { value: true, parameters: {} },
         },
       }),
     );
@@ -3064,7 +3071,7 @@ test('@mutation tenant-admin account-profile rich text toolbar authors HTTPS lin
       'is_publicly_navigable',
     ]) {
       expect(
-        createdType?.capabilities?.[capability],
+        createdType?.capabilities?.[capability]?.effective?.value,
         `Rich-text Profile fixture must enable ${capability}.`,
       ).toBe(true);
     }
@@ -3410,13 +3417,13 @@ test('@mutation tenant-admin granular mixed gallery CRUD persists and renders se
         allowedTaxonomies: [],
         markerColor: '#0E7A6A',
         capabilities: {
-          is_favoritable: false,
-          is_publicly_discoverable: true,
-          is_publicly_navigable: true,
-          has_gallery: true,
-          has_avatar: false,
-          has_cover: false,
-          has_taxonomies: false,
+          is_favoritable: { value: false, parameters: {} },
+          is_publicly_discoverable: { value: true, parameters: {} },
+          is_publicly_navigable: { value: true, parameters: {} },
+          has_gallery: { value: true, parameters: { max_groups: 6, max_items_per_group: 12 } },
+          has_avatar: { value: false, parameters: {} },
+          has_cover: { value: false, parameters: {} },
+          has_taxonomies: { value: false, parameters: {} },
         },
       })
     )?.data;
@@ -3853,13 +3860,13 @@ test('@mutation tenant-admin account-profile edit save keeps Display Name visibl
         allowedTaxonomies: [],
         markerColor: '#0B6E4F',
         capabilities: {
-          is_favoritable: false,
-          is_publicly_discoverable: true,
-          is_publicly_navigable: true,
-          has_gallery: true,
-          has_avatar: false,
-          has_cover: false,
-          has_taxonomies: false,
+          is_favoritable: { value: false, parameters: {} },
+          is_publicly_discoverable: { value: true, parameters: {} },
+          is_publicly_navigable: { value: true, parameters: {} },
+          has_gallery: { value: true, parameters: { max_groups: 6, max_items_per_group: 12 } },
+          has_avatar: { value: false, parameters: {} },
+          has_cover: { value: false, parameters: {} },
+          has_taxonomies: { value: false, parameters: {} },
         },
       })
     )?.data;
@@ -4040,13 +4047,13 @@ test('@mutation tenant-admin gallery data stays dormant when has_gallery is disa
         allowedTaxonomies: [],
         markerColor: '#136F63',
         capabilities: {
-          is_favoritable: false,
-          is_publicly_discoverable: true,
-          is_publicly_navigable: true,
-          has_gallery: true,
-          has_avatar: false,
-          has_cover: false,
-          has_taxonomies: false,
+          is_favoritable: { value: false, parameters: {} },
+          is_publicly_discoverable: { value: true, parameters: {} },
+          is_publicly_navigable: { value: true, parameters: {} },
+          has_gallery: { value: true, parameters: { max_groups: 6, max_items_per_group: 12 } },
+          has_avatar: { value: false, parameters: {} },
+          has_cover: { value: false, parameters: {} },
+          has_taxonomies: { value: false, parameters: {} },
         },
       })
     )?.data;
@@ -4168,12 +4175,13 @@ test('@mutation tenant-admin gallery data stays dormant when has_gallery is disa
       profileTypeKey,
       {
         capabilities: {
-          has_gallery: false,
+          has_gallery: { value: false, parameters: { max_groups: 6, max_items_per_group: 12 } },
         },
+        expected_capability_revision: createdProfileType?.capability_revision ?? 0,
       },
     );
     expect(
-      disabledTypePayload?.data?.capabilities?.has_gallery,
+      disabledTypePayload?.data?.capabilities?.has_gallery?.configured?.value,
       'Account profile type update must disable has_gallery.',
     ).toBe(false);
 
@@ -4220,7 +4228,9 @@ test('@mutation tenant-admin gallery data stays dormant when has_gallery is disa
             session.token,
             profileTypeKey,
           );
-          const hasGallery = profileTypeReadback?.capabilities?.has_gallery ?? null;
+          const hasGallery =
+            profileTypeReadback?.capabilities?.has_gallery?.effective?.value ??
+            null;
           logStep(
             'gallery-dormant',
             `admin API catalog readback has_gallery=${hasGallery}`,
@@ -4322,7 +4332,8 @@ test('@mutation tenant-admin gallery data stays dormant when has_gallery is disa
                   rows.find((row) => row?.type?.toString() === typeKey) || null;
                 return {
                   status: response.status,
-                  hasGallery: entry?.capabilities?.has_gallery ?? null,
+                  hasGallery:
+                    entry?.capabilities?.has_gallery?.effective?.value ?? null,
                 };
               },
               {
@@ -4472,14 +4483,17 @@ test('@mutation home favorites preserve backend order and expose event status ha
         allowedTaxonomies: [],
         markerColor: '#225588',
         capabilities: {
-          is_favoritable: true,
-          is_publicly_discoverable: true,
-          is_publicly_navigable: true,
-          is_poi_enabled: true,
-          has_events: true,
-          has_avatar: false,
-          has_cover: false,
-          has_taxonomies: false,
+          is_favoritable: { value: true, parameters: {} },
+          is_publicly_discoverable: { value: true, parameters: {} },
+          is_publicly_navigable: { value: true, parameters: {} },
+          location_policy: { value: 'required', parameters: {} },
+          is_map_poi_enabled: { value: true, parameters: {} },
+          is_physical_host_enabled: { value: true, parameters: {} },
+          is_reference_location_enabled: { value: true, parameters: {} },
+          has_events: { value: true, parameters: {} },
+          has_avatar: { value: false, parameters: {} },
+          has_cover: { value: false, parameters: {} },
+          has_taxonomies: { value: false, parameters: {} },
         },
       })
     )?.data;
@@ -5114,13 +5128,13 @@ test('@mutation tenant-admin persisted WhatsApp edit saves without a draft key a
         allowedTaxonomies: [],
         markerColor: '#0B6E4F',
         capabilities: {
-          is_favoritable: false,
-          is_publicly_discoverable: false,
-          is_publicly_navigable: false,
-          has_avatar: false,
-          has_cover: false,
-          has_taxonomies: false,
-          has_contact_channels: true,
+          is_favoritable: { value: false, parameters: {} },
+          is_publicly_discoverable: { value: false, parameters: {} },
+          is_publicly_navigable: { value: false, parameters: {} },
+          has_avatar: { value: false, parameters: {} },
+          has_cover: { value: false, parameters: {} },
+          has_taxonomies: { value: false, parameters: {} },
+          has_contact_channels: { value: true, parameters: {} },
         },
       })
     )?.data;
@@ -5302,12 +5316,12 @@ test('@mutation tenant-admin account profile edit nested tabs obey profile type 
         allowedTaxonomies: [],
         markerColor: '#65758B',
         capabilities: {
-          is_favoritable: false,
-          is_poi_enabled: false,
-          has_avatar: false,
-          has_cover: false,
-          has_taxonomies: false,
-          has_nested_profile_groups: false,
+          is_favoritable: { value: false, parameters: {} },
+          location_policy: { value: 'disabled', parameters: {} },
+          has_avatar: { value: false, parameters: {} },
+          has_cover: { value: false, parameters: {} },
+          has_taxonomies: { value: false, parameters: {} },
+          has_nested_profile_groups: { value: false, parameters: {} },
         },
       })
     )?.data;
@@ -5318,12 +5332,12 @@ test('@mutation tenant-admin account profile edit nested tabs obey profile type 
         allowedTaxonomies: [],
         markerColor: '#0E7A6A',
         capabilities: {
-          is_favoritable: false,
-          is_poi_enabled: false,
-          has_avatar: false,
-          has_cover: false,
-          has_taxonomies: false,
-          has_nested_profile_groups: true,
+          is_favoritable: { value: false, parameters: {} },
+          location_policy: { value: 'disabled', parameters: {} },
+          has_avatar: { value: false, parameters: {} },
+          has_cover: { value: false, parameters: {} },
+          has_taxonomies: { value: false, parameters: {} },
+          has_nested_profile_groups: { value: true, parameters: {} },
         },
       })
     )?.data;
@@ -5438,15 +5452,15 @@ test('@mutation U04-ACCOUNT-GROUP-HEAD tenant-admin account-profile group heads 
         allowedTaxonomies: [],
         markerColor: '#0E7A6A',
         capabilities: {
-          is_queryable: true,
-          is_favoritable: false,
-          is_poi_enabled: false,
-          is_publicly_navigable: true,
-          is_publicly_discoverable: true,
-          has_avatar: false,
-          has_cover: false,
-          has_taxonomies: false,
-          has_nested_profile_groups: true,
+          is_queryable: { value: true, parameters: {} },
+          is_favoritable: { value: false, parameters: {} },
+          location_policy: { value: 'disabled', parameters: {} },
+          is_publicly_navigable: { value: true, parameters: {} },
+          is_publicly_discoverable: { value: true, parameters: {} },
+          has_avatar: { value: false, parameters: {} },
+          has_cover: { value: false, parameters: {} },
+          has_taxonomies: { value: false, parameters: {} },
+          has_nested_profile_groups: { value: true, parameters: {} },
         },
       })
     )?.data;
@@ -6216,13 +6230,13 @@ test('@mutation U06-CANDIDATE-PICKER server-owned nested and contact candidate s
         allowedTaxonomies: [],
         markerColor: '#0E7A6A',
         capabilities: {
-          is_queryable: true,
-          is_favoritable: false,
-          is_poi_enabled: false,
-          has_avatar: false,
-          has_cover: false,
-          has_taxonomies: false,
-          has_nested_profile_groups: true,
+          is_queryable: { value: true, parameters: {} },
+          is_favoritable: { value: false, parameters: {} },
+          location_policy: { value: 'disabled', parameters: {} },
+          has_avatar: { value: false, parameters: {} },
+          has_cover: { value: false, parameters: {} },
+          has_taxonomies: { value: false, parameters: {} },
+          has_nested_profile_groups: { value: true, parameters: {} },
         },
       })
     )?.data;
@@ -6236,13 +6250,13 @@ test('@mutation U06-CANDIDATE-PICKER server-owned nested and contact candidate s
         allowedTaxonomies: [],
         markerColor: '#1D4ED8',
         capabilities: {
-          is_queryable: false,
-          is_favoritable: false,
-          is_poi_enabled: false,
-          has_avatar: false,
-          has_cover: false,
-          has_taxonomies: false,
-          has_contact_channels: true,
+          is_queryable: { value: false, parameters: {} },
+          is_favoritable: { value: false, parameters: {} },
+          location_policy: { value: 'disabled', parameters: {} },
+          has_avatar: { value: false, parameters: {} },
+          has_cover: { value: false, parameters: {} },
+          has_taxonomies: { value: false, parameters: {} },
+          has_contact_channels: { value: true, parameters: {} },
         },
       })
     )?.data;
@@ -6642,13 +6656,13 @@ test('@mutation tenant-admin account onboarding CRUD persists detail/edit readba
         allowedTaxonomies: [],
         markerColor: '#0F766E',
         capabilities: {
-          is_favoritable: false,
-          is_publicly_discoverable: true,
-          is_publicly_navigable: true,
-          has_avatar: false,
-          has_cover: false,
-          has_taxonomies: false,
-          has_bio: false,
+          is_favoritable: { value: false, parameters: {} },
+          is_publicly_discoverable: { value: true, parameters: {} },
+          is_publicly_navigable: { value: true, parameters: {} },
+          has_avatar: { value: false, parameters: {} },
+          has_cover: { value: false, parameters: {} },
+          has_taxonomies: { value: false, parameters: {} },
+          has_bio: { value: false, parameters: {} },
         },
       }),
     );
@@ -6854,11 +6868,11 @@ test('@mutation tenant-admin account onboarding rejects stale selected profile t
         allowedTaxonomies: [],
         markerColor: '#1D4ED8',
         capabilities: {
-          is_favoritable: false,
-          has_avatar: false,
-          has_cover: false,
-          has_taxonomies: false,
-          has_bio: false,
+          is_favoritable: { value: false, parameters: {} },
+          has_avatar: { value: false, parameters: {} },
+          has_cover: { value: false, parameters: {} },
+          has_taxonomies: { value: false, parameters: {} },
+          has_bio: { value: false, parameters: {} },
         },
       }),
     );

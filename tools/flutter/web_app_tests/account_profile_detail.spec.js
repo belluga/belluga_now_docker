@@ -406,13 +406,13 @@ async function deleteEventType(api, baseUrl, token, eventTypeId) {
 function matchesPoiCapableProfileType(row, { requireEvents = false } = {}) {
   const capabilities = row?.capabilities || {};
   const isPubliclyDiscoverable =
-    capabilities.is_publicly_discoverable !== false;
-  return capabilities.is_queryable === true
-    && capabilities.is_poi_enabled === true
-    && capabilities.is_reference_location_enabled === true
-    && capabilities.is_favoritable === true
+    capabilities.is_publicly_discoverable?.effective?.value !== false;
+  return capabilities.is_queryable?.effective?.value === true
+    && capabilities.is_physical_host_enabled?.effective?.value === true
+    && capabilities.is_reference_location_enabled?.effective?.value === true
+    && capabilities.is_favoritable?.effective?.value === true
     && isPubliclyDiscoverable
-    && (!requireEvents || capabilities.has_events === true);
+    && (!requireEvents || capabilities.has_events?.effective?.value === true);
 }
 
 async function resolvePoiCapableProfileType(
@@ -455,17 +455,19 @@ async function resolvePoiCapableProfileType(
           icon_color: '#FFFFFF',
         },
         capabilities: {
-          is_queryable: true,
-          is_publicly_navigable: true,
-          is_favoritable: true,
-          is_publicly_discoverable: true,
-          is_poi_enabled: true,
-          is_reference_location_enabled: true,
-          has_bio: false,
-          has_taxonomies: false,
-          has_avatar: false,
-          has_cover: false,
-          has_events: true,
+          is_queryable: { value: true, parameters: {} },
+          is_publicly_navigable: { value: true, parameters: {} },
+          is_favoritable: { value: true, parameters: {} },
+          is_publicly_discoverable: { value: true, parameters: {} },
+          location_policy: { value: 'required', parameters: {} },
+          is_map_poi_enabled: { value: true, parameters: {} },
+          is_physical_host_enabled: { value: true, parameters: {} },
+          is_reference_location_enabled: { value: true, parameters: {} },
+          has_bio: { value: false, parameters: {} },
+          has_taxonomies: { value: false, parameters: {} },
+          has_avatar: { value: false, parameters: {} },
+          has_cover: { value: false, parameters: {} },
+          has_events: { value: true, parameters: {} },
         },
       },
       headers: await authHeaders(token),
