@@ -3613,6 +3613,70 @@ test('@mutation tenant-admin granular mixed gallery CRUD persists and renders se
     const photoItemId = primaryItems.find((item) => item?.type === 'photo')?.item_id?.toString() || '';
     expect(photoItemId, 'Granular photo create must return the canonical item id.').toBeTruthy();
 
+    const metadataTitle = `Título da galeria ${unique}`;
+    const metadataDescription = `Descrição da galeria ${unique}\nSegunda linha`;
+    const metadataItemPath = `/admin/api/v1/account_profiles/${profileId}/gallery/groups/${primaryGroupId}/items/${firstYoutubeItemId}`;
+    await fillFlutterTextField(page, 'Título do item', metadataTitle);
+    const titlePatchPromise = page.waitForResponse((candidate) =>
+      candidate.request().method() === 'PATCH' &&
+      candidate.url().endsWith(metadataItemPath) &&
+      candidate.status() < 400,
+    );
+    await page.getByRole('button', { name: 'Salvar título', exact: true }).click();
+    const titlePatch = await titlePatchPromise;
+    const titlePatchBody = titlePatch.request().postDataJSON();
+    expect(titlePatchBody?.title).toBe(metadataTitle);
+    expect(titlePatchBody).not.toHaveProperty('description');
+    await expect(page.getByLabel('Título do item').first()).toHaveValue(metadataTitle);
+
+    await fillFlutterTextField(page, 'Descrição do item', metadataDescription);
+    const descriptionPatchPromise = page.waitForResponse((candidate) =>
+      candidate.request().method() === 'PATCH' &&
+      candidate.url().endsWith(metadataItemPath) &&
+      candidate.status() < 400,
+    );
+    await page.getByRole('button', { name: 'Salvar descrição', exact: true }).click();
+    const descriptionPatch = await descriptionPatchPromise;
+    const descriptionPatchBody = descriptionPatch.request().postDataJSON();
+    expect(descriptionPatchBody?.description).toBe(metadataDescription);
+    expect(descriptionPatchBody).not.toHaveProperty('title');
+
+    const metadataReload = await page.reload({ waitUntil: 'domcontentloaded' });
+    expect(metadataReload, 'Gallery metadata reload response should be available.').not.toBeNull();
+    expect(metadataReload.status()).toBeLessThan(400);
+    await assertAppBooted(page);
+    await enableAccessibilityIfNeeded(page);
+    await scrollUntilVisible(
+      page,
+      page.getByText('Galerias', { exact: true }),
+      'Expected gallery section after metadata reload.',
+    );
+    const metadataReadback = await fetchAdminProfile(
+      api,
+      baseUrl,
+      session.token,
+      profileId,
+    );
+    const metadataReadbackItem = normalizeList(
+      normalizeList(metadataReadback?.gallery_groups)
+        .find((group) => group?.group_id?.toString() === primaryGroupId)
+        ?.items,
+    ).find((item) => item?.item_id?.toString() === firstYoutubeItemId);
+    expect(metadataReadbackItem?.title).toBe(metadataTitle);
+    expect(metadataReadbackItem?.description).toBe(metadataDescription);
+    const reloadedTitleField = page.getByLabel('Título do item').first();
+    const reloadedDescriptionField = page.getByLabel('Descrição do item').first();
+    await expectFlutterFieldRenderedAndFocusedValue(
+      reloadedTitleField,
+      metadataTitle,
+      'Expected the reloaded gallery title to render and retain its authoritative value.',
+    );
+    await expectFlutterFieldRenderedAndFocusedValue(
+      reloadedDescriptionField,
+      metadataDescription,
+      'Expected the reloaded gallery description to render and retain its authoritative value.',
+    );
+
     const profileSaveResponsePromise = page.waitForResponse((candidate) =>
       candidate.request().method() === 'PATCH' &&
       candidate.url().endsWith(`/admin/api/v1/account_profiles/${profileId}`) &&
