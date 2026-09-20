@@ -5238,20 +5238,24 @@ test('@mutation repeated public event detail GET/hydration keeps programming pay
     if (physicalHostSeed.createdType) {
       createdSeedProfileTypes.add(physicalHostSeed.createdType);
     }
+    for (const accountSlug of physicalHostSeed.createdAccountSlugs) {
+      await publishAccount(api, baseUrl, session.token, accountSlug);
+    }
     const physicalHost = physicalHostSeed.candidates[0];
     const programmingHost = physicalHostSeed.candidates[1];
-    const relatedProfileSeed = await fetchRelatedAccountProfileCandidates(
+    const relatedProfileSeed = await createDedicatedRelatedProfiles(
       api,
       baseUrl,
       session.token,
-      {
-        excludeIds: [physicalHost.id, programmingHost.id],
-      },
+      `${uniqueSuffix}-stability`,
     );
     createdSeedProfileIds.push(...relatedProfileSeed.createdProfileIds);
     createdSeedAccountSlugs.push(...relatedProfileSeed.createdAccountSlugs);
     if (relatedProfileSeed.createdType) {
       createdSeedProfileTypes.add(relatedProfileSeed.createdType);
+    }
+    for (const accountSlug of relatedProfileSeed.createdAccountSlugs) {
+      await publishAccount(api, baseUrl, session.token, accountSlug);
     }
     const relatedProfiles = relatedProfileSeed.candidates;
     const occurrenceProfileWithMedia = relatedProfiles[1] || relatedProfiles[0];

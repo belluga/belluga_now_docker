@@ -1844,7 +1844,7 @@ function firstOccurrenceIsoDate(payload) {
   return localIsoDate(parsed);
 }
 
-async function waitForAccountDeletion(api, baseUrl, token, profileId) {
+async function waitForAccountSoftDeletion(api, baseUrl, token, profileId) {
   await expect
     .poll(
       async () => {
@@ -1855,11 +1855,20 @@ async function waitForAccountDeletion(api, baseUrl, token, profileId) {
             failOnStatusCode: false,
           },
         );
-        return [404, 410].includes(response.status());
+        if (response.status() !== 200) {
+          return false;
+        }
+        const profile = normalizePayload(await response.json());
+        const deletedAt = typeof profile?.deleted_at === 'string' ? profile.deleted_at.trim() : '';
+        return (
+          String(profile?.id || '') === profileId &&
+          deletedAt !== '' &&
+          !Number.isNaN(new Date(deletedAt).getTime())
+        );
       },
       {
         timeout: appBootTimeoutMs,
-        message: `Account profile ${profileId} must disappear after account deletion.`,
+        message: `Account profile ${profileId} must remain readable with a valid deleted_at after account deletion.`,
       },
     )
     .toBe(true);
@@ -2737,13 +2746,33 @@ test('@mutation tenant-admin account-profile cover upload persists and renders a
       page.getByRole('button', { name: 'Usar' }).click(),
     ]);
     const savePayload = await saveResponse.json();
-    const coverUrl = savePayload?.data?.cover_url?.toString() || '';
-    logStep('cover', `autosave returned ${coverUrl}`);
-    expect(coverUrl, 'Cover save must return a canonical cover URL.').toBeTruthy();
+    const profileSlug = savePayload.data.slug?.toString() || '';
+    const adminCoverUrl = savePayload.data.admin_cover_url?.toString() || '';
+    logStep('cover', `autosave returned protected ${adminCoverUrl}`);
+    expect(profileSlug, 'Cover save must return the canonical account profile slug.').toBeTruthy();
+    expect(savePayload.data.cover_url, 'Draft cover save must not return a public cover URL.').toBeNull();
+    expect(adminCoverUrl, 'Cover save must return an authenticated admin cover URL.').toBeTruthy();
 
-    const unpublishedCoverResponse = await api.get(coverUrl, {
+    const protectedCoverResponse = await api.get(adminCoverUrl, {
+      headers: authHeaders(session.token),
       failOnStatusCode: false,
     });
+    expect(
+      protectedCoverResponse.status(),
+      'Persisted draft cover must be readable through the authenticated admin URL.',
+    ).toBe(200);
+    expect(
+      (await protectedCoverResponse.body()).length,
+      'Authenticated admin cover read must return persisted image bytes.',
+    ).toBeGreaterThan(0);
+    await disposeApiResponse(protectedCoverResponse);
+
+    const unpublishedCoverResponse = await api.get(
+      buildApiUrl(baseUrl, `/api/v1/media/account-profiles/${profileId}/cover`),
+      {
+        failOnStatusCode: false,
+      },
+    );
     expect(
       unpublishedCoverResponse.status(),
       'Persisted cover URL must stay private while the parent Account remains unpublished.',
@@ -2752,7 +2781,19 @@ test('@mutation tenant-admin account-profile cover upload persists and renders a
 
     await publishAccount(api, baseUrl, session.token, created.accountSlug);
 
-    const publishedCoverResponse = await api.get(coverUrl, {
+    const publicProfile = await fetchPublicProfile(
+      api,
+      baseUrl,
+      session.token,
+      profileSlug,
+    );
+    const publishedCoverUrl = publicProfile?.cover_url?.toString() || '';
+    expect(
+      publishedCoverUrl,
+      'Published public profile detail must return the canonical cover URL.',
+    ).toBeTruthy();
+
+    const publishedCoverResponse = await api.get(publishedCoverUrl, {
       failOnStatusCode: false,
     });
     expect(
@@ -2766,7 +2807,7 @@ test('@mutation tenant-admin account-profile cover upload persists and renders a
     const coverStatuses = [];
 
     verificationPage.on('response', (response) => {
-      if (response.url() === coverUrl) {
+      if (urlsMatchIgnoringQuery(response.url(), adminCoverUrl)) {
         coverStatuses.push(response.status());
       }
     });
@@ -3315,13 +3356,33 @@ test('@mutation tenant-admin account-profile avatar upload persists and renders 
       page.getByRole('button', { name: 'Usar' }).click(),
     ]);
     const savePayload = await saveResponse.json();
-    const avatarUrl = savePayload?.data?.avatar_url?.toString() || '';
-    logStep('avatar', `autosave returned ${avatarUrl}`);
-    expect(avatarUrl, 'Avatar save must return a canonical avatar URL.').toBeTruthy();
+    const profileSlug = savePayload.data.slug?.toString() || '';
+    const adminAvatarUrl = savePayload.data.admin_avatar_url?.toString() || '';
+    logStep('avatar', `autosave returned protected ${adminAvatarUrl}`);
+    expect(profileSlug, 'Avatar save must return the canonical account profile slug.').toBeTruthy();
+    expect(savePayload.data.avatar_url, 'Draft avatar save must not return a public avatar URL.').toBeNull();
+    expect(adminAvatarUrl, 'Avatar save must return an authenticated admin avatar URL.').toBeTruthy();
 
-    const unpublishedAvatarResponse = await api.get(avatarUrl, {
+    const protectedAvatarResponse = await api.get(adminAvatarUrl, {
+      headers: authHeaders(session.token),
       failOnStatusCode: false,
     });
+    expect(
+      protectedAvatarResponse.status(),
+      'Persisted draft avatar must be readable through the authenticated admin URL.',
+    ).toBe(200);
+    expect(
+      (await protectedAvatarResponse.body()).length,
+      'Authenticated admin avatar read must return persisted image bytes.',
+    ).toBeGreaterThan(0);
+    await disposeApiResponse(protectedAvatarResponse);
+
+    const unpublishedAvatarResponse = await api.get(
+      buildApiUrl(baseUrl, `/api/v1/media/account-profiles/${profileId}/avatar`),
+      {
+        failOnStatusCode: false,
+      },
+    );
     expect(
       unpublishedAvatarResponse.status(),
       'Persisted avatar URL must stay private while the parent Account remains unpublished.',
@@ -3330,7 +3391,19 @@ test('@mutation tenant-admin account-profile avatar upload persists and renders 
 
     await publishAccount(api, baseUrl, session.token, created.accountSlug);
 
-    const publishedAvatarResponse = await api.get(avatarUrl, {
+    const publicProfile = await fetchPublicProfile(
+      api,
+      baseUrl,
+      session.token,
+      profileSlug,
+    );
+    const publishedAvatarUrl = publicProfile?.avatar_url?.toString() || '';
+    expect(
+      publishedAvatarUrl,
+      'Published public profile detail must return the canonical avatar URL.',
+    ).toBeTruthy();
+
+    const publishedAvatarResponse = await api.get(publishedAvatarUrl, {
       failOnStatusCode: false,
     });
     expect(
@@ -3344,7 +3417,7 @@ test('@mutation tenant-admin account-profile avatar upload persists and renders 
     const avatarStatuses = [];
 
     verificationPage.on('response', (response) => {
-      if (urlsMatchIgnoringQuery(response.url(), avatarUrl)) {
+      if (urlsMatchIgnoringQuery(response.url(), adminAvatarUrl)) {
         avatarStatuses.push(response.status());
       }
     });
@@ -6815,7 +6888,7 @@ test('@mutation tenant-admin account onboarding CRUD persists detail/edit readba
       'Account delete request must succeed after the bounded admin delete flow.',
     ).toContain(deleteResponse.status());
 
-    await waitForAccountDeletion(api, baseUrl, session.token, profileId);
+    await waitForAccountSoftDeletion(api, baseUrl, session.token, profileId);
     accountSlug = null;
     profileId = null;
 
