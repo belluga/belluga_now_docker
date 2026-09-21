@@ -122,6 +122,11 @@ server {
     }
 
     location ^~ /storage/ {
+        # Account-profile media is served only through its policy-aware Laravel controllers.
+        location ~ ^/storage/tenants/[^/]+/account_profiles(?:/|$) {
+            return 404;
+        }
+
         # Serve Laravel public-disk files directly from the mounted storage volume.
         alias /var/www/storage/app/public/;
 

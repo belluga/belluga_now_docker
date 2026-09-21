@@ -1844,7 +1844,7 @@ function firstOccurrenceIsoDate(payload) {
   return localIsoDate(parsed);
 }
 
-async function waitForAccountDeletion(api, baseUrl, token, profileId) {
+async function waitForAccountSoftDeletion(api, baseUrl, token, profileId) {
   await expect
     .poll(
       async () => {
@@ -1855,11 +1855,20 @@ async function waitForAccountDeletion(api, baseUrl, token, profileId) {
             failOnStatusCode: false,
           },
         );
-        return [404, 410].includes(response.status());
+        if (response.status() !== 200) {
+          return false;
+        }
+        const profile = normalizePayload(await response.json());
+        const deletedAt = typeof profile?.deleted_at === 'string' ? profile.deleted_at.trim() : '';
+        return (
+          String(profile?.id || '') === profileId &&
+          deletedAt !== '' &&
+          !Number.isNaN(new Date(deletedAt).getTime())
+        );
       },
       {
         timeout: appBootTimeoutMs,
-        message: `Account profile ${profileId} must disappear after account deletion.`,
+        message: `Account profile ${profileId} must remain readable with a valid deleted_at after account deletion.`,
       },
     )
     .toBe(true);
@@ -2101,14 +2110,14 @@ async function resolveImageCapableProfileType(
   const selected =
     rows.find(
       (row) =>
-        (!requireAvatar || row?.capabilities?.has_avatar === true) &&
-        (!requireCover || row?.capabilities?.has_cover === true) &&
-        row?.capabilities?.is_poi_enabled !== true,
+        (!requireAvatar || row?.capabilities?.has_avatar?.effective?.value === true) &&
+        (!requireCover || row?.capabilities?.has_cover?.effective?.value === true) &&
+        row?.capabilities?.location_policy?.effective?.value === 'disabled',
     ) ||
     rows.find(
       (row) =>
-        (!requireAvatar || row?.capabilities?.has_avatar === true) &&
-        (!requireCover || row?.capabilities?.has_cover === true),
+        (!requireAvatar || row?.capabilities?.has_avatar?.effective?.value === true) &&
+        (!requireCover || row?.capabilities?.has_cover?.effective?.value === true),
     );
 
   return selected || null;
@@ -2143,10 +2152,10 @@ async function ensureImageCapableProfileType(
     allowedTaxonomies: [],
     markerColor: '#0E7A6A',
     capabilities: {
-      is_favoritable: true,
-      has_taxonomies: false,
-      has_avatar: requireAvatar,
-      has_cover: requireCover,
+      is_favoritable: { value: true, parameters: {} },
+      has_taxonomies: { value: false, parameters: {} },
+      has_avatar: { value: requireAvatar },
+      has_cover: { value: requireCover },
     },
   });
   const createdType = createdPayload?.data || {};
@@ -2180,7 +2189,9 @@ async function createImageTestProfile(
     profile_type: profileType.type,
   };
 
-  if (profileType?.capabilities?.is_poi_enabled === true) {
+  if (
+    profileType?.capabilities?.location_policy?.effective?.value === 'required'
+  ) {
     payload.location = {
       lat: -20.671339,
       lng: -40.495395,
@@ -2218,7 +2229,9 @@ async function createAccountProfileForType(
     profile_type: profileType.type,
   };
 
-  if (profileType?.capabilities?.is_poi_enabled === true) {
+  if (
+    profileType?.capabilities?.location_policy?.effective?.value === 'required'
+  ) {
     payload.location = {
       lat: -20.671339,
       lng: -40.495395,
@@ -2463,10 +2476,13 @@ async function createAccountProfileType(
   },
 ) {
   const resolvedCapabilities = {
-    is_favoritable: true,
-    has_taxonomies: (allowedTaxonomies || []).length > 0,
-    has_avatar: true,
-    has_cover: false,
+    is_favoritable: { value: true, parameters: {} },
+    has_taxonomies: {
+      value: (allowedTaxonomies || []).length > 0,
+      parameters: {},
+    },
+    has_avatar: { value: true, parameters: {} },
+    has_cover: { value: false, parameters: {} },
     ...capabilities,
   };
   const response = await api.post(
@@ -2549,47 +2565,6 @@ async function forceDeleteAccountProfile(api, baseUrl, token, profileId) {
   );
 }
 
-async function createStaticProfileType(
-  api,
-  baseUrl,
-  token,
-  {
-    type,
-    label,
-    allowedTaxonomies,
-    markerColor,
-    iconColor = '#FFFFFF',
-  },
-) {
-  const response = await api.post(
-    buildApiUrl(baseUrl, '/admin/api/v1/static_profile_types'),
-    {
-      headers: authHeaders(token),
-      data: {
-        type,
-        label,
-        map_category: 'beach',
-        allowed_taxonomies: allowedTaxonomies,
-        capabilities: {
-          is_poi_enabled: true,
-          has_taxonomies: true,
-          has_content: true,
-        },
-        visual: {
-          mode: 'icon',
-          icon: 'place',
-          color: markerColor,
-          icon_color: iconColor,
-        },
-      },
-    },
-  );
-  expect(response.status(), `Static profile type ${type} must be created.`).toBe(
-    201,
-  );
-  return response.json();
-}
-
 async function createEventType(
   api,
   baseUrl,
@@ -2625,26 +2600,6 @@ async function createEventType(
   return response.json();
 }
 
-async function fetchStaticProfileTypeListEntry(
-  api,
-  baseUrl,
-  token,
-  type,
-) {
-  const response = await api.get(
-    buildApiUrl(baseUrl, '/admin/api/v1/static_profile_types?page=1&page_size=500'),
-    {
-      headers: authHeaders(token),
-    },
-  );
-  expect(response.status(), 'Static profile type index must load for readback.').toBe(
-    200,
-  );
-  const payload = await response.json();
-  const rows = Array.isArray(payload?.data) ? payload.data : [];
-  return rows.find((row) => row?.type?.toString() === type) || null;
-}
-
 async function fetchAccountProfileTypeListEntry(
   api,
   baseUrl,
@@ -2663,23 +2618,6 @@ async function fetchAccountProfileTypeListEntry(
   const payload = await response.json();
   const rows = Array.isArray(payload?.data) ? payload.data : [];
   return rows.find((row) => row?.type?.toString() === type) || null;
-}
-
-async function deleteStaticProfileType(api, baseUrl, token, type) {
-  if (!type) {
-    return;
-  }
-
-  await api.delete(
-    buildApiUrl(
-      baseUrl,
-      `/admin/api/v1/static_profile_types/${encodeURIComponent(type)}`,
-    ),
-    {
-      headers: authHeaders(token),
-      failOnStatusCode: false,
-    },
-  );
 }
 
 async function expectSelectedToggleChip(
@@ -2702,6 +2640,24 @@ async function expectSelectedToggleChip(
     timeout: timeoutMs,
   });
   await switchChip.scrollIntoViewIfNeeded({ timeout: 2000 }).catch(() => {});
+}
+
+async function expectOrderedTaxonomyRows(page, taxonomies) {
+  const rows = taxonomies.map((taxonomy, index) => page.getByRole('group', {
+    name: new RegExp(
+      `^${escapeRegExp(taxonomy.name)} \\(${escapeRegExp(taxonomy.slug)}\\)\\s+Posição ${index + 1} de ${taxonomies.length}$`,
+    ),
+  }));
+  for (const row of rows) {
+    await expect(row).toHaveCount(1);
+    await row.scrollIntoViewIfNeeded({ timeout: interactionTimeoutMs });
+    await expect(row).toBeVisible();
+  }
+  const bounds = await Promise.all(rows.map((row) => row.boundingBox()));
+  for (let index = 0; index < bounds.length; index += 1) {
+    expect(bounds[index]).not.toBeNull();
+    if (index > 0) expect(bounds[index - 1].y).toBeLessThan(bounds[index].y);
+  }
 }
 async function createEventTypeWithTypeAsset(
   api,
@@ -2808,13 +2764,33 @@ test('@mutation tenant-admin account-profile cover upload persists and renders a
       page.getByRole('button', { name: 'Usar' }).click(),
     ]);
     const savePayload = await saveResponse.json();
-    const coverUrl = savePayload?.data?.cover_url?.toString() || '';
-    logStep('cover', `autosave returned ${coverUrl}`);
-    expect(coverUrl, 'Cover save must return a canonical cover URL.').toBeTruthy();
+    const profileSlug = savePayload.data.slug?.toString() || '';
+    const adminCoverUrl = savePayload.data.admin_cover_url?.toString() || '';
+    logStep('cover', `autosave returned protected ${adminCoverUrl}`);
+    expect(profileSlug, 'Cover save must return the canonical account profile slug.').toBeTruthy();
+    expect(savePayload.data.cover_url, 'Draft cover save must not return a public cover URL.').toBeNull();
+    expect(adminCoverUrl, 'Cover save must return an authenticated admin cover URL.').toBeTruthy();
 
-    const unpublishedCoverResponse = await api.get(coverUrl, {
+    const protectedCoverResponse = await api.get(adminCoverUrl, {
+      headers: authHeaders(session.token),
       failOnStatusCode: false,
     });
+    expect(
+      protectedCoverResponse.status(),
+      'Persisted draft cover must be readable through the authenticated admin URL.',
+    ).toBe(200);
+    expect(
+      (await protectedCoverResponse.body()).length,
+      'Authenticated admin cover read must return persisted image bytes.',
+    ).toBeGreaterThan(0);
+    await disposeApiResponse(protectedCoverResponse);
+
+    const unpublishedCoverResponse = await api.get(
+      buildApiUrl(baseUrl, `/api/v1/media/account-profiles/${profileId}/cover`),
+      {
+        failOnStatusCode: false,
+      },
+    );
     expect(
       unpublishedCoverResponse.status(),
       'Persisted cover URL must stay private while the parent Account remains unpublished.',
@@ -2823,7 +2799,19 @@ test('@mutation tenant-admin account-profile cover upload persists and renders a
 
     await publishAccount(api, baseUrl, session.token, created.accountSlug);
 
-    const publishedCoverResponse = await api.get(coverUrl, {
+    const publicProfile = await fetchPublicProfile(
+      api,
+      baseUrl,
+      session.token,
+      profileSlug,
+    );
+    const publishedCoverUrl = publicProfile?.cover_url?.toString() || '';
+    expect(
+      publishedCoverUrl,
+      'Published public profile detail must return the canonical cover URL.',
+    ).toBeTruthy();
+
+    const publishedCoverResponse = await api.get(publishedCoverUrl, {
       failOnStatusCode: false,
     });
     expect(
@@ -2837,7 +2825,7 @@ test('@mutation tenant-admin account-profile cover upload persists and renders a
     const coverStatuses = [];
 
     verificationPage.on('response', (response) => {
-      if (response.url() === coverUrl) {
+      if (urlsMatchIgnoringQuery(response.url(), adminCoverUrl)) {
         coverStatuses.push(response.status());
       }
     });
@@ -3123,14 +3111,14 @@ test('@mutation tenant-admin account-profile rich text toolbar authors HTTPS lin
         allowedTaxonomies: [],
         markerColor: '#0F766E',
         capabilities: {
-          is_queryable: true,
-          is_favoritable: true,
-          is_publicly_discoverable: true,
-          is_publicly_navigable: true,
-          has_avatar: false,
-          has_cover: false,
-          has_taxonomies: false,
-          has_bio: true,
+          is_queryable: { value: true, parameters: {} },
+          is_favoritable: { value: true, parameters: {} },
+          is_publicly_discoverable: { value: true, parameters: {} },
+          is_publicly_navigable: { value: true, parameters: {} },
+          has_avatar: { value: false, parameters: {} },
+          has_cover: { value: false, parameters: {} },
+          has_taxonomies: { value: false, parameters: {} },
+          has_bio: { value: true, parameters: {} },
         },
       }),
     );
@@ -3142,7 +3130,7 @@ test('@mutation tenant-admin account-profile rich text toolbar authors HTTPS lin
       'is_publicly_navigable',
     ]) {
       expect(
-        createdType?.capabilities?.[capability],
+        createdType?.capabilities?.[capability]?.effective?.value,
         `Rich-text Profile fixture must enable ${capability}.`,
       ).toBe(true);
     }
@@ -3386,13 +3374,33 @@ test('@mutation tenant-admin account-profile avatar upload persists and renders 
       page.getByRole('button', { name: 'Usar' }).click(),
     ]);
     const savePayload = await saveResponse.json();
-    const avatarUrl = savePayload?.data?.avatar_url?.toString() || '';
-    logStep('avatar', `autosave returned ${avatarUrl}`);
-    expect(avatarUrl, 'Avatar save must return a canonical avatar URL.').toBeTruthy();
+    const profileSlug = savePayload.data.slug?.toString() || '';
+    const adminAvatarUrl = savePayload.data.admin_avatar_url?.toString() || '';
+    logStep('avatar', `autosave returned protected ${adminAvatarUrl}`);
+    expect(profileSlug, 'Avatar save must return the canonical account profile slug.').toBeTruthy();
+    expect(savePayload.data.avatar_url, 'Draft avatar save must not return a public avatar URL.').toBeNull();
+    expect(adminAvatarUrl, 'Avatar save must return an authenticated admin avatar URL.').toBeTruthy();
 
-    const unpublishedAvatarResponse = await api.get(avatarUrl, {
+    const protectedAvatarResponse = await api.get(adminAvatarUrl, {
+      headers: authHeaders(session.token),
       failOnStatusCode: false,
     });
+    expect(
+      protectedAvatarResponse.status(),
+      'Persisted draft avatar must be readable through the authenticated admin URL.',
+    ).toBe(200);
+    expect(
+      (await protectedAvatarResponse.body()).length,
+      'Authenticated admin avatar read must return persisted image bytes.',
+    ).toBeGreaterThan(0);
+    await disposeApiResponse(protectedAvatarResponse);
+
+    const unpublishedAvatarResponse = await api.get(
+      buildApiUrl(baseUrl, `/api/v1/media/account-profiles/${profileId}/avatar`),
+      {
+        failOnStatusCode: false,
+      },
+    );
     expect(
       unpublishedAvatarResponse.status(),
       'Persisted avatar URL must stay private while the parent Account remains unpublished.',
@@ -3401,7 +3409,19 @@ test('@mutation tenant-admin account-profile avatar upload persists and renders 
 
     await publishAccount(api, baseUrl, session.token, created.accountSlug);
 
-    const publishedAvatarResponse = await api.get(avatarUrl, {
+    const publicProfile = await fetchPublicProfile(
+      api,
+      baseUrl,
+      session.token,
+      profileSlug,
+    );
+    const publishedAvatarUrl = publicProfile?.avatar_url?.toString() || '';
+    expect(
+      publishedAvatarUrl,
+      'Published public profile detail must return the canonical avatar URL.',
+    ).toBeTruthy();
+
+    const publishedAvatarResponse = await api.get(publishedAvatarUrl, {
       failOnStatusCode: false,
     });
     expect(
@@ -3415,7 +3435,7 @@ test('@mutation tenant-admin account-profile avatar upload persists and renders 
     const avatarStatuses = [];
 
     verificationPage.on('response', (response) => {
-      if (urlsMatchIgnoringQuery(response.url(), avatarUrl)) {
+      if (urlsMatchIgnoringQuery(response.url(), adminAvatarUrl)) {
         avatarStatuses.push(response.status());
       }
     });
@@ -3488,13 +3508,13 @@ test('@mutation tenant-admin granular mixed gallery CRUD persists and renders se
         allowedTaxonomies: [],
         markerColor: '#0E7A6A',
         capabilities: {
-          is_favoritable: false,
-          is_publicly_discoverable: true,
-          is_publicly_navigable: true,
-          has_gallery: true,
-          has_avatar: false,
-          has_cover: false,
-          has_taxonomies: false,
+          is_favoritable: { value: false, parameters: {} },
+          is_publicly_discoverable: { value: true, parameters: {} },
+          is_publicly_navigable: { value: true, parameters: {} },
+          has_gallery: { value: true, parameters: { max_groups: 6, max_items_per_group: 12 } },
+          has_avatar: { value: false, parameters: {} },
+          has_cover: { value: false, parameters: {} },
+          has_taxonomies: { value: false, parameters: {} },
         },
       })
     )?.data;
@@ -3610,6 +3630,70 @@ test('@mutation tenant-admin granular mixed gallery CRUD persists and renders se
     expect(primaryItems).toHaveLength(2);
     const photoItemId = primaryItems.find((item) => item?.type === 'photo')?.item_id?.toString() || '';
     expect(photoItemId, 'Granular photo create must return the canonical item id.').toBeTruthy();
+
+    const metadataTitle = `Título da galeria ${unique}`;
+    const metadataDescription = `Descrição da galeria ${unique}\nSegunda linha`;
+    const metadataItemPath = `/admin/api/v1/account_profiles/${profileId}/gallery/groups/${primaryGroupId}/items/${firstYoutubeItemId}`;
+    await fillFlutterTextField(page, 'Título do item', metadataTitle);
+    const titlePatchPromise = page.waitForResponse((candidate) =>
+      candidate.request().method() === 'PATCH' &&
+      candidate.url().endsWith(metadataItemPath) &&
+      candidate.status() < 400,
+    );
+    await page.getByRole('button', { name: 'Salvar título', exact: true }).click();
+    const titlePatch = await titlePatchPromise;
+    const titlePatchBody = titlePatch.request().postDataJSON();
+    expect(titlePatchBody?.title).toBe(metadataTitle);
+    expect(titlePatchBody).not.toHaveProperty('description');
+    await expect(page.getByLabel('Título do item').first()).toHaveValue(metadataTitle);
+
+    await fillFlutterTextField(page, 'Descrição do item', metadataDescription);
+    const descriptionPatchPromise = page.waitForResponse((candidate) =>
+      candidate.request().method() === 'PATCH' &&
+      candidate.url().endsWith(metadataItemPath) &&
+      candidate.status() < 400,
+    );
+    await page.getByRole('button', { name: 'Salvar descrição', exact: true }).click();
+    const descriptionPatch = await descriptionPatchPromise;
+    const descriptionPatchBody = descriptionPatch.request().postDataJSON();
+    expect(descriptionPatchBody?.description).toBe(metadataDescription);
+    expect(descriptionPatchBody).not.toHaveProperty('title');
+
+    const metadataReload = await page.reload({ waitUntil: 'domcontentloaded' });
+    expect(metadataReload, 'Gallery metadata reload response should be available.').not.toBeNull();
+    expect(metadataReload.status()).toBeLessThan(400);
+    await assertAppBooted(page);
+    await enableAccessibilityIfNeeded(page);
+    await scrollUntilVisible(
+      page,
+      page.getByText('Galerias', { exact: true }),
+      'Expected gallery section after metadata reload.',
+    );
+    const metadataReadback = await fetchAdminProfile(
+      api,
+      baseUrl,
+      session.token,
+      profileId,
+    );
+    const metadataReadbackItem = normalizeList(
+      normalizeList(metadataReadback?.gallery_groups)
+        .find((group) => group?.group_id?.toString() === primaryGroupId)
+        ?.items,
+    ).find((item) => item?.item_id?.toString() === firstYoutubeItemId);
+    expect(metadataReadbackItem?.title).toBe(metadataTitle);
+    expect(metadataReadbackItem?.description).toBe(metadataDescription);
+    const reloadedTitleField = page.getByLabel('Título do item').first();
+    const reloadedDescriptionField = page.getByLabel('Descrição do item').first();
+    await expectFlutterFieldRenderedAndFocusedValue(
+      reloadedTitleField,
+      metadataTitle,
+      'Expected the reloaded gallery title to render and retain its authoritative value.',
+    );
+    await expectFlutterFieldRenderedAndFocusedValue(
+      reloadedDescriptionField,
+      metadataDescription,
+      'Expected the reloaded gallery description to render and retain its authoritative value.',
+    );
 
     const profileSaveResponsePromise = page.waitForResponse((candidate) =>
       candidate.request().method() === 'PATCH' &&
@@ -3931,13 +4015,13 @@ test('@mutation tenant-admin account-profile edit save keeps Display Name visibl
         allowedTaxonomies: [],
         markerColor: '#0B6E4F',
         capabilities: {
-          is_favoritable: false,
-          is_publicly_discoverable: true,
-          is_publicly_navigable: true,
-          has_gallery: true,
-          has_avatar: false,
-          has_cover: false,
-          has_taxonomies: false,
+          is_favoritable: { value: false, parameters: {} },
+          is_publicly_discoverable: { value: true, parameters: {} },
+          is_publicly_navigable: { value: true, parameters: {} },
+          has_gallery: { value: true, parameters: { max_groups: 6, max_items_per_group: 12 } },
+          has_avatar: { value: false, parameters: {} },
+          has_cover: { value: false, parameters: {} },
+          has_taxonomies: { value: false, parameters: {} },
         },
       })
     )?.data;
@@ -4118,13 +4202,13 @@ test('@mutation tenant-admin gallery data stays dormant when has_gallery is disa
         allowedTaxonomies: [],
         markerColor: '#136F63',
         capabilities: {
-          is_favoritable: false,
-          is_publicly_discoverable: true,
-          is_publicly_navigable: true,
-          has_gallery: true,
-          has_avatar: false,
-          has_cover: false,
-          has_taxonomies: false,
+          is_favoritable: { value: false, parameters: {} },
+          is_publicly_discoverable: { value: true, parameters: {} },
+          is_publicly_navigable: { value: true, parameters: {} },
+          has_gallery: { value: true, parameters: { max_groups: 6, max_items_per_group: 12 } },
+          has_avatar: { value: false, parameters: {} },
+          has_cover: { value: false, parameters: {} },
+          has_taxonomies: { value: false, parameters: {} },
         },
       })
     )?.data;
@@ -4246,12 +4330,13 @@ test('@mutation tenant-admin gallery data stays dormant when has_gallery is disa
       profileTypeKey,
       {
         capabilities: {
-          has_gallery: false,
+          has_gallery: { value: false, parameters: { max_groups: 6, max_items_per_group: 12 } },
         },
+        expected_capability_revision: createdProfileType?.capability_revision ?? 0,
       },
     );
     expect(
-      disabledTypePayload?.data?.capabilities?.has_gallery,
+      disabledTypePayload?.data?.capabilities?.has_gallery?.configured?.value,
       'Account profile type update must disable has_gallery.',
     ).toBe(false);
 
@@ -4298,7 +4383,9 @@ test('@mutation tenant-admin gallery data stays dormant when has_gallery is disa
             session.token,
             profileTypeKey,
           );
-          const hasGallery = profileTypeReadback?.capabilities?.has_gallery ?? null;
+          const hasGallery =
+            profileTypeReadback?.capabilities?.has_gallery?.effective?.value ??
+            null;
           logStep(
             'gallery-dormant',
             `admin API catalog readback has_gallery=${hasGallery}`,
@@ -4400,7 +4487,8 @@ test('@mutation tenant-admin gallery data stays dormant when has_gallery is disa
                   rows.find((row) => row?.type?.toString() === typeKey) || null;
                 return {
                   status: response.status,
-                  hasGallery: entry?.capabilities?.has_gallery ?? null,
+                  hasGallery:
+                    entry?.capabilities?.has_gallery?.effective?.value ?? null,
                 };
               },
               {
@@ -4550,14 +4638,17 @@ test('@mutation home favorites preserve backend order and expose event status ha
         allowedTaxonomies: [],
         markerColor: '#225588',
         capabilities: {
-          is_favoritable: true,
-          is_publicly_discoverable: true,
-          is_publicly_navigable: true,
-          is_poi_enabled: true,
-          has_events: true,
-          has_avatar: false,
-          has_cover: false,
-          has_taxonomies: false,
+          is_favoritable: { value: true, parameters: {} },
+          is_publicly_discoverable: { value: true, parameters: {} },
+          is_publicly_navigable: { value: true, parameters: {} },
+          location_policy: { value: 'required', parameters: {} },
+          is_map_poi_enabled: { value: true, parameters: {} },
+          is_physical_host_enabled: { value: true, parameters: {} },
+          is_reference_location_enabled: { value: true, parameters: {} },
+          has_events: { value: true, parameters: {} },
+          has_avatar: { value: false, parameters: {} },
+          has_cover: { value: false, parameters: {} },
+          has_taxonomies: { value: false, parameters: {} },
         },
       })
     )?.data;
@@ -4603,7 +4694,12 @@ test('@mutation home favorites preserve backend order and expose event status ha
         profileType: createdProfileType,
       },
     );
+    const memberEventHost = await createPublicAccountProfileForType(
+      api, baseUrl, session.token,
+      { name: `Host Fav Members ${unique}`, profileType: createdProfileType },
+    );
     createdAccountSlugs.push(
+      memberEventHost.accountSlug,
       liveProfile.accountSlug,
       upcomingSoonProfile.accountSlug,
       upcomingLaterProfile.accountSlug,
@@ -4638,7 +4734,7 @@ test('@mutation home favorites preserve backend order and expose event status ha
       {
         title: `PW Favorites Live ${unique}`,
         eventType: createdEventType.data,
-        host: liveProfile,
+        host: memberEventHost,
         occurrences: [liveOccurrenceWindow()],
       },
     );
@@ -4649,7 +4745,7 @@ test('@mutation home favorites preserve backend order and expose event status ha
       {
         title: `PW Favorites Soon ${unique}`,
         eventType: createdEventType.data,
-        host: upcomingSoonProfile,
+        host: memberEventHost,
         occurrences: [futureOccurrenceWindow(1)],
       },
     );
@@ -4658,6 +4754,24 @@ test('@mutation home favorites preserve backend order and expose event status ha
       upcomingSoonEvent?.event_id?.toString() || '',
       upcomingLaterEvent?.event_id?.toString() || '',
     );
+    for (const [event, profile] of [[liveEvent, liveProfile], [upcomingSoonEvent, upcomingSoonProfile]]) {
+      const occurrenceId = event?.occurrences?.[0]?.occurrence_id?.toString() || '';
+      expect(occurrenceId, 'Member-only Favorites fixture requires its exact occurrence.').toBeTruthy();
+      expect(profile.profileId).not.toBe(memberEventHost.profileId);
+      const groupsPath = `/admin/api/v1/events/${event.event_id}/occurrences/${occurrenceId}/profile_groups`;
+      const groupResponse = await api.post(buildApiUrl(baseUrl, groupsPath), {
+        headers: authHeaders(session.token), data: { label: 'Favorites related profiles' },
+      });
+      const groupPayload = await groupResponse.json();
+      expect(groupResponse.status(), JSON.stringify(groupPayload)).toBe(201);
+      const groupId = normalizeList(groupPayload?.data?.profile_groups)
+        .find((group) => group.label === 'Favorites related profiles')?.id;
+      expect(groupId, 'Canonical related group must be returned.').toBeTruthy();
+      const memberResponse = await api.patch(buildApiUrl(baseUrl, `${groupsPath}/${groupId}/members`), {
+        headers: authHeaders(session.token), data: { add_ids: [profile.profileId] },
+      });
+      expect(memberResponse.status(), 'Canonical member mutation must succeed.').toBeLessThan(400);
+    }
 
     anonymousIdentity = await createAnonymousIdentity(
       api,
@@ -4774,11 +4888,38 @@ test('@mutation home favorites preserve backend order and expose event status ha
     const liveFavoritePayload = favoriteItems.find(
       (item) => item?.target_id?.toString() === liveProfile.profileId?.toString(),
     );
+    const upcomingMemberPayload = favoriteItems.find((item) => item?.target_id === upcomingSoonProfile.profileId);
+    expect(liveFavoritePayload?.occurrence_state?.live_now_event_occurrence_id).toBe(liveEvent.occurrences[0].occurrence_id);
+    expect(favoritesPayload?.pinned?.occurrence_state?.live_now_event_occurrence_id).toBe(liveEvent.occurrences[0].occurrence_id);
+    expect(upcomingMemberPayload?.occurrence_state?.next_event_occurrence_id).toBe(upcomingSoonEvent.occurrences[0].occurrence_id);
+    const liveOccurrenceId = liveEvent.occurrences[0].occurrence_id?.toString() || '';
+    const upcomingSoonOccurrenceId = upcomingSoonEvent.occurrences[0].occurrence_id?.toString() || '';
+    expect(liveOccurrenceId, 'Owned live occurrence ID must be present.').toBeTruthy();
+    expect(upcomingSoonOccurrenceId, 'Owned upcoming occurrence ID must be present.').toBeTruthy();
+    const [livePublicProfile, upcomingSoonPublicProfile] = await Promise.all([
+      fetchPublicProfile(api, baseUrl, anonymousIdentity.token, liveProfile.profileSlug),
+      fetchPublicProfile(api, baseUrl, anonymousIdentity.token, upcomingSoonProfile.profileSlug),
+    ]);
+    expect(
+      normalizeList(livePublicProfile?.agenda_occurrences).map((occurrence) =>
+        occurrence?.occurrence_id?.toString() || '',
+      ),
+      'Public live member Profile agenda must contain its owned occurrence only.',
+    ).toEqual([liveOccurrenceId]);
+    expect(
+      normalizeList(upcomingSoonPublicProfile?.agenda_occurrences).map((occurrence) =>
+        occurrence?.occurrence_id?.toString() || '',
+      ),
+      'Public upcoming member Profile agenda must contain its owned occurrence only.',
+    ).toEqual([upcomingSoonOccurrenceId]);
+    expect(liveFavoritePayload?.occurrence_state?.live_now_event_occurrence_id?.toString()).toBe(liveOccurrenceId);
+    expect(upcomingMemberPayload?.occurrence_state?.next_event_occurrence_id?.toString()).toBe(upcomingSoonOccurrenceId);
     const fallbackFavoritePayload = favoriteItems.find(
       (item) => item?.target_id?.toString() === fallbackProfile.profileId?.toString(),
     );
-    const liveTargetPath =
-      liveFavoritePayload?.navigation?.target_path?.toString() || '';
+    expect(liveEvent.slug, 'Owned live event must expose its canonical slug').toBeTruthy();
+    const liveTargetPath = `/agenda/evento/${encodeURIComponent(liveEvent.slug)}?occurrence=${encodeURIComponent(liveOccurrenceId)}`;
+    expect(liveFavoritePayload?.navigation?.target_path).toBe(liveTargetPath);
     const fallbackTargetPath =
       fallbackFavoritePayload?.navigation?.target_path?.toString() || '';
     expect(
@@ -4792,7 +4933,7 @@ test('@mutation home favorites preserve backend order and expose event status ha
     expect(
       liveFavoritePayload?.navigation?.event_occurrence_id?.toString() || '',
       'Live favorite must expose event_occurrence_id in /favorites payload.',
-    ).toBeTruthy();
+    ).toBe(liveOccurrenceId);
     expect(
       fallbackFavoritePayload?.navigation?.kind,
       'Fallback favorite must keep canonical account-profile navigation in /favorites payload.',
@@ -4838,10 +4979,13 @@ test('@mutation home favorites preserve backend order and expose event status ha
     const upcomingLaterChipLabel = `${upcomingLaterProfile.displayName}, TEM EVENTO`;
     const fallbackChipLabel = fallbackProfile.displayName;
 
-    const liveChip = publicPage.getByRole('button', { name: liveChipLabel }).first();
-    const upcomingSoonChip = publicPage.getByRole('button', { name: upcomingSoonChipLabel }).first();
-    const upcomingLaterChip = publicPage.getByRole('button', { name: upcomingLaterChipLabel }).first();
-    const fallbackChip = publicPage.getByRole('button', { name: fallbackChipLabel }).first();
+    const liveChip = publicPage.getByRole('button', { name: liveChipLabel, exact: true });
+    const upcomingSoonChip = publicPage.getByRole('button', { name: upcomingSoonChipLabel, exact: true });
+    const upcomingLaterChip = publicPage.getByRole('button', { name: upcomingLaterChipLabel, exact: true });
+    const fallbackChip = publicPage.getByRole('button', { name: fallbackChipLabel, exact: true });
+    for (const chip of [liveChip, upcomingSoonChip, upcomingLaterChip, fallbackChip]) {
+      await expect(chip).toHaveCount(1);
+    }
 
     const ensureChipAccessible = async (chip, label) => {
       await expect
@@ -5192,13 +5336,13 @@ test('@mutation tenant-admin persisted WhatsApp edit saves without a draft key a
         allowedTaxonomies: [],
         markerColor: '#0B6E4F',
         capabilities: {
-          is_favoritable: false,
-          is_publicly_discoverable: false,
-          is_publicly_navigable: false,
-          has_avatar: false,
-          has_cover: false,
-          has_taxonomies: false,
-          has_contact_channels: true,
+          is_favoritable: { value: false, parameters: {} },
+          is_publicly_discoverable: { value: false, parameters: {} },
+          is_publicly_navigable: { value: false, parameters: {} },
+          has_avatar: { value: false, parameters: {} },
+          has_cover: { value: false, parameters: {} },
+          has_taxonomies: { value: false, parameters: {} },
+          has_contact_channels: { value: true, parameters: {} },
         },
       })
     )?.data;
@@ -5380,12 +5524,12 @@ test('@mutation tenant-admin account profile edit nested tabs obey profile type 
         allowedTaxonomies: [],
         markerColor: '#65758B',
         capabilities: {
-          is_favoritable: false,
-          is_poi_enabled: false,
-          has_avatar: false,
-          has_cover: false,
-          has_taxonomies: false,
-          has_nested_profile_groups: false,
+          is_favoritable: { value: false, parameters: {} },
+          location_policy: { value: 'disabled', parameters: {} },
+          has_avatar: { value: false, parameters: {} },
+          has_cover: { value: false, parameters: {} },
+          has_taxonomies: { value: false, parameters: {} },
+          has_nested_profile_groups: { value: false, parameters: {} },
         },
       })
     )?.data;
@@ -5396,12 +5540,12 @@ test('@mutation tenant-admin account profile edit nested tabs obey profile type 
         allowedTaxonomies: [],
         markerColor: '#0E7A6A',
         capabilities: {
-          is_favoritable: false,
-          is_poi_enabled: false,
-          has_avatar: false,
-          has_cover: false,
-          has_taxonomies: false,
-          has_nested_profile_groups: true,
+          is_favoritable: { value: false, parameters: {} },
+          location_policy: { value: 'disabled', parameters: {} },
+          has_avatar: { value: false, parameters: {} },
+          has_cover: { value: false, parameters: {} },
+          has_taxonomies: { value: false, parameters: {} },
+          has_nested_profile_groups: { value: true, parameters: {} },
         },
       })
     )?.data;
@@ -5516,15 +5660,15 @@ test('@mutation U04-ACCOUNT-GROUP-HEAD tenant-admin account-profile group heads 
         allowedTaxonomies: [],
         markerColor: '#0E7A6A',
         capabilities: {
-          is_queryable: true,
-          is_favoritable: false,
-          is_poi_enabled: false,
-          is_publicly_navigable: true,
-          is_publicly_discoverable: true,
-          has_avatar: false,
-          has_cover: false,
-          has_taxonomies: false,
-          has_nested_profile_groups: true,
+          is_queryable: { value: true, parameters: {} },
+          is_favoritable: { value: false, parameters: {} },
+          location_policy: { value: 'disabled', parameters: {} },
+          is_publicly_navigable: { value: true, parameters: {} },
+          is_publicly_discoverable: { value: true, parameters: {} },
+          has_avatar: { value: false, parameters: {} },
+          has_cover: { value: false, parameters: {} },
+          has_taxonomies: { value: false, parameters: {} },
+          has_nested_profile_groups: { value: true, parameters: {} },
         },
       })
     )?.data;
@@ -6294,13 +6438,13 @@ test('@mutation U06-CANDIDATE-PICKER server-owned nested and contact candidate s
         allowedTaxonomies: [],
         markerColor: '#0E7A6A',
         capabilities: {
-          is_queryable: true,
-          is_favoritable: false,
-          is_poi_enabled: false,
-          has_avatar: false,
-          has_cover: false,
-          has_taxonomies: false,
-          has_nested_profile_groups: true,
+          is_queryable: { value: true, parameters: {} },
+          is_favoritable: { value: false, parameters: {} },
+          location_policy: { value: 'disabled', parameters: {} },
+          has_avatar: { value: false, parameters: {} },
+          has_cover: { value: false, parameters: {} },
+          has_taxonomies: { value: false, parameters: {} },
+          has_nested_profile_groups: { value: true, parameters: {} },
         },
       })
     )?.data;
@@ -6314,13 +6458,13 @@ test('@mutation U06-CANDIDATE-PICKER server-owned nested and contact candidate s
         allowedTaxonomies: [],
         markerColor: '#1D4ED8',
         capabilities: {
-          is_queryable: false,
-          is_favoritable: false,
-          is_poi_enabled: false,
-          has_avatar: false,
-          has_cover: false,
-          has_taxonomies: false,
-          has_contact_channels: true,
+          is_queryable: { value: false, parameters: {} },
+          is_favoritable: { value: false, parameters: {} },
+          location_policy: { value: 'disabled', parameters: {} },
+          has_avatar: { value: false, parameters: {} },
+          has_cover: { value: false, parameters: {} },
+          has_taxonomies: { value: false, parameters: {} },
+          has_contact_channels: { value: true, parameters: {} },
         },
       })
     )?.data;
@@ -6720,13 +6864,13 @@ test('@mutation tenant-admin account onboarding CRUD persists detail/edit readba
         allowedTaxonomies: [],
         markerColor: '#0F766E',
         capabilities: {
-          is_favoritable: false,
-          is_publicly_discoverable: true,
-          is_publicly_navigable: true,
-          has_avatar: false,
-          has_cover: false,
-          has_taxonomies: false,
-          has_bio: false,
+          is_favoritable: { value: false, parameters: {} },
+          is_publicly_discoverable: { value: true, parameters: {} },
+          is_publicly_navigable: { value: true, parameters: {} },
+          has_avatar: { value: false, parameters: {} },
+          has_cover: { value: false, parameters: {} },
+          has_taxonomies: { value: false, parameters: {} },
+          has_bio: { value: false, parameters: {} },
         },
       }),
     );
@@ -6879,7 +7023,7 @@ test('@mutation tenant-admin account onboarding CRUD persists detail/edit readba
       'Account delete request must succeed after the bounded admin delete flow.',
     ).toContain(deleteResponse.status());
 
-    await waitForAccountDeletion(api, baseUrl, session.token, profileId);
+    await waitForAccountSoftDeletion(api, baseUrl, session.token, profileId);
     accountSlug = null;
     profileId = null;
 
@@ -6932,11 +7076,11 @@ test('@mutation tenant-admin account onboarding rejects stale selected profile t
         allowedTaxonomies: [],
         markerColor: '#1D4ED8',
         capabilities: {
-          is_favoritable: false,
-          has_avatar: false,
-          has_cover: false,
-          has_taxonomies: false,
-          has_bio: false,
+          is_favoritable: { value: false, parameters: {} },
+          has_avatar: { value: false, parameters: {} },
+          has_cover: { value: false, parameters: {} },
+          has_taxonomies: { value: false, parameters: {} },
+          has_bio: { value: false, parameters: {} },
         },
       }),
     );
@@ -8055,7 +8199,7 @@ test('@mutation tenant-admin branding public default image and favicon persist a
   }
 });
 
-test('@mutation tenant-admin profile-type editors preload and preserve allowed taxonomies when saving unrelated visual changes', async ({
+test('@mutation tenant-admin event and account profile type editors preload and preserve allowed taxonomies when saving unrelated visual changes', async ({
   browser,
 }) => {
   test.setTimeout(600000);
@@ -8070,10 +8214,8 @@ test('@mutation tenant-admin profile-type editors preload and preserve allowed t
   let eventTaxonomyBId = null;
   let profileTaxonomyAId = null;
   let profileTaxonomyBId = null;
-  let staticTaxonomyId = null;
   let createdEventTypeId = null;
   let createdProfileType = null;
-  let createdStaticType = null;
 
   try {
     async function rotateFreshTenantAdminPage() {
@@ -8129,19 +8271,11 @@ test('@mutation tenant-admin profile-type editors preload and preserve allowed t
       terms: [{ slug: `term-b-${unique}`, name: `Termo B ${unique}` }],
     });
     profileTaxonomyBId = profileTaxonomyB.taxonomyId;
-    const staticTaxonomy = await createTaxonomy(api, baseUrl, session.token, {
-      slug: `hd13-static-${unique}`,
-      name: `AA Ativo ${uniqueSuffix}`,
-      appliesTo: ['static_asset'],
-      terms: [{ slug: `term-static-${unique}`, name: `Termo Ativo ${unique}` }],
-    });
-    staticTaxonomyId = staticTaxonomy.taxonomyId;
     await waitForTaxonomyRegistry(api, baseUrl, session.token, [
       eventTaxonomyA.slug,
       eventTaxonomyB.slug,
       profileTaxonomyA.slug,
       profileTaxonomyB.slug,
-      staticTaxonomy.slug,
     ]);
 
     const createdEventType = await createEventType(
@@ -8165,28 +8299,17 @@ test('@mutation tenant-admin profile-type editors preload and preserve allowed t
         label: `HD13 Perfil ${unique}`,
         allowedTaxonomies: [profileTaxonomyA.slug, profileTaxonomyB.slug],
         markerColor: '#B51E5B',
+        capabilities: {
+          is_publicly_discoverable: { value: true, parameters: {} },
+        },
       },
     );
-    createdStaticType = await createStaticProfileType(
-      api,
-      baseUrl,
-      session.token,
-      {
-        type: `hd13-static-${unique}`,
-        label: `HD13 Ativo ${unique}`,
-        allowedTaxonomies: [staticTaxonomy.slug],
-        markerColor: '#1E6FB5',
-      },
-    );
-
     await rotateFreshTenantAdminPage();
 
     const profileTypeKey = createdProfileType?.data?.type?.toString() || '';
-    const staticTypeKey = createdStaticType?.data?.type?.toString() || '';
     const eventTypeName = createdEventType?.data?.name?.toString() || '';
     expect(createdEventTypeId, 'Created event type must expose id.').toBeTruthy();
     expect(profileTypeKey, 'Created account profile type must expose type.').toBeTruthy();
-    expect(staticTypeKey, 'Created static profile type must expose type.').toBeTruthy();
 
     const eventTypesUrl = buildApiUrl(baseUrl, '/admin/events/types');
     logStep('type-taxonomies', `open event types route ${eventTypesUrl}`);
@@ -8215,6 +8338,8 @@ test('@mutation tenant-admin profile-type editors preload and preserve allowed t
     await expectSelectedToggleChip(page, eventTaxonomyA.name);
     await expectSelectedToggleChip(page, eventTaxonomyB.name);
     logStep('type-taxonomies', 'event type preloaded allowed taxonomies confirmed');
+
+    await page.getByRole('button', { name: 'Mover para baixo' }).first().click();
 
     const eventDescriptionUpdate = `Descricao atualizada ${unique}`;
     await fillFlutterTextField(
@@ -8245,8 +8370,8 @@ test('@mutation tenant-admin profile-type editors preload and preserve allowed t
     expect(eventSaveResponse.status()).toBeLessThan(400);
     const eventSavePayload = await eventSaveResponse.json();
     expect(
-      (eventSavePayload?.data?.allowed_taxonomies || []).slice().sort(),
-    ).toEqual([eventTaxonomyA.slug, eventTaxonomyB.slug].slice().sort());
+      eventSavePayload?.data?.allowed_taxonomies || [],
+    ).toEqual([eventTaxonomyB.slug, eventTaxonomyA.slug]);
     expect(eventSavePayload?.data?.description).toBe(eventDescriptionUpdate);
     logStep('type-taxonomies', 'event type save preserved allowed taxonomies');
 
@@ -8284,6 +8409,7 @@ test('@mutation tenant-admin profile-type editors preload and preserve allowed t
       timeoutMs: 15000,
     });
     logStep('type-taxonomies', 'event type reopen preserved allowed taxonomies');
+    await expectOrderedTaxonomyRows(page, [eventTaxonomyB, eventTaxonomyA]);
 
     await rotateFreshTenantAdminPage();
     const profileEditUrl = buildApiUrl(
@@ -8303,6 +8429,8 @@ test('@mutation tenant-admin profile-type editors preload and preserve allowed t
       timeout: appBootTimeoutMs,
     });
     logStep('type-taxonomies', 'profile type edit loaded taxonomy section');
+
+    await page.getByRole('button', { name: 'Mover para baixo' }).first().click();
 
     const profileLabelUpdate = `HD13 Perfil Atualizado ${unique}`;
     await fillFlutterTextField(page, 'Label', profileLabelUpdate);
@@ -8324,8 +8452,8 @@ test('@mutation tenant-admin profile-type editors preload and preserve allowed t
     expect(profileSaveResponse.status()).toBeLessThan(400);
     const profileSavePayload = await profileSaveResponse.json();
     expect(
-      (profileSavePayload?.data?.allowed_taxonomies || []).slice().sort(),
-    ).toEqual([profileTaxonomyA.slug, profileTaxonomyB.slug].slice().sort());
+      profileSavePayload?.data?.allowed_taxonomies || [],
+    ).toEqual([profileTaxonomyB.slug, profileTaxonomyA.slug]);
     expect(profileSavePayload?.data?.label).toBe(profileLabelUpdate);
     logStep('type-taxonomies', 'profile type save preserved allowed taxonomies');
 
@@ -8347,89 +8475,39 @@ test('@mutation tenant-admin profile-type editors preload and preserve allowed t
       profileTypeKey,
     );
     expect(
-      (profileReadback?.allowed_taxonomies || []).slice().sort(),
+      profileReadback?.allowed_taxonomies || [],
       'Account profile type readback must preserve allowed taxonomies after reopen.',
-    ).toEqual([profileTaxonomyA.slug, profileTaxonomyB.slug].slice().sort());
+    ).toEqual([profileTaxonomyB.slug, profileTaxonomyA.slug]);
     expect(profileReadback?.label).toBe(profileLabelUpdate);
+    await expectOrderedTaxonomyRows(page, [profileTaxonomyB, profileTaxonomyA]);
     logStep('type-taxonomies', 'profile type reopen preserved allowed taxonomies');
 
-    await rotateFreshTenantAdminPage();
-    const staticEditUrl = buildApiUrl(
-      baseUrl,
-      `/admin/static_profile_types/${encodeURIComponent(staticTypeKey)}/edit`,
-    );
-    logStep('type-taxonomies', `open static profile type route ${staticEditUrl}`);
-    response = await page.goto(staticEditUrl, {
-      waitUntil: 'domcontentloaded',
-    });
-    expect(response, 'Static profile type edit response should be available.').not.toBeNull();
-    expect(response.status()).toBeLessThan(400);
-    await assertAppBooted(page);
-    await enableAccessibilityIfNeeded(page);
-    await scrollTenantAdminSheetToTop(page);
-    await expect(page.getByText('Taxonomias permitidas')).toBeVisible({
-      timeout: appBootTimeoutMs,
-    });
-    logStep('type-taxonomies', 'static type edit loaded taxonomy section');
-
-    const staticLabelUpdate = `HD13 Ativo Atualizado ${unique}`;
-    await fillFlutterTextField(page, 'Label', staticLabelUpdate);
-    logStep('type-taxonomies', 'save static type with unrelated label change');
-    const staticSaveResponsePromise = page.waitForResponse((candidate) => {
-      return (
-        candidate.request().method() === 'PATCH' &&
-        candidate.url().includes(
-          `/admin/api/v1/static_profile_types/${encodeURIComponent(
-            staticTypeKey,
-          )}`,
-        )
+    const publicIdentity = await createAnonymousIdentity(api, baseUrl, 'type-taxonomies-readback');
+    for (const { surface, entity, key, expectedOrder } of [
+      {
+        surface: 'home.events', entity: 'event', key: `hd13-event-${unique}`,
+        expectedOrder: [eventTaxonomyB.slug, eventTaxonomyA.slug],
+      },
+      {
+        surface: 'discovery.account_profiles', entity: 'account_profile', key: profileTypeKey,
+        expectedOrder: [profileTaxonomyB.slug, profileTaxonomyA.slug],
+      },
+    ]) {
+      const catalogResponse = await api.get(
+        buildApiUrl(baseUrl, `/api/v1/discovery-filters/${surface}`),
+        { headers: authHeaders(publicIdentity.token) },
       );
-    });
-    logStep('type-taxonomies', 'click static type save button');
-    await clickSaveChanges(page);
-    logStep('type-taxonomies', 'static type save button clicked');
-    const staticSaveResponse = await staticSaveResponsePromise;
-    expect(staticSaveResponse.status()).toBeLessThan(400);
-    const staticSavePayload = await staticSaveResponse.json();
-    expect(staticSavePayload?.data?.allowed_taxonomies || []).toEqual([
-      staticTaxonomy.slug,
-    ]);
-    expect(staticSavePayload?.data?.label).toBe(staticLabelUpdate);
-    logStep('type-taxonomies', 'static type save preserved allowed taxonomies');
-    expect(staticSavePayload?.data?.visual?.color).toBe('#1E6FB5');
-
-    response = await page.goto(staticEditUrl, {
-      waitUntil: 'domcontentloaded',
-    });
-    expect(response, 'Static profile type reopen response should be available.').not.toBeNull();
-    expect(response.status()).toBeLessThan(400);
-    await assertAppBooted(page);
-    await enableAccessibilityIfNeeded(page);
-    await scrollTenantAdminSheetToTop(page);
-    await expect(page.getByText('Taxonomias permitidas')).toBeVisible({
-      timeout: appBootTimeoutMs,
-    });
-    const staticReadback = await fetchStaticProfileTypeListEntry(
-      api,
-      baseUrl,
-      session.token,
-      staticTypeKey,
-    );
-    expect(
-      staticReadback?.allowed_taxonomies || [],
-      'Static profile type readback must preserve allowed taxonomies after reopen.',
-    ).toEqual([staticTaxonomy.slug]);
-    expect(staticReadback?.label).toBe(staticLabelUpdate);
+      expect(catalogResponse.status()).toBe(200);
+      const catalog = normalizePayload(await catalogResponse.json());
+      const savedType = normalizeList(catalog?.type_options?.[entity])
+        .find((option) => option.value === key);
+      expect(savedType, `The public ${surface} catalog must expose the same saved Type`).toBeTruthy();
+      expect(savedType.allowed_taxonomies).toEqual(expectedOrder);
+    }
 
     await assertNoBrowserFailures(collectors);
   } finally {
     await deleteEventType(api, baseUrl, session?.token, createdEventTypeId);
-    await deleteStaticProfileType(
-      api,
-      baseUrl,
-      session?.token,
-      createdStaticType?.data?.type?.toString() || '',
-    );
     await deleteAccountProfileType(
       api,
       baseUrl,
@@ -8438,7 +8516,6 @@ test('@mutation tenant-admin profile-type editors preload and preserve allowed t
     );
     await deleteTaxonomy(api, baseUrl, session?.token, eventTaxonomyBId);
     await deleteTaxonomy(api, baseUrl, session?.token, eventTaxonomyAId);
-    await deleteTaxonomy(api, baseUrl, session?.token, staticTaxonomyId);
     await deleteTaxonomy(api, baseUrl, session?.token, profileTaxonomyBId);
     await deleteTaxonomy(api, baseUrl, session?.token, profileTaxonomyAId);
     if (browserContext) {

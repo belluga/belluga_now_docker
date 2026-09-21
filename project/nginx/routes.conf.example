@@ -3,8 +3,7 @@
 #
 # Current Belluga Now reference families:
 # - backend-routed prefixes: /account-profiles/ /parceiro/ /agenda/evento/
-#   /static/ /account-profile-types/ /static-assets/ /event-types/
-#   /static-profile-types/ /events/ /map-filters/
+#   /account-profile-types/ /event-types/ /events/ /map-filters/
 # - tenant-public shell routes: /descobrir /privacy-policy /mapa /mapa/poi
 #   /invite /convites /location/permission /baixe-o-app
 
