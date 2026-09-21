@@ -3473,7 +3473,7 @@ async function openPublicAgendaCardAndReturn(
   const titlePattern = new RegExp(escapeRegExp(uniqueTitle));
   const title = page.getByText(titlePattern).first();
   await revealPublicAgendaCard(page, baseUrl, titlePattern);
-  await scrollUntilTextInViewport(
+  await waitForTextInViewport(
     page,
     titlePattern,
     'Seeded occurrence card must be visible in the public agenda list.',

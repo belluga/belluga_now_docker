@@ -210,7 +210,10 @@ async function cleanupOnboardedAccount(
         );
         status = response.status();
         actionWasForceDelete = false;
-        if (status >= 200 && status < 300) {
+        if ((status >= 200 && status < 300) || status === 409) {
+          // A committed soft-delete can still surface an ambiguous 409 conflict.
+          // Treat that outcome as requiring bounded force-delete finalization;
+          // 409 is never accepted as cleanup success.
           archiveNeedsFinalization = true;
         }
       }
