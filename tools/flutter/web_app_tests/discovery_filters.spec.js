@@ -144,6 +144,8 @@ function canonicalQueryParamKeys(expectedName) {
       return ['entities', 'entities[]'];
     case 'type':
       return ['types', 'types[]'];
+    case 'profile_type':
+      return ['profile_type', 'profile_type[]'];
     case 'taxonomy':
       return ['taxonomy', 'taxonomy[]'];
     case 'category':
@@ -160,13 +162,19 @@ function requestContainsFilterValue(rawUrl, expected) {
   const params = url.searchParams;
   const expectedValue = expected.value.toLowerCase();
   const allEntries = [...params.entries()];
+  if (expected.taxonomyType) {
+    return allEntries.some(([key, value]) => {
+      const match = /^taxonomy\[(\d+)\]\[type\]$/.exec(key);
+      return match && value === expected.taxonomyType
+        && params.get(`taxonomy[${match[1]}][value]`) === expected.value;
+    });
+  }
   const candidateKeys = canonicalQueryParamKeys(expected.name)
     .map((value) => value.toLowerCase());
   const scopedEntries = candidateKeys.length > 0
     ? allEntries.filter(([key]) => candidateKeys.includes(String(key).toLowerCase()))
     : [];
-  const entriesToCheck = scopedEntries.length > 0 ? scopedEntries : allEntries;
-  for (const [, value] of entriesToCheck) {
+  for (const [, value] of scopedEntries) {
     const rawValue = String(value).toLowerCase();
     const tokens = rawValue
       .split(',')
@@ -185,7 +193,7 @@ function trackFilteredRequests(page, pathFragment, expected) {
     if (!request.url().includes(pathFragment)) {
       return;
     }
-    if (requestContainsFilterValue(request.url(), expected)) {
+    if (!expected || requestContainsFilterValue(request.url(), expected)) {
       urls.push(request.url());
     }
   };
@@ -197,44 +205,22 @@ function trackFilteredRequests(page, pathFragment, expected) {
   };
 }
 
-async function waitForTrackedFilteredRequest(
-  tracker,
-  message,
-  previousCount = 0,
-  timeoutMs = appBootTimeoutMs,
-) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (tracker.urls.length > previousCount) {
-      return tracker.urls[tracker.urls.length - 1];
-    }
-    await new Promise((resolve) => setTimeout(resolve, 250));
-  }
-  throw new Error(`${message}. Captured filtered requests: ${tracker.urls.join('\n')}`);
-}
-
-async function clickUntilFilteredRequest({
+async function clickAndWaitForFilteredRequest({
   locator,
   tracker,
   message,
-  attempts = 3,
 }) {
-  let lastError = null;
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
-    const previousCount = tracker.urls.length;
-    await activateSemanticToggle(locator.first());
-    try {
-      return await waitForTrackedFilteredRequest(
-        tracker,
-        message,
-        previousCount,
-        12000,
-      );
-    } catch (error) {
-      lastError = error;
-    }
-  }
-  throw lastError ?? new Error(message);
+  const previousCount = tracker.urls.length;
+  const [response] = await Promise.all([
+    locator.page().waitForResponse(
+      (candidate) => tracker.urls.slice(previousCount).includes(candidate.url()),
+      { timeout: 12000 },
+    ),
+    activateSemanticToggle(locator.first()),
+  ]);
+  expect(response.status(), message).toBe(200);
+  await response.finished();
+  return response.url();
 }
 
 async function expectVisibleRuntimeTitle(page, title) {
@@ -950,7 +936,19 @@ async function assertFilterPanelStaysVisibleOnScroll(
 }
 
 function filterPanel(page, label) {
-  return page.getByLabel(label);
+  return page.getByRole('group', { name: label });
+}
+
+function compactFilterPanel(page, label) {
+  return filterPanel(page, label).filter({
+    has: page.getByRole('button', { name: 'Limpar', exact: true }),
+  });
+}
+
+function taxonomyFilterPanel(page, label) {
+  return filterPanel(page, label).filter({
+    hasNot: page.getByRole('button', { name: 'Limpar', exact: true }),
+  });
 }
 
 function filterOption(panel, label) {
@@ -1099,10 +1097,11 @@ async function expectAccessibleGroupContains(locator, text) {
 }
 
 async function expectAccessibleGroupNotContains(locator, text, timeoutMs = 5000) {
-  await expect(locator).not.toHaveAccessibleName(
-    accessibleTextPattern(text),
-    { timeout: timeoutMs },
-  );
+  await expect(
+    locator.and(locator.page().getByRole('group', {
+      name: accessibleTextPattern(text),
+    })),
+  ).toHaveCount(0, { timeout: timeoutMs });
 }
 
 async function createTaxonomy(
@@ -2102,7 +2101,7 @@ test('@mutation Home filters honor Event Type taxonomy compatibility, hide zero-
     const typeA = await createEventType(api, baseUrl, session.token, {
       name: typeALabel,
       slug: `hd10-show-${unique}`,
-      allowedTaxonomies: [taxonomyA.slug],
+      allowedTaxonomies: [taxonomyB.slug, taxonomyA.slug],
       icon: 'music_note',
       color: '#D71920',
     });
@@ -2160,6 +2159,10 @@ test('@mutation Home filters honor Event Type taxonomy compatibility, hide zero-
       host: physicalHost,
       taxonomyTerms: [
         {
+          type: taxonomyB.slug,
+          value: `chef-${unique}`,
+        },
+        {
           type: taxonomyA.slug,
           value: `rock-${unique}`,
         },
@@ -2194,42 +2197,44 @@ test('@mutation Home filters honor Event Type taxonomy compatibility, hide zero-
 
     await grantNavigationGeolocation(page, baseUrl);
     await openTenantPath(page, baseUrl, '/');
-    const panel = filterPanel(page, /Painel de filtros de eventos/i);
-    await expect(panel).toBeVisible({ timeout: appBootTimeoutMs });
+    const panelLabel = /Painel de filtros de eventos/i;
+    const compactPanel = compactFilterPanel(page, panelLabel);
+    const taxonomyPanel = taxonomyFilterPanel(page, panelLabel);
+    await expect(compactPanel).toBeVisible({ timeout: appBootTimeoutMs });
     await expect(
       page.getByRole('button', { name: /Filtrar eventos/i }),
       'Home must expose the always-visible event filter panel without the legacy toggle button.',
     ).toHaveCount(0, { timeout: appBootTimeoutMs });
     await assertFilterPanelStaysVisibleOnScroll(
       page,
-      panel,
+      compactPanel,
       /Filtrar eventos/i,
     );
-    const typeAOption = await revealFilterOption(page, panel, typeALabel);
+    const typeAOption = await revealFilterOption(page, compactPanel, typeALabel);
     await expectFilterChipShowsVisibleLabel(typeAOption);
-    const typeBOption = await revealFilterOption(page, panel, typeBLabel);
+    const typeBOption = await revealFilterOption(page, compactPanel, typeBLabel);
     await expectFilterChipShowsVisibleLabel(typeBOption);
-    const typeCOption = await revealFilterOption(page, panel, typeCLabel);
+    const typeCOption = await revealFilterOption(page, compactPanel, typeCLabel);
     await expectFilterChipShowsVisibleLabel(typeCOption);
     await expect(
-      filterOption(panel, typeDLabel),
+      filterOption(compactPanel, typeDLabel),
       'Home runtime facets must hide event types with zero eligible events in the current universe.',
     ).toHaveCount(0, { timeout: appBootTimeoutMs });
-    await expectAccessibleGroupNotContains(panel, taxonomyA.name);
-    await expectAccessibleGroupNotContains(panel, taxonomyB.name);
-    await expect(filterOption(panel, `Rock ${unique}`))
+    await expectAccessibleGroupNotContains(taxonomyPanel, taxonomyA.name);
+    await expectAccessibleGroupNotContains(taxonomyPanel, taxonomyB.name);
+    await expect(filterOption(taxonomyPanel, `Rock ${unique}`))
       .toHaveCount(0, { timeout: 5000 });
-    await expect(filterOption(panel, `Blues ${unique}`))
+    await expect(filterOption(taxonomyPanel, `Blues ${unique}`))
       .toHaveCount(0, { timeout: 5000 });
-    await expect(filterOption(panel, `Chef ${unique}`))
+    await expect(filterOption(taxonomyPanel, `Chef ${unique}`))
       .toHaveCount(0, { timeout: 5000 });
 
     const homeShowTracker = trackFilteredRequests(page, '/api/v1/agenda', {
-      name: 'type',
+      name: 'category',
       value: `hd10-show-${unique}`,
     });
-    const typeASelectionOption = await revealFilterOption(page, panel, typeALabel);
-    await clickUntilFilteredRequest({
+    const typeASelectionOption = await revealFilterOption(page, compactPanel, typeALabel);
+    await clickAndWaitForFilteredRequest({
       locator: typeASelectionOption,
       tracker: homeShowTracker,
       message: 'Home primary filter click must trigger agenda request for selected Event Type',
@@ -2238,48 +2243,102 @@ test('@mutation Home filters honor Event Type taxonomy compatibility, hide zero-
     await expectSelectedChipIconAndLabelForegroundParity(
       typeASelectionOption.first(),
     );
-    await expect(panel).toBeVisible({ timeout: appBootTimeoutMs });
-    await expectAccessibleGroupContains(panel, taxonomyA.name);
-    await expect(filterOption(panel, `Rock ${unique}`))
+    await expect(compactPanel).toBeVisible({ timeout: appBootTimeoutMs });
+    await expect(page.getByRole('button', { name: /Filtros \(1\)/i })).toBeVisible();
+    await expectAccessibleGroupContains(taxonomyPanel, taxonomyA.name);
+    await expectAccessibleGroupContains(taxonomyPanel, taxonomyB.name);
+    const groupBBounds = await filterOption(taxonomyPanel, `Chef ${unique}`).boundingBox();
+    const groupABounds = await filterOption(taxonomyPanel, `Rock ${unique}`).boundingBox();
+    expect(groupBBounds).not.toBeNull();
+    expect(groupABounds).not.toBeNull();
+    expect(groupBBounds.y, 'Type taxonomy groups must retain allowed_taxonomies order.').toBeLessThan(groupABounds.y);
+    await expect(filterOption(taxonomyPanel, `Rock ${unique}`))
       .toBeVisible({ timeout: appBootTimeoutMs });
     await expect(
-      filterOption(panel, `Blues ${unique}`),
+      filterOption(taxonomyPanel, `Blues ${unique}`),
       'Home runtime taxonomy facets must hide terms with zero eligible events under the selected type universe.',
     ).toHaveCount(0, { timeout: appBootTimeoutMs });
-    await expectAccessibleGroupNotContains(panel, taxonomyB.name, appBootTimeoutMs);
     await expectVisibleRuntimeTitle(page, eventA.title);
     await expectAbsentRuntimeTitle(page, eventB.title);
     await expectAbsentRuntimeTitle(page, eventC.title);
+    const taxonomyTracker = trackFilteredRequests(page, '/api/v1/agenda', {
+      name: 'taxonomy',
+      taxonomyType: taxonomyA.slug,
+      value: `rock-${unique}`,
+    });
+    await clickAndWaitForFilteredRequest({
+      locator: filterOption(taxonomyPanel, `Rock ${unique}`),
+      tracker: taxonomyTracker,
+      message: 'Home taxonomy selection must immediately issue the canonical agenda request',
+    });
+    taxonomyTracker.dispose();
+    await expect(page.getByRole('button', { name: /Filtros \(2\)/i })).toBeVisible();
+    const collapseTracker = trackFilteredRequests(page, '/api/v1/agenda');
+    await page.getByRole('button', { name: /Filtros \(2\)/i }).click();
+    await expectAccessibleGroupNotContains(taxonomyPanel, taxonomyA.name, appBootTimeoutMs);
+    await page.waitForTimeout(350);
+    expect(collapseTracker.urls, 'Collapsing is presentation-only and cannot issue a filter request.').toHaveLength(0);
+    await page.getByRole('button', { name: /Filtros \(2\)/i }).click();
+    await expectAccessibleGroupContains(taxonomyPanel, taxonomyA.name);
+    await expect(page.getByRole('button', { name: /Filtros \(2\)/i })).toBeVisible();
+    await page.waitForTimeout(350);
+    expect(collapseTracker.urls, 'Reopening is presentation-only and cannot issue a list request.').toHaveLength(0);
+    collapseTracker.dispose();
+
+    // Runtime facets with Rock selected admit only Type A. Remove that Type
+    // through its selected chip before choosing B; this must also remove Rock.
+    const deselectTracker = trackFilteredRequests(page, '/api/v1/agenda');
+    let deselectRequest;
+    try {
+      deselectRequest = await clickAndWaitForFilteredRequest({
+        locator: filterOption(compactPanel, typeALabel),
+        tracker: deselectTracker,
+        message: 'Removing the selected Type must refresh without its dependent taxonomy',
+      });
+    } finally {
+      deselectTracker.dispose();
+    }
+    expect(
+      [...new URL(deselectRequest).searchParams.keys()].filter(
+        (key) => key.startsWith('categories') || key.startsWith('taxonomy'),
+      ),
+    ).toEqual([]);
+    await expect(filterOption(taxonomyPanel, `Rock ${unique}`)).toHaveCount(0);
+    await expectAccessibleGroupContains(compactPanel, 'Filtros (0)');
 
     const homeTalkTracker = trackFilteredRequests(page, '/api/v1/agenda', {
-      name: 'type',
+      name: 'category',
       value: `hd10-talk-${unique}`,
     });
-    const typeBSelectionOption = await revealFilterOption(page, panel, typeBLabel);
-    await clickUntilFilteredRequest({
+    const typeBSelectionOption = await revealFilterOption(page, compactPanel, typeBLabel);
+    const typeBRequest = await clickAndWaitForFilteredRequest({
       locator: typeBSelectionOption,
       tracker: homeTalkTracker,
       message: 'Home primary filter switch must trigger agenda request for the next Event Type',
     });
     homeTalkTracker.dispose();
+    expect(
+      [...new URL(typeBRequest).searchParams.keys()].filter((key) => key.startsWith('taxonomy')),
+      'Switching Type must remove the previously active incompatible Rock term.',
+    ).toEqual([]);
     await expectSelectedChipIconAndLabelForegroundParity(
       typeBSelectionOption.first(),
     );
-    await expect(panel).toBeVisible({ timeout: appBootTimeoutMs });
-    await expectAccessibleGroupContains(panel, taxonomyB.name);
-    await expect(filterOption(panel, `Chef ${unique}`))
+    await expect(compactPanel).toBeVisible({ timeout: appBootTimeoutMs });
+    await expectAccessibleGroupContains(taxonomyPanel, taxonomyB.name);
+    await expect(filterOption(taxonomyPanel, `Chef ${unique}`))
       .toBeVisible({ timeout: appBootTimeoutMs });
-    await expectAccessibleGroupNotContains(panel, taxonomyA.name, appBootTimeoutMs);
+    await expectAccessibleGroupNotContains(taxonomyPanel, taxonomyA.name, appBootTimeoutMs);
     await expectVisibleRuntimeTitle(page, eventB.title);
     await expectAbsentRuntimeTitle(page, eventA.title);
     await expectAbsentRuntimeTitle(page, eventC.title);
 
     const homeEmptyTracker = trackFilteredRequests(page, '/api/v1/agenda', {
-      name: 'type',
+      name: 'category',
       value: `hd10-empty-${unique}`,
     });
-    const typeCSelectionOption = await revealFilterOption(page, panel, typeCLabel);
-    await clickUntilFilteredRequest({
+    const typeCSelectionOption = await revealFilterOption(page, compactPanel, typeCLabel);
+    await clickAndWaitForFilteredRequest({
       locator: typeCSelectionOption,
       tracker: homeEmptyTracker,
       message: 'Home zero-taxonomy primary click must still trigger agenda request',
@@ -2288,18 +2347,54 @@ test('@mutation Home filters honor Event Type taxonomy compatibility, hide zero-
     await expectSelectedChipIconAndLabelForegroundParity(
       typeCSelectionOption.first(),
     );
-    await expect(panel).toBeVisible({ timeout: appBootTimeoutMs });
-    await expectAccessibleGroupNotContains(panel, taxonomyA.name, appBootTimeoutMs);
-    await expectAccessibleGroupNotContains(panel, taxonomyB.name, appBootTimeoutMs);
-    await expect(filterOption(panel, `Rock ${unique}`))
+    await expect(compactPanel).toBeVisible({ timeout: appBootTimeoutMs });
+    await expect(page.getByRole('button', { name: /Filtros \(1\)/i })).toHaveCount(0);
+    await expectAccessibleGroupNotContains(taxonomyPanel, taxonomyA.name, appBootTimeoutMs);
+    await expectAccessibleGroupNotContains(taxonomyPanel, taxonomyB.name, appBootTimeoutMs);
+    await expect(filterOption(taxonomyPanel, `Rock ${unique}`))
       .toHaveCount(0, { timeout: appBootTimeoutMs });
-    await expect(filterOption(panel, `Blues ${unique}`))
+    await expect(filterOption(taxonomyPanel, `Blues ${unique}`))
       .toHaveCount(0, { timeout: appBootTimeoutMs });
-    await expect(filterOption(panel, `Chef ${unique}`))
+    await expect(filterOption(taxonomyPanel, `Chef ${unique}`))
       .toHaveCount(0, { timeout: appBootTimeoutMs });
     await expectVisibleRuntimeTitle(page, eventC.title);
     await expectAbsentRuntimeTitle(page, eventA.title);
     await expectAbsentRuntimeTitle(page, eventB.title);
+
+    const clearResponsePromise = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return url.pathname === '/api/v1/agenda'
+        && ![...url.searchParams.keys()].some(
+          (key) => key.startsWith('categories') || key.startsWith('taxonomy'),
+        );
+    });
+    await page.getByRole('button', { name: /Limpar/i }).click();
+    const clearResponse = await clearResponsePromise;
+    expect(clearResponse.status()).toBe(200);
+    await clearResponse.finished();
+    await expect(compactPanel).toBeVisible();
+    await expectAccessibleGroupContains(compactPanel, 'Filtros (0)');
+    await expect(compactPanel.getByRole('button', { name: 'Limpar', exact: true }))
+      .toBeDisabled();
+    await expect(filterOption(taxonomyPanel, `Rock ${unique}`)).toHaveCount(0);
+    const viewport = page.viewportSize();
+    await page.mouse.move(viewport.width / 2, viewport.height * 0.8);
+    for (const event of [eventA, eventB, eventC]) {
+      const card = page.getByRole('button', { name: labelPattern(event.title) });
+      await expect.poll(async () => {
+        if (await card.isVisible()) {
+          return true;
+        }
+        await page.mouse.wheel(0, 350);
+        return false;
+      }, {
+        message: `Clearing filters must restore the visible agenda card ${event.title}.`,
+        timeout: appBootTimeoutMs,
+        intervals: [250],
+      }).toBe(true);
+      await expect(card).toBeVisible();
+    }
+    await page.mouse.wheel(0, -10000);
 
     await assertNoCriticalBrowserFailures(collectors);
   } catch (error) {
@@ -2343,6 +2438,7 @@ test('@mutation Profile Discovery hides non-publicly-discoverable types and keep
   let visibleEmptyType = null;
   let hiddenType = null;
   let taxonomyId = null;
+  let taxonomySecondaryId = null;
   let visibleProfile = null;
   let hiddenProfile = null;
   let primaryError = null;
@@ -2363,11 +2459,18 @@ test('@mutation Profile Discovery hides non-publicly-discoverable types and keep
       ],
     });
     taxonomyId = taxonomy.taxonomyId;
+    const taxonomySecondary = await createTaxonomy(api, baseUrl, session.token, {
+      slug: `hd12-genre-${unique}`,
+      name: `Genero ${unique}`,
+      appliesTo: ['account_profile'],
+      terms: [{ slug: `indie-${unique}`, name: `Indie ${unique}` }],
+    });
+    taxonomySecondaryId = taxonomySecondary.taxonomyId;
 
     visibleType = await createAccountProfileType(api, baseUrl, session.token, {
       type: `hd12-visible-${unique}`,
       label: visibleTypeLabel,
-      allowedTaxonomies: [taxonomy.slug],
+      allowedTaxonomies: [taxonomySecondary.slug, taxonomy.slug],
       isFavoritable: false,
       locationPolicy: 'optional',
       icon: 'restaurant',
@@ -2427,6 +2530,7 @@ test('@mutation Profile Discovery hides non-publicly-discoverable types and keep
           type: taxonomy.slug,
           value: `japanese-${unique}`,
         },
+        { type: taxonomySecondary.slug, value: `indie-${unique}` },
       ],
     );
     await waitForPublicAccountProfileListHit(page, baseUrl, {
@@ -2457,30 +2561,32 @@ test('@mutation Profile Discovery hides non-publicly-discoverable types and keep
     await openTenantPath(page, baseUrl, '/descobrir');
     await expect(page.getByText('Descubra', { exact: true }))
       .toBeVisible({ timeout: appBootTimeoutMs });
-    const panel = filterPanel(page, /Painel de filtros de perfis/i);
-    await expect(panel).toBeVisible({ timeout: appBootTimeoutMs });
+    const panelLabel = /Painel de filtros de perfis/i;
+    const compactPanel = compactFilterPanel(page, panelLabel);
+    const taxonomyPanel = taxonomyFilterPanel(page, panelLabel);
+    await expect(compactPanel).toBeVisible({ timeout: appBootTimeoutMs });
     await expect(
       page.getByRole('button', { name: /Filtrar perfis/i }),
       'Discovery must expose the always-visible profile filter panel without the legacy toggle button.',
     ).toHaveCount(0, { timeout: appBootTimeoutMs });
     await assertFilterPanelStaysVisibleOnScroll(
       page,
-      panel,
+      compactPanel,
       /Filtrar perfis/i,
     );
-    await expectFilterChipShowsVisibleLabel(filterOption(panel, visibleTypeLabel));
-    await expect(filterOption(panel, visibleTypeLabel))
+    await expectFilterChipShowsVisibleLabel(filterOption(compactPanel, visibleTypeLabel));
+    await expect(filterOption(compactPanel, visibleTypeLabel))
       .toBeVisible({ timeout: appBootTimeoutMs });
     await expect(
-      filterOption(panel, visibleEmptyTypeLabel),
+      filterOption(compactPanel, visibleEmptyTypeLabel),
       'Discovery runtime facets must hide publicly discoverable types with zero eligible public profiles.',
     ).toHaveCount(0, { timeout: 5000 });
-    await expect(filterOption(panel, hiddenTypeLabel))
+    await expect(filterOption(compactPanel, hiddenTypeLabel))
       .toHaveCount(0, { timeout: 5000 });
-    await expectAccessibleGroupNotContains(panel, taxonomy.name);
-    await expect(filterOption(panel, `Japonesa ${unique}`))
+    await expectAccessibleGroupNotContains(taxonomyPanel, taxonomy.name);
+    await expect(filterOption(taxonomyPanel, `Japonesa ${unique}`))
       .toHaveCount(0, { timeout: 5000 });
-    await expect(filterOption(panel, `Tailandesa ${unique}`))
+    await expect(filterOption(taxonomyPanel, `Tailandesa ${unique}`))
       .toHaveCount(0, { timeout: 5000 });
 
     const discoveryTracker = trackFilteredRequests(
@@ -2491,37 +2597,86 @@ test('@mutation Profile Discovery hides non-publicly-discoverable types and keep
         value: `hd12-visible-${unique}`,
       },
     );
-    await clickUntilFilteredRequest({
-      locator: filterOption(panel, visibleTypeLabel),
+    await clickAndWaitForFilteredRequest({
+      locator: filterOption(compactPanel, visibleTypeLabel),
       tracker: discoveryTracker,
       message: 'Discovery primary filter click must trigger account profile request for selected type',
     });
     discoveryTracker.dispose();
     await expectSelectedChipIconAndLabelForegroundParity(
-      filterOption(panel, visibleTypeLabel).first(),
+      filterOption(compactPanel, visibleTypeLabel).first(),
     );
-    await expect(panel).toBeVisible({ timeout: appBootTimeoutMs });
-    await expectAccessibleGroupContains(panel, taxonomy.name);
-    await expect(filterOption(panel, `Japonesa ${unique}`))
+    await expect(compactPanel).toBeVisible({ timeout: appBootTimeoutMs });
+    await expect(page.getByRole('button', { name: /Filtros \(1\)/i })).toBeVisible();
+    await expectAccessibleGroupContains(taxonomyPanel, taxonomy.name);
+    await expectAccessibleGroupContains(taxonomyPanel, taxonomySecondary.name);
+    const secondaryBounds = await filterOption(taxonomyPanel, `Indie ${unique}`).boundingBox();
+    const primaryBounds = await filterOption(taxonomyPanel, `Japonesa ${unique}`).boundingBox();
+    expect(secondaryBounds).not.toBeNull();
+    expect(primaryBounds).not.toBeNull();
+    expect(secondaryBounds.y, 'Discovery must preserve allowed_taxonomies group order.').toBeLessThan(primaryBounds.y);
+    await expect(filterOption(taxonomyPanel, `Japonesa ${unique}`))
       .toBeVisible({ timeout: appBootTimeoutMs });
     await expect(
-      filterOption(panel, `Tailandesa ${unique}`),
+      filterOption(taxonomyPanel, `Tailandesa ${unique}`),
       'Discovery runtime taxonomy facets must hide terms with zero eligible public profiles.',
     ).toHaveCount(0, { timeout: 5000 });
-    await expect(filterOption(panel, hiddenTypeLabel))
+    await expect(filterOption(compactPanel, hiddenTypeLabel))
       .toHaveCount(0, { timeout: 5000 });
     await expectVisibleRuntimeTitle(page, visibleProfile.displayName);
     await expectAbsentRuntimeTitle(page, hiddenProfile.displayName);
+    const taxonomyTracker = trackFilteredRequests(page, '/api/v1/account_profiles', {
+      name: 'taxonomy',
+      taxonomyType: taxonomy.slug,
+      value: `japanese-${unique}`,
+    });
+    try {
+      await clickAndWaitForFilteredRequest({
+        locator: filterOption(taxonomyPanel, `Japonesa ${unique}`),
+        tracker: taxonomyTracker,
+        message: 'Discovery taxonomy selection must send its canonical type/value pair',
+      });
+    } finally {
+      taxonomyTracker.dispose();
+    }
+    await expect(page.getByRole('button', { name: /Filtros \(2\)/i })).toBeVisible();
+    const collapseTracker = trackFilteredRequests(page, '/api/v1/account_profiles');
+    try {
+      await page.getByRole('button', { name: /Filtros \(2\)/i }).click();
+      await expect(filterOption(taxonomyPanel, `Japonesa ${unique}`)).toHaveCount(0);
+      await expectVisibleRuntimeTitle(page, visibleProfile.displayName);
+      await page.getByRole('button', { name: /Filtros \(2\)/i }).click();
+      await expect(filterOption(taxonomyPanel, `Japonesa ${unique}`)).toBeVisible();
+      await page.waitForTimeout(350);
+      expect(collapseTracker.urls, 'Collapse/reopen must not refetch or clear Discovery filters').toEqual([]);
+    } finally {
+      collapseTracker.dispose();
+    }
+    const clearResponsePromise = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return url.pathname === '/api/v1/account_profiles'
+        && ![...url.searchParams.keys()].some(
+          (key) => key.startsWith('profile_type')
+            || key.startsWith('taxonomy'),
+        );
+    });
+    await compactPanel.getByRole('button', { name: 'Limpar', exact: true }).click();
+    const clearResponse = await clearResponsePromise;
+    expect(clearResponse.status()).toBe(200);
+    await clearResponse.finished();
+    await expectAccessibleGroupContains(compactPanel, 'Filtros (0)');
+    await expect(compactPanel.getByRole('button', { name: 'Limpar', exact: true })).toBeDisabled();
+    await expect(filterOption(taxonomyPanel, `Japonesa ${unique}`)).toHaveCount(0);
     await page.getByRole('button', { name: /Buscar perfis/i }).click();
     await expect(page.getByLabel('Buscar artistas, locais...'))
       .toBeVisible({ timeout: appBootTimeoutMs });
     await expect(page.getByText('Descubra', { exact: true }))
       .toHaveCount(0, { timeout: appBootTimeoutMs });
-    await expect(panel).toHaveCount(0, { timeout: appBootTimeoutMs });
+    await expect(compactPanel).toHaveCount(0, { timeout: appBootTimeoutMs });
     await page.getByRole('button', { name: /Fechar busca/i }).click();
     await expect(page.getByText('Descubra', { exact: true }))
       .toBeVisible({ timeout: appBootTimeoutMs });
-    await expect(panel).toBeVisible({ timeout: appBootTimeoutMs });
+    await expect(compactPanel).toBeVisible({ timeout: appBootTimeoutMs });
 
     await assertNoCriticalBrowserFailures(collectors);
   } catch (error) {
@@ -2540,6 +2695,7 @@ test('@mutation Profile Discovery hides non-publicly-discoverable types and keep
           () => deleteAccountProfileType(api, baseUrl, session?.token, hiddenType?.data?.type?.toString() || ''),
           () => deleteAccountProfileType(api, baseUrl, session?.token, visibleEmptyType?.data?.type?.toString() || ''),
           () => deleteAccountProfileType(api, baseUrl, session?.token, visibleType?.data?.type?.toString() || ''),
+          () => deleteTaxonomy(api, baseUrl, session?.token, taxonomySecondaryId),
           () => deleteTaxonomy(api, baseUrl, session?.token, taxonomyId),
         ]);
       } finally {

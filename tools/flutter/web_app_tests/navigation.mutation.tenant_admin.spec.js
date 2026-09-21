@@ -2641,6 +2641,24 @@ async function expectSelectedToggleChip(
   });
   await switchChip.scrollIntoViewIfNeeded({ timeout: 2000 }).catch(() => {});
 }
+
+async function expectOrderedTaxonomyRows(page, taxonomies) {
+  const rows = taxonomies.map((taxonomy, index) => page.getByRole('group', {
+    name: new RegExp(
+      `^${escapeRegExp(taxonomy.name)} \\(${escapeRegExp(taxonomy.slug)}\\)\\s+Posição ${index + 1} de ${taxonomies.length}$`,
+    ),
+  }));
+  for (const row of rows) {
+    await expect(row).toHaveCount(1);
+    await row.scrollIntoViewIfNeeded({ timeout: interactionTimeoutMs });
+    await expect(row).toBeVisible();
+  }
+  const bounds = await Promise.all(rows.map((row) => row.boundingBox()));
+  for (let index = 0; index < bounds.length; index += 1) {
+    expect(bounds[index]).not.toBeNull();
+    if (index > 0) expect(bounds[index - 1].y).toBeLessThan(bounds[index].y);
+  }
+}
 async function createEventTypeWithTypeAsset(
   api,
   baseUrl,
@@ -4676,7 +4694,12 @@ test('@mutation home favorites preserve backend order and expose event status ha
         profileType: createdProfileType,
       },
     );
+    const memberEventHost = await createPublicAccountProfileForType(
+      api, baseUrl, session.token,
+      { name: `Host Fav Members ${unique}`, profileType: createdProfileType },
+    );
     createdAccountSlugs.push(
+      memberEventHost.accountSlug,
       liveProfile.accountSlug,
       upcomingSoonProfile.accountSlug,
       upcomingLaterProfile.accountSlug,
@@ -4711,7 +4734,7 @@ test('@mutation home favorites preserve backend order and expose event status ha
       {
         title: `PW Favorites Live ${unique}`,
         eventType: createdEventType.data,
-        host: liveProfile,
+        host: memberEventHost,
         occurrences: [liveOccurrenceWindow()],
       },
     );
@@ -4722,7 +4745,7 @@ test('@mutation home favorites preserve backend order and expose event status ha
       {
         title: `PW Favorites Soon ${unique}`,
         eventType: createdEventType.data,
-        host: upcomingSoonProfile,
+        host: memberEventHost,
         occurrences: [futureOccurrenceWindow(1)],
       },
     );
@@ -4731,6 +4754,24 @@ test('@mutation home favorites preserve backend order and expose event status ha
       upcomingSoonEvent?.event_id?.toString() || '',
       upcomingLaterEvent?.event_id?.toString() || '',
     );
+    for (const [event, profile] of [[liveEvent, liveProfile], [upcomingSoonEvent, upcomingSoonProfile]]) {
+      const occurrenceId = event?.occurrences?.[0]?.occurrence_id?.toString() || '';
+      expect(occurrenceId, 'Member-only Favorites fixture requires its exact occurrence.').toBeTruthy();
+      expect(profile.profileId).not.toBe(memberEventHost.profileId);
+      const groupsPath = `/admin/api/v1/events/${event.event_id}/occurrences/${occurrenceId}/profile_groups`;
+      const groupResponse = await api.post(buildApiUrl(baseUrl, groupsPath), {
+        headers: authHeaders(session.token), data: { label: 'Favorites related profiles' },
+      });
+      const groupPayload = await groupResponse.json();
+      expect(groupResponse.status(), JSON.stringify(groupPayload)).toBe(201);
+      const groupId = normalizeList(groupPayload?.data?.profile_groups)
+        .find((group) => group.label === 'Favorites related profiles')?.id;
+      expect(groupId, 'Canonical related group must be returned.').toBeTruthy();
+      const memberResponse = await api.patch(buildApiUrl(baseUrl, `${groupsPath}/${groupId}/members`), {
+        headers: authHeaders(session.token), data: { add_ids: [profile.profileId] },
+      });
+      expect(memberResponse.status(), 'Canonical member mutation must succeed.').toBeLessThan(400);
+    }
 
     anonymousIdentity = await createAnonymousIdentity(
       api,
@@ -4847,11 +4888,38 @@ test('@mutation home favorites preserve backend order and expose event status ha
     const liveFavoritePayload = favoriteItems.find(
       (item) => item?.target_id?.toString() === liveProfile.profileId?.toString(),
     );
+    const upcomingMemberPayload = favoriteItems.find((item) => item?.target_id === upcomingSoonProfile.profileId);
+    expect(liveFavoritePayload?.occurrence_state?.live_now_event_occurrence_id).toBe(liveEvent.occurrences[0].occurrence_id);
+    expect(favoritesPayload?.pinned?.occurrence_state?.live_now_event_occurrence_id).toBe(liveEvent.occurrences[0].occurrence_id);
+    expect(upcomingMemberPayload?.occurrence_state?.next_event_occurrence_id).toBe(upcomingSoonEvent.occurrences[0].occurrence_id);
+    const liveOccurrenceId = liveEvent.occurrences[0].occurrence_id?.toString() || '';
+    const upcomingSoonOccurrenceId = upcomingSoonEvent.occurrences[0].occurrence_id?.toString() || '';
+    expect(liveOccurrenceId, 'Owned live occurrence ID must be present.').toBeTruthy();
+    expect(upcomingSoonOccurrenceId, 'Owned upcoming occurrence ID must be present.').toBeTruthy();
+    const [livePublicProfile, upcomingSoonPublicProfile] = await Promise.all([
+      fetchPublicProfile(api, baseUrl, anonymousIdentity.token, liveProfile.profileSlug),
+      fetchPublicProfile(api, baseUrl, anonymousIdentity.token, upcomingSoonProfile.profileSlug),
+    ]);
+    expect(
+      normalizeList(livePublicProfile?.agenda_occurrences).map((occurrence) =>
+        occurrence?.occurrence_id?.toString() || '',
+      ),
+      'Public live member Profile agenda must contain its owned occurrence only.',
+    ).toEqual([liveOccurrenceId]);
+    expect(
+      normalizeList(upcomingSoonPublicProfile?.agenda_occurrences).map((occurrence) =>
+        occurrence?.occurrence_id?.toString() || '',
+      ),
+      'Public upcoming member Profile agenda must contain its owned occurrence only.',
+    ).toEqual([upcomingSoonOccurrenceId]);
+    expect(liveFavoritePayload?.occurrence_state?.live_now_event_occurrence_id?.toString()).toBe(liveOccurrenceId);
+    expect(upcomingMemberPayload?.occurrence_state?.next_event_occurrence_id?.toString()).toBe(upcomingSoonOccurrenceId);
     const fallbackFavoritePayload = favoriteItems.find(
       (item) => item?.target_id?.toString() === fallbackProfile.profileId?.toString(),
     );
-    const liveTargetPath =
-      liveFavoritePayload?.navigation?.target_path?.toString() || '';
+    expect(liveEvent.slug, 'Owned live event must expose its canonical slug').toBeTruthy();
+    const liveTargetPath = `/agenda/evento/${encodeURIComponent(liveEvent.slug)}?occurrence=${encodeURIComponent(liveOccurrenceId)}`;
+    expect(liveFavoritePayload?.navigation?.target_path).toBe(liveTargetPath);
     const fallbackTargetPath =
       fallbackFavoritePayload?.navigation?.target_path?.toString() || '';
     expect(
@@ -4865,7 +4933,7 @@ test('@mutation home favorites preserve backend order and expose event status ha
     expect(
       liveFavoritePayload?.navigation?.event_occurrence_id?.toString() || '',
       'Live favorite must expose event_occurrence_id in /favorites payload.',
-    ).toBeTruthy();
+    ).toBe(liveOccurrenceId);
     expect(
       fallbackFavoritePayload?.navigation?.kind,
       'Fallback favorite must keep canonical account-profile navigation in /favorites payload.',
@@ -4911,10 +4979,13 @@ test('@mutation home favorites preserve backend order and expose event status ha
     const upcomingLaterChipLabel = `${upcomingLaterProfile.displayName}, TEM EVENTO`;
     const fallbackChipLabel = fallbackProfile.displayName;
 
-    const liveChip = publicPage.getByRole('button', { name: liveChipLabel }).first();
-    const upcomingSoonChip = publicPage.getByRole('button', { name: upcomingSoonChipLabel }).first();
-    const upcomingLaterChip = publicPage.getByRole('button', { name: upcomingLaterChipLabel }).first();
-    const fallbackChip = publicPage.getByRole('button', { name: fallbackChipLabel }).first();
+    const liveChip = publicPage.getByRole('button', { name: liveChipLabel, exact: true });
+    const upcomingSoonChip = publicPage.getByRole('button', { name: upcomingSoonChipLabel, exact: true });
+    const upcomingLaterChip = publicPage.getByRole('button', { name: upcomingLaterChipLabel, exact: true });
+    const fallbackChip = publicPage.getByRole('button', { name: fallbackChipLabel, exact: true });
+    for (const chip of [liveChip, upcomingSoonChip, upcomingLaterChip, fallbackChip]) {
+      await expect(chip).toHaveCount(1);
+    }
 
     const ensureChipAccessible = async (chip, label) => {
       await expect
@@ -8228,6 +8299,9 @@ test('@mutation tenant-admin event and account profile type editors preload and 
         label: `HD13 Perfil ${unique}`,
         allowedTaxonomies: [profileTaxonomyA.slug, profileTaxonomyB.slug],
         markerColor: '#B51E5B',
+        capabilities: {
+          is_publicly_discoverable: { value: true, parameters: {} },
+        },
       },
     );
     await rotateFreshTenantAdminPage();
@@ -8265,6 +8339,8 @@ test('@mutation tenant-admin event and account profile type editors preload and 
     await expectSelectedToggleChip(page, eventTaxonomyB.name);
     logStep('type-taxonomies', 'event type preloaded allowed taxonomies confirmed');
 
+    await page.getByRole('button', { name: 'Mover para baixo' }).first().click();
+
     const eventDescriptionUpdate = `Descricao atualizada ${unique}`;
     await fillFlutterTextField(
       page,
@@ -8294,8 +8370,8 @@ test('@mutation tenant-admin event and account profile type editors preload and 
     expect(eventSaveResponse.status()).toBeLessThan(400);
     const eventSavePayload = await eventSaveResponse.json();
     expect(
-      (eventSavePayload?.data?.allowed_taxonomies || []).slice().sort(),
-    ).toEqual([eventTaxonomyA.slug, eventTaxonomyB.slug].slice().sort());
+      eventSavePayload?.data?.allowed_taxonomies || [],
+    ).toEqual([eventTaxonomyB.slug, eventTaxonomyA.slug]);
     expect(eventSavePayload?.data?.description).toBe(eventDescriptionUpdate);
     logStep('type-taxonomies', 'event type save preserved allowed taxonomies');
 
@@ -8333,6 +8409,7 @@ test('@mutation tenant-admin event and account profile type editors preload and 
       timeoutMs: 15000,
     });
     logStep('type-taxonomies', 'event type reopen preserved allowed taxonomies');
+    await expectOrderedTaxonomyRows(page, [eventTaxonomyB, eventTaxonomyA]);
 
     await rotateFreshTenantAdminPage();
     const profileEditUrl = buildApiUrl(
@@ -8352,6 +8429,8 @@ test('@mutation tenant-admin event and account profile type editors preload and 
       timeout: appBootTimeoutMs,
     });
     logStep('type-taxonomies', 'profile type edit loaded taxonomy section');
+
+    await page.getByRole('button', { name: 'Mover para baixo' }).first().click();
 
     const profileLabelUpdate = `HD13 Perfil Atualizado ${unique}`;
     await fillFlutterTextField(page, 'Label', profileLabelUpdate);
@@ -8373,8 +8452,8 @@ test('@mutation tenant-admin event and account profile type editors preload and 
     expect(profileSaveResponse.status()).toBeLessThan(400);
     const profileSavePayload = await profileSaveResponse.json();
     expect(
-      (profileSavePayload?.data?.allowed_taxonomies || []).slice().sort(),
-    ).toEqual([profileTaxonomyA.slug, profileTaxonomyB.slug].slice().sort());
+      profileSavePayload?.data?.allowed_taxonomies || [],
+    ).toEqual([profileTaxonomyB.slug, profileTaxonomyA.slug]);
     expect(profileSavePayload?.data?.label).toBe(profileLabelUpdate);
     logStep('type-taxonomies', 'profile type save preserved allowed taxonomies');
 
@@ -8396,11 +8475,35 @@ test('@mutation tenant-admin event and account profile type editors preload and 
       profileTypeKey,
     );
     expect(
-      (profileReadback?.allowed_taxonomies || []).slice().sort(),
+      profileReadback?.allowed_taxonomies || [],
       'Account profile type readback must preserve allowed taxonomies after reopen.',
-    ).toEqual([profileTaxonomyA.slug, profileTaxonomyB.slug].slice().sort());
+    ).toEqual([profileTaxonomyB.slug, profileTaxonomyA.slug]);
     expect(profileReadback?.label).toBe(profileLabelUpdate);
+    await expectOrderedTaxonomyRows(page, [profileTaxonomyB, profileTaxonomyA]);
     logStep('type-taxonomies', 'profile type reopen preserved allowed taxonomies');
+
+    const publicIdentity = await createAnonymousIdentity(api, baseUrl, 'type-taxonomies-readback');
+    for (const { surface, entity, key, expectedOrder } of [
+      {
+        surface: 'home.events', entity: 'event', key: `hd13-event-${unique}`,
+        expectedOrder: [eventTaxonomyB.slug, eventTaxonomyA.slug],
+      },
+      {
+        surface: 'discovery.account_profiles', entity: 'account_profile', key: profileTypeKey,
+        expectedOrder: [profileTaxonomyB.slug, profileTaxonomyA.slug],
+      },
+    ]) {
+      const catalogResponse = await api.get(
+        buildApiUrl(baseUrl, `/api/v1/discovery-filters/${surface}`),
+        { headers: authHeaders(publicIdentity.token) },
+      );
+      expect(catalogResponse.status()).toBe(200);
+      const catalog = normalizePayload(await catalogResponse.json());
+      const savedType = normalizeList(catalog?.type_options?.[entity])
+        .find((option) => option.value === key);
+      expect(savedType, `The public ${surface} catalog must expose the same saved Type`).toBeTruthy();
+      expect(savedType.allowed_taxonomies).toEqual(expectedOrder);
+    }
 
     await assertNoBrowserFailures(collectors);
   } finally {
