@@ -110,6 +110,15 @@ test('@deferred MAP-NAV-REENTRY-01 tenant home can reopen map after returning fr
     expect(response, 'Tenant response should be available').not.toBeNull();
     expect(response.status(), 'Tenant response should be successful').toBeLessThan(400);
 
+    const environmentResponse = await page.request.get(
+      new URL('/api/v1/environment', baseUrl).toString(),
+    );
+    expect(environmentResponse.status()).toBeLessThan(400);
+    const environmentPayload = JSON.stringify(await environmentResponse.json());
+    expect(environmentPayload, 'Map environment must not publish Static sources.').not.toContain(
+      'static_asset',
+    );
+
     await assertAppBooted(page);
     await enableAccessibilityIfNeeded(page);
     await waitForTenantPath(page, ['/']);

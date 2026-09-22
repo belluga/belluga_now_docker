@@ -271,6 +271,27 @@ async function assertArchivedRowDoesNotAcceptPersistent404AsFinalization() {
   });
 }
 
+async function assertAmbiguousSoftDeleteConflictRequiresForceFinalization() {
+  const api = fakeApi({
+    deleteStatuses: [409],
+    postStatuses: [404, 204],
+    getStatuses: [200, 404, 404],
+  });
+
+  await cleanupOnboardedAccount(
+    api,
+    'https://example.test',
+    'token',
+    'ambiguous-soft-delete-conflict-account',
+  );
+
+  assert.deepStrictEqual(api.stats(), {
+    deleteCalls: [409],
+    postCalls: [404, 204],
+    patchCalls: [],
+  });
+}
+
 async function assertAlreadyAbsentAccountCompletesIdempotently() {
   const api = fakeApi({
     postStatuses: [404],
@@ -316,6 +337,7 @@ async function assertCleanupFailureIsSurfacedAlongsidePrimaryFailure() {
   await assertArchivedRowRetriesBoundedlyAndFailsWithoutForceFinalization();
   await assertArchivedRowDoesNotAcceptPersistent422AsFinalization();
   await assertArchivedRowDoesNotAcceptPersistent404AsFinalization();
+  await assertAmbiguousSoftDeleteConflictRequiresForceFinalization();
   await assertAlreadyAbsentAccountCompletesIdempotently();
   await assertCleanupFailureIsSurfacedAlongsidePrimaryFailure();
   console.log('Account onboarding cleanup contract tests passed.');

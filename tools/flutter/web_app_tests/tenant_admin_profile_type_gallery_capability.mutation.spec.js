@@ -183,15 +183,20 @@ async function createAccountProfileType(
         },
         allowed_taxonomies: [],
         capabilities: {
-          is_favoritable: true,
-          has_avatar: true,
-          has_cover: false,
-          has_bio: false,
-          has_taxonomies: false,
-          has_events: false,
-          is_poi_enabled: false,
-          is_reference_location_enabled: false,
-          has_gallery: true,
+          is_favoritable: { value: true, parameters: {} },
+          has_avatar: { value: true, parameters: {} },
+          has_cover: { value: false, parameters: {} },
+          has_bio: { value: false, parameters: {} },
+          has_taxonomies: { value: false, parameters: {} },
+          has_events: { value: false, parameters: {} },
+          location_policy: { value: 'disabled', parameters: {} },
+          is_map_poi_enabled: { value: false, parameters: {} },
+          is_physical_host_enabled: { value: false, parameters: {} },
+          is_reference_location_enabled: { value: false, parameters: {} },
+          has_gallery: {
+            value: true,
+            parameters: { max_groups: 6, max_items_per_group: 12 },
+          },
         },
         visual: {
           mode: 'icon',
@@ -339,7 +344,7 @@ async function setExternalLinksCapability({
     timeout: appBootTimeoutMs,
   });
 
-  const toggle = await resolveToggle(page, 'Links externos habilitados');
+  const toggle = await resolveToggle(page, 'Has external links');
   await toggle.scrollIntoViewIfNeeded();
   if ((await toggleCheckedValue(toggle)) !== enabled) {
     await toggle.click();
@@ -363,7 +368,8 @@ async function setExternalLinksCapability({
     baseUrl,
     token,
     type,
-    (data) => data?.capabilities?.has_external_links === enabled,
+    (data) =>
+      data?.capabilities?.has_external_links?.configured?.value === enabled,
     `Account profile type ${type} did not persist has_external_links=${enabled}.`,
   );
 }
@@ -531,7 +537,7 @@ async function expectListCardShowsGallery(page, label) {
   await scrollUntilVisible(
     page,
     listCard,
-    `Expected account profile type list card for "${label}" to become visible before asserting Galeria.`,
+    `Expected account profile type list card for "${label}" to become visible before asserting the gallery capability.`,
   );
 
   await expect
@@ -539,14 +545,14 @@ async function expectListCardShowsGallery(page, label) {
       async () =>
         page
           .locator(
-            `flt-semantics[aria-label*="${escapedAttributeValue}"][aria-label*="Galeria"], [aria-label*="${escapedAttributeValue}"][aria-label*="Galeria"]`,
+            `flt-semantics[aria-label*="${escapedAttributeValue}"][aria-label*="Has gallery"], [aria-label*="${escapedAttributeValue}"][aria-label*="Has gallery"]`,
           )
           .count()
           .then((count) => count > 0)
           .catch(() => false),
       {
         timeout: appBootTimeoutMs,
-        message: `Expected account profile type list card for "${label}" to expose the Galeria capability label.`,
+        message: `Expected account profile type list card for "${label}" to expose the Has gallery capability label.`,
       },
     )
     .toBe(true);
@@ -605,11 +611,11 @@ test('@mutation T6-GALLERY-CAPABILITY tenant-admin account profile type gallery 
       'Edit screen must expose the profile type form before gallery-capability hydration is asserted.',
     ).toBeVisible({ timeout: appBootTimeoutMs });
 
-    const galleryToggle = await resolveToggle(page, 'Galeria habilitada');
+    const galleryToggle = await resolveToggle(page, 'Has gallery');
     await galleryToggle.scrollIntoViewIfNeeded();
     await expectToggleChecked(
       galleryToggle,
-      'Persisted gallery-capable profile type must reopen with Galeria habilitada active.',
+      'Persisted gallery-capable profile type must reopen with Has gallery active.',
     );
 
     await fillFlutterTextField(page, 'Label', updatedLabel);
@@ -638,7 +644,7 @@ test('@mutation T6-GALLERY-CAPABILITY tenant-admin account profile type gallery 
     const patchPayload = patchRequest.postDataJSON();
     expect(patchPayload?.label).toBe(updatedLabel);
     expect(
-      patchPayload?.capabilities?.has_gallery,
+      patchPayload?.capabilities?.has_gallery?.value,
       'Saving an unrelated profile type change must preserve has_gallery=true in the submitted payload.',
     ).toBe(true);
     await patchResponsePromise;
@@ -650,11 +656,18 @@ test('@mutation T6-GALLERY-CAPABILITY tenant-admin account profile type gallery 
       type,
       (data) =>
         data?.label === updatedLabel &&
-        data?.capabilities?.has_gallery === true,
+        data?.capabilities?.has_gallery?.configured?.value === true,
       `Account profile type ${type} did not persist label="${updatedLabel}" and has_gallery=true within the expected polling window.`,
     );
     expect(savedType?.label).toBe(updatedLabel);
-    expect(savedType?.capabilities?.has_gallery).toBe(true);
+    expect(savedType?.capabilities?.has_gallery?.configured?.value).toBe(true);
+    expect(
+      savedType?.capabilities?.has_gallery?.configured?.parameters?.max_groups,
+    ).toBe(6);
+    expect(
+      savedType?.capabilities?.has_gallery?.configured?.parameters
+        ?.max_items_per_group,
+    ).toBe(12);
 
     await testInfo.attach('gallery-capability-after-save', {
       body: await page.screenshot(),
@@ -679,8 +692,8 @@ test('@mutation T6-GALLERY-CAPABILITY tenant-admin account profile type gallery 
       'Reopened edit screen must expose the profile type form again before persisted gallery-capability readback is asserted.',
     ).toBeVisible({ timeout: appBootTimeoutMs });
     await expectToggleChecked(
-      await resolveToggle(page, 'Galeria habilitada'),
-      'Reopened edit screen must keep Galeria habilitada active for the persisted type.',
+      await resolveToggle(page, 'Has gallery'),
+      'Reopened edit screen must keep Has gallery active for the persisted type.',
     );
 
     const listUrl = buildUrl(baseUrl, '/admin/profile-types');
@@ -759,10 +772,13 @@ test('@mutation T6-EXTERNAL-LINKS profile capability gates admin CRUD, dormant r
       baseUrl,
       session.token,
       type,
-      (data) => data?.capabilities?.has_external_links === false,
+      (data) =>
+        data?.capabilities?.has_external_links?.configured?.value === false,
       `New profile type ${type} did not default has_external_links to false.`,
     );
-    expect(defaultType.capabilities.has_external_links).toBe(false);
+    expect(defaultType.capabilities.has_external_links.configured.value).toBe(
+      false,
+    );
 
     const pageBundle = await createAuthenticatedTenantAdminPage(browser, session);
     browserContext = pageBundle.context;
@@ -838,11 +854,11 @@ test('@mutation T6-EXTERNAL-LINKS profile capability gates admin CRUD, dormant r
       session.token,
       profileId,
     );
-    const externalLinksLimit = Number(capacityProfile.external_links_limit);
+    const externalLinksLimit = capacityProfile.external_links_limit;
     expect(
-      Number.isSafeInteger(externalLinksLimit) && externalLinksLimit >= 0,
-      'Admin profile detail must expose a non-negative plan-resolved external_links_limit.',
-    ).toBe(true);
+      externalLinksLimit,
+      'Admin profile detail must expose the frozen canonical external_links_limit of 3 without coercion.',
+    ).toBe(3);
 
     const emptyPublicProfile = await gotoPublicProfile(
       page,
@@ -858,11 +874,6 @@ test('@mutation T6-EXTERNAL-LINKS profile capability gates admin CRUD, dormant r
       body: await page.screenshot(),
       contentType: 'image/png',
     });
-
-    if (externalLinksLimit === 0) {
-      assertNoCriticalBrowserFailures(browserFailures, 'T6');
-      return;
-    }
 
     await gotoAdminProfileEdit(page, baseUrl, accountSlug, profileId);
     await expect(page.getByText('Links externos', { exact: true })).toBeVisible({
@@ -1028,97 +1039,57 @@ test('@mutation T6-EXTERNAL-LINKS profile capability gates admin CRUD, dormant r
       'Re-enabled external links must expose the dormant URL unchanged.',
     );
 
-    if (externalLinksLimit >= 2) {
-      const youtubeResponse = await createExternalLink(
-        api,
-        baseUrl,
-        session.token,
-        profileId,
-        { type: 'youtube', url: 'https://youtu.be/dQw4w9WgXcQ' },
-      );
-      expect(youtubeResponse.status()).toBe(201);
-      capacityProfile = (await youtubeResponse.json())?.data || {};
-      await gotoPublicProfile(page, baseUrl, fixture.profileSlug);
-      await expect(page.getByRole('button', { name: /^Abrir / })).toHaveCount(2);
-    }
+    const youtubeResponse = await createExternalLink(
+      api,
+      baseUrl,
+      session.token,
+      profileId,
+      { type: 'youtube', url: 'https://youtu.be/dQw4w9WgXcQ' },
+    );
+    expect(youtubeResponse.status()).toBe(201);
+    capacityProfile = (await youtubeResponse.json())?.data || {};
+    await gotoPublicProfile(page, baseUrl, fixture.profileSlug);
+    await expect(page.getByRole('button', { name: /^Abrir / })).toHaveCount(2);
 
-    if (externalLinksLimit >= 3) {
-      const websiteResponse = await createExternalLink(
-        api,
-        baseUrl,
-        session.token,
-        profileId,
-        {
-          type: 'website',
-          url: 'https://belluga.example/profile',
-          label: 'Site oficial',
-        },
-      );
-      expect(websiteResponse.status()).toBe(201);
-      capacityProfile = (await websiteResponse.json())?.data || {};
-    }
-    expect(capacityProfile.external_links.map((link) => link.type)).toEqual(
-      externalLinksLimit >= 3
-        ? ['instagram', 'youtube', 'website']
-        : externalLinksLimit >= 2
-          ? ['instagram', 'youtube']
-          : ['instagram'],
+    const websiteResponse = await createExternalLink(
+      api,
+      baseUrl,
+      session.token,
+      profileId,
+      {
+        type: 'website',
+        url: 'https://belluga.example/profile',
+        label: 'Site oficial',
+      },
     );
-    expect(capacityProfile.external_links.length).toBeLessThanOrEqual(
-      externalLinksLimit,
-    );
-    const capacityFillCandidates = [
+    expect(websiteResponse.status()).toBe(201);
+    capacityProfile = (await websiteResponse.json())?.data || {};
+    expect(capacityProfile.external_links.map((link) => link.type)).toEqual([
+      'instagram',
+      'youtube',
+      'website',
+    ]);
+    expect(capacityProfile.external_links).toHaveLength(externalLinksLimit);
+
+    const overflowResponse = await createExternalLink(
+      api,
+      baseUrl,
+      session.token,
+      profileId,
       { type: 'facebook', url: 'https://facebook.com/belluga.now' },
-      { type: 'tiktok', url: 'https://www.tiktok.com/@belluga' },
-      { type: 'spotify', url: 'https://open.spotify.com/artist/belluga' },
-    ];
-    for (const candidate of capacityFillCandidates) {
-      if (capacityProfile.external_links.length >= externalLinksLimit) {
-        break;
-      }
-      const fillResponse = await createExternalLink(
-        api,
-        baseUrl,
-        session.token,
-        profileId,
-        candidate,
-      );
-      expect(fillResponse.status()).toBe(201);
-      capacityProfile = (await fillResponse.json())?.data || {};
-    }
-    expect(capacityProfile.external_links.length).toBeLessThanOrEqual(
-      externalLinksLimit,
     );
-
-    const overflowCandidate = capacityFillCandidates.find(
-      (candidate) =>
-        !capacityProfile.external_links.some((link) => link.type === candidate.type),
+    expect(overflowResponse.status()).toBe(422);
+    expect((await overflowResponse.json())?.errors).toHaveProperty(
+      'external_links_limit',
     );
-    if (overflowCandidate) {
-      const overflowResponse = await createExternalLink(
-        api,
-        baseUrl,
-        session.token,
-        profileId,
-        overflowCandidate,
-      );
-      expect(overflowResponse.status()).toBe(422);
-      expect((await overflowResponse.json())?.errors).toHaveProperty(
-        'external_links_limit',
-      );
-    }
 
     await gotoPublicProfile(page, baseUrl, fixture.profileSlug);
     await expect(page.getByRole('button', { name: /^Abrir / })).toHaveCount(
       capacityProfile.external_links.length,
     );
     await expect(page.getByRole('button', { name: 'Abrir Instagram' })).toBeVisible();
-    if (capacityProfile.external_links.some((link) => link.type === 'youtube')) {
-      await expect(page.getByRole('button', { name: 'Abrir YouTube' })).toBeVisible();
-    }
-    if (capacityProfile.external_links.some((link) => link.type === 'website')) {
-      await expect(page.getByRole('button', { name: 'Abrir Site oficial' })).toBeVisible();
-    }
+    await expect(page.getByRole('button', { name: 'Abrir YouTube' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Abrir Site oficial' })).toBeVisible();
     const threeLinkScreenshotPath = testInfo.outputPath(
       'external-links-public-three-long-name.png',
     );

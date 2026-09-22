@@ -249,18 +249,20 @@ async function createAccountProfileType(
         },
         allowed_taxonomies: allowedTaxonomies,
         capabilities: {
-          is_queryable: true,
-          is_publicly_discoverable: false,
-          is_publicly_navigable: false,
-          is_poi_enabled: false,
-          is_reference_location_enabled: false,
-          is_favoritable: false,
-          has_avatar: true,
-          has_cover: false,
-          has_bio: false,
-          has_taxonomies: false,
-          has_events: false,
-          has_nested_profile_groups: false,
+          is_queryable: { value: true, parameters: {} },
+          is_publicly_discoverable: { value: false, parameters: {} },
+          is_publicly_navigable: { value: false, parameters: {} },
+          location_policy: { value: 'disabled', parameters: {} },
+          is_map_poi_enabled: { value: false, parameters: {} },
+          is_physical_host_enabled: { value: false, parameters: {} },
+          is_reference_location_enabled: { value: false, parameters: {} },
+          is_favoritable: { value: false, parameters: {} },
+          has_avatar: { value: true, parameters: {} },
+          has_cover: { value: false, parameters: {} },
+          has_bio: { value: false, parameters: {} },
+          has_taxonomies: { value: false, parameters: {} },
+          has_events: { value: false, parameters: {} },
+          has_nested_profile_groups: { value: false, parameters: {} },
           ...capabilities,
         },
         visual: {
@@ -301,7 +303,9 @@ async function createAccountProfile(api, baseUrl, token, profileType, name) {
     ownership_state: 'unmanaged',
     profile_type: profileType.type,
   };
-  if (profileType?.capabilities?.is_poi_enabled === true) {
+  if (
+    profileType?.capabilities?.location_policy?.effective?.value === 'required'
+  ) {
     payload.location = {
       lat: -20.671339,
       lng: -40.495395,
@@ -939,9 +943,9 @@ test('@diagnostic QRY-RUNTIME admin/public queryability and navigation contract 
       type: `pw_qry_visible_${suffix}`,
       label: `PW QRY Visible ${suffix}`,
       capabilities: {
-        is_queryable: true,
-        is_publicly_discoverable: true,
-        is_publicly_navigable: true,
+        is_queryable: { value: true, parameters: {} },
+        is_publicly_discoverable: { value: true, parameters: {} },
+        is_publicly_navigable: { value: true, parameters: {} },
       },
       color: '#2563EB',
     });
@@ -950,9 +954,9 @@ test('@diagnostic QRY-RUNTIME admin/public queryability and navigation contract 
       type: `pw_qry_participant_${suffix}`,
       label: `PW QRY Participant ${suffix}`,
       capabilities: {
-        is_queryable: true,
-        is_publicly_discoverable: true,
-        is_publicly_navigable: false,
+        is_queryable: { value: true, parameters: {} },
+        is_publicly_discoverable: { value: true, parameters: {} },
+        is_publicly_navigable: { value: false, parameters: {} },
       },
       color: '#7C3AED',
     });
@@ -961,9 +965,9 @@ test('@diagnostic QRY-RUNTIME admin/public queryability and navigation contract 
       type: `pw_qry_hidden_${suffix}`,
       label: `PW QRY Hidden ${suffix}`,
       capabilities: {
-        is_queryable: false,
-        is_publicly_discoverable: false,
-        is_publicly_navigable: false,
+        is_queryable: { value: false, parameters: {} },
+        is_publicly_discoverable: { value: false, parameters: {} },
+        is_publicly_navigable: { value: false, parameters: {} },
       },
       color: '#B91C1C',
     });
@@ -972,10 +976,10 @@ test('@diagnostic QRY-RUNTIME admin/public queryability and navigation contract 
       type: `pw_qry_parent_${suffix}`,
       label: `PW QRY Parent ${suffix}`,
       capabilities: {
-        is_queryable: true,
-        is_publicly_discoverable: false,
-        is_publicly_navigable: false,
-        has_nested_profile_groups: true,
+        is_queryable: { value: true, parameters: {} },
+        is_publicly_discoverable: { value: false, parameters: {} },
+        is_publicly_navigable: { value: false, parameters: {} },
+        has_nested_profile_groups: { value: true, parameters: {} },
       },
       color: '#0F766E',
     });
@@ -984,11 +988,13 @@ test('@diagnostic QRY-RUNTIME admin/public queryability and navigation contract 
       type: `pw_qry_host_${suffix}`,
       label: `PW QRY Host ${suffix}`,
       capabilities: {
-        is_queryable: true,
-        is_publicly_discoverable: false,
-        is_publicly_navigable: false,
-        is_poi_enabled: true,
-        is_reference_location_enabled: true,
+        is_queryable: { value: true, parameters: {} },
+        is_publicly_discoverable: { value: false, parameters: {} },
+        is_publicly_navigable: { value: false, parameters: {} },
+        location_policy: { value: 'required', parameters: {} },
+        is_map_poi_enabled: { value: true, parameters: {} },
+        is_physical_host_enabled: { value: true, parameters: {} },
+        is_reference_location_enabled: { value: true, parameters: {} },
       },
       color: '#EA580C',
     });
