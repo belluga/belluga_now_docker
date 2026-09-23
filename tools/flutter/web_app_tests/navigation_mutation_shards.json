@@ -73,6 +73,12 @@
           "@mutation T6-GALLERY-CAPABILITY tenant-admin account profile type gallery capability rehydrates and renders across edit list and detail"
         ]
       },
+      "account-profile-location-policy": {
+        "grep_extra": "T6-LOCATION-POLICY",
+        "expected_titles": [
+          "@mutation T6-LOCATION-POLICY profile type policy persists and optional accounts support absent or present location"
+        ]
+      },
       "account-profile-external-links": {
         "grep_extra": "T6-EXTERNAL-LINKS",
         "expected_titles": [
@@ -194,9 +200,9 @@
         ]
       },
       "admin-profile-taxonomies": {
-        "grep_extra": "profile-type editors preload",
+        "grep_extra": "event and account profile type editors preload",
         "expected_titles": [
-          "@mutation tenant-admin profile-type editors preload and preserve allowed taxonomies when saving unrelated visual changes"
+          "@mutation tenant-admin event and account profile type editors preload and preserve allowed taxonomies when saving unrelated visual changes"
         ]
       },
       "admin-agenda": {
@@ -233,6 +239,12 @@
         "grep_extra": "T6-EVENT-SHARE",
         "expected_titles": [
           "@mutation T6-EVENT-SHARE anonymous web event invite opens contextual promotion directly"
+        ]
+      },
+      "account-profile-visibility": {
+        "grep_extra": "VIS-RUNTIME-01",
+        "expected_titles": [
+          "@mutation VIS-RUNTIME-01 public visibility states and protected admin media stay connected"
         ]
       }
     }
@@ -292,6 +304,69 @@
         "expected_titles": [
           "@readonly-fixture EVENT-LOCAL-NAV tenant Event Local profile navigation preserves history",
           "@readonly-fixture EVENT-PROGRAMMING-PROFILE-NAV tenant Event Programação profile navigation preserves history"
+        ]
+      },
+      "account-profile-detail": {
+        "grep_extra": "NAV-APD-(?:01|PROD-01|12)",
+        "expected_titles": [
+          "@deferred @readonly NAV-APD-01 Discovery profile detail back stack does not reopen stale detail",
+          "@deferred @readonly NAV-APD-PROD-01 any public profile renders its canonical hero",
+          "@deferred @readonly NAV-APD-12 mobile breakpoint keeps the canonical title readable"
+        ]
+      },
+      "map-full-width": {
+        "grep_extra": "MAP-WEB-WIDTH-01",
+        "expected_titles": [
+          "@deferred @readonly MAP-WEB-WIDTH-01 tenant map route is full width while framed tenant routes remain constrained"
+        ]
+      },
+      "navigation": {
+        "grep_extra": "(?:landlord domain bootstraps as landlord|tenant domain bootstraps as tenant)",
+        "expected_titles": [
+          "@readonly landlord domain bootstraps as landlord and navigates",
+          "@readonly tenant domain bootstraps as tenant and navigates to tenant routes"
+        ]
+      },
+      "startup-public-bootstrap": {
+        "grep_extra": "STARTUP-PUBLIC-BOOTSTRAP-(?:01|02|03)",
+        "expected_titles": [
+          "@readonly STARTUP-PUBLIC-BOOTSTRAP-01 anonymous tenant home cold start keeps the public surface and completes anonymous bootstrap",
+          "@readonly STARTUP-PUBLIC-BOOTSTRAP-02 anonymous account-profile direct entry keeps the public surface and completes anonymous bootstrap",
+          "@readonly STARTUP-PUBLIC-BOOTSTRAP-03 anonymous event-detail direct entry keeps the public surface and completes anonymous bootstrap"
+        ]
+      },
+      "deeplink-contract": {
+        "grep_extra": "(?:well-known endpoints|manifest endpoint|favicon endpoint|open-app generates Android handoff|Android direct public links request open-app)",
+        "expected_titles": [
+          "@readonly landlord and tenant well-known endpoints are JSON and not SPA fallback",
+          "@readonly landlord and tenant manifest endpoint is JSON and not SPA fallback",
+          "@readonly landlord and tenant favicon endpoint is image and not SPA fallback",
+          "@readonly tenant open-app generates Android handoff redirects for pre-Guard action targets",
+          "@readonly tenant Android direct public links request open-app handoff redirects"
+        ]
+      },
+      "boora-font-runtime": {
+        "grep_extra": "BOORA-FONT-01",
+        "expected_titles": [
+          "@readonly BOORA-FONT-01 web runtime loads and draws BooraIcons glyphs"
+        ]
+      },
+      "favorite-auth-gate-runtime": {
+        "grep_extra": "FAV-GATE-RUNTIME",
+        "expected_titles": [
+          "@readonly FAV-GATE-RUNTIME web anonymous account and discovery favorite actions show app promotion modal"
+        ]
+      },
+      "otp-auth-public": {
+        "grep_extra": "OTP-WEB-BOUNDARY-01",
+        "expected_titles": [
+          "@readonly OTP-WEB-BOUNDARY-01 tenant-public web auth remains app promotion boundary"
+        ]
+      },
+      "invite-not-found-event-fallback": {
+        "grep_extra": "invite not-found without recoverable fallback",
+        "expected_titles": [
+          "@readonly invite not-found without recoverable fallback lands safely on home"
         ]
       }
     },

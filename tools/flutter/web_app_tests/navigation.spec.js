@@ -513,6 +513,15 @@ test('@readonly tenant domain bootstraps as tenant and navigates to tenant route
 
   await assertEnvironmentType(page, tenantUrl, 'tenant');
 
+  const retiredStaticResponse = await page.request.get(
+    new URL('/api/v1/static_assets/retired-static-probe', tenantUrl).toString(),
+    { failOnStatusCode: false },
+  );
+  expect(
+    retiredStaticResponse.status(),
+    'Retired public Static API must stay absent.',
+  ).toBe(404);
+
   await assertAppBooted(page);
   await waitForLanding(page, ['/', '/invites', '/convites', '/profile']);
   await logLandingHref(page, 'tenant');
