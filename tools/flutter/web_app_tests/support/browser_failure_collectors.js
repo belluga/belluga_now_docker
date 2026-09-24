@@ -3,8 +3,8 @@
 /**
  * Canonical browser-failure collectors for the web navigation suites.
  *
- * Contract owner: foundation_documentation/todos/active/bugs-performance/high/TODO-post-release-web-navigation-media-image-failure-collector-normalization.md
- * (Decision Baseline D-01..D-05).
+ * Canonical contract: foundation_documentation/modules/flutter_client_experience_module.md
+ * (web/browser compatibility suite).
  *
  * - Media/image asset failures are classified by URL SHAPE first (canonical
  *   `/api/v1/media/**` routes and explicitly enumerated legacy media path
@@ -81,7 +81,7 @@ function hasCacheBustedVersionParam(url) {
 
 /**
  * Legacy media path shapes tolerated as known stale data until the
- * media-host-agnostic hardening TODO lands (owner: foundation_documentation/todos/active/bugs-performance/high/TODO-post-release-web-navigation-media-image-failure-collector-normalization.md). Every entry is an explicit
+ * media-host-agnostic hardening TODO lands (owner: foundation_documentation/todos/active/bugs-performance/high/TODO-store-release-media-host-agnostic-public-urls-and-tenant-cors-cache.md). Every entry is an explicit
  * path pattern (no host allowlist, no catch-all wildcard).
  */
 const LEGACY_MEDIA_PATH_PATTERNS = [
