@@ -160,6 +160,21 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Classify hotfix Web Mutation policy
+        id: stage_hotfix_policy
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PUSH_MESSAGE: ${{ github.event.head_commit.message }}
+        run: |
+          set -euo pipefail
+
+          skip_web_mutation=false
+          if [[ "${PR_TITLE:-}" == "[HOTFIX]"* || "${PUSH_MESSAGE:-}" == *"[HOTFIX]"* ]]; then
+            skip_web_mutation=true
+          fi
+
+          echo "skip_web_mutation=${skip_web_mutation}" >> "$GITHUB_OUTPUT"
+
       - name: Resolve submodule checkout auth
         id: submodule_auth
         env:
@@ -462,7 +477,7 @@ jobs:
 
       - name: Run stage mutation navigation smoke
         id: stage_navigation_mutation_smoke
-        if: steps.stage_initialize_preflight.outputs.initialized == 'true' && steps.stage_untrusted_initialized_bootstrap_block.outcome != 'failure' && steps.stage_runtime_web_sha_check.outcome != 'failure' && steps.stage_public_edge_environment_probe.outcome != 'failure' && steps.stage_provenance_check.outcome != 'failure' && steps.stage_public_taxonomy_validation_fixture.outcome != 'failure' && steps.stage_navigation_smoke.outcome != 'failure'
+        if: steps.stage_hotfix_policy.outputs.skip_web_mutation != 'true' && steps.stage_initialize_preflight.outputs.initialized == 'true' && steps.stage_untrusted_initialized_bootstrap_block.outcome != 'failure' && steps.stage_runtime_web_sha_check.outcome != 'failure' && steps.stage_public_edge_environment_probe.outcome != 'failure' && steps.stage_provenance_check.outcome != 'failure' && steps.stage_public_taxonomy_validation_fixture.outcome != 'failure' && steps.stage_navigation_smoke.outcome != 'failure'
         continue-on-error: true
         timeout-minutes: 35
         env:
@@ -477,6 +492,10 @@ jobs:
           NAV_ADMIN_PASSWORD: ${{ secrets.STAGE_NAV_ADMIN_PASSWORD }}
           NAV_WEB_ALLOW_NONLOCAL_MUTATION_HOSTS: '1'
         run: bash tools/flutter/run_web_navigation_smoke.sh mutation
+
+      - name: Skip stage Web Mutation for hotfix
+        if: steps.stage_hotfix_policy.outputs.skip_web_mutation == 'true'
+        run: echo "SKIP Web Mutation because this promotion is marked [HOTFIX]."
 
       - name: Clean up stage public taxonomy validation fixture
         id: stage_public_taxonomy_validation_fixture_cleanup
@@ -511,7 +530,7 @@ jobs:
         run: bash .github/scripts/collect_remote_deploy_diagnostics.sh
 
       - name: Mark stage revision as successful after navigation smoke
-        if: steps.stage_initialize_preflight.outputs.initialized == 'true' && (steps.stage_rollback_target.outputs.trusted_tuple_present == 'true' || steps.stage_untrusted_initialized_bootstrap_block.outputs.first_trusted_tuple_bootstrap == 'true') && steps.stage_untrusted_initialized_bootstrap_block.outcome != 'failure' && steps.stage_runtime_web_sha_check.outcome == 'success' && steps.stage_public_edge_environment_probe.outcome == 'success' && steps.stage_provenance_check.outcome == 'success' && steps.stage_public_taxonomy_validation_fixture.outcome == 'success' && steps.stage_navigation_smoke.outcome == 'success' && steps.stage_navigation_mutation_smoke.outcome == 'success' && steps.stage_public_taxonomy_validation_fixture_cleanup.outcome != 'failure'
+        if: steps.stage_initialize_preflight.outputs.initialized == 'true' && (steps.stage_rollback_target.outputs.trusted_tuple_present == 'true' || steps.stage_untrusted_initialized_bootstrap_block.outputs.first_trusted_tuple_bootstrap == 'true') && steps.stage_untrusted_initialized_bootstrap_block.outcome != 'failure' && steps.stage_runtime_web_sha_check.outcome == 'success' && steps.stage_public_edge_environment_probe.outcome == 'success' && steps.stage_provenance_check.outcome == 'success' && steps.stage_public_taxonomy_validation_fixture.outcome == 'success' && steps.stage_navigation_smoke.outcome == 'success' && (steps.stage_navigation_mutation_smoke.outcome == 'success' || (steps.stage_hotfix_policy.outputs.skip_web_mutation == 'true' && steps.stage_navigation_mutation_smoke.outcome == 'skipped')) && steps.stage_public_taxonomy_validation_fixture_cleanup.outcome != 'failure'
         env:
           DEPLOY_LANE: stage
           DEPLOY_SSH_HOST: ${{ vars.STAGE_SSH_HOST }}
@@ -828,7 +847,7 @@ jobs:
 
       - name: Run restored stage mutation navigation smoke
         id: stage_rollback_navigation_mutation_smoke
-        if: ${{ always() && steps.stage_rollback_proof_plan.outputs.run == 'true' && steps.stage_rollback_proof_plan.outputs.restored_navigation_validation_mode == 'restored-checks' && steps.stage_rollback_restored_navigation_prep.outcome != 'failure' && steps.stage_rollback_initialize_preflight.outcome != 'failure' && steps.stage_rollback_public_edge_environment_probe.outcome != 'failure' && steps.stage_rollback_provenance_check.outcome != 'failure' && steps.stage_rollback_public_taxonomy_validation_fixture.outcome != 'failure' && steps.stage_rollback_navigation_smoke.outcome != 'failure' }}
+        if: ${{ always() && steps.stage_hotfix_policy.outputs.skip_web_mutation != 'true' && steps.stage_rollback_proof_plan.outputs.run == 'true' && steps.stage_rollback_proof_plan.outputs.restored_navigation_validation_mode == 'restored-checks' && steps.stage_rollback_restored_navigation_prep.outcome != 'failure' && steps.stage_rollback_initialize_preflight.outcome != 'failure' && steps.stage_rollback_public_edge_environment_probe.outcome != 'failure' && steps.stage_rollback_provenance_check.outcome != 'failure' && steps.stage_rollback_public_taxonomy_validation_fixture.outcome != 'failure' && steps.stage_rollback_navigation_smoke.outcome != 'failure' }}
         continue-on-error: true
         timeout-minutes: 35
         env:

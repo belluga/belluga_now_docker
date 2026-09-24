@@ -1398,6 +1398,7 @@ for marker in "${required_navigation_timeout_steps[@]}"; do
 done
 
 required_workflow_markers=(
+  "id: stage_hotfix_policy"
   "id: stage_rollback_proof_plan"
   "id: stage_rollback_proof_guard"
   "id: stage_rollback_restored_navigation_prep"
@@ -1425,6 +1426,68 @@ for marker in "${required_workflow_markers[@]}"; do
     exit 1
   fi
 done
+
+stage_hotfix_policy_block="$(awk '
+  /- name: Classify hotfix Web Mutation policy/ { in_block=1 }
+  in_block && /^      - name:/ && $0 !~ /Classify hotfix Web Mutation policy/ { exit }
+  in_block { print }
+' .github/workflows/orchestration-ci-cd.yml)"
+
+deploy_stage_job_block="$(awk '
+  /^  deploy_stage:/ { in_block=1 }
+  in_block && /^  deploy_main:/ { exit }
+  in_block { print }
+' .github/workflows/orchestration-ci-cd.yml)"
+
+if [[ -z "${stage_hotfix_policy_block}" ]]; then
+  echo "ERROR: could not locate the canonical stage hotfix Web Mutation classifier." >&2
+  exit 1
+fi
+
+if ! grep -Fq -- '- name: Classify hotfix Web Mutation policy' <<<"${deploy_stage_job_block}"; then
+  echo "ERROR: canonical hotfix Web Mutation classifier must belong to deploy_stage." >&2
+  exit 1
+fi
+
+required_stage_hotfix_policy_markers=(
+  'PR_TITLE: ${{ github.event.pull_request.title }}'
+  'PUSH_MESSAGE: ${{ github.event.head_commit.message }}'
+  '"${PR_TITLE:-}" == "[HOTFIX]"*'
+  '"${PUSH_MESSAGE:-}" == *"[HOTFIX]"*'
+  'echo "skip_web_mutation=${skip_web_mutation}" >> "$GITHUB_OUTPUT"'
+)
+
+for marker in "${required_stage_hotfix_policy_markers[@]}"; do
+  if ! grep -Fq "${marker}" <<<"${stage_hotfix_policy_block}"; then
+    echo "ERROR: stage hotfix Web Mutation classifier missing '${marker}'." >&2
+    exit 1
+  fi
+done
+
+stage_mutation_smoke_block="$(awk '
+  /- name: Run stage mutation navigation smoke/ { in_block=1 }
+  in_block && /^      - name:/ && $0 !~ /Run stage mutation navigation smoke/ { exit }
+  in_block { print }
+' .github/workflows/orchestration-ci-cd.yml)"
+
+stage_rollback_mutation_smoke_block="$(awk '
+  /- name: Run restored stage mutation navigation smoke/ { in_block=1 }
+  in_block && /^      - name:/ && $0 !~ /Run restored stage mutation navigation smoke/ { exit }
+  in_block { print }
+' .github/workflows/orchestration-ci-cd.yml)"
+
+for block_name in stage_mutation_smoke_block stage_rollback_mutation_smoke_block; do
+  mutation_block="${!block_name}"
+  if [[ -z "${mutation_block}" ]] || ! grep -Fq "steps.stage_hotfix_policy.outputs.skip_web_mutation != 'true'" <<<"${mutation_block}"; then
+    echo "ERROR: ${block_name} must skip Web Mutation only through the canonical hotfix policy output." >&2
+    exit 1
+  fi
+done
+
+if ! grep -Fq 'echo "SKIP Web Mutation because this promotion is marked [HOTFIX]."' .github/workflows/orchestration-ci-cd.yml; then
+  echo "ERROR: orchestration-ci-cd.yml must emit explicit evidence when HOTFIX skips Web Mutation." >&2
+  exit 1
+fi
 
 if [[ ! -x .github/scripts/prepare_navigation_workspace_from_revision.sh ]]; then
   echo "ERROR: prepare_navigation_workspace_from_revision.sh is required for restored-revision rollback proof." >&2
@@ -1484,7 +1547,7 @@ if ! grep -Fq "steps.stage_initialize_preflight.outputs.initialized == 'true'" <
   exit 1
 fi
 
-stage_mark_success_expected_if="if: steps.stage_initialize_preflight.outputs.initialized == 'true' && (steps.stage_rollback_target.outputs.trusted_tuple_present == 'true' || steps.stage_untrusted_initialized_bootstrap_block.outputs.first_trusted_tuple_bootstrap == 'true') && steps.stage_untrusted_initialized_bootstrap_block.outcome != 'failure' && steps.stage_runtime_web_sha_check.outcome == 'success' && steps.stage_public_edge_environment_probe.outcome == 'success' && steps.stage_provenance_check.outcome == 'success' && steps.stage_public_taxonomy_validation_fixture.outcome == 'success' && steps.stage_navigation_smoke.outcome == 'success' && steps.stage_navigation_mutation_smoke.outcome == 'success' && steps.stage_public_taxonomy_validation_fixture_cleanup.outcome != 'failure'"
+stage_mark_success_expected_if="if: steps.stage_initialize_preflight.outputs.initialized == 'true' && (steps.stage_rollback_target.outputs.trusted_tuple_present == 'true' || steps.stage_untrusted_initialized_bootstrap_block.outputs.first_trusted_tuple_bootstrap == 'true') && steps.stage_untrusted_initialized_bootstrap_block.outcome != 'failure' && steps.stage_runtime_web_sha_check.outcome == 'success' && steps.stage_public_edge_environment_probe.outcome == 'success' && steps.stage_provenance_check.outcome == 'success' && steps.stage_public_taxonomy_validation_fixture.outcome == 'success' && steps.stage_navigation_smoke.outcome == 'success' && (steps.stage_navigation_mutation_smoke.outcome == 'success' || (steps.stage_hotfix_policy.outputs.skip_web_mutation == 'true' && steps.stage_navigation_mutation_smoke.outcome == 'skipped')) && steps.stage_public_taxonomy_validation_fixture_cleanup.outcome != 'failure'"
 stage_mark_success_if_line="$(printf '%s\n' "${stage_mark_success_block}" | sed -n 's/^        if: /if: /p' | head -n 1)"
 if [[ "${stage_mark_success_if_line}" != "${stage_mark_success_expected_if}" ]]; then
   echo "ERROR: stage success-marking block must exactly match the allowlisted full-proof success expression." >&2
@@ -1526,8 +1589,8 @@ if ! grep -Fq "steps.stage_navigation_smoke.outcome == 'success'" <<<"${stage_ma
   exit 1
 fi
 
-if ! grep -Fq "steps.stage_navigation_mutation_smoke.outcome == 'success'" <<<"${stage_mark_success_block}"; then
-  echo "ERROR: stage success-marking block must require a successful mutation navigation smoke." >&2
+if ! grep -Fq "steps.stage_navigation_mutation_smoke.outcome == 'success' || (steps.stage_hotfix_policy.outputs.skip_web_mutation == 'true' && steps.stage_navigation_mutation_smoke.outcome == 'skipped')" <<<"${stage_mark_success_block}"; then
+  echo "ERROR: stage success-marking block must require successful mutation or the explicit hotfix-owned skip." >&2
   exit 1
 fi
 
